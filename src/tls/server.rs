@@ -2,12 +2,13 @@
 //! streaming and HTTP/2 over TLS, interop checks against OpenSSL, curl and Go, and the handshakes the
 //! scripted servers of the unit tests cannot reach.
 //!
-//! **Experimental, and not for production.** Behind the `server` feature (always built for this crate's own
-//! tests). The signing is Ed25519 and is not constant-time (see [`crate::crypto::ed25519_sign`]), the code
-//! has had no review, and it takes whatever shortcut keeps a test simple: no client certificates, no early data, one
-//! certificate, and sessions resumed from tickets that are kept in memory per configuration (used once, never expiring),
-//! so that the client's resumption (B-35) has a peer in the tests; OpenSSL's server checks that too. The independent
-//! review of BACKLOG B-23 does not cover it.
+//! **Not for production yet.** Behind the `server` feature (always built for this crate's own tests), and being made
+//! into a server for real services (BACKLOG B-109 to B-114). The signing is done (B-109): any [`SigningKey`] (ECDSA
+//! P-256 or P-384, Ed25519, RSA of 2048 to 8192 bits, read from PEM with [`ServerConfig::from_pem`]) signs the
+//! CertificateVerify in constant time, in the first of its schemes the client offers. What is still a test server's
+//! shortcut: no client certificates, early data not handled, one certificate, sessions resumed from tickets kept in
+//! memory per configuration (used once, never expiring), no limits or timeouts of its own; that is B-110 and B-112. The
+//! code has had no independent review (B-23's phase 3).
 //!
 //! It is the same shape as the client: [`ServerConnection`] is the protocol as a state machine that does no
 //! I/O (bytes in with [`receive`](ServerConnection::receive), bytes out of [`output`](ServerConnection::output)),
@@ -23,7 +24,8 @@
 //! made the same way on both ends of a test.
 
 use super::messages::*;
-use super::pki::{CertSpec, KeyPair, TestPki};
+use super::pki::{CertSpec, TestPki};
+use crate::sign::SigningKey;
 use super::suite::*;
 use crate::crypto::ecdsa::Curve;
 use crate::crypto::sha2::HashAlg;
@@ -35,8 +37,6 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
 
-/// Ed25519 (the only key this server has), as a SignatureScheme.
-const ED25519: u16 = 0x0807;
 const MAX_HANDSHAKE_MESSAGE: usize = 1 << 18;
 const MAX_CIPHERTEXT_RECORD: usize = MAX_PLAINTEXT + 256;
 /// What one call to `write_plaintext` takes: four full records.
@@ -49,7 +49,7 @@ pub struct ServerConfig {
     /// The certificate chain, DER, leaf first.
     pub chain: Vec<Vec<u8>>,
     /// The key of the first certificate.
-    pub key: KeyPair,
+    pub key: SigningKey,
     /// ALPN protocols, in the server's order of preference. Empty: no ALPN.
     pub alpn_protocols: Vec<Vec<u8>>,
     /// A client that offers ALPN protocols the server has none of is refused with `no_application_protocol`
@@ -87,10 +87,10 @@ pub struct ServerSessions {
 }
 
 impl ServerConfig {
-    pub fn new(chain: Vec<Vec<u8>>, key: KeyPair) -> ServerConfig {
+    pub fn new(chain: Vec<Vec<u8>>, key: impl Into<SigningKey>) -> ServerConfig {
         ServerConfig {
             chain,
-            key,
+            key: key.into(),
             alpn_protocols: Vec::new(),
             alpn_required: true,
             suites: Suite::preference_order().to_vec(),
@@ -102,6 +102,21 @@ impl ServerConfig {
             ocsp_staple: None,
             sessions: Some(Arc::new(Mutex::new(ServerSessions::default()))),
         }
+    }
+
+    /// A config for the certificate chain in `chain_pem` (the server's certificate first, then the intermediates, as
+    /// a CA delivers a "fullchain" file) and its private key in `key_pem` (PKCS#8, SEC 1 or PKCS#1 PEM; see
+    /// [`SigningKey::from_pem`]). Refused if the key is not the first certificate's.
+    pub fn from_pem(chain_pem: &str, key_pem: &str) -> Result<ServerConfig> {
+        let chain: Vec<Vec<u8>> = crate::pem::parse(chain_pem).into_iter().filter(|b| b.label == "CERTIFICATE").map(|b| b.data).collect();
+        let Some(leaf) = chain.first() else {
+            return Err(Error::Key("no CERTIFICATE block in the certificate chain's PEM".into()));
+        };
+        let key = SigningKey::from_pem(key_pem)?;
+        if !key.matches_certificate(leaf)? {
+            return Err(Error::Key(format!("the {} private key is not the key of the first certificate in the chain", key.algorithm())));
+        }
+        Ok(ServerConfig::new(chain, key))
     }
 
     /// Resumes nothing: every handshake is a full one.
@@ -909,8 +924,8 @@ impl ServerConnection {
         let Some(sig_algs) = &hello.signature_algorithms else {
             return Err(Error::Tls("missing_extension: no signature_algorithms".into()));
         };
-        if !sig_algs.contains(&ED25519) {
-            return Err(Error::Tls("handshake_failure: the client does not take Ed25519 signatures, the only kind this server makes".into()));
+        if !config.key.tls_schemes().iter().any(|s| sig_algs.contains(s)) {
+            return Err(Error::Tls(format!("handshake_failure: the client takes none of the signatures this server's {} key makes", config.key.algorithm())));
         }
 
         // the second ClientHello must be the first with a new key share
@@ -1129,9 +1144,11 @@ impl ServerConnection {
 
         // CertificateVerify
         let content = server_certificate_verify_content(&alg.digest(&hs.transcript));
-        let signature = config.key.sign(&content);
+        let offered = hello.signature_algorithms.as_deref().unwrap_or(&[]);
+        let scheme = config.key.tls_schemes().into_iter().find(|s| offered.contains(s)).ok_or_else(|| Error::Tls("internal: no signature scheme in common".into()))?;
+        let signature = config.key.sign_tls(scheme, &content)?;
         let mut verify = Vec::new();
-        put_u16(&mut verify, ED25519);
+        put_u16(&mut verify, scheme);
         put_vec16(&mut verify, &signature);
         self.queue_handshake(hs, &handshake_message(HS_CERTIFICATE_VERIFY, &verify))
     }

@@ -1,44 +1,66 @@
-//! A certificate writer for the test TLS server: Ed25519 keys, a throwaway root and a server certificate
-//! under it (or a self-signed one), written as DER and nothing more. It writes what the client's validator
-//! reads (v3, serial, validity, subject and issuer names with a common name, the key, basic constraints,
-//! key usage, extended key usage, alternative names, key identifiers) and refuses nothing: a test can ask
-//! for an expired certificate, a wrong name or a CA that may not issue.
+//! A certificate writer for tests: a throwaway root and a server certificate under it (or a self-signed one), with keys
+//! of any kind [`SigningKey`] has (Ed25519 by default), written as DER and nothing more. It writes what the client's
+//! validator reads (v3, serial, validity, subject and issuer names with a common name, the key, basic constraints, key
+//! usage, extended key usage, alternative names, key identifiers) and refuses nothing: a test can ask for an expired
+//! certificate, a wrong name or a CA that may not issue.
 //!
-//! Like the signing under it (`crypto::ed25519_sign`), this is for tests. The keys it makes protect
-//! nothing.
+//! The keys it makes protect nothing: they are for tests.
 
-use crate::crypto::{ed25519_sign, rand};
+use crate::crypto::ecdsa::Curve;
+use crate::sign::{Ed25519SigningKey, SigningKey};
 use crate::sys;
 use std::io;
 use std::net::IpAddr;
 
-/// An Ed25519 key pair: the 32-byte secret seed and the public key.
-#[derive(Clone)]
+/// A key pair for test certificates: any [`SigningKey`]; [`generate`](KeyPair::generate) makes an Ed25519 one.
+#[derive(Clone, Debug)]
 pub struct KeyPair {
-    seed: [u8; 32],
-    public: [u8; 32],
+    key: SigningKey,
 }
 
 impl KeyPair {
-    /// A new random key pair.
+    /// A new random Ed25519 key pair.
     pub fn generate() -> io::Result<KeyPair> {
-        Ok(KeyPair::from_seed(rand::bytes()?))
+        Ok(KeyPair { key: Ed25519SigningKey::generate()?.into() })
     }
 
+    /// A new random ECDSA key pair on P-256 or P-384.
+    pub fn generate_ecdsa(curve: Curve) -> io::Result<KeyPair> {
+        Ok(KeyPair { key: SigningKey::generate_ecdsa(curve).map_err(io::Error::other)? })
+    }
+
+    /// The Ed25519 key pair with this seed.
     pub fn from_seed(seed: [u8; 32]) -> KeyPair {
-        KeyPair { public: ed25519_sign::public_key(&seed), seed }
+        KeyPair { key: Ed25519SigningKey::from_seed(&seed).into() }
     }
 
-    pub fn seed(&self) -> &[u8; 32] {
-        &self.seed
+    pub fn from_key(key: SigningKey) -> KeyPair {
+        KeyPair { key }
     }
 
-    pub fn public(&self) -> &[u8; 32] {
-        &self.public
+    pub fn signing_key(&self) -> &SigningKey {
+        &self.key
     }
 
-    pub fn sign(&self, message: &[u8]) -> [u8; 64] {
-        ed25519_sign::sign(&self.seed, message)
+    /// The subjectPublicKey bits of the key (the Ed25519 point, the EC point, the RSA PKCS#1 public key).
+    pub fn public(&self) -> Vec<u8> {
+        let spki = self.key.public_key_spki();
+        let mut d = crate::asn1::Der::new(&spki);
+        let mut seq = d.sequence().expect("our own SPKI");
+        seq.next().expect("the algorithm");
+        crate::asn1::bit_string_bytes(&seq.next().expect("the key")).expect("the key bits").to_vec()
+    }
+
+    /// The signature over `tbs` for the algorithm [`SigningKey::x509_algorithm`] names (for Ed25519, the plain
+    /// signature, which is also what a TLS 1.3 CertificateVerify carries).
+    pub fn sign(&self, tbs: &[u8]) -> Vec<u8> {
+        self.key.sign_x509(tbs).expect("a test key signs")
+    }
+}
+
+impl From<KeyPair> for SigningKey {
+    fn from(k: KeyPair) -> SigningKey {
+        k.key
     }
 }
 
@@ -115,7 +137,7 @@ impl CertSpec {
 /// self-signed certificate when that is `None`.
 pub fn issue(spec: &CertSpec, subject_key: &KeyPair, issuer: Option<(&str, &KeyPair)>) -> Vec<u8> {
     let (issuer_name, issuer_key) = issuer.unwrap_or((spec.common_name.as_str(), subject_key));
-    let algorithm = tlv(0x30, &oid(&[0x2B, 0x65, 0x70])); // Ed25519 has no parameters
+    let algorithm = issuer_key.signing_key().x509_algorithm();
 
     let mut tbs = Vec::new();
     tbs.extend(tlv(0xA0, &integer(&[2]))); // version: v3
@@ -124,7 +146,7 @@ pub fn issue(spec: &CertSpec, subject_key: &KeyPair, issuer: Option<(&str, &KeyP
     tbs.extend(name(issuer_name));
     tbs.extend(tlv(0x30, &[time(spec.not_before), time(spec.not_after)].concat()));
     tbs.extend(name(&spec.common_name));
-    tbs.extend(tlv(0x30, &[algorithm.clone(), bit_string(0, subject_key.public())].concat()));
+    tbs.extend(subject_key.signing_key().public_key_spki());
     tbs.extend(tlv(0xA3, &tlv(0x30, &extensions(spec, subject_key, issuer_key))));
     let tbs = tlv(0x30, &tbs);
 
@@ -178,7 +200,7 @@ fn extensions(spec: &CertSpec, subject_key: &KeyPair, issuer_key: &KeyPair) -> V
         out.extend(extension(&[0x55, 0x1D, 0x1F], false, &tlv(0x30, &points)));
     }
     // subjectKeyIdentifier and authorityKeyIdentifier: the keys' own hashes (RFC 5280's method 1)
-    let key_id = |key: &KeyPair| <crate::crypto::sha2::Sha256 as crate::crypto::sha2::Hash>::digest(key.public())[..20].to_vec();
+    let key_id = |key: &KeyPair| <crate::crypto::sha2::Sha256 as crate::crypto::sha2::Hash>::digest(&key.public())[..20].to_vec();
     out.extend(extension(&[0x55, 0x1D, 0x0E], false, &tlv(0x04, &key_id(subject_key))));
     out.extend(extension(&[0x55, 0x1D, 0x23], false, &tlv(0x30, &tlv(0x80, &key_id(issuer_key)))));
     out
@@ -204,7 +226,7 @@ fn name(common_name: &str) -> Vec<u8> {
 /// A CRL from the CA named `issuer_name` with key `issuer_key`, valid from `this_update` to `next_update`, listing the
 /// certificates with these serial numbers (big-endian magnitudes) as revoked at the times given.
 pub fn crl(issuer_name: &str, issuer_key: &KeyPair, this_update: i64, next_update: i64, revoked: &[(&[u8], i64)]) -> Vec<u8> {
-    let algorithm = tlv(0x30, &oid(&[0x2B, 0x65, 0x70]));
+    let algorithm = issuer_key.signing_key().x509_algorithm();
     let mut tbs = Vec::new();
     tbs.extend(integer(&[1])); // v2
     tbs.extend(&algorithm);
@@ -268,7 +290,7 @@ pub fn ocsp_response(issuer: &[u8], issuer_key: &KeyPair, cert: &[u8], status: O
         0x30,
         &[tlv(0xA1, &issuer_cert.subject_der), gen_time(this_update), tlv(0x30, &tlv(0x30, &single))].concat(),
     );
-    let algorithm = tlv(0x30, &oid(&[0x2B, 0x65, 0x70]));
+    let algorithm = issuer_key.signing_key().x509_algorithm();
     let signature = issuer_key.sign(&data);
     let basic = tlv(0x30, &[data, algorithm, bit_string(0, &signature)].concat());
     let response_bytes = tlv(0x30, &[oid(&[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x30, 0x01, 0x01]), tlv(0x04, &basic)].concat());
@@ -365,12 +387,15 @@ impl TestPki {
 
     /// Like `new`, with the server certificate as `leaf` says.
     pub fn with_spec(leaf: CertSpec) -> io::Result<TestPki> {
-        let root_key = KeyPair::generate()?;
-        let server_key = KeyPair::generate()?;
+        Ok(TestPki::with_keys(leaf, &KeyPair::generate()?, KeyPair::generate()?))
+    }
+
+    /// A root with `root_key` and the server certificate `leaf` for `server_key` under it: keys of any kind.
+    pub fn with_keys(leaf: CertSpec, root_key: &KeyPair, server_key: KeyPair) -> TestPki {
         let root_spec = CertSpec::ca("pratique test root");
-        let root = issue(&root_spec, &root_key, None);
-        let leaf = issue(&leaf, &server_key, Some((&root_spec.common_name, &root_key)));
-        Ok(TestPki { root, chain: vec![leaf], server_key })
+        let root = issue(&root_spec, root_key, None);
+        let leaf = issue(&leaf, &server_key, Some((&root_spec.common_name, root_key)));
+        TestPki { root, chain: vec![leaf], server_key }
     }
 
     /// A trust store that holds the root.

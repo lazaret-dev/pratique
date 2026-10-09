@@ -95,6 +95,50 @@ fn a_client_connects_to_the_server_with_every_suite_and_group() {
     }
 }
 
+/// The RSA test keys of `crypto::rsa_sign` (PKCS#1 DER), by size.
+fn rsa_test_key(bits: usize) -> crate::sign::SigningKey {
+    let line = include_str!("../../tests/data/rsa_signing_keys.txt")
+        .lines()
+        .find(|l| l.starts_with(&format!("{bits} ")))
+        .expect("a key of that size");
+    let der = crate::util::unhex(line.split(' ').nth(1).unwrap());
+    crate::sign::RsaSigningKey::from_pkcs1_der(&der).unwrap().into()
+}
+
+#[test]
+fn a_client_connects_whatever_kind_of_key_the_server_and_its_root_have() {
+    use super::pki::KeyPair;
+    use crate::crypto::ecdsa::Curve;
+    let kinds = || -> Vec<(&'static str, KeyPair)> {
+        vec![
+            ("Ed25519", KeyPair::generate().unwrap()),
+            ("ECDSA P-256", KeyPair::generate_ecdsa(Curve::P256).unwrap()),
+            ("ECDSA P-384", KeyPair::generate_ecdsa(Curve::P384).unwrap()),
+            ("RSA-2048", KeyPair::from_key(rsa_test_key(2048))),
+            ("RSA-3072", KeyPair::from_key(rsa_test_key(3072))),
+        ]
+    };
+    for (root_name, root_key) in kinds() {
+        for (leaf_name, leaf_key) in kinds() {
+            let pki = TestPki::with_keys(CertSpec::server(&["server.test"]), &root_key, leaf_key);
+            let client = ClientConfig::new(pki.trust_store());
+            let (port, handle) = serve_one(ServerConfig::from_pki(&pki), |mut s| {
+                let mut buf = [0u8; 4];
+                s.read_exact(&mut buf).unwrap();
+                s.write_all(&buf).unwrap();
+                s.flush().unwrap();
+            });
+            let mut c = connect(port, "server.test", &client).unwrap_or_else(|e| panic!("root {root_name}, leaf {leaf_name}: {e}"));
+            c.write_all(b"ping").unwrap();
+            c.flush().unwrap();
+            let mut back = [0u8; 4];
+            c.read_exact(&mut back).unwrap();
+            assert_eq!(&back, b"ping", "root {root_name}, leaf {leaf_name}");
+            handle.join().unwrap().unwrap();
+        }
+    }
+}
+
 #[test]
 fn the_server_picks_the_alpn_protocol_by_its_own_preference() {
     let cases: [(&[&str], &[&str], Option<&str>); 5] = [

@@ -1,13 +1,17 @@
 //! A small HTTPS test server on pratique's TLS 1.3 server, for pointing other programs at: `openssl s_client`,
 //! `curl`, a Go client, a browser that has been told to trust the root.
 //!
-//! EXPERIMENTAL, FOR TESTS: the signing is not constant-time and nothing here has been reviewed. The certificate
-//! and its key are made fresh at each start and mean nothing. Do not expose this to a network.
+//! FOR TESTS: the server is not ready for production yet (BACKLOG B-109 to B-114: no limits or timeouts against abusive
+//! clients, no review). The throwaway certificate and its key are made fresh at each start and mean nothing. Do not
+//! expose this to a network.
 //!
 //!     cargo run --release --features server --example serve -- [options]
 //!
 //!   port=N            listen on 127.0.0.1:N (default 0: a free port, printed)
 //!   names=a,b         DNS names or IP addresses of the certificate (default localhost,127.0.0.1,::1)
+//!   keytype=NAME      the throwaway certificate's key: ed25519 (default), p256 or p384
+//!   certfile=FILE     serve this certificate chain (PEM, leaf first) instead of a throwaway one, with
+//!   keyfile=FILE      its private key (PEM: PKCS#8, SEC 1 or PKCS#1; ECDSA P-256/P-384, Ed25519 or RSA)
 //!   ca=FILE           write the root certificate (PEM) there (default: serve-root.pem)
 //!   alpn=h2,http/1.1  ALPN protocols, in the server's order (default: none)
 //!   suite=NAME        only this cipher suite: aes128, aes256 or chacha
@@ -38,7 +42,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use pratique::http::h2_server::{self, Action, Step};
-use pratique::tls::pki::{CertSpec, TestPki};
+use pratique::crypto::ecdsa::Curve;
+use pratique::tls::pki::{CertSpec, KeyPair, TestPki};
 use pratique::tls::server::{ServerConfig, ServerStream};
 use pratique::tls::Suite;
 
@@ -59,11 +64,27 @@ fn main() {
 
     let names = get("names", "localhost,127.0.0.1,::1");
     let names: Vec<&str> = names.split(',').collect();
-    let pki = TestPki::with_spec(CertSpec::server(&names)).expect("random numbers");
     let ca_path = get("ca", "serve-root.pem");
-    std::fs::write(&ca_path, pki.root_pem()).expect("write the root certificate");
-
-    let mut config = ServerConfig::from_pki(&pki);
+    let mut config = match (opts.get("certfile"), opts.get("keyfile")) {
+        (Some(c), Some(k)) => {
+            let chain = std::fs::read_to_string(c).expect("read certfile");
+            let key = std::fs::read_to_string(k).expect("read keyfile");
+            ServerConfig::from_pem(&chain, &key).unwrap_or_else(|e| panic!("{e}"))
+        }
+        (None, None) => {
+            let server_key = match get("keytype", "ed25519").as_str() {
+                "ed25519" => KeyPair::generate(),
+                "p256" => KeyPair::generate_ecdsa(Curve::P256),
+                "p384" => KeyPair::generate_ecdsa(Curve::P384),
+                other => panic!("unknown keytype {other}"),
+            }
+            .expect("random numbers");
+            let pki = TestPki::with_keys(CertSpec::server(&names), &KeyPair::generate().expect("random numbers"), server_key);
+            std::fs::write(&ca_path, pki.root_pem()).expect("write the root certificate");
+            ServerConfig::from_pki(&pki)
+        }
+        _ => panic!("certfile= and keyfile= go together"),
+    };
     if let Some(a) = opts.get("alpn") {
         config = config.with_alpn(&a.split(',').collect::<Vec<_>>());
     }

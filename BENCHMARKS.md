@@ -104,6 +104,19 @@ What B-104 changed (`examples/bench.rs`, 2026-10-08, two runs each; before is B-
 | AES-256-GCM, 16 KiB | 3.0 to 3.1, 3.27 GB/s | unchanged (9.9) |
 | ChaCha20-Poly1305, 16 KiB / 1 KB / 100 B | 1.22 / 0.83 / 0.32, 1.40 / 0.82 to 0.85 / 0.32 GB/s | unchanged (2.69 / 1.40 / 0.51) |
 
+What B-109 added (`examples/bench.rs`, 2026-10-08, the x86-64 VM): the cost of signing, which a TLS server pays once per
+full handshake, and of ECDH on the NIST curves, which a client pays after a HelloRetryRequest for one:
+
+| Figure | x86-64 VM |
+|---|---|
+| ECDSA P-256 / P-384 signing (hedged RFC 6979 nonce) | 0.42 / 1.01 ms |
+| Ed25519 signing | 0.021 ms |
+| RSA-2048 / RSA-3072 / RSA-4096 signing (PSS, CRT, blinded, checked) | 1.26 / 4.96 / 12.0 ms |
+| ECDH P-256 / P-384 (a shared secret) | 0.38 / 0.93 ms |
+
+ECDSA signing is nearly all [k]G by `ecdh.rs`'s windows over a variable base; a fixed-base table, as X25519 key generation
+has, would cut it about five times, and RSA signing takes about twice OpenSSL's time (both B-115 in BACKLOG.md).
+
 The ladder has a row of its own since B-104 (`X25519 (shared secret, the ladder)`); the row before it is key generation,
 which B-103 took off the ladder. On x86-64 the X25519 ladder and ECDSA P-256's point operations run from copies compiled for
 BMI2 where the CPU has it, and Poly1305 takes four blocks at a time with AVX2 from 2 KiB (B-104 in BACKLOG.md).

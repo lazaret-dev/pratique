@@ -288,9 +288,123 @@ pub fn oid_from_string(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Writing DER: the few constructions the certificates, certificate requests and keys this crate makes need (B-109).
+/// Each function returns one complete element (tag, definite length, content).
+pub mod write {
+    /// An element with this tag and content; lengths up to 2^32 - 1.
+    pub fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+        let n = content.len();
+        let mut out = Vec::with_capacity(n + 6);
+        out.push(tag);
+        if n < 0x80 {
+            out.push(n as u8);
+        } else {
+            let bytes = (n as u32).to_be_bytes();
+            let skip = bytes.iter().position(|&b| b != 0).unwrap_or(3);
+            out.push(0x80 | (4 - skip) as u8);
+            out.extend_from_slice(&bytes[skip..]);
+        }
+        out.extend_from_slice(content);
+        out
+    }
+
+    /// A SEQUENCE of these elements, in order.
+    pub fn sequence(parts: &[&[u8]]) -> Vec<u8> {
+        tlv(super::TAG_SEQUENCE, &parts.concat())
+    }
+
+    /// A SET of these elements in the order given (DER's SET OF order is the caller's to keep).
+    pub fn set(parts: &[&[u8]]) -> Vec<u8> {
+        tlv(super::TAG_SET, &parts.concat())
+    }
+
+    /// An OBJECT IDENTIFIER from its content octets.
+    pub fn oid(content: &[u8]) -> Vec<u8> {
+        tlv(super::TAG_OID, content)
+    }
+
+    /// An OBJECT IDENTIFIER from dotted form; panics on a malformed one (the callers pass constants).
+    pub fn oid_str(dotted: &str) -> Vec<u8> {
+        oid(&super::oid_from_string(dotted).unwrap_or_else(|| panic!("a valid OID: {dotted}")))
+    }
+
+    /// A non-negative INTEGER from big-endian magnitude bytes: redundant leading zeros dropped, one added where the top
+    /// bit is set; an empty magnitude is 0.
+    pub fn integer(be: &[u8]) -> Vec<u8> {
+        let start = be.iter().position(|&b| b != 0).unwrap_or(be.len());
+        let v = &be[start..];
+        let mut content = Vec::with_capacity(v.len() + 1);
+        if v.is_empty() || v[0] & 0x80 != 0 {
+            content.push(0);
+        }
+        content.extend_from_slice(v);
+        tlv(super::TAG_INTEGER, &content)
+    }
+
+    /// A BIT STRING of whole bytes after `unused` unused bits in the last.
+    pub fn bit_string(unused: u8, bytes: &[u8]) -> Vec<u8> {
+        let mut content = Vec::with_capacity(bytes.len() + 1);
+        content.push(unused);
+        content.extend_from_slice(bytes);
+        tlv(super::TAG_BIT_STRING, &content)
+    }
+
+    pub fn octet_string(bytes: &[u8]) -> Vec<u8> {
+        tlv(super::TAG_OCTET_STRING, bytes)
+    }
+
+    pub fn null() -> Vec<u8> {
+        vec![super::TAG_NULL, 0]
+    }
+
+    pub fn boolean(v: bool) -> Vec<u8> {
+        vec![super::TAG_BOOLEAN, 1, if v { 0xff } else { 0 }]
+    }
+
+    pub fn utf8_string(s: &str) -> Vec<u8> {
+        tlv(super::TAG_UTF8_STRING, s.as_bytes())
+    }
+
+    /// A context-specific element: `[n]` constructed (EXPLICIT tagging, or an IMPLICIT constructed type), or primitive.
+    pub fn context(n: u8, constructed: bool, content: &[u8]) -> Vec<u8> {
+        tlv(0x80 | if constructed { 0x20 } else { 0 } | n, content)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn written_der_reads_back() {
+        use super::write::*;
+        for n in [0usize, 1, 127, 128, 255, 256, 65_535, 65_536, 1 << 20] {
+            let content = vec![7u8; n];
+            let e = tlv(TAG_OCTET_STRING, &content);
+            let mut d = Der::new(&e);
+            let t = d.next().unwrap();
+            assert_eq!(t.content.len(), n);
+            assert!(d.is_empty());
+        }
+        for (be, want) in [(&[][..], &[0x02, 0x01, 0x00][..]), (&[0, 0][..], &[0x02, 0x01, 0x00]), (&[0x7f], &[0x02, 0x01, 0x7f]), (&[0x80], &[0x02, 0x02, 0x00, 0x80]), (&[0, 0, 1, 2], &[0x02, 0x02, 0x01, 0x02])] {
+            assert_eq!(integer(be), want);
+            if !be.iter().all(|&b| b == 0) {
+                let w = integer(be);
+                let mut d = Der::new(&w);
+                let start = be.iter().position(|&b| b != 0).unwrap();
+                assert_eq!(unsigned_integer(&d.next().unwrap()).unwrap(), be[start..].to_vec());
+            }
+        }
+        let s = sequence(&[&oid_str("1.2.840.10045.2.1"), &null(), &bit_string(0, &[1, 2]), &boolean(true), &context(0, true, &integer(&[2]))]);
+        let mut d = Der::new(&s);
+        let mut seq = d.sequence().unwrap();
+        assert_eq!(oid_to_string(seq.expect(TAG_OID).unwrap().content), "1.2.840.10045.2.1");
+        seq.expect(TAG_NULL).unwrap();
+        assert_eq!(bit_string_bytes(&seq.next().unwrap()).unwrap(), &[1, 2]);
+        assert!(super::boolean(&seq.next().unwrap()).unwrap());
+        assert_eq!(seq.next().unwrap().tag, 0xa0);
+        seq.finish().unwrap();
+    }
 
     #[test]
     fn oids_convert_both_ways() {

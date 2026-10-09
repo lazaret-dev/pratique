@@ -35,8 +35,15 @@ pub mod chacha20poly1305;
 pub(crate) mod dit;
 #[cfg(feature = "net")]
 pub mod ecdh;
-#[cfg(any(test, feature = "server"))]
+// constant-time arithmetic modulo the group orders, for signing (B-109)
+#[cfg(feature = "net")]
+pub(crate) mod ct_mod;
+#[cfg(feature = "net")]
+pub mod ecdsa_sign;
+#[cfg(feature = "net")]
 pub mod ed25519_sign;
+#[cfg(feature = "net")]
+pub mod rsa_sign;
 #[cfg(all(test, feature = "net"))]
 pub(crate) mod ecdh_vectors;
 #[cfg(feature = "net")]

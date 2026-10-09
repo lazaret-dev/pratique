@@ -15,7 +15,7 @@ use pratique::crypto::ecdsa::{self, Curve};
 use pratique::crypto::gcm::AesGcm;
 use pratique::crypto::rsa::RsaPublicKey;
 use pratique::crypto::sha2::{Hash, HashAlg, Sha256, Sha384};
-use pratique::crypto::{ed25519, x25519};
+use pratique::crypto::{ecdh, ed25519, x25519};
 use pratique::pem;
 use pratique::x509::{Certificate, TrustStore};
 
@@ -102,6 +102,14 @@ fn main() {
         std::hint::black_box(x25519::x25519(&k, &peer));
     });
     r.row("X25519 (shared secret, the ladder)", secs * 1e3, "ms");
+    for (curve, name) in [(Curve::P256, "P-256"), (Curve::P384, "P-384")] {
+        let (_, peer) = ecdh::generate(curve).expect("a key pair");
+        let (k, _) = ecdh::generate(curve).expect("a key pair");
+        let secs = best_secs(|| {
+            std::hint::black_box(ecdh::shared_secret(curve, &k, &peer));
+        });
+        r.row(&format!("ECDH {name} (shared secret)"), secs * 1e3, "ms");
+    }
     // RFC 6979 A.2.5 and A.2.6 (message "sample")
     let p256_pub = hex("0460FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB67903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299");
     let p256_sig = der_sig("EFD48B2AACB6A8FD1140DD9CD45E81D69D2C877B56AAF991C34D0EA84EAF3716", "F7CB1C942D657C41D436C7A1B6E29F65F3E900DBB9AFF4064DC4AB2F843ACDA8");
@@ -121,6 +129,29 @@ fn main() {
     assert!(ed25519::verify(&ed_pub, b"", &ed_sig), "the Ed25519 vector verifies");
     let secs = best_secs(|| assert!(ed25519::verify(&ed_pub, b"", &ed_sig)));
     r.row("Ed25519 verification", secs * 1e3, "ms");
+    // signing (B-109): what a server spends on its CertificateVerify
+    for (curve, name) in [(Curve::P256, "P-256"), (Curve::P384, "P-384")] {
+        let key = pratique::sign::EcdsaSigningKey::generate(curve).expect("a key");
+        let alg = pratique::crypto::ecdsa_sign::default_hash(curve);
+        let secs = best_secs(|| {
+            std::hint::black_box(key.sign(alg, b"a handshake's signed content").expect("a signature"));
+        });
+        r.row(&format!("ECDSA {name} signing"), secs * 1e3, "ms");
+    }
+    let ed = pratique::sign::Ed25519SigningKey::from_seed(&[7u8; 32]);
+    let secs = best_secs(|| {
+        std::hint::black_box(ed.sign(b"a handshake's signed content"));
+    });
+    r.row("Ed25519 signing", secs * 1e3, "ms");
+    for line in include_str!("../tests/data/rsa_signing_keys.txt").lines().filter(|l| !l.starts_with('#') && !l.starts_with("1024 ")) {
+        let mut f = line.split(' ');
+        let bits = f.next().unwrap();
+        let key = pratique::sign::RsaSigningKey::from_pkcs1_der(&hex(f.next().unwrap())).expect("a test key");
+        let secs = best_secs(|| {
+            std::hint::black_box(key.sign_pss(pratique::crypto::sha2::HashAlg::Sha256, b"a handshake's signed content").expect("a signature"));
+        });
+        r.row(&format!("RSA-{bits} signing (PSS)"), secs * 1e3, "ms");
+    }
     for bits in [2048usize, 4096] {
         // an odd modulus of the size and a "signature" below it: the exponentiation is the work of a real verification
         let mut n = vec![0xc3u8; bits / 8];

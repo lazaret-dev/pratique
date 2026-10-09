@@ -18,10 +18,10 @@ default = ["net"]
 # `#![forbid(unsafe_code)]`, no I/O, no threads, builds for wasm32. See "Features" in the README and
 # tools/check_features.sh.
 net = []
-# A TLS 1.3 SERVER (`tls::server`), with Ed25519 signing and a certificate writer, for tests and tools that need
-# a real peer for the client (keep-alive, streaming and HTTP/2 over TLS, interop checks). Experimental and not
-# for production: the signing is not constant-time and none of it has been reviewed. Off by default, so the
-# default build contains no server and no signing code. See src/tls/server.rs.
+# A TLS 1.3 SERVER (`tls::server`) and a certificate writer for tests (`tls::pki`), with an HTTP/1.1 and HTTP/2 server
+# on top. Being made ready for production (BACKLOG B-109 to B-114): its signing is constant time (B-109; the keys and
+# signing themselves, `pratique::sign`, are in `net`), but it is not for production yet. Off by default, so the default
+# build contains no server. See src/tls/server.rs.
 server = ["net"]
 # Mozilla's root store for TLS servers, built in (`mozilla_roots::trust_store()`; roots/mozilla.pem, about 190 KB, made by
 # tools/gen_mozilla_roots.py from NSS's certdata.txt, and like NSS under the Mozilla Public License 2.0: see NOTICE): for

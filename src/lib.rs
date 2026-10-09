@@ -76,6 +76,8 @@ pub mod native_roots;
 #[cfg(feature = "net")]
 pub mod quic;
 #[cfg(feature = "net")]
+pub mod sign;
+#[cfg(feature = "net")]
 pub mod sys;
 #[cfg(feature = "net")]
 pub mod tls;

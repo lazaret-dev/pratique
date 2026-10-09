@@ -108,6 +108,7 @@ pub fn all() -> Vec<Target> {
         Target { name: "quic_recovery", run: crate::quic_state_targets::recovery, seeds: crate::quic_state_targets::seeds_recovery, dict: &[], max_len: 1500, alloc_base: 1 << 22, alloc_per_byte: 4096 },
         Target { name: "quic_connection", run: crate::quic_state_targets::connection, seeds: crate::quic_state_targets::seeds_connection, dict: crate::quic_state_targets::CONNECTION_DICT, max_len: 800, alloc_base: 1 << 26, alloc_per_byte: 65536 },
         Target { name: "pem", run: pem_text, seeds: seeds_pem, dict: PEM_DICT, max_len: 3072, alloc_base: 1 << 20, alloc_per_byte: 64 },
+        Target { name: "signing_key", run: crate::key_targets::signing_key, seeds: crate::key_targets::seeds_signing_key, dict: crate::key_targets::KEY_DICT, max_len: 3072, alloc_base: 1 << 20, alloc_per_byte: 256 },
         Target { name: "crl", run: crl, seeds: seeds_crl, dict: DER_DICT, max_len: 4096, alloc_base: 1 << 21, alloc_per_byte: 256 },
         Target { name: "ocsp", run: ocsp, seeds: seeds_ocsp, dict: DER_DICT, max_len: 4096, alloc_base: 1 << 21, alloc_per_byte: 256 },
         Target { name: "revocation_path", run: revocation_path, seeds: seeds_revocation_path, dict: DER_DICT, max_len: 6144, alloc_base: 1 << 22, alloc_per_byte: 256 },

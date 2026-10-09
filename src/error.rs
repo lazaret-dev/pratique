@@ -27,6 +27,9 @@ pub enum Error {
     /// The request's batch was cancelled ([`Batch::cancel`](crate::http::Batch::cancel)): it was stopped while it waited
     /// to start or while it was under way, or it was made after the cancel.
     Cancelled,
+    /// A private key could not be read (not PEM or DER of a kind this library reads, encrypted, malformed, of an
+    /// unsupported algorithm or size) or could not sign (BACKLOG B-109).
+    Key(String),
 }
 
 /// A request or a redirect that the client's rules did not allow: nothing was sent to the host it named.
@@ -129,6 +132,7 @@ impl fmt::Display for Error {
             Error::Refused(r) => r.fmt(f),
             Error::Decode(e) => write!(f, "response body could not be decoded: {}", e),
             Error::Cancelled => f.write_str("cancelled: the request's batch was cancelled"),
+            Error::Key(m) => write!(f, "private key error: {}", m),
         }
     }
 }

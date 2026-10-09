@@ -677,6 +677,138 @@ fn ecdh_on_p256_and_p384_is_constant_time() {
     finish();
 }
 
+#[test]
+#[ignore = "statistical timing run; see the module documentation"]
+fn ecdsa_signing_is_constant_time() {
+    use super::ecdsa_sign::{default_hash, sign_with_nonce, EcdsaSigningKey};
+    for (curve, size) in [(Curve::P256, 32usize), (Curve::P384, 48)] {
+        let label = if size == 32 { "p256" } else { "p384" };
+        let alg = default_hash(curve);
+        let digest = alg.digest(b"a message to sign");
+        let key = EcdsaSigningKey::generate(curve).unwrap();
+        // the nonce, chosen: few set bits and a long run of zeros against random nonces (both made as random bytes first)
+        let random_nonce = move |rng: &mut Rng| -> Vec<u8> {
+            loop {
+                let k = rng.bytes(size);
+                if ecdh::public_key(curve, &k).is_some() {
+                    return k;
+                }
+            }
+        };
+        let (k1, d1, rn) = (key.clone(), digest.clone(), random_nonce);
+        expect_constant_time(
+            &format!("ecdsa {label} nonce: 3 vs random"),
+            move |rng, c| {
+                let mut k = rn(rng);
+                if !c {
+                    k.fill(0);
+                    k[size - 1] = 3;
+                }
+                k
+            },
+            move |k: &Vec<u8>| sign_with_nonce(&k1, &d1, k),
+        );
+        let (k2, d2) = (key.clone(), digest.clone());
+        expect_constant_time(
+            &format!("ecdsa {label} nonce: 0x00ff..ff vs 0x7f00..00"),
+            move |rng, c| {
+                let mut k = rng.bytes(size);
+                k[0] = if c { 0x00 } else { 0x7f };
+                k[1..].fill(if c { 0xff } else { 0x00 });
+                k
+            },
+            move |k: &Vec<u8>| sign_with_nonce(&k2, &d2, k),
+        );
+        // the key, through whole (hedged) signatures: 1 against random keys, all made before the timed region
+        let one = EcdsaSigningKey::from_scalar(curve, &[1]).unwrap();
+        let pool: Vec<EcdsaSigningKey> = (0..16).map(|_| EcdsaSigningKey::generate(curve).unwrap()).collect();
+        let d3 = digest.clone();
+        expect_constant_time(
+            &format!("ecdsa {label} key: 1 vs random (whole signature)"),
+            move |rng, c| if c { pool[rng.below(16)].clone() } else { one.clone() },
+            move |k: &EcdsaSigningKey| k.sign_prehashed(alg, &d3),
+        );
+    }
+    finish();
+}
+
+#[test]
+#[ignore = "statistical timing run; see the module documentation"]
+fn ed25519_signing_is_constant_time() {
+    use super::ed25519_sign::Ed25519SigningKey;
+    let clamp = |mut a: [u8; 32]| {
+        a[0] &= 248;
+        a[31] &= 127;
+        a[31] |= 64;
+        a
+    };
+    let prefix = [0x5au8; 32];
+    // the scalar, chosen (the message and the prefix fixed, so the nonce is the same in both classes)
+    let pool: Vec<Ed25519SigningKey> = (0..16).map(|i| Ed25519SigningKey::from_expanded(clamp(rand32(&mut Rng::new(900 + i))), prefix)).collect();
+    let lowest = Ed25519SigningKey::from_expanded(clamp([0u8; 32]), prefix);
+    let pool_a = pool.clone();
+    expect_constant_time(
+        "ed25519 scalar: 2^254 vs random",
+        move |rng, c| if c { pool_a[rng.below(16)].clone() } else { lowest.clone() },
+        |k: &Ed25519SigningKey| k.sign(b"a message to sign"),
+    );
+    let (eights, ones) = (Ed25519SigningKey::from_expanded(clamp([0x88u8; 32]), prefix), Ed25519SigningKey::from_expanded(clamp([0x11u8; 32]), prefix));
+    expect_constant_time("ed25519 scalar: digits 8 vs digits 1", move |_, c| if c { eights.clone() } else { ones.clone() }, |k: &Ed25519SigningKey| k.sign(b"a message to sign"));
+    // the nonce, through the message: all zeros vs random (fixed key)
+    let key = pool[0].clone();
+    expect_constant_time("ed25519 message (and so nonce): zeros vs random", |rng, c| fixed_or_random(rng, c, 64, 0), move |m: &Vec<u8>| key.sign(m));
+    // making a key from a seed: all zero vs random
+    expect_constant_time("ed25519 key from seed: zero vs random", |rng, c| fixed_or_random(rng, c, 32, 0), |s: &Vec<u8>| Ed25519SigningKey::from_seed(&s[..].try_into().unwrap()));
+    finish();
+}
+
+#[test]
+#[ignore = "statistical timing run; see the module documentation"]
+fn rsa_signing_is_constant_time() {
+    use super::rsa_sign::{pow_for_timing, RsaSigningKey};
+    // the exponentiation modulo a secret prime of RSA-2048's size: a fixed odd modulus with its top bit set
+    let mut rng = Rng::new(2048);
+    let mut m = [0u64; 16];
+    for l in m.iter_mut() {
+        *l = rng.next_u64();
+    }
+    m[0] |= 1;
+    m[15] |= 1 << 63;
+    let limbs = |rng: &mut Rng, c: bool, fill: u64| -> [u64; 16] {
+        let mut a = [0u64; 16];
+        for l in a.iter_mut() {
+            *l = rng.next_u64();
+        }
+        if !c {
+            a = [fill; 16];
+        }
+        a[15] &= u64::MAX >> 1; // below the modulus either way
+        a
+    };
+    let base = limbs(&mut Rng::new(1), true, 0);
+    expect_constant_time(
+        "rsa power: exponent all zero vs random",
+        move |rng, c| limbs(rng, c, 0),
+        move |e: &[u64; 16]| pow_for_timing(&m, &base, e),
+    );
+    expect_constant_time(
+        "rsa power: exponent all ones vs random",
+        move |rng, c| limbs(rng, c, u64::MAX),
+        move |e: &[u64; 16]| pow_for_timing(&m, &base, e),
+    );
+    let exp = limbs(&mut Rng::new(2), true, 0);
+    expect_constant_time("rsa power: base 0 vs random", move |rng, c| limbs(rng, c, 0), move |b: &[u64; 16]| pow_for_timing(&m, b, &exp));
+    // whole signatures with a real key: the message (so the encoded value) all zeros vs random
+    let line = include_str!("../../tests/data/rsa_signing_keys.txt").lines().find(|l| l.starts_with("2048 ")).unwrap();
+    let key = RsaSigningKey::from_pkcs1_der(&crate::util::unhex(line.split(' ').nth(1).unwrap())).unwrap();
+    expect_constant_time(
+        "rsa-2048 pkcs1 signature: message zeros vs random",
+        |rng, c| fixed_or_random(rng, c, 64, 0),
+        move |msg: &Vec<u8>| key.sign_pkcs1(super::sha2::HashAlg::Sha256, msg),
+    );
+    finish();
+}
+
 /// The backends this machine can run: portable always, hardware where the CPU has it.
 fn backends() -> Vec<Backend> {
     let mut v = vec![Backend::Portable];

@@ -126,12 +126,14 @@ impl RsaPublicKey {
     /// RSASSA-PKCS1-v1_5 verification (the expected encoding is rebuilt and
     /// compared, never parsed, which rules out padding-parsing bugs).
     pub fn verify_pkcs1(&self, alg: HashAlg, msg: &[u8], sig: &[u8]) -> bool {
-        let prefix: &[u8] = match alg {
-            HashAlg::Sha256 => &[0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20],
-            HashAlg::Sha384 => &[0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30],
-            HashAlg::Sha512 => &[0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40],
-        };
-        self.verify_pkcs1_digest(prefix, &alg.digest(msg), sig)
+        self.verify_pkcs1_digest(digest_info_prefix(alg), &alg.digest(msg), sig)
+    }
+
+    /// sig^e mod n as exactly the modulus's length in bytes, or `None` if `sig` is not that long or not below n: the
+    /// public operation, for the check a signer makes of its own signature (`rsa_sign`).
+    #[allow(dead_code)] // used by rsa_sign (the net part)
+    pub(crate) fn public_op(&self, sig: &[u8]) -> Option<Vec<u8>> {
+        self.raw(sig)
     }
 
     /// RSASSA-PKCS1-v1_5 over a SHA-1 hash of `msg`. SHA-1 is broken for signatures; this exists so
@@ -220,7 +222,17 @@ impl RsaPublicKey {
     }
 }
 
-fn mgf1(alg: HashAlg, seed: &[u8], len: usize) -> Vec<u8> {
+/// The DER of PKCS#1 v1.5's DigestInfo for `alg`, up to the digest itself (RFC 8017 section 9.2, note 1).
+pub(crate) fn digest_info_prefix(alg: HashAlg) -> &'static [u8] {
+    match alg {
+        HashAlg::Sha256 => &[0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20],
+        HashAlg::Sha384 => &[0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30],
+        HashAlg::Sha512 => &[0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40],
+    }
+}
+
+/// MGF1 (RFC 8017 appendix B.2.1) with `alg`: `len` bytes from `seed`.
+pub(crate) fn mgf1(alg: HashAlg, seed: &[u8], len: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(len + alg.output_len());
     let mut counter = 0u32;
     while out.len() < len {

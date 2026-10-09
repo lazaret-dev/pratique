@@ -6,7 +6,7 @@
 #   sh tools/server_interop.sh            all the checks that the installed tools allow (skips the others)
 #   RELEASE=1 sh tools/server_interop.sh  build with --release first
 #
-# The server is the example in examples/serve.rs (feature `server`; experimental, for tests).
+# The server is the example in examples/serve.rs (feature `server`).
 set -u
 cd "$(dirname "$0")/.." || exit 2
 
@@ -73,6 +73,45 @@ if have openssl; then
             fi
         done
     done
+    # the server's key: the throwaway certificate with each kind the server makes (B-109)
+    for kt in ed25519:Ed25519 p256:ECDSA p384:ECDSA; do
+        start_server keytype=${kt%%:*}
+        full=$(s_client /size/10 -alpn http/1.1)
+        if echo "$full" | grep -q "Verification: OK" && echo "$full" | grep -qi "Peer signature type: ${kt#*:}"; then
+            ok "openssl, server key ${kt%%:*}: verified, $(echo "$full" | grep -i 'Peer signature type' | head -1 | tr -d '\r')"
+        else
+            bad "openssl, server key ${kt%%:*}"
+        fi
+    done
+    # certificates and keys OpenSSL made, in each of the PEM formats it writes: served from the files
+    SAN="subjectAltName=DNS:localhost,IP:127.0.0.1"
+    for kind in rsa2048-pkcs8 rsa3072-pkcs1 rsa4096-pkcs8 p256-sec1 p384-pkcs8 ed25519-pkcs8; do
+        k="$WORK/$kind.key"
+        case $kind in
+            rsa2048-pkcs8) openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$k" 2>/dev/null; sig=RSA-PSS ;;
+            rsa3072-pkcs1) openssl genrsa -traditional -out "$k" 3072 2>/dev/null || openssl genrsa -out "$k" 3072 2>/dev/null; sig=RSA-PSS ;;
+            rsa4096-pkcs8) openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out "$k" 2>/dev/null; sig=RSA-PSS ;;
+            p256-sec1) openssl ecparam -name prime256v1 -genkey -out "$k" 2>/dev/null; sig=ECDSA ;;
+            p384-pkcs8) openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out "$k" 2>/dev/null; sig=ECDSA ;;
+            ed25519-pkcs8) openssl genpkey -algorithm ED25519 -out "$k" 2>/dev/null; sig=Ed25519 ;;
+        esac
+        openssl req -x509 -key "$k" -out "$WORK/$kind.crt" -days 2 -subj /CN=localhost -addext "$SAN" 2>/dev/null
+        label=$(sed -n 's/^-----BEGIN \(.*\)-----$/\1/p' "$k" | tr '\n' '+' | sed 's/+$//')
+        start_server certfile="$WORK/$kind.crt" keyfile="$k"
+        CA="$WORK/$kind.crt"
+        full=$(s_client /size/10 -alpn http/1.1)
+        if echo "$full" | grep -q "Verification: OK" && echo "$full" | grep -qi "Peer signature type: $sig"; then
+            ok "openssl, a $kind key from OpenSSL ($label): verified, $sig"
+        else
+            bad "openssl, a $kind key from OpenSSL ($label)"
+        fi
+    done
+    # a key that is not the certificate's: the server must not start
+    if "$SERVE" certfile="$WORK/p256-sec1.crt" keyfile="$WORK/p384-pkcs8.key" > "$WORK/mismatch" 2>&1; then
+        bad "the server started with a key that is not its certificate's"
+    else
+        grep -q "not the key of the first certificate" "$WORK/mismatch" && ok "a key that is not the certificate's is refused at start" || bad "mismatched key: $(tail -2 "$WORK/mismatch")"
+    fi
     # records of one byte, a hundred bytes, tickets before and after the data, key updates
     for opts in "fragment=1" "fragment=100" "tickets=0" "tickets=3" "tickets=2 late_tickets=1" "rekey=3" "alpn=http/1.1,h2"; do
         start_server $opts

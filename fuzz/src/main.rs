@@ -24,6 +24,7 @@ mod cms_targets;
 mod h2_targets;
 mod h3_targets;
 mod inflate_targets;
+mod key_targets;
 mod log_targets;
 mod quic_state_targets;
 mod quic_targets;
