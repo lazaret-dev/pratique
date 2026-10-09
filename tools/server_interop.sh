@@ -1,6 +1,7 @@
 #!/bin/sh
-# Checks pratique's TLS server against clients that are not ours: openssl s_client, curl and a Go program
-# (tools/server_interop.go, crypto/tls and net/http). Each check starts the `serve` example with some settings,
+# Checks pratique's TLS server against clients that are not ours: openssl s_client, curl, headless Chromium
+# (tools/server_interop_browser.py, through Playwright) and a Go program (tools/server_interop.go, crypto/tls and
+# net/http). Each check starts the `serve` example with some settings,
 # connects, and compares what came back, byte for byte, with what the server must have sent.
 #
 #   sh tools/server_interop.sh            all the checks that the installed tools allow (skips the others)
@@ -112,6 +113,53 @@ if have openssl; then
     else
         grep -q "not the key of the first certificate" "$WORK/mismatch" && ok "a key that is not the certificate's is refused at start" || bad "mismatched key: $(tail -2 "$WORK/mismatch")"
     fi
+    # SNI picks the certificate (B-110): a second certificate under the same root for second.localhost
+    start_server names2=second.localhost,second.test
+    out=$(printf 'GET /size/3 HTTP/1.1\r\nHost: second.localhost\r\nConnection: close\r\n\r\n' |
+        timeout 30 openssl s_client -connect "127.0.0.1:$PORT" -CAfile "$CA" -servername second.localhost \
+            -verify_return_error -verify_hostname second.localhost -ign_eof 2>&1)
+    if echo "$out" | grep -q "Verification: OK" && echo "$out" | grep -qi "subject=.*second.localhost"; then
+        ok "openssl: SNI second.localhost gets the second certificate, verified for that name"
+    else
+        bad "openssl SNI: $(echo "$out" | grep -i 'subject=\|verif' | head -3)"
+    fi
+    # session resumption from a ticket (stateless tickets under the server's ticket keys)
+    start_server
+    s_client /size/3 -sess_out "$WORK/sess" > /dev/null
+    out=$(s_client /size/3 -sess_in "$WORK/sess")
+    if echo "$out" | grep -q "Reused, TLSv1.3" && grep -q "resumed true" "$WORK/log"; then
+        ok "openssl resumes a session from the server's ticket"
+    else
+        bad "openssl resumption: $(echo "$out" | grep -i 'reused\|new,' | head -2)"
+    fi
+    # client certificates (mutual TLS): a client CA and certificates under it, made by OpenSSL
+    printf 'basicConstraints=critical,CA:true\nkeyUsage=critical,keyCertSign\n' > "$WORK/ca.ext"
+    printf 'extendedKeyUsage=clientAuth\n' > "$WORK/client.ext"
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout "$WORK/cca.key" -out "$WORK/cca.pem" \
+        -subj /CN=interop-client-ca -days 2 -addext basicConstraints=critical,CA:true -addext keyUsage=critical,keyCertSign 2>/dev/null
+    for ck in p256 rsa2048; do
+        case $ck in
+            p256) openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$WORK/c-$ck.key" 2>/dev/null ;;
+            rsa2048) openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$WORK/c-$ck.key" 2>/dev/null ;;
+        esac
+        openssl req -new -key "$WORK/c-$ck.key" -subj "/CN=interop-client-$ck" -out "$WORK/c-$ck.csr" 2>/dev/null
+        openssl x509 -req -in "$WORK/c-$ck.csr" -CA "$WORK/cca.pem" -CAkey "$WORK/cca.key" -CAcreateserial -days 2 \
+            -extfile "$WORK/client.ext" -out "$WORK/c-$ck.pem" 2>/dev/null
+    done
+    start_server clientca="$WORK/cca.pem"
+    for ck in p256 rsa2048; do
+        out=$(s_client /size/3 -cert "$WORK/c-$ck.pem" -key "$WORK/c-$ck.key")
+        if echo "$out" | grep -q "Verification: OK" && grep -q "client certificates 1" "$WORK/log"; then
+            ok "openssl presents a $ck client certificate; the server checks it and sees it"
+        else
+            bad "openssl client certificate $ck"
+        fi
+    done
+    out=$(s_client /size/3)
+    if echo "$out" | grep -qi "certificate required"; then ok "openssl without a client certificate is refused (certificate_required)"; else bad "openssl without a client certificate: $(echo "$out" | grep -i alert | head -2)"; fi
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -keyout "$WORK/stranger.key" -out "$WORK/stranger.pem" -subj /CN=stranger -days 2 -addext extendedKeyUsage=clientAuth 2>/dev/null
+    out=$(s_client /size/3 -cert "$WORK/stranger.pem" -key "$WORK/stranger.key")
+    if echo "$out" | grep -qi "bad certificate"; then ok "openssl with a certificate from another CA is refused (bad_certificate)"; else bad "openssl stranger certificate: $(echo "$out" | grep -i alert | head -2)"; fi
     # records of one byte, a hundred bytes, tickets before and after the data, key updates
     for opts in "fragment=1" "fragment=100" "tickets=0" "tickets=3" "tickets=2 late_tickets=1" "rekey=3" "alpn=http/1.1,h2"; do
         start_server $opts
@@ -155,6 +203,14 @@ if have curl; then
     # a root it does not know (the system's roots, not ours): curl exit code 60
     curl -sS --http1.1 "https://localhost:$PORT/" --resolve "localhost:$PORT:127.0.0.1" -o /dev/null 2>/dev/null
     [ $? = 60 ] && ok "curl refuses a root it does not trust (exit 60)" || bad "curl accepted an untrusted root"
+    # a client certificate with curl (the files of the openssl section, if it ran)
+    if [ -f "$WORK/c-p256.pem" ]; then
+        start_server clientca="$WORK/cca.pem"
+        code=$(curl -sS --http1.1 --cacert "$CA" --cert "$WORK/c-p256.pem" --key "$WORK/c-p256.key" "https://127.0.0.1:$PORT/size/5" -o /dev/null -w '%{http_code}' 2>&1)
+        [ "$code" = 200 ] && grep -q "client certificates 1" "$WORK/log" && ok "curl presents a client certificate" || bad "curl client certificate: $code"
+        code=$(curl -sS --http1.1 --cacert "$CA" "https://127.0.0.1:$PORT/size/5" -o /dev/null -w '%{http_code}' 2>&1)
+        [ "$code" != 200 ] && ok "curl without a client certificate is refused" || bad "curl without a client certificate got 200"
+    fi
     # HTTP/2 is offered by curl; a server that picks no ALPN protocol gets HTTP/1.1
     start_server alpn=http/1.1
     v=$(curl -sS --http2 --cacert "$CA" "https://127.0.0.1:$PORT/size/5" -o /dev/null -w '%{http_version}' 2>&1)
@@ -166,6 +222,60 @@ if have curl; then
     done
 else
     skipped="$skipped curl"
+fi
+
+# --------------------------------------------------------------------------------------------------- Chromium
+# Headless Chromium through Playwright, trusting the test root through its NSS database (a throwaway $HOME), so it
+# verifies the server as it would any site. Browsers take no Ed25519 in a chain, hence rootkey=p256.
+if have certutil && python3 -c 'import playwright.sync_api' 2>/dev/null; then
+    echo "== Chromium ($(python3 -c 'from playwright.sync_api import sync_playwright as s; p=s().start(); b=p.chromium.launch(); print(b.version); b.close(); p.stop()' 2>/dev/null))"
+    # chromium_trust FILE: a fresh NSS database that trusts the certificate in FILE
+    chromium_trust() {
+        rm -rf "$WORK/home"; mkdir -p "$WORK/home/.pki/nssdb"
+        certutil -N -d "sql:$WORK/home/.pki/nssdb" --empty-password &&
+            certutil -A -a -d "sql:$WORK/home/.pki/nssdb" -t "C,," -n "pratique interop" -i "$1"
+    }
+    # chromium URL BYTES...: loads each page in a new connection; the output is one line per page
+    chromium() { HOME="$WORK/home" timeout 45 python3 -I tools/server_interop_browser.py "$@" 2>&1; }
+
+    start_server keytype=p256 rootkey=p256 alpn=h2,http/1.1
+    rm -rf "$WORK/home"; mkdir -p "$WORK/home"
+    out=$(chromium "https://localhost:$PORT/size/10" 10)
+    echo "$out" | grep -q ERR_CERT_AUTHORITY_INVALID && ok "chromium refuses a root it does not trust" || bad "chromium, untrusted root: $out"
+    chromium_trust "$CA"
+    out=$(chromium "https://localhost:$PORT/size/100000" 100000 "https://127.0.0.1:$PORT/size/7000" 7000)
+    [ "$(echo "$out" | tr '\n' ';')" = "ok h2 100000;ok h2 7000;" ] && ok "chromium over HTTP/2, by name and by IP address" || bad "chromium h2: $out"
+    for opts in suite=aes256 suite=chacha "group=p256" "group=p384" "fragment=100" "rekey=3" "alpn=http/1.1"; do
+        start_server keytype=p256 rootkey=p256 alpn=h2,http/1.1 $opts
+        chromium_trust "$CA"
+        want=h2; [ "$opts" = alpn=http/1.1 ] && want=http/1.1
+        out=$(chromium "https://localhost:$PORT/size/70000" 70000)
+        what=$opts; case $opts in group=*) what="$opts (a HelloRetryRequest: Chromium sends X25519 shares)" ;; esac
+        [ "$out" = "ok $want 70000" ] && ok "chromium with $what" || bad "chromium with $opts: $out"
+    done
+    # P-384 and RSA certificates (RSA from the OpenSSL section, if it ran)
+    start_server keytype=p384 rootkey=p384 alpn=h2
+    chromium_trust "$CA"
+    out=$(chromium "https://localhost:$PORT/size/5000" 5000)
+    [ "$out" = "ok h2 5000" ] && ok "chromium, P-384 leaf and root" || bad "chromium p384: $out"
+    if [ -f "$WORK/rsa2048-pkcs8.crt" ]; then
+        start_server certfile="$WORK/rsa2048-pkcs8.crt" keyfile="$WORK/rsa2048-pkcs8.key" alpn=h2
+        chromium_trust "$WORK/rsa2048-pkcs8.crt"
+        out=$(chromium "https://localhost:$PORT/size/5000" 5000)
+        [ "$out" = "ok h2 5000" ] && ok "chromium, an RSA-2048 certificate and key from OpenSSL (RSA-PSS)" || bad "chromium rsa: $out"
+    fi
+    # Chromium signs nothing with Ed25519: a server with only an Ed25519 key says so; with a P-256 certificate
+    # for the same name next to it, Chromium gets that one (the store picks by what the client verifies)
+    start_server keytype=ed25519 rootkey=p256 alpn=h2
+    chromium_trust "$CA"
+    out=$(chromium "https://localhost:$PORT/size/10" 10)
+    case $out in error*) grep -q "no certificate whose signatures" "$WORK/log" && ok "chromium and an Ed25519-only server: refused, the server says why" || bad "chromium ed25519: server log" ;; *) bad "chromium ed25519 only: $out" ;; esac
+    start_server keytype=ed25519 rootkey=p256 alpn=h2 names2=localhost
+    chromium_trust "$CA"
+    out=$(chromium "https://localhost:$PORT/size/10" 10)
+    [ "$out" = "ok h2 10" ] && ok "chromium gets the P-256 certificate of a name that also has an Ed25519 one" || bad "chromium two certificates: $out"
+else
+    skipped="$skipped chromium"
 fi
 
 # --------------------------------------------------------------------------------------------------- Go

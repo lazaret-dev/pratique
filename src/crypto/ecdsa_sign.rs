@@ -1,6 +1,6 @@
 //! ECDSA signing on P-256 and P-384 (FIPS 186-5, SEC 1 section 4.1.3), in constant time (B-109).
 //!
-//! A signature is (r, s) with r = x([k]G) mod n and s = k^-1 (z + r d) mod n, for the private key d, the message's
+//! A signature is (r, s) with r = x(\[k\]G) mod n and s = k^-1 (z + r d) mod n, for the private key d, the message's
 //! hash z and a nonce k that must never repeat or be guessable: the same k for two messages, or a few known bits of
 //! k over many, gives the key away. So:
 //!
@@ -9,7 +9,7 @@
 //!   signing): a broken random source still gives RFC 6979's nonce, and the randomness keeps an attacker who can
 //!   cause a fault in one signature from getting a second with the same nonce to compare. [`EcdsaSigningKey::sign_deterministic`]
 //!   leaves it out, for the RFC's test vectors and for anyone who wants the same signature each time.
-//! * **[k]G** is `ecdh`'s constant-time scalar multiplication (fixed 4-bit windows, complete formulas, every table
+//! * **\[k\]G** is `ecdh`'s constant-time scalar multiplication (fixed 4-bit windows, complete formulas, every table
 //!   entry read).
 //! * **Everything modulo n** (the hash and r brought below n, r d, the sum, the inverse of k, the product) is
 //!   `ct_mod`'s: no branch and no memory address depends on k, d or s, and the inverse is Fermat's with the public

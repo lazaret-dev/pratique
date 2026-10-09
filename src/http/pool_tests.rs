@@ -1001,20 +1001,20 @@ mod asynchronous {
 /// client does not.
 #[test]
 fn a_new_connection_to_the_same_server_resumes_the_tls_session() {
-    let sessions = Arc::new(Mutex::new(crate::tls::server::ServerSessions::default()));
-    let s = sessions.clone();
+    let stats = Arc::new(crate::tls::server::ServerStats::default());
+    let s = stats.clone();
     // the server closes every connection after its response, so each request makes a new one
-    let server = TestServer::start_tls_with(|_| Reply::SendAndClose(response(200, &[], b"ok")), move |c| crate::tls::server::ServerConfig { sessions: Some(s), ..c });
+    let server = TestServer::start_tls_with(|_| Reply::SendAndClose(response(200, &[], b"ok")), move |c| crate::tls::server::ServerConfig { stats: s, ..c });
     let client = server.client();
     for i in 0..3 {
         let resp = client.get(&server.url("/")).unwrap();
         assert_eq!(resp.body, b"ok", "request {i}");
     }
     assert_eq!(server.connections(), 3);
-    assert_eq!(sessions.lock().unwrap().resumed, 2, "the second and third connections resumed");
+    assert_eq!(stats.resumed.load(std::sync::atomic::Ordering::Relaxed), 2, "the second and third connections resumed");
     let clone = client.clone();
     clone.get(&server.url("/")).unwrap();
-    assert_eq!(sessions.lock().unwrap().resumed, 3, "a clone shares the sessions");
+    assert_eq!(stats.resumed.load(std::sync::atomic::Ordering::Relaxed), 3, "a clone shares the sessions");
     server.client().get(&server.url("/")).unwrap();
-    assert_eq!(sessions.lock().unwrap().resumed, 3, "another client has none");
+    assert_eq!(stats.resumed.load(std::sync::atomic::Ordering::Relaxed), 3, "another client has none");
 }

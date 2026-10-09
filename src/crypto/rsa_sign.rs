@@ -6,9 +6,9 @@
 //! constant time:
 //!
 //! * the arithmetic modulo p and q is `ct_mod`'s, with constants made without the variable-time code
-//!   ([`Modulus::new_secret`]);
+//!   (`Modulus::new_secret`);
 //! * the exponentiation runs fixed windows of 4 bits over every bit of the exponent's limbs, with four squarings and one
-//!   product each, and reads all 16 table entries to pick one ([`Modulus::pow_secret`]);
+//!   product each, and reads all 16 table entries to pick one (`Modulus::pow_secret`);
 //! * the recombination's subtraction, product and addition are fixed loops over all limbs.
 //!
 //! On top of that, two defences that the constant-time code should make unnecessary and that cost little:

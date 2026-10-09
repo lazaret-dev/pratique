@@ -121,6 +121,7 @@ pub fn all() -> Vec<Target> {
         Target { name: "tls_flight", run: tls_flight, seeds: seeds_tls_flight, dict: TLS_DICT, max_len: 8192, alloc_base: 1 << 22, alloc_per_byte: 256 },
         Target { name: "tls_post", run: tls_post, seeds: seeds_tls_post, dict: TLS_DICT, max_len: 2048, alloc_base: 1 << 21, alloc_per_byte: 256 },
         Target { name: "tls12_flight", run: tls12_flight, seeds: seeds_tls12_flight, dict: TLS_DICT, max_len: 4096, alloc_base: 1 << 22, alloc_per_byte: 256 },
+        Target { name: "tls_server", run: tls_server, seeds: pratique::tls::server_fuzz::server_exchange_seeds, dict: TLS_DICT, max_len: 4096, alloc_base: 1 << 23, alloc_per_byte: 512 },
     ]
 }
 
@@ -1315,6 +1316,10 @@ fn tls_records(data: &[u8]) {
 
 fn tls_flight(data: &[u8]) {
     pratique::tls::fuzz_hooks::server_flight(data);
+}
+
+fn tls_server(data: &[u8]) {
+    pratique::tls::server_fuzz::server_exchange(data);
 }
 
 fn tls_post(data: &[u8]) {

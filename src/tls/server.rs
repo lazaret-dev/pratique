@@ -3,12 +3,28 @@
 //! scripted servers of the unit tests cannot reach.
 //!
 //! **Not for production yet.** Behind the `server` feature (always built for this crate's own tests), and being made
-//! into a server for real services (BACKLOG B-109 to B-114). The signing is done (B-109): any [`SigningKey`] (ECDSA
-//! P-256 or P-384, Ed25519, RSA of 2048 to 8192 bits, read from PEM with [`ServerConfig::from_pem`]) signs the
-//! CertificateVerify in constant time, in the first of its schemes the client offers. What is still a test server's
-//! shortcut: no client certificates, early data not handled, one certificate, sessions resumed from tickets kept in
-//! memory per configuration (used once, never expiring), no limits or timeouts of its own; that is B-110 and B-112. The
-//! code has had no independent review (B-23's phase 3).
+//! into a server for real services (BACKLOG B-109 to B-114). Done so far:
+//!
+//! * signing (B-109): any [`SigningKey`] (ECDSA P-256 or P-384, Ed25519, RSA of 2048 to 8192 bits, read from PEM with
+//!   [`ServerConfig::from_pem`]) signs the CertificateVerify in constant time, in the first of its schemes the client
+//!   offers;
+//! * certificates (B-110): a [`CertStore`], or any
+//!   [`ResolvesServerCert`], picks the certificate by the name the client asks for
+//!   (exact names before wildcards) and by the signatures it takes, for the key and for the chain; a strict store
+//!   refuses names it has no certificate for (unrecognized_name), and certificates and OCSP staples can be swapped
+//!   while the server runs;
+//! * resumption (B-110): stateless tickets sealed with AES-256-GCM under [`TicketKeys`]
+//!   that rotate and can be shared by several servers; a ticket carries its lifetime, the name and the client's
+//!   certificates, and is refused when it has expired or was made for another name;
+//! * client certificates (B-110): [`ClientAuth`] asks for one, optionally or required, checks the chain against a
+//!   [`TrustStore`] for client authentication and the CertificateVerify, and gives the chain to the application
+//!   ([`ServerStream::peer_certificates`]);
+//! * the edges (B-110): early data, never accepted, is skipped up to 64 KiB and refused past that; floods of
+//!   KeyUpdate messages or empty records are refused.
+//!
+//! Still a test server's shortcut: no limits or timeouts of its own (a slow client holds a thread), no connection
+//! handling beyond one blocking stream; that is the runtime, B-112. The code has had no independent review (B-23's
+//! phase 3).
 //!
 //! It is the same shape as the client: [`ServerConnection`] is the protocol as a state machine that does no
 //! I/O (bytes in with [`receive`](ServerConnection::receive), bytes out of [`output`](ServerConnection::output)),
@@ -23,33 +39,76 @@
 //! record layer around them (framing, fragmentation, buffering) is its own, so that a mistake there is not
 //! made the same way on both ends of a test.
 
+use super::certs::{CertStore, CertifiedKey, ClientHelloInfo, ResolvesServerCert};
 use super::messages::*;
 use super::pki::{CertSpec, TestPki};
-use crate::sign::SigningKey;
 use super::suite::*;
+use super::tickets::{TicketKeys, TicketState};
+use crate::crypto::dit::Dit;
 use crate::crypto::ecdsa::Curve;
 use crate::crypto::sha2::HashAlg;
 use crate::crypto::{ecdh, rand, x25519};
 use crate::error::{Error, Result};
+use crate::sign::SigningKey;
+use crate::sys;
 use crate::util::{ct_eq, Reader};
+use crate::x509::{Certificate, Purpose, TrustStore, VerifyOptions};
 use crate::zeroize::{Zeroize, Zeroizing};
-use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
+/// RFC 8446 section 4.2.10: the client would send 0-RTT data. Only the server reads it (the client never offers
+/// early data), so it lives here rather than in `messages`, which the default build compiles without the server.
+pub(crate) const EXT_EARLY_DATA: u16 = 42;
 const MAX_HANDSHAKE_MESSAGE: usize = 1 << 18;
 const MAX_CIPHERTEXT_RECORD: usize = MAX_PLAINTEXT + 256;
 /// What one call to `write_plaintext` takes: four full records.
 const MAX_WRITE: usize = 4 * MAX_PLAINTEXT;
 const MAX_COMPAT_CCS: u8 = 2;
+/// Records of early data a client sends although this server never accepts it (RFC 8446 section 4.2.10), skipped up
+/// to this many bytes; more is an error.
+pub(crate) const MAX_EARLY_DATA_SKIP: usize = 1 << 16;
+/// KeyUpdates in a row with no application data between them: more is taken for an attempt to make the server spend
+/// work (each one derives keys, and one that asks for an answer makes the server send one).
+pub(crate) const MAX_KEY_UPDATES_IN_A_ROW: u32 = 32;
+/// Empty application-data records in a row (each costs a decryption): more is refused the same way.
+pub(crate) const MAX_EMPTY_RECORDS_IN_A_ROW: u32 = 64;
+/// How long a session ticket is good for, by default (seconds; RFC 8446 allows up to seven days).
+pub const DEFAULT_TICKET_LIFETIME: u32 = 86_400;
+/// The signatures this server takes in a client's CertificateVerify, in its CertificateRequest.
+const CLIENT_SIGNATURE_SCHEMES: [u16; 7] = [0x0403, 0x0503, 0x0603, 0x0807, 0x0804, 0x0805, 0x0806];
+
+/// Whether the server asks for a client certificate, and the roots the client's chain must lead to.
+#[derive(Clone, Default)]
+pub enum ClientAuth {
+    /// No CertificateRequest: anyone may connect.
+    #[default]
+    None,
+    /// A certificate is asked for; a client that sends none is let in, one that sends a chain that does not verify is not.
+    Optional(Arc<TrustStore>),
+    /// A certificate that verifies (for client authentication, at the current time, up to one of these roots) is required:
+    /// a client without one is refused with `certificate_required`.
+    Required(Arc<TrustStore>),
+}
+
+/// Counts shared by a configuration and its clones.
+#[derive(Default, Debug)]
+pub struct ServerStats {
+    /// Handshakes that completed in full (a certificate and a signature).
+    pub full: AtomicUsize,
+    /// Handshakes that resumed a session from a ticket.
+    pub resumed: AtomicUsize,
+}
 
 /// What a server does.
 #[derive(Clone)]
 pub struct ServerConfig {
-    /// The certificate chain, DER, leaf first.
-    pub chain: Vec<Vec<u8>>,
-    /// The key of the first certificate.
-    pub key: SigningKey,
+    /// Picks the certificate chain and key of each handshake; see [`crate::tls::certs`].
+    pub certs: Arc<dyn ResolvesServerCert>,
+    /// The store behind `certs` when the configuration was made with one ([`new`](Self::new), [`from_pem`](Self::from_pem),
+    /// [`with_certificates`](Self::with_certificates)), for changing it while the server runs.
+    pub store: Option<Arc<CertStore>>,
     /// ALPN protocols, in the server's order of preference. Empty: no ALPN.
     pub alpn_protocols: Vec<Vec<u8>>,
     /// A client that offers ALPN protocols the server has none of is refused with `no_application_protocol`
@@ -66,41 +125,55 @@ pub struct ServerConfig {
     /// Send those tickets after the first data the server writes instead of before it (some servers do:
     /// the client then meets them in the middle of the first response).
     pub tickets_after_first_write: bool,
+    /// The keys session tickets are sealed under (shared by the clones of this configuration), or `None` to resume
+    /// nothing: the tickets sent are then random bytes.
+    pub ticket_keys: Option<Arc<TicketKeys>>,
+    /// How long a ticket may be used, in seconds.
+    pub ticket_lifetime: u32,
+    /// Client certificates: none asked for (the default), optional, or required.
+    pub client_auth: ClientAuth,
     /// The most plaintext in one record (at most 16384). Small values make a client reassemble messages
     /// and data from many records.
     pub max_fragment: usize,
     /// Rotate our sending keys with a KeyUpdate after this many records under one key (at least 2).
     pub rekey_after_records: Option<u64>,
-    /// An OCSP response to staple to the leaf certificate for a client that asks for one.
-    pub ocsp_staple: Option<Vec<u8>>,
-    /// The tickets issued and not used yet (shared by clones of this configuration), or `None` to resume nothing (the
-    /// tickets sent are then random bytes).
-    pub sessions: Option<Arc<Mutex<ServerSessions>>>,
-}
-
-/// A server's resumable sessions: ticket, the PSK it stands for, and the suite it came from.
-#[derive(Default)]
-pub struct ServerSessions {
-    tickets: HashMap<Vec<u8>, (Zeroizing<Vec<u8>>, Suite)>,
-    /// How many handshakes resumed a session.
-    pub resumed: usize,
+    /// Handshakes completed, full and resumed.
+    pub stats: Arc<ServerStats>,
 }
 
 impl ServerConfig {
+    /// A configuration that serves `chain` (DER, leaf first) with `key`, the leaf's key (not checked: see
+    /// [`from_pem`](Self::from_pem) and [`CertifiedKey::new`] for that).
     pub fn new(chain: Vec<Vec<u8>>, key: impl Into<SigningKey>) -> ServerConfig {
+        let cert = CertifiedKey::new_unchecked(chain, key.into()).expect("a certificate chain that is not empty");
+        ServerConfig::with_certificates(CertStore::single(cert))
+    }
+
+    /// A configuration that serves the certificates of `store` (see [`CertStore`]).
+    pub fn with_certificates(store: CertStore) -> ServerConfig {
+        let store = Arc::new(store);
+        let mut config = ServerConfig::with_resolver(store.clone());
+        config.store = Some(store);
+        config
+    }
+
+    /// A configuration whose certificates `resolver` picks (the scanning proxy makes one per host).
+    pub fn with_resolver(resolver: Arc<dyn ResolvesServerCert>) -> ServerConfig {
         ServerConfig {
-            chain,
-            key: key.into(),
+            certs: resolver,
+            store: None,
             alpn_protocols: Vec::new(),
             alpn_required: true,
             suites: Suite::preference_order().to_vec(),
             groups: SUPPORTED_GROUPS.to_vec(),
             tickets: 1,
             tickets_after_first_write: false,
+            ticket_keys: TicketKeys::new(DEFAULT_TICKET_LIFETIME).ok().map(Arc::new),
+            ticket_lifetime: DEFAULT_TICKET_LIFETIME,
+            client_auth: ClientAuth::None,
             max_fragment: MAX_PLAINTEXT,
             rekey_after_records: None,
-            ocsp_staple: None,
-            sessions: Some(Arc::new(Mutex::new(ServerSessions::default()))),
+            stats: Arc::new(ServerStats::default()),
         }
     }
 
@@ -108,26 +181,31 @@ impl ServerConfig {
     /// a CA delivers a "fullchain" file) and its private key in `key_pem` (PKCS#8, SEC 1 or PKCS#1 PEM; see
     /// [`SigningKey::from_pem`]). Refused if the key is not the first certificate's.
     pub fn from_pem(chain_pem: &str, key_pem: &str) -> Result<ServerConfig> {
-        let chain: Vec<Vec<u8>> = crate::pem::parse(chain_pem).into_iter().filter(|b| b.label == "CERTIFICATE").map(|b| b.data).collect();
-        let Some(leaf) = chain.first() else {
-            return Err(Error::Key("no CERTIFICATE block in the certificate chain's PEM".into()));
-        };
-        let key = SigningKey::from_pem(key_pem)?;
-        if !key.matches_certificate(leaf)? {
-            return Err(Error::Key(format!("the {} private key is not the key of the first certificate in the chain", key.algorithm())));
-        }
-        Ok(ServerConfig::new(chain, key))
+        Ok(ServerConfig::with_certificates(CertStore::single(CertifiedKey::from_pem(chain_pem, key_pem)?)))
     }
 
     /// Resumes nothing: every handshake is a full one.
     pub fn without_resumption(mut self) -> ServerConfig {
-        self.sessions = None;
+        self.ticket_keys = None;
+        self
+    }
+
+    /// Seals tickets under `keys` (share them between configurations, or servers, that should resume each other's
+    /// sessions).
+    pub fn with_ticket_keys(mut self, keys: Arc<TicketKeys>) -> ServerConfig {
+        self.ticket_keys = Some(keys);
+        self
+    }
+
+    /// Asks for client certificates (or requires them); see [`ClientAuth`].
+    pub fn with_client_auth(mut self, auth: ClientAuth) -> ServerConfig {
+        self.client_auth = auth;
         self
     }
 
     /// How many handshakes resumed a session so far.
     pub fn resumed_count(&self) -> usize {
-        self.sessions.as_ref().map_or(0, |s| s.lock().unwrap().resumed)
+        self.stats.resumed.load(Ordering::Relaxed)
     }
 
     /// The server certificate of `pki`.
@@ -172,8 +250,22 @@ impl ServerConfig {
         self
     }
 
+    /// Staples `response` (an OCSP response, DER) to the first certificate of the store, in a new store of this
+    /// configuration's own (the clones it was made from keep theirs).
     pub fn with_ocsp_staple(mut self, response: &[u8]) -> ServerConfig {
-        self.ocsp_staple = Some(response.to_vec());
+        if let Some(store) = &self.store {
+            let mut certs: Vec<CertifiedKey> = store.certificates().iter().map(|c| (**c).clone()).collect();
+            if let Some(first) = certs.first_mut() {
+                *first = first.clone().with_ocsp_staple(response.to_vec());
+            }
+            let fresh = CertStore::new();
+            for c in certs {
+                fresh.add(c);
+            }
+            let fresh = Arc::new(fresh);
+            self.certs = fresh.clone();
+            self.store = Some(fresh);
+        }
         self
     }
 }
@@ -194,17 +286,21 @@ fn alert_error(content: &[u8]) -> Error {
 
 /// The alert a protocol error is answered with; `None` for errors that are not the peer's fault on the wire.
 fn alert_description(err: &Error) -> Option<u8> {
-    const TABLE: [(&str, u8); 11] = [
+    const TABLE: [(&str, u8); 15] = [
         ("unexpected_message", 10),
         ("bad_record_mac", 20),
         ("record_overflow", 22),
         ("handshake_failure", 40),
+        ("bad_certificate", 42),
         ("illegal_parameter", 47),
+        ("unknown_ca", 48),
         ("decode_error", 50),
         ("decrypt_error", 51),
         ("protocol_version", 70),
         ("missing_extension", 109),
         ("unsupported_extension", 110),
+        ("unrecognized_name", 112),
+        ("certificate_required", 116),
         ("no_application_protocol", 120),
     ];
     match err {
@@ -226,8 +322,11 @@ struct Hello {
     groups: Vec<u16>,
     shares: Vec<(u16, Vec<u8>)>,
     signature_algorithms: Option<Vec<u16>>,
+    signature_algorithms_cert: Option<Vec<u16>>,
     alpn: Option<Vec<Vec<u8>>>,
     status_request: bool,
+    /// the client says it sends early data (which this server never takes)
+    early_data: bool,
     psk_dhe_ke: bool,
     /// `pre_shared_key`: the first identity and its binder, and the length of the binders list (with its own length),
     /// which the end of the ClientHello is.
@@ -274,8 +373,10 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
         groups: Vec::new(),
         shares: Vec::new(),
         signature_algorithms: None,
+        signature_algorithms_cert: None,
         alpn: None,
         status_request: false,
+        early_data: false,
         psk_dhe_ke: false,
         psk: None,
     };
@@ -299,6 +400,13 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
             }
             EXT_SUPPORTED_GROUPS => hello.groups = u16_list(d, "supported_groups")?,
             EXT_SIGNATURE_ALGORITHMS => hello.signature_algorithms = Some(u16_list(d, "signature_algorithms")?),
+            EXT_SIGNATURE_ALGORITHMS_CERT => hello.signature_algorithms_cert = Some(u16_list(d, "signature_algorithms_cert")?),
+            EXT_EARLY_DATA => {
+                if !d.is_empty() {
+                    return Err(bad("early_data in a ClientHello is empty"));
+                }
+                hello.early_data = true;
+            }
             EXT_KEY_SHARE => {
                 let mut kr = Reader::new(d);
                 let list = kr.vec16().ok_or_else(|| bad("key_share"))?;
@@ -395,6 +503,10 @@ enum Stage {
     Hello,
     /// A HelloRetryRequest has been sent; waiting for the second ClientHello.
     RetriedHello,
+    /// Our flight is out with a CertificateRequest; waiting for the client's Certificate.
+    ClientCertificate,
+    /// The client sent a certificate; waiting for its CertificateVerify.
+    ClientCertificateVerify,
     /// Our flight is out; waiting for the client's Finished.
     ClientFinished,
 }
@@ -414,12 +526,18 @@ struct Handshake {
     retried: Option<Retried>,
     /// A compatibility change_cipher_spec went out already.
     ccs_sent: bool,
-    /// The client's Finished, as it must be, and the keys that follow it.
-    expected_finished: Vec<u8>,
+    /// The key the client's Finished is made with (over the transcript as it stands when it comes), and the keys that
+    /// follow it.
+    client_finished_key: Zeroizing<Vec<u8>>,
     client_application_secret: Zeroizing<Vec<u8>>,
     suite: Suite,
     /// The master secret, for the resumption master secret once the client's Finished is in.
     master_secret: Zeroizing<Vec<u8>>,
+    /// The certificate and key this handshake presents (a full one).
+    cert: Option<Arc<CertifiedKey>>,
+    /// The client's certificate chain and its parsed leaf, once checked.
+    client_chain: Vec<Vec<u8>>,
+    client_leaf: Option<Certificate>,
 }
 
 /// The private half of our key share.
@@ -516,6 +634,17 @@ pub struct ServerConnection {
     resumed: bool,
     /// The suite and resumption master secret, which the PSKs of our tickets are made from.
     resumption_secret: Option<(Suite, Zeroizing<Vec<u8>>)>,
+    /// The client's certificate chain, if it authenticated with one (or the session it resumed was made with one).
+    peer_chain: Vec<Vec<u8>>,
+    /// The certificate this connection presented (a full handshake).
+    presented: Option<Arc<CertifiedKey>>,
+    /// Bytes of early data that may still be skipped (the client sent `early_data`; see MAX_EARLY_DATA_SKIP).
+    skip_early: usize,
+    /// For the limits on KeyUpdates and empty records in a row.
+    key_updates_in_a_row: u32,
+    empty_in_a_row: u32,
+    /// Tickets sent so far (their nonces).
+    tickets_sent: u32,
 }
 
 impl ServerConnection {
@@ -536,10 +665,13 @@ impl ServerConnection {
                 transcript: Vec::new(),
                 retried: None,
                 ccs_sent: false,
-                expected_finished: Vec::new(),
+                client_finished_key: Zeroizing::new(Vec::new()),
                 client_application_secret: Zeroizing::new(Vec::new()),
                 suite: Suite::Aes128GcmSha256,
                 master_secret: Zeroizing::new(Vec::new()),
+                cert: None,
+                client_chain: Vec::new(),
+                client_leaf: None,
             })),
             established: false,
             got_close_notify: false,
@@ -554,7 +686,24 @@ impl ServerConnection {
             late_tickets: 0,
             resumed: false,
             resumption_secret: None,
+            peer_chain: Vec::new(),
+            presented: None,
+            skip_early: 0,
+            key_updates_in_a_row: 0,
+            empty_in_a_row: 0,
+            tickets_sent: 0,
         }
+    }
+
+    /// The client's certificate chain (DER, leaf first), if it authenticated with one; checked against the
+    /// configuration's [`ClientAuth`] roots. Empty otherwise.
+    pub fn peer_certificates(&self) -> &[Vec<u8>] {
+        &self.peer_chain
+    }
+
+    /// The certificate this connection presented (none on a resumed handshake).
+    pub fn certificate(&self) -> Option<&Arc<CertifiedKey>> {
+        self.presented.as_ref()
     }
 
     /// Whether the handshake resumed a session.
@@ -646,6 +795,7 @@ impl ServerConnection {
             return Err(Error::Tls("internal: application data before the handshake finished".into()));
         }
         let n = data.len().min(MAX_WRITE);
+        let _dit = Dit::on(); // held across the records, as the client does (crypto::dit)
         for chunk in data[..n].chunks(MAX_PLAINTEXT) {
             self.rekey_if_due()?;
             self.queue_protected(RT_APPLICATION_DATA, chunk)?;
@@ -677,23 +827,37 @@ impl ServerConnection {
         Ok(())
     }
 
-    /// Queues `count` NewSessionTicket messages: resumable ones if the configuration keeps sessions, else random bytes for a
-    /// client to read past.
+    /// Queues `count` NewSessionTicket messages: tickets sealed under the configuration's ticket keys, or random bytes
+    /// for a client to read past if it has none.
     pub fn send_session_tickets(&mut self, count: usize) -> Result<()> {
-        for i in 0..count {
-            let ticket = rand::bytes::<32>()?.to_vec();
-            let nonce = [i as u8];
-            if let (Some(sessions), Some((suite, secret))) = (&self.config.sessions, &self.resumption_secret) {
-                let alg = suite.hash();
-                let psk = Zeroizing::new(expand_label(alg, secret, "resumption", &nonce, alg.output_len()));
-                sessions.lock().unwrap().tickets.insert(ticket.clone(), (psk, *suite));
-            }
+        for _ in 0..count {
+            let nonce = self.tickets_sent.to_be_bytes();
+            self.tickets_sent = self.tickets_sent.wrapping_add(1);
+            let age_add = u32::from_be_bytes(rand::bytes::<4>()?);
+            let lifetime = self.config.ticket_lifetime.min(604_800);
+            let ticket = match (&self.config.ticket_keys, &self.resumption_secret) {
+                (Some(keys), Some((suite, secret))) => {
+                    let alg = suite.hash();
+                    let state = TicketState {
+                        suite: suite.id(),
+                        issued: sys::now_unix(),
+                        lifetime,
+                        age_add,
+                        psk: Zeroizing::new(expand_label(alg, secret, "resumption", &nonce, alg.output_len())),
+                        server_name: self.server_name.clone(),
+                        alpn: self.alpn.clone(),
+                        client_chain: self.peer_chain.clone(),
+                    };
+                    keys.seal(&state.encode())?
+                }
+                _ => rand::bytes::<32>()?.to_vec(),
+            };
             let mut body = Vec::new();
-            body.extend_from_slice(&7200u32.to_be_bytes()); // ticket_lifetime
-            body.extend_from_slice(&rand::bytes::<4>()?); // ticket_age_add
+            body.extend_from_slice(&lifetime.to_be_bytes()); // ticket_lifetime
+            body.extend_from_slice(&age_add.to_be_bytes()); // ticket_age_add
             put_vec8(&mut body, &nonce); // ticket_nonce
             put_vec16(&mut body, &ticket); // ticket
-            put_vec16(&mut body, &[]); // extensions
+            put_vec16(&mut body, &[]); // extensions: no early_data, so a client never sends 0-RTT data with it
             self.queue_protected(RT_HANDSHAKE, &handshake_message(HS_NEW_SESSION_TICKET, &body))?;
         }
         Ok(())
@@ -754,6 +918,7 @@ impl ServerConnection {
         if self.failed {
             return Err(Error::Tls("internal: the connection has already failed".into()));
         }
+        let _dit = Dit::on(); // data-independent timing across the records and the handshake work (crypto::dit)
         match self.process_records() {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -786,7 +951,15 @@ impl ServerConnection {
             let Some((record_type, content)) = self.next_record()? else { return Ok(()) };
             if self.established {
                 match record_type {
+                    RT_APPLICATION_DATA if content.is_empty() => {
+                        self.empty_in_a_row += 1;
+                        if self.empty_in_a_row > MAX_EMPTY_RECORDS_IN_A_ROW {
+                            return Err(Error::Tls("unexpected_message: too many empty records in a row".into()));
+                        }
+                    }
                     RT_APPLICATION_DATA => {
+                        self.empty_in_a_row = 0;
+                        self.key_updates_in_a_row = 0;
                         self.plain = content;
                         self.plain_pos = 0;
                     }
@@ -848,6 +1021,34 @@ impl ServerConnection {
             }
             let record: Vec<u8> = self.inbuf.drain(..5 + length).collect();
             let payload = &record[5..];
+            // early data the client sends although it is never accepted (RFC 8446 section 4.2.10): after a
+            // HelloRetryRequest, its records before the second ClientHello; otherwise those that do not open under the
+            // handshake keys. Skipped up to a limit; the first record that opens ends the skipping.
+            if self.skip_early > 0 && !self.established && record_type == RT_APPLICATION_DATA {
+                let retried = matches!(self.hs.as_ref().map(|h| &h.stage), Some(Stage::RetriedHello));
+                if retried && self.read_cipher.is_none() {
+                    self.skip_early = self.skip_early.checked_sub(length).ok_or_else(|| Error::Tls("unexpected_message: too much early data".into()))?;
+                    continue;
+                }
+                if let Some(cipher) = self.read_cipher.as_mut() {
+                    let mut content = payload.to_vec();
+                    match cipher.decrypt_in_place(&header, &mut content) {
+                        Ok((t, n)) => {
+                            self.skip_early = 0;
+                            content.truncate(n);
+                            if t == RT_CHANGE_CIPHER_SPEC {
+                                return Err(Error::Tls("unexpected_message: protected change_cipher_spec".into()));
+                            }
+                            return Ok(Some((t, content)));
+                        }
+                        Err(Error::Tls(m)) if m.starts_with("bad_record_mac") => {
+                            self.skip_early = self.skip_early.checked_sub(length).ok_or_else(|| Error::Tls("bad_record_mac: too much early data, or a record that does not open".into()))?;
+                            continue;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
             match (self.read_cipher.as_mut(), record_type) {
                 (_, RT_CHANGE_CIPHER_SPEC) => {
                     // RFC 8446 appendix D.4: a client may send one after its ClientHello (or its second), not before
@@ -901,6 +1102,8 @@ impl ServerConnection {
     fn on_message(&mut self, hs: &mut Handshake, msg: &[u8]) -> Result<()> {
         match (&hs.stage, msg[0]) {
             (Stage::Hello, HS_CLIENT_HELLO) | (Stage::RetriedHello, HS_CLIENT_HELLO) => self.on_client_hello(hs, msg),
+            (Stage::ClientCertificate, HS_CERTIFICATE) => self.on_client_certificate(hs, msg),
+            (Stage::ClientCertificateVerify, HS_CERTIFICATE_VERIFY) => self.on_client_certificate_verify(hs, msg),
             (Stage::ClientFinished, HS_FINISHED) => self.on_client_finished(hs, msg),
             _ => Err(Error::Tls("unexpected_message: handshake message out of order".into())),
         }
@@ -924,8 +1127,24 @@ impl ServerConnection {
         let Some(sig_algs) = &hello.signature_algorithms else {
             return Err(Error::Tls("missing_extension: no signature_algorithms".into()));
         };
-        if !config.key.tls_schemes().iter().any(|s| sig_algs.contains(s)) {
-            return Err(Error::Tls(format!("handshake_failure: the client takes none of the signatures this server's {} key makes", config.key.algorithm())));
+        let info = ClientHelloInfo {
+            server_name: hello.server_name.as_deref(),
+            signature_schemes: sig_algs,
+            signature_schemes_cert: hello.signature_algorithms_cert.as_deref(),
+            alpn: hello.alpn.as_deref(),
+        };
+        let Some(cert) = config.certs.resolve(&info) else {
+            // no certificate for the name at all (a strict store), or none whose signature the client takes
+            const ANY: [u16; 7] = [0x0403, 0x0503, 0x0603, 0x0807, 0x0804, 0x0805, 0x0806];
+            let for_the_name = config.certs.resolve(&ClientHelloInfo { signature_schemes: &ANY, signature_schemes_cert: None, ..info }).is_some();
+            return Err(Error::Tls(match &hello.server_name {
+                Some(name) if !for_the_name => format!("unrecognized_name: no certificate for {name:?}"),
+                _ => "handshake_failure: no certificate whose signatures the client takes".into(),
+            }));
+        };
+        hs.cert = Some(cert);
+        if hello.early_data {
+            self.skip_early = MAX_EARLY_DATA_SKIP;
         }
 
         // the second ClientHello must be the first with a new key share
@@ -965,14 +1184,27 @@ impl ServerConnection {
             _ => None,
         };
 
-        // a session to resume: the first identity, if it is a ticket of ours (used once) of a suite with this one's hash, with
-        // a fresh key exchange; its binder must be right (RFC 8446 section 4.2.11.2: a wrong one ends the handshake)
+        // a session to resume: the first identity, if it is a ticket of ours that opens, of a suite with this one's hash,
+        // still within its lifetime, for the same name, and (when certificates are asked for) whose client certificate
+        // still verifies; resumed with a fresh key exchange. Its binder must then be right (RFC 8446 section 4.2.11.2: a
+        // wrong one ends the handshake). Any other ticket means a full handshake.
         let mut psk = None;
-        if let (Some((id, binder, binders_len)), true, Some(sessions)) = (&hello.psk, hello.psk_dhe_ke, &config.sessions) {
-            let found = sessions.lock().unwrap().tickets.remove(id);
-            if let Some((key, _)) = found.filter(|(_, s)| s.hash() == suite.hash()) {
+        if let (Some((id, binder, binders_len)), true, Some(keys)) = (&hello.psk, hello.psk_dhe_ke, &config.ticket_keys) {
+            let state = keys.open(id).and_then(|plain| TicketState::decode(&plain));
+            let now = sys::now_unix();
+            let usable = state.filter(|st| {
+                Suite::from_id(st.suite).is_some_and(|s| s.hash() == suite.hash())
+                    && st.is_current(now)
+                    && st.server_name.as_deref().map(str::to_ascii_lowercase) == hello.server_name.as_deref().map(str::to_ascii_lowercase)
+                    && match &config.client_auth {
+                        ClientAuth::None => true,
+                        ClientAuth::Optional(roots) => st.client_chain.is_empty() || client_chain_verifies(roots, &st.client_chain, now).is_ok(),
+                        ClientAuth::Required(roots) => !st.client_chain.is_empty() && client_chain_verifies(roots, &st.client_chain, now).is_ok(),
+                    }
+            });
+            if let Some(st) = usable {
                 let alg = suite.hash();
-                let early = Zeroizing::new(hkdf_extract(alg, &[], &key));
+                let early = Zeroizing::new(hkdf_extract(alg, &[], &st.psk));
                 let binder_key = Zeroizing::new(derive_secret(alg, &early, "res binder", &alg.digest(&[])));
                 let finished_key = Zeroizing::new(expand_label(alg, &binder_key, "finished", &[], alg.output_len()));
                 let mut t = hs.transcript.clone();
@@ -980,8 +1212,10 @@ impl ServerConnection {
                 if !ct_eq(&hmac(alg, &finished_key, &alg.digest(&t)), binder) {
                     return Err(Error::Tls("decrypt_error: the PSK binder is wrong".into()));
                 }
-                sessions.lock().unwrap().resumed += 1;
-                psk = Some(key);
+                if !matches!(config.client_auth, ClientAuth::None) {
+                    self.peer_chain = st.client_chain.clone();
+                }
+                psk = Some(st.psk.clone());
             }
         }
 
@@ -1095,6 +1329,21 @@ impl ServerConnection {
         put_vec16(&mut ee, &exts);
         self.queue_handshake(hs, &handshake_message(HS_ENCRYPTED_EXTENSIONS, &ee))?;
 
+        // a CertificateRequest when client certificates are wanted (not on a resumed handshake: RFC 8446 section 4.3.2)
+        let request = psk.is_none() && !matches!(self.config.client_auth, ClientAuth::None);
+        if request {
+            let mut schemes = Vec::new();
+            for s in CLIENT_SIGNATURE_SCHEMES {
+                put_u16(&mut schemes, s);
+            }
+            let mut sig_ext = Vec::new();
+            put_vec16(&mut sig_ext, &schemes);
+            let mut exts = Vec::new();
+            put_extension(&mut exts, EXT_SIGNATURE_ALGORITHMS, &sig_ext);
+            let mut body = vec![0u8]; // certificate_request_context: empty
+            put_vec16(&mut body, &exts);
+            self.queue_handshake(hs, &handshake_message(HS_CERTIFICATE_REQUEST, &body))?;
+        }
         if psk.is_none() {
             self.queue_certificate(hs, hello, alg)?;
         }
@@ -1110,27 +1359,27 @@ impl ServerConnection {
         let master_secret = Zeroizing::new(hkdf_extract(alg, &derived2, &zeros));
         let c_ap = Zeroizing::new(derive_secret(alg, &master_secret, "c ap traffic", &app_hash));
         let s_ap = Zeroizing::new(derive_secret(alg, &master_secret, "s ap traffic", &app_hash));
-        let client_finished_key = Zeroizing::new(expand_label(alg, &c_hs, "finished", &[], hash_len));
-        hs.expected_finished = hmac(alg, &client_finished_key, &app_hash);
+        hs.client_finished_key = Zeroizing::new(expand_label(alg, &c_hs, "finished", &[], hash_len));
         hs.client_application_secret = c_ap;
         hs.suite = suite;
         hs.master_secret = master_secret;
         // we may send application data as soon as our Finished is out; we read the client's Finished first
         self.write_cipher = Some(RecordCipher::new(suite, &s_ap));
-        hs.stage = Stage::ClientFinished;
+        hs.stage = if request { Stage::ClientCertificate } else { Stage::ClientFinished };
         Ok(())
     }
 
     /// Certificate and CertificateVerify (a full handshake's).
     fn queue_certificate(&mut self, hs: &mut Handshake, hello: &Hello, alg: HashAlg) -> Result<()> {
-        let config = self.config.clone();
+        let ck = hs.cert.clone().ok_or_else(|| Error::Tls("internal: no certificate chosen".into()))?;
+        self.presented = Some(ck.clone());
         // Certificate
         let mut list = Vec::new();
-        for (i, der) in config.chain.iter().enumerate() {
+        for (i, der) in ck.chain().iter().enumerate() {
             put_vec24(&mut list, der);
             let mut entry_exts = Vec::new();
             if i == 0 && hello.status_request {
-                if let Some(staple) = &config.ocsp_staple {
+                if let Some(staple) = ck.ocsp_staple() {
                     let mut status = vec![1u8]; // status_type: ocsp
                     put_vec24(&mut status, staple);
                     put_extension(&mut entry_exts, EXT_STATUS_REQUEST, &status);
@@ -1145,8 +1394,8 @@ impl ServerConnection {
         // CertificateVerify
         let content = server_certificate_verify_content(&alg.digest(&hs.transcript));
         let offered = hello.signature_algorithms.as_deref().unwrap_or(&[]);
-        let scheme = config.key.tls_schemes().into_iter().find(|s| offered.contains(s)).ok_or_else(|| Error::Tls("internal: no signature scheme in common".into()))?;
-        let signature = config.key.sign_tls(scheme, &content)?;
+        let scheme = ck.key().tls_schemes().into_iter().find(|s| offered.contains(s)).ok_or_else(|| Error::Tls("internal: no signature scheme in common".into()))?;
+        let signature = ck.key().sign_tls(scheme, &content)?;
         let mut verify = Vec::new();
         put_u16(&mut verify, scheme);
         put_vec16(&mut verify, &signature);
@@ -1159,8 +1408,67 @@ impl ServerConnection {
         self.queue_protected(RT_HANDSHAKE, msg)
     }
 
+    /// The client's Certificate, answering our CertificateRequest: empty (allowed if certificates are optional), or a
+    /// chain that must verify for client authentication up to the configured roots.
+    fn on_client_certificate(&mut self, hs: &mut Handshake, msg: &[u8]) -> Result<()> {
+        let mut r = Reader::new(&msg[4..]);
+        let ctx = r.vec8().ok_or_else(|| bad("client Certificate context"))?;
+        if !ctx.is_empty() {
+            return Err(Error::Tls("illegal_parameter: a client Certificate with a context our request did not have".into()));
+        }
+        let list = r.vec24().ok_or_else(|| bad("client Certificate list"))?;
+        if !r.is_empty() {
+            return Err(bad("trailing data in the client Certificate"));
+        }
+        let mut chain = Vec::new();
+        let mut lr = Reader::new(list);
+        while !lr.is_empty() {
+            let der = lr.vec24().ok_or_else(|| bad("client certificate"))?;
+            lr.vec16().ok_or_else(|| bad("client certificate extensions"))?;
+            if der.is_empty() {
+                return Err(bad("an empty client certificate"));
+            }
+            chain.push(der.to_vec());
+        }
+        hs.transcript.extend_from_slice(msg);
+        let (roots, required) = match &self.config.client_auth {
+            ClientAuth::Optional(r) => (r.clone(), false),
+            ClientAuth::Required(r) => (r.clone(), true),
+            ClientAuth::None => return Err(Error::Tls("unexpected_message: a client Certificate that was not asked for".into())),
+        };
+        if chain.is_empty() {
+            if required {
+                return Err(Error::Tls("certificate_required: the client sent no certificate".into()));
+            }
+            hs.stage = Stage::ClientFinished;
+            return Ok(());
+        }
+        hs.client_leaf = Some(client_chain_verifies(&roots, &chain, sys::now_unix())?);
+        hs.client_chain = chain;
+        hs.stage = Stage::ClientCertificateVerify;
+        Ok(())
+    }
+
+    /// The client's CertificateVerify: its signature over the transcript, by the key of the certificate it sent.
+    fn on_client_certificate_verify(&mut self, hs: &mut Handshake, msg: &[u8]) -> Result<()> {
+        let (scheme, signature) = parse_certificate_verify(&msg[4..])?;
+        if !CLIENT_SIGNATURE_SCHEMES.contains(&scheme) {
+            return Err(Error::Tls(format!("illegal_parameter: the client signed with scheme {scheme:#06x}, which our request did not offer")));
+        }
+        let alg = hs.suite.hash();
+        let content = client_certificate_verify_content(&alg.digest(&hs.transcript));
+        let leaf = hs.client_leaf.as_ref().ok_or_else(|| Error::Tls("internal: no client certificate".into()))?;
+        super::signature::verify_tls13_signature(leaf, scheme, &content, &signature)
+            .map_err(|e| Error::Tls(format!("decrypt_error: the client's CertificateVerify: {e}")))?;
+        hs.transcript.extend_from_slice(msg);
+        hs.stage = Stage::ClientFinished;
+        Ok(())
+    }
+
     fn on_client_finished(&mut self, hs: &mut Handshake, msg: &[u8]) -> Result<()> {
-        if !ct_eq(&hs.expected_finished, &msg[4..]) {
+        let alg = hs.suite.hash();
+        let expected = hmac(alg, &hs.client_finished_key, &alg.digest(&hs.transcript));
+        if !ct_eq(&expected, &msg[4..]) {
             return Err(Error::Tls("decrypt_error: client Finished MAC is invalid".into()));
         }
         if !self.hs_buf.is_empty() {
@@ -1169,8 +1477,12 @@ impl ServerConnection {
         self.read_cipher = Some(RecordCipher::new(hs.suite, &hs.client_application_secret));
         self.rekey_after = self.config.rekey_after_records.unwrap_or(hs.suite.records_per_key()).max(2);
         self.established = true;
+        if !hs.client_chain.is_empty() {
+            self.peer_chain = std::mem::take(&mut hs.client_chain);
+        }
+        let counter = if self.resumed { &self.config.stats.resumed } else { &self.config.stats.full };
+        counter.fetch_add(1, Ordering::Relaxed);
         // the resumption master secret: the transcript through the client's Finished
-        let alg = hs.suite.hash();
         hs.transcript.extend_from_slice(msg);
         let res_master = Zeroizing::new(derive_secret(alg, &hs.master_secret, "res master", &alg.digest(&hs.transcript)));
         self.resumption_secret = Some((hs.suite, res_master));
@@ -1189,6 +1501,10 @@ impl ServerConnection {
                     if msg.len() != 5 || msg[4] > 1 {
                         return Err(bad("malformed KeyUpdate"));
                     }
+                    self.key_updates_in_a_row += 1;
+                    if self.key_updates_in_a_row > MAX_KEY_UPDATES_IN_A_ROW {
+                        return Err(Error::Tls("unexpected_message: too many KeyUpdates in a row".into()));
+                    }
                     if !self.hs_buf.is_empty() {
                         return Err(Error::Tls("unexpected_message: handshake data follows a KeyUpdate in the same record".into()));
                     }
@@ -1205,6 +1521,14 @@ impl ServerConnection {
         }
         Ok(())
     }
+}
+
+/// The client's chain checked for client authentication at `now` up to `roots`; its leaf.
+fn client_chain_verifies(roots: &TrustStore, chain: &[Vec<u8>], now: i64) -> Result<Certificate> {
+    roots
+        .verify_chain(chain, &VerifyOptions::new(Purpose::ClientAuth, now))
+        .map(|v| v.leaf)
+        .map_err(|e| Error::Tls(format!("bad_certificate: the client's certificate does not verify: {e}")))
 }
 
 impl Drop for ServerConnection {
@@ -1290,6 +1614,11 @@ impl<S: Read + Write> ServerStream<S> {
     /// Whether the handshake resumed a session.
     pub fn is_resumed(&self) -> bool {
         self.conn.is_resumed()
+    }
+
+    /// The client's certificate chain, if it authenticated with one (see [`ServerConnection::peer_certificates`]).
+    pub fn peer_certificates(&self) -> &[Vec<u8>] {
+        self.conn.peer_certificates()
     }
 
     pub fn get_ref(&self) -> &S {

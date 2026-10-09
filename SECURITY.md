@@ -37,7 +37,8 @@ warning"). `SECURITY_REVIEW.md` is the brief for that review.
 
 The TLS server behind the `server` feature is being made ready for production (BACKLOG B-109 to B-114) and is not
 for production yet. Its signing (`pratique::sign`: ECDSA, Ed25519 and RSA, constant time; B-109) is part of the `net`
-build; a timing leak in it, or a key file it reads wrongly, is a security problem. Reports about the server are welcome.
+build; a timing leak in it, or a key file it reads wrongly, is a security problem. So is a session ticket that can be
+forged, read or used for another name, or a client certificate the server takes without checking it (B-110). Reports about the server are welcome.
 
 ## Versions
 

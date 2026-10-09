@@ -579,7 +579,7 @@ fn a_hello_that_is_wrong_is_refused_with_the_alert_that_says_why() {
         ("no extensions at all", |b| b.extensions = false, 70, "protocol_version"),
         ("no cipher suite in common", |b| b.suites = vec![0x1304, 0xc02f], 40, "no cipher suite"),
         ("no signature_algorithms", |b| b.sig_algs = None, 109, "missing_extension"),
-        ("no Ed25519", |b| b.sig_algs = Some(vec![0x0403, 0x0804]), 40, "Ed25519"),
+        ("no Ed25519", |b| b.sig_algs = Some(vec![0x0403, 0x0804]), 40, "no certificate whose signatures"),
         ("no group in common", |b| { b.groups = Some(vec![0x001e]); b.shares = vec![(0x001e, vec![1; 56])]; }, 40, "no key exchange group"),
         ("compression", |b| b.compression = vec![0, 1], 47, "compression"),
         ("no null compression", |b| b.compression = vec![1], 47, "compression"),
@@ -1031,4 +1031,257 @@ fn random_and_damaged_input_never_panics_the_server() {
         let mut buf = [0u8; 16];
         let _ = conn.read_plaintext(&mut buf);
     });
+}
+
+// ------------------------------------------------------------------------------------------------ B-110: certificates, client
+// certificates, early data, floods
+
+use super::certs::{CertStore, CertifiedKey};
+use super::pki::{issue, KeyPair};
+use crate::x509::TrustStore;
+
+/// A root and a store of certificates under it, one per name list, the first the default.
+fn store_under_one_root(name_lists: &[&[&str]]) -> (CertStore, ClientConfig) {
+    let root_key = KeyPair::generate().unwrap();
+    let root_spec = CertSpec::ca("pratique test root");
+    let root = issue(&root_spec, &root_key, None);
+    let store = CertStore::new();
+    for names in name_lists {
+        let k = KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P256).unwrap();
+        let der = issue(&CertSpec::server(names), &k, Some((&root_spec.common_name, &root_key)));
+        store.add(CertifiedKey::new(vec![der], k.signing_key().clone()).unwrap());
+    }
+    let mut trust = TrustStore::empty();
+    trust.add_der(&root).unwrap();
+    (store, ClientConfig::new(trust))
+}
+
+#[test]
+fn the_certificate_is_the_one_for_the_name_the_client_asks_for() {
+    let (store, client) = store_under_one_root(&[&["default.test"], &["a.test"], &["*.b.test"]]);
+    let config = ServerConfig::with_certificates(store);
+    for (sni, want) in [("a.test", "a.test"), ("x.b.test", "*.b.test"), ("default.test", "default.test")] {
+        let (port, handle) = serve_one(config.clone(), |mut s| s.connection_mut().certificate().unwrap().dns_names()[0].clone());
+        let mut c = connect(port, sni, &client).unwrap_or_else(|e| panic!("{sni}: {e}"));
+        let _ = c.write_all(b"x");
+        assert_eq!(handle.join().unwrap().unwrap(), want, "for {sni}");
+    }
+    // a name none is for: the default certificate, which the client refuses (it is not for that name)
+    let (port, handle) = serve_one(config.clone(), |_| ());
+    let err = connect(port, "unknown.test", &client).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("unknown.test") || err.to_lowercase().contains("name"), "{err}");
+    let _ = handle.join();
+    // a strict store refuses the name with unrecognized_name
+    let (store, client) = store_under_one_root(&[&["only.test"]]);
+    let (port, handle) = serve_one(ServerConfig::with_certificates(store.strict()), |_| ());
+    let err = connect(port, "unknown.test", &client).err().map(|e| e.to_string()).unwrap_or_default();
+    let server_err = handle.join().unwrap().err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(server_err.contains("unrecognized_name"), "{server_err}");
+    assert!(err.contains("112") || err.contains("unrecognized_name"), "{err}");
+}
+
+#[test]
+fn the_certificate_is_one_whose_signature_the_client_takes() {
+    let root_key = KeyPair::generate().unwrap();
+    let store = CertStore::new();
+    for key in [KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P256).unwrap(), KeyPair::from_key(rsa_test_key(2048))] {
+        let der = issue(&CertSpec::server(&["server.test"]), &key, Some(("root", &root_key)));
+        store.add(CertifiedKey::new(vec![der], key.signing_key().clone()).unwrap());
+    }
+    let config = ServerConfig::with_certificates(store);
+    for (offered, want) in [(vec![0x0804], 0x0804), (vec![0x0403, 0x0804], 0x0403), (vec![0x0805, 0x0806], 0x0805)] {
+        let mut b = HelloBuilder::new();
+        b.sig_algs = Some(offered.clone());
+        let (_, flight) = first_flight(config.clone(), &b);
+        let (scheme, _) = parse_certificate_verify(&flight.messages[2][4..]).unwrap();
+        assert_eq!(scheme, want, "offered {offered:04x?}");
+    }
+    // nothing the keys can make: handshake_failure (the name is fine)
+    let mut b = HelloBuilder::new();
+    b.sig_algs = Some(vec![0x0503]);
+    let (result, alert, _) = run_hello(config, &record(RT_HANDSHAKE, &b.build()));
+    assert!(result.unwrap_err().to_string().contains("handshake_failure"));
+    assert_eq!(alert, Some(40));
+}
+
+/// A client CA, its certificate (DER), a client certificate under it, and a TrustStore holding the CA.
+fn client_ca() -> (CertifiedKey, Arc<TrustStore>) {
+    let ca_key = KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P256).unwrap();
+    let ca_spec = CertSpec::ca("pratique client CA");
+    let ca = issue(&ca_spec, &ca_key, None);
+    let key = KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P384).unwrap();
+    let spec = CertSpec { common_name: "a client".into(), server_auth: false, client_auth: true, ..CertSpec::default() };
+    let cert = issue(&spec, &key, Some((&ca_spec.common_name, &ca_key)));
+    let mut roots = TrustStore::empty();
+    roots.add_der(&ca).unwrap();
+    (CertifiedKey::new(vec![cert], key.signing_key().clone()).unwrap(), Arc::new(roots))
+}
+
+/// Connects, sends four bytes and reads four back: what the client saw and what the server saw (its peer's chain).
+fn client_auth_exchange(config: ServerConfig, client: &ClientConfig) -> (std::result::Result<(), String>, std::result::Result<Vec<Vec<u8>>, String>) {
+    let (port, handle) = serve_one(config, |mut s| {
+        let mut buf = [0u8; 4];
+        s.read_exact(&mut buf).map_err(|e| e.to_string())?;
+        s.write_all(&buf).map_err(|e| e.to_string())?;
+        s.flush().map_err(|e| e.to_string())?;
+        Ok::<_, String>(s.peer_certificates().to_vec())
+    });
+    let client_side = (|| -> Result<()> {
+        let mut c = connect(port, "server.test", client)?;
+        c.write_all(b"ping")?;
+        c.flush()?;
+        let mut back = [0u8; 4];
+        c.read_exact(&mut back)?;
+        Ok(())
+    })()
+    .map_err(|e| e.to_string());
+    let server_side = match handle.join().unwrap() {
+        Ok(inner) => inner,
+        Err(e) => Err(e.to_string()),
+    };
+    (client_side, server_side)
+}
+
+#[test]
+fn client_certificates_are_required_optional_or_refused() {
+    let (server, pki) = ServerConfig::for_names(&["server.test"]).unwrap();
+    let (client_cert, roots) = client_ca();
+    let plain = ClientConfig::new(pki.trust_store()).with_resumption(Resumption::off());
+    let with_cert = plain.clone().with_client_certificate(client_cert.clone());
+    let required = server.clone().with_client_auth(ClientAuth::Required(roots.clone())).without_resumption();
+    let optional = server.clone().with_client_auth(ClientAuth::Optional(roots.clone())).without_resumption();
+
+    // a certificate under the roots: in, and the server sees the chain
+    let (c, s) = client_auth_exchange(required.clone(), &with_cert);
+    c.unwrap();
+    assert_eq!(s.unwrap(), client_cert.chain().to_vec());
+    // none, when one is required: certificate_required
+    let (c, s) = client_auth_exchange(required.clone(), &plain);
+    assert!(s.unwrap_err().contains("certificate_required"));
+    assert!(c.unwrap_err().contains("116"), "the client hears certificate_required");
+    // one under other roots: bad_certificate
+    let (other, _) = client_ca();
+    let (c, s) = client_auth_exchange(required.clone(), &plain.clone().with_client_certificate(other));
+    assert!(s.unwrap_err().contains("bad_certificate"));
+    assert!(c.unwrap_err().contains("42"));
+    // optional: in without one (nothing seen), and with one (seen)
+    let (c, s) = client_auth_exchange(optional.clone(), &plain);
+    c.unwrap();
+    assert!(s.unwrap().is_empty());
+    let (c, s) = client_auth_exchange(optional, &with_cert);
+    c.unwrap();
+    assert_eq!(s.unwrap().len(), 1);
+    // a server that does not ask: the client's certificate is never sent
+    let (c, s) = client_auth_exchange(server.clone().without_resumption(), &with_cert);
+    c.unwrap();
+    assert!(s.unwrap().is_empty());
+}
+
+#[test]
+fn a_resumed_session_keeps_the_client_certificate_it_was_made_with() {
+    let (server, pki) = ServerConfig::for_names(&["server.test"]).unwrap();
+    let (client_cert, roots) = client_ca();
+    let config = server.with_client_auth(ClientAuth::Required(roots));
+    let client = ClientConfig::new(pki.trust_store()).with_client_certificate(client_cert.clone());
+    let (c, s) = client_auth_exchange(config.clone(), &client);
+    c.unwrap();
+    assert_eq!(s.unwrap(), client_cert.chain().to_vec());
+    let (c, s) = client_auth_exchange(config.clone(), &client);
+    c.unwrap();
+    assert_eq!(s.unwrap(), client_cert.chain().to_vec(), "the resumed connection knows the client too");
+    assert_eq!(config.resumed_count(), 1);
+}
+
+#[test]
+fn a_client_certificate_verify_that_is_wrong_is_refused() {
+    let (server, _) = ServerConfig::for_names(&["server.test"]).unwrap();
+    let (client_cert, roots) = client_ca();
+    let config = server.with_client_auth(ClientAuth::Required(roots));
+    let (mut conn, flight) = first_flight(config, &HelloBuilder::new());
+    let kinds: Vec<u8> = flight.messages.iter().map(|m| m[0]).collect();
+    assert_eq!(kinds, [HS_ENCRYPTED_EXTENSIONS, HS_CERTIFICATE_REQUEST, HS_CERTIFICATE, HS_CERTIFICATE_VERIFY, HS_FINISHED]);
+    let request = parse_certificate_request(&flight.messages[1][4..]).unwrap();
+    assert!(request.context.is_empty() && request.signature_algorithms.contains(&0x0503));
+    // the client's Certificate, then a CertificateVerify signed over the wrong transcript
+    let mut list = Vec::new();
+    for der in client_cert.chain() {
+        list.extend_from_slice(&(der.len() as u32).to_be_bytes()[1..]);
+        list.extend_from_slice(der);
+        list.extend_from_slice(&[0, 0]);
+    }
+    let mut body = vec![0u8];
+    body.extend_from_slice(&(list.len() as u32).to_be_bytes()[1..]);
+    body.extend_from_slice(&list);
+    let certificate = handshake_message(HS_CERTIFICATE, &body);
+    let signature = client_cert.key().sign_tls(0x0503, &client_certificate_verify_content(&[0u8; 32])).unwrap();
+    let mut v = 0x0503u16.to_be_bytes().to_vec();
+    v.extend_from_slice(&(signature.len() as u16).to_be_bytes());
+    v.extend_from_slice(&signature);
+    let verify = handshake_message(HS_CERTIFICATE_VERIFY, &v);
+    let mut cipher = RecordCipher::new(flight.suite, &flight.c_hs);
+    conn.receive(&cipher.encrypt(RT_HANDSHAKE, &certificate));
+    conn.receive(&cipher.encrypt(RT_HANDSHAKE, &verify));
+    let err = conn.process().unwrap_err().to_string();
+    assert!(err.contains("decrypt_error"), "{err}");
+}
+
+#[test]
+fn early_data_the_server_never_accepts_is_skipped_up_to_a_limit() {
+    let mut b = HelloBuilder::new();
+    b.extra.push((EXT_EARLY_DATA, vec![]));
+    // records under keys the server does not have, before the client's Finished: skipped
+    let (mut conn, flight) = first_flight(default_config(), &b);
+    let junk = record(RT_APPLICATION_DATA, &[0x55; 300]);
+    conn.receive(&junk);
+    conn.receive(&junk);
+    conn.receive(&flight.client_finished_record(None));
+    conn.process().unwrap();
+    assert!(conn.is_established());
+    // more than the limit: an error
+    let (mut conn, _) = first_flight(default_config(), &b);
+    for _ in 0..super::server::MAX_EARLY_DATA_SKIP / 16_000 + 2 {
+        conn.receive(&record(RT_APPLICATION_DATA, &vec![0x55; 16_000]));
+    }
+    assert!(conn.process().is_err());
+    // without early_data in the hello, a record that does not open is fatal at once
+    let (mut conn, _) = first_flight(default_config(), &HelloBuilder::new());
+    conn.receive(&junk);
+    assert!(conn.process().unwrap_err().to_string().contains("bad_record_mac"));
+}
+
+#[test]
+fn floods_of_key_updates_and_empty_records_are_refused() {
+    let established = || {
+        let (mut conn, flight) = first_flight(default_config(), &HelloBuilder::new());
+        conn.receive(&flight.client_finished_record(None));
+        conn.process().unwrap();
+        let (c_ap, _) = flight.application_secrets();
+        (conn, RecordCipher::new(flight.suite, &c_ap))
+    };
+    let (mut conn, mut cipher) = established();
+    for i in 0..=super::server::MAX_KEY_UPDATES_IN_A_ROW {
+        conn.receive(&cipher.encrypt(RT_HANDSHAKE, &handshake_message(HS_KEY_UPDATE, &[0])));
+        cipher = cipher.next_generation();
+        let r = conn.process();
+        if i < super::server::MAX_KEY_UPDATES_IN_A_ROW {
+            r.unwrap();
+        } else {
+            assert!(r.unwrap_err().to_string().contains("KeyUpdates"));
+        }
+    }
+    // data between them resets the count
+    let (mut conn, mut cipher) = established();
+    for _ in 0..3 * super::server::MAX_KEY_UPDATES_IN_A_ROW {
+        conn.receive(&cipher.encrypt(RT_HANDSHAKE, &handshake_message(HS_KEY_UPDATE, &[0])));
+        cipher = cipher.next_generation();
+        conn.receive(&cipher.encrypt(RT_APPLICATION_DATA, b"x"));
+        conn.process().unwrap();
+        let mut buf = [0u8; 4];
+        assert_eq!(conn.read_plaintext(&mut buf), 1);
+    }
+    let (mut conn, mut cipher) = established();
+    for _ in 0..=super::server::MAX_EMPTY_RECORDS_IN_A_ROW {
+        conn.receive(&cipher.encrypt(RT_APPLICATION_DATA, &[]));
+    }
+    assert!(conn.process().unwrap_err().to_string().contains("empty records"));
 }

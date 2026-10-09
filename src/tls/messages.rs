@@ -426,28 +426,35 @@ pub fn parse_encrypted_extensions_for(body: &[u8], sent_sni: bool, offered_alpn:
     Ok(EncryptedExtensions { alpn, quic_transport_parameters })
 }
 
-/// Parses a CertificateRequest and returns its certificate_request_context.
-pub fn parse_certificate_request(body: &[u8]) -> Result<Vec<u8>> {
+/// A server's CertificateRequest (RFC 8446 section 4.3.2): its context and the signatures it takes from the client.
+#[derive(Debug)]
+pub struct CertificateRequest {
+    pub context: Vec<u8>,
+    pub signature_algorithms: Vec<u16>,
+}
+
+/// Parses a CertificateRequest.
+pub fn parse_certificate_request(body: &[u8]) -> Result<CertificateRequest> {
     let mut r = Reader::new(body);
-    let ctx = r.vec8().ok_or_else(|| bad("CertificateRequest context"))?.to_vec();
+    let context = r.vec8().ok_or_else(|| bad("CertificateRequest context"))?.to_vec();
     let exts = r.vec16().ok_or_else(|| bad("CertificateRequest extensions"))?;
     if !r.is_empty() {
         return Err(bad("trailing data in CertificateRequest"));
     }
     // signature_algorithms is mandatory here; the other allowed extensions are ignored.
-    let mut has_sigalgs = false;
-    for_each_extension(exts, |t, _| match t {
+    let mut signature_algorithms = None;
+    for_each_extension(exts, |t, d| match t {
         EXT_SIGNATURE_ALGORITHMS => {
-            has_sigalgs = true;
+            let mut sr = Reader::new(d);
+            let list = sr.vec16().filter(|l| !l.is_empty() && l.len() % 2 == 0 && sr.is_empty()).ok_or_else(|| bad("CertificateRequest signature_algorithms"))?;
+            signature_algorithms = Some(list.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect());
             Ok(())
         }
         EXT_STATUS_REQUEST | EXT_SCT | EXT_CERTIFICATE_AUTHORITIES | EXT_OID_FILTERS | EXT_SIGNATURE_ALGORITHMS_CERT => Ok(()),
         _ => Err(Error::Tls(format!("unsupported_extension: extension {} is not allowed in CertificateRequest", t))),
     })?;
-    if !has_sigalgs {
-        return Err(Error::Tls("missing_extension: CertificateRequest has no signature_algorithms".into()));
-    }
-    Ok(ctx)
+    let signature_algorithms = signature_algorithms.ok_or_else(|| Error::Tls("missing_extension: CertificateRequest has no signature_algorithms".into()))?;
+    Ok(CertificateRequest { context, signature_algorithms })
 }
 
 /// What a server's Certificate message carries.
@@ -554,8 +561,17 @@ pub fn parse_new_session_ticket(body: &[u8]) -> Result<NewSessionTicket> {
 
 /// The data a server signs in CertificateVerify (RFC 8446 section 4.4.3).
 pub fn server_certificate_verify_content(transcript_hash: &[u8]) -> Vec<u8> {
+    certificate_verify_content(b"TLS 1.3, server CertificateVerify", transcript_hash)
+}
+
+/// The data a client signs in its CertificateVerify.
+pub fn client_certificate_verify_content(transcript_hash: &[u8]) -> Vec<u8> {
+    certificate_verify_content(b"TLS 1.3, client CertificateVerify", transcript_hash)
+}
+
+fn certificate_verify_content(context: &[u8], transcript_hash: &[u8]) -> Vec<u8> {
     let mut c = vec![0x20u8; 64];
-    c.extend_from_slice(b"TLS 1.3, server CertificateVerify");
+    c.extend_from_slice(context);
     c.push(0);
     c.extend_from_slice(transcript_hash);
     c
@@ -835,7 +851,8 @@ mod strictness_tests {
         let sigalgs = ext(EXT_SIGNATURE_ALGORITHMS, &block16(&[0x04, 0x03]));
         let mut body = vec![2, 0xaa, 0xbb];
         body.extend(block16(&sigalgs));
-        assert_eq!(parse_certificate_request(&body).unwrap(), vec![0xaa, 0xbb]);
+        let request = parse_certificate_request(&body).unwrap();
+        assert_eq!((request.context, request.signature_algorithms), (vec![0xaa, 0xbb], vec![0x0403]));
         // other legitimate extensions are fine alongside it
         let mut more = sigalgs.clone();
         more.extend(ext(EXT_CERTIFICATE_AUTHORITIES, &block16(&[])));

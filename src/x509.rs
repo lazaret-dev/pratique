@@ -1038,6 +1038,11 @@ impl Certificate {
         &self.spki
     }
 
+    /// The algorithm the issuer signed this certificate with, if it is one this crate knows.
+    pub fn signature_algorithm(&self) -> Option<SigAlg> {
+        self.sig_alg
+    }
+
     /// The DER of the `TBSCertificate`, the part the issuer signed.
     pub fn tbs_der(&self) -> &[u8] {
         &self.tbs

@@ -216,7 +216,8 @@ pub(crate) struct Handshake {
     config: ClientConfig,
     transcript: Transcript,
     keys: Option<HandshakeKeys>,
-    request_context: Option<Vec<u8>>,
+    /// the server's CertificateRequest, answered after its Finished
+    request: Option<CertificateRequest>,
     leaf: Option<Certificate>,
     /// The session the ClientHello offers, if it offers one (TLS 1.3 over TCP, with resumption on and a session kept).
     psk: Option<Session>,
@@ -283,7 +284,7 @@ impl Handshake {
             config: config.clone(),
             transcript: Transcript::new(client_hello.clone()),
             keys: None,
-            request_context: None,
+            request: None,
             leaf: None,
             psk,
             verified_at: now,
@@ -326,7 +327,7 @@ impl Handshake {
             config: config.clone(),
             transcript: Transcript::new(client_hello.to_vec()),
             keys: None,
-            request_context: None,
+            request: None,
             leaf: None,
             psk: None,
             verified_at: 0,
@@ -480,7 +481,7 @@ impl Handshake {
                 }
             }
             (Stage::CertificateOrRequest, HS_CERTIFICATE_REQUEST) => {
-                self.request_context = Some(parse_certificate_request(body)?);
+                self.request = Some(parse_certificate_request(body)?);
                 self.transcript.add(msg);
                 self.stage = Stage::Certificate;
             }
@@ -657,14 +658,37 @@ impl Handshake {
         let s_ap = Zeroizing::new(master.derive_secret("s ap traffic", &app_hash));
 
         // client flight, protected with the client handshake keys
-        if let Some(ctx) = self.request_context.take() {
-            // We have no client certificate: answer with an empty Certificate message.
-            let mut b = vec![ctx.len() as u8];
-            b.extend_from_slice(&ctx);
-            b.extend_from_slice(&[0, 0, 0]);
+        if let Some(request) = self.request.take() {
+            // our certificate, if we have one whose key makes a signature the server takes; else an empty Certificate
+            let ours = self.config.client_certificate.as_ref().and_then(|c| {
+                let scheme = c.key().tls_schemes().into_iter().find(|s| request.signature_algorithms.contains(s))?;
+                Some((c.clone(), scheme))
+            });
+            let mut b = vec![request.context.len() as u8];
+            b.extend_from_slice(&request.context);
+            let mut list = Vec::new();
+            if let Some((c, _)) = &ours {
+                for der in c.chain() {
+                    list.extend_from_slice(&(der.len() as u32).to_be_bytes()[1..]);
+                    list.extend_from_slice(der);
+                    list.extend_from_slice(&[0, 0]); // no extensions
+                }
+            }
+            b.extend_from_slice(&(list.len() as u32).to_be_bytes()[1..]);
+            b.extend_from_slice(&list);
             let m = handshake_message(HS_CERTIFICATE, &b);
             self.transcript.add(&m);
             events.push(Event::Send(Epoch::Handshake, m));
+            if let Some((c, scheme)) = ours {
+                let content = client_certificate_verify_content(&self.transcript.hash(alg));
+                let signature = c.key().sign_tls(scheme, &content)?;
+                let mut v = scheme.to_be_bytes().to_vec();
+                v.extend_from_slice(&(signature.len() as u16).to_be_bytes());
+                v.extend_from_slice(&signature);
+                let m = handshake_message(HS_CERTIFICATE_VERIFY, &v);
+                self.transcript.add(&m);
+                events.push(Event::Send(Epoch::Handshake, m));
+            }
         }
         let client_finished_key = Zeroizing::new(expand_label(alg, &keys.c_hs, "finished", &[], hash_len));
         let verify_data = hmac(alg, &client_finished_key, &self.transcript.hash(alg));

@@ -6,7 +6,6 @@ use super::scripted::*;
 use super::server::*;
 use super::session::{Scope, Session as Kept};
 use crate::zeroize::Zeroizing;
-use std::sync::Mutex;
 use super::suite::*;
 use super::*;
 use std::net::{TcpListener, TcpStream};
@@ -97,15 +96,36 @@ fn a_ticket_is_offered_once_and_only_to_its_server_name() {
 }
 
 #[test]
+fn tickets_resume_on_any_server_that_shares_the_ticket_keys() {
+    let (server, client) = setup();
+    let keys = Arc::new(crate::tls::tickets::TicketKeys::new(86_400).unwrap());
+    let a = Arc::new(server.clone().with_ticket_keys(keys.clone()));
+    let b = Arc::new(server.clone().with_ticket_keys(keys));
+    let (port, handle) = serve(a.clone(), 1);
+    assert!(!exchange(port, "server.test", &client).unwrap().0);
+    handle.join().unwrap();
+    // another server (another configuration) with the same keys resumes the first one's ticket
+    let (port, handle) = serve(b.clone(), 1);
+    assert!(exchange(port, "server.test", &client).unwrap().0, "resumed on the other server");
+    assert_eq!(handle.join().unwrap(), [true]);
+    assert_eq!(b.resumed_count(), 1, "the clones of one configuration share its counts");
+    // after the keys rotate the old tickets still resume (the old key is kept while its tickets live)
+    b.ticket_keys.as_ref().unwrap().rotate().unwrap();
+    let (port, handle) = serve(b.clone(), 1);
+    assert!(exchange(port, "server.test", &client).unwrap().0);
+    handle.join().unwrap();
+}
+
+#[test]
 fn a_server_that_does_not_know_the_ticket_makes_a_full_handshake() {
     let (server, client) = setup();
-    // two servers with the same certificate and different stores: the second has never seen the first's ticket
+    // two servers with the same certificate and different ticket keys: the second cannot open the first's ticket
     let first = Arc::new(server.clone().without_resumption().with_tickets(0));
     let (port, handle) = serve(Arc::new(server.clone()), 1);
     exchange(port, "server.test", &client).unwrap();
     handle.join().unwrap();
     assert_eq!(client.resumption.sessions(), 1);
-    let fresh = Arc::new(ServerConfig { sessions: Some(Arc::new(Mutex::new(ServerSessions::default()))), ..server });
+    let fresh = Arc::new(server.with_ticket_keys(Arc::new(crate::tls::tickets::TicketKeys::new(86_400).unwrap())));
     let (port, handle) = serve(fresh.clone(), 1);
     assert!(!exchange(port, "server.test", &client).unwrap().0, "offered, not taken: a full handshake, checked in full");
     assert_eq!(handle.join().unwrap(), [false]);

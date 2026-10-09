@@ -3,12 +3,12 @@
 //! The secrets are the scalar a (from the key's seed) and the nonce r (from the seed's other half and the message);
 //! both stay out of every branch and memory address:
 //!
-//! * [r]B and [a]B are the fixed-base multiplication of `x25519_base` (ref10's table of multiples of B, every entry of
+//! * \[r\]B and \[a\]B are the fixed-base multiplication of `x25519_base` (ref10's table of multiples of B, every entry of
 //!   a row read at each step and the one needed kept with masks), not the verifier's variable-time double-and-add,
 //!   which is what this module used until B-109 (it was for the test server only);
 //! * r from its 64-byte hash, and S = r + k a, are computed modulo L by `ct_mod` (Montgomery products, conditional
 //!   subtractions by mask), not by the verifier's bit-at-a-time reduction, which branches on the value;
-//! * encoding [r]B is one inversion by a fixed chain and a canonical reduction without branches.
+//! * encoding \[r\]B is one inversion by a fixed chain and a canonical reduction without branches.
 //!
 //! Signing is deterministic, as RFC 8032 says (the same key and message give the same signature), so no randomness is
 //! needed and none is used. The data-independent-timing mode of ARM (`crypto::dit`) is held while the secrets are in

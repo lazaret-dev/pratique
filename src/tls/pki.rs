@@ -79,8 +79,10 @@ pub struct CertSpec {
     pub not_before: i64,
     pub not_after: i64,
     pub serial: u64,
-    /// An extended key usage of serverAuth. Without it the certificate has no extended key usage at all.
+    /// An extended key usage of serverAuth. Without it (and `client_auth`) the certificate has no extended key usage at all.
     pub server_auth: bool,
+    /// An extended key usage of clientAuth (with serverAuth too if `server_auth` is set).
+    pub client_auth: bool,
     /// OCSP responders to name in an Authority Information Access extension (none: no extension).
     pub ocsp_uris: Vec<String>,
     /// CRL distribution points (none: no extension).
@@ -100,6 +102,7 @@ impl Default for CertSpec {
             not_after: now + 30 * 86_400,
             serial: 1,
             server_auth: true,
+            client_auth: false,
             ocsp_uris: Vec::new(),
             crl_uris: Vec::new(),
         }
@@ -168,8 +171,15 @@ fn extensions(spec: &CertSpec, subject_key: &KeyPair, issuer_key: &KeyPair) -> V
     // keyUsage (critical): keyCertSign and cRLSign for a CA, digitalSignature otherwise
     let usage = if spec.is_ca { bit_string(1, &[0x06]) } else { bit_string(7, &[0x80]) };
     out.extend(extension(&[0x55, 0x1D, 0x0F], true, &usage));
-    if spec.server_auth {
-        out.extend(extension(&[0x55, 0x1D, 0x25], false, &tlv(0x30, &oid(&[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01]))));
+    if spec.server_auth || spec.client_auth {
+        let mut usages = Vec::new();
+        if spec.server_auth {
+            usages.extend(oid(&[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01]));
+        }
+        if spec.client_auth {
+            usages.extend(oid(&[0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x02]));
+        }
+        out.extend(extension(&[0x55, 0x1D, 0x25], false, &tlv(0x30, &usages)));
     }
     if !spec.dns_names.is_empty() || !spec.ip_addresses.is_empty() {
         let mut names = Vec::new();

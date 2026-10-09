@@ -20,17 +20,21 @@
 mod conn;
 pub(crate) mod session;
 mod split;
-#[cfg(test)]
+// The split tests drive the stream over `UnixStream::pair`, so they are built on Unix only.
+#[cfg(all(test, unix))]
 mod split_tests;
 pub(crate) mod handshake;
 pub(crate) mod messages;
 mod signature;
 pub(crate) mod suite;
 pub mod tls12;
+pub mod certs;
 #[cfg(any(test, feature = "server"))]
 pub mod pki;
 #[cfg(any(test, feature = "server"))]
 pub mod server;
+#[cfg(any(test, feature = "server"))]
+pub mod tickets;
 #[cfg(test)]
 mod server_tests;
 #[cfg(any(test, pratique_fuzzing))]
@@ -44,6 +48,9 @@ mod hello_retry;
 #[cfg(pratique_fuzzing)]
 #[doc(hidden)]
 pub mod fuzz_hooks;
+#[cfg(all(pratique_fuzzing, feature = "server"))]
+#[doc(hidden)]
+pub mod server_fuzz;
 #[cfg(test)]
 mod rfc8448;
 
@@ -100,6 +107,9 @@ pub struct ClientConfig {
     /// TLS 1.3 session resumption: on by default, sessions shared by the clones of this configuration and used for at most an
     /// hour after the certificate check they rest on; see [`Resumption`].
     pub resumption: Resumption,
+    /// A certificate and key to present when a TLS 1.3 server asks for one (mutual TLS), if its key can make a signature
+    /// the server takes; otherwise, and over TLS 1.2, the client answers with no certificate.
+    pub client_certificate: Option<Arc<certs::CertifiedKey>>,
 }
 
 impl ClientConfig {
@@ -113,7 +123,14 @@ impl ClientConfig {
             rekey_after_records: None,
             min_version: TlsVersion::Tls12,
             resumption: Resumption::new(),
+            client_certificate: None,
         }
+    }
+
+    /// Presents `cert` to a server that asks for a client certificate (TLS 1.3).
+    pub fn with_client_certificate(mut self, cert: certs::CertifiedKey) -> ClientConfig {
+        self.client_certificate = Some(Arc::new(cert));
+        self
     }
 
     /// Sets how sessions are resumed (or [`Resumption::off`]); see [`resumption`](ClientConfig::resumption).
