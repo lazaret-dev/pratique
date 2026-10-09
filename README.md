@@ -2,7 +2,7 @@
 
 An HTTPS client for Rust built from scratch with **zero dependencies** (only `std`).
 
-Formerly `tiny_https`, renamed in October 2026. The name goes with Lazaret, the package-security scanner it was written for: a
+The name goes with Lazaret, the package-security scanner it was written for: a
 lazaret is a quarantine station, and pratique is the clearance a ship gets to leave quarantine and enter port.
 
 ## Status
