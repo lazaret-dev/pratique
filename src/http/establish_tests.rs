@@ -61,6 +61,33 @@ fn no_more_connections_to_a_host_than_the_limit_and_the_others_wait_for_one_to_c
     }
 }
 
+/// BACKLOG B-105, reported again by Lazaret's CI (three connections where two were allowed, under parallel load): a request
+/// waiting for room looked for a parked connection of its own, found none, and then closed the oldest idle connection to
+/// the host to make room. A connection of its own parked between the two was closed and a new one dialled. The pause
+/// holds the waiting request between the two looks, so that the other request's connection is parked there every time.
+#[test]
+fn a_connection_parked_while_a_request_waits_for_room_is_used_and_not_closed() {
+    let server = TestServer::start(|seen: &Seen| {
+        if seen.path() == "/slow" {
+            thread::sleep(Duration::from_millis(100));
+        }
+        ok("x")
+    });
+    let client = server.client().max_connections_per_host(1);
+    let first = {
+        let (client, url) = (client.clone(), server.url("/slow"));
+        thread::spawn(move || client.get(&url).unwrap().status)
+    };
+    thread::sleep(Duration::from_millis(30));
+    super::ROOM_PAUSE.with(|p| p.set(Some(Duration::from_millis(250))));
+    let second = client.get(&server.url("/next"));
+    super::ROOM_PAUSE.with(|p| p.set(None));
+    assert_eq!(second.unwrap().status, 200);
+    assert_eq!(first.join().unwrap(), 200);
+    assert_eq!(server.connections(), 1, "the waiting request took the connection that was parked, rather than closing it and dialling");
+    assert_eq!(client.idle_connections(), 1);
+}
+
 #[test]
 fn a_request_that_cannot_get_a_connection_in_time_says_why_and_a_closed_one_gives_its_slot_back() {
     let server = TestServer::start(big);

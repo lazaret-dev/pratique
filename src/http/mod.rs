@@ -1163,6 +1163,13 @@ pub(crate) fn slot_key(url: &Url) -> String {
     format!("{}:{}", url.host, url.port)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A pause in [`Client::room`] between looking for a parked connection and closing one to make room, for the test of
+    /// the race between them (BACKLOG B-105).
+    pub(crate) static ROOM_PAUSE: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+
 /// No slot came free in time under a per-host connection limit.
 pub(crate) fn no_slot(key: &str, max: usize, deadline: Option<Instant>, waited: Duration) -> Error {
     if deadline.is_some_and(|d| Instant::now() >= d) {
@@ -1780,9 +1787,11 @@ impl Client {
             if let Some(conn) = reuse.and_then(|k| self.checkout(k, deadline)) {
                 return Ok(Room::Parked(conn));
             }
-            // an idle connection to the host that this request cannot use (made for another proxy or TLS minimum, or one
-            // that went stale) is closed to make room
-            if let Some(idle) = self.idle.take_oldest_to(&url.host, url.port) {
+            #[cfg(test)]
+            ROOM_PAUSE.with(|p| if let Some(d) = p.get() { std::thread::sleep(d) });
+            // an idle connection to the host that this request cannot use (made for another proxy or TLS minimum) is closed
+            // to make room; one of its own key that was parked since the look above is not, and is taken on the next turn
+            if let Some(idle) = self.idle.take_oldest_to(&url.host, url.port, reuse) {
                 drop(idle);
                 continue;
             }

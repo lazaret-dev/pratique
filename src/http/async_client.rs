@@ -349,7 +349,7 @@ impl<C: Connect> AsyncClient<C> {
             if let Some(conn) = reuse.and_then(|k| self.checkout(k, deadline)) {
                 return Ok(AsyncRoom::Parked(conn));
             }
-            if let Some(idle) = self.idle.take_oldest_to(&url.host, url.port) {
+            if let Some(idle) = self.idle.take_oldest_to(&url.host, url.port, reuse) {
                 drop(idle);
                 continue;
             }

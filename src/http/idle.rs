@@ -139,14 +139,15 @@ impl<T> IdlePool<T> {
         drop(dropped);
     }
 
-    /// The connection to `host:port` (of any key) that has been parked the longest: the one to close when a per-host
-    /// connection limit needs room.
-    pub(crate) fn take_oldest_to(&self, host: &str, port: u16) -> Option<T> {
+    /// The connection to `host:port` (of any key but `keep`) that has been parked the longest: the one to close when a
+    /// per-host connection limit needs room. A connection of `keep`, the key of the request that wants the room, is never
+    /// taken: one that has just been parked is for that request to use, not to close (BACKLOG B-105).
+    pub(crate) fn take_oldest_to(&self, host: &str, port: u16, keep: Option<&Key>) -> Option<T> {
         let mut inner = self.lock();
         let key = inner
             .hosts
             .iter()
-            .filter(|(k, _)| k.host == host && k.port == port)
+            .filter(|(k, _)| k.host == host && k.port == port && Some(*k) != keep)
             .filter_map(|(k, l)| l.front().map(|e| (e.parked, k.clone())))
             .min_by_key(|(p, _)| *p)
             .map(|(_, k)| k)?;
@@ -247,9 +248,13 @@ mod tests {
         pool.put(Key { min_tls: crate::tls::TlsVersion::Tls13, ..key("a") }, conn(2, &dropped), 60 * SECOND, &policy(), t0);
         pool.put(key("b"), conn(3, &dropped), 60 * SECOND, &policy(), t0);
         pool.put(Key { port: 8443, ..key("a") }, conn(4, &dropped), 60 * SECOND, &policy(), t0);
-        assert_eq!(pool.take_oldest_to("a", 443).map(|c| c.id), Some(2));
-        assert_eq!(pool.take_oldest_to("a", 443).map(|c| c.id), Some(1));
-        assert!(pool.take_oldest_to("a", 443).is_none());
+        // not the key of the request that wants the room: that one it would use
+        assert!(pool.take_oldest_to("a", 443, Some(&Key { min_tls: crate::tls::TlsVersion::Tls13, ..key("a") })).is_some_and(|c| c.id == 1));
+        pool.put(key("a"), conn(1, &dropped), 60 * SECOND, &policy(), t0 + SECOND);
+        assert_eq!(pool.take_oldest_to("a", 443, None).map(|c| c.id), Some(2));
+        assert!(pool.take_oldest_to("a", 443, Some(&key("a"))).is_none());
+        assert_eq!(pool.take_oldest_to("a", 443, None).map(|c| c.id), Some(1));
+        assert!(pool.take_oldest_to("a", 443, None).is_none());
         assert_eq!(pool.len(), 2);
     }
 
