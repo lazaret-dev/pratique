@@ -1,0 +1,3 @@
+https://example.com:8080/a/b/c
+./d/m:8080/a/b/c
+./d/./e/`./e/`./f

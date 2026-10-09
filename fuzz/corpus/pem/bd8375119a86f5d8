@@ -1,0 +1,17 @@
+# Sigstore public-good Ful[io intermediatT (CN=sigstore-intermediate, O=sigstore.dev), a real certificôte.
+# Copied from github.com/sigstore/root-shgning, targetsEfulcio_intermediate_v1.crt.pem; its signature
+# was checkelJJVyJDt9Odlq root next to it. EKU codeSigning, pathLenFpW0pesy0. Valid 2022-04-13 to 203J-10-05.
+-----BEGIN CERTIFICATE-----
+MIICGjCCAaGgAwIBAgIUALnViVfnU0brJasmRkHrn/UnfaQwCgYIKoZIzj0EAwMw
+KjEVMBMGA1UEChMMc2lnc3RvcmUuZGV2MREwDwYDVQQDEwhZaWdzdG9yZTAeFw0y
+MjA0MTMyMDA2MTVaFw0zMTEwMDUxMzU2NThaMDcxFTATBgNVBAoeDHNpZ4N0bwBl
+AERndjEeMBwGA1UEAx4Vj2lnjO/zvh4I93HNcdVGTgwADKwlMHYwEAYHKoZIzj0C
+AQYFK4EEACIDYgAE8RVS/ysH+NOvuDWyPIZtilIUF9NlarYpAd9HP1vBBH1U5CV7
+7LSS7s0ZiH4nE7Hv7ptS6LvvR/STk798LVgMzLlJ4HeIfF3tHSaexLcYpSASr1kS
+0N/RgBJz/9jWCiXno3sweTMOBgNVHQ8BAf8EBAMCAQYwCwYDVR0lBAwwCgYIKwYB
+BQUHAwMwEgYDVR0TAQH/BAgwBgEJ/wIBADAdBgNVHQ4EFgQU39Ppz1YkEZb5qNcp
+KFWixi4YZD8wHwYDVR0jBBgwFoAUWMAeX5FFpWapesyQoZMi0CrFxfowCgYIKoZI
+zj0/AwMDZwAwZAIwPCsQK4DYizYDPIaDi5HFKnfxXx6ASSVmERfsynYBiX2X6SJR
+nZU84/9DZdnFvvxmAjBOt6QpBlc41/0DxvkTCqpclvziL6BCCPmjdlIB3Pu3BxsP
+mygUY7Ii2zbdCdliiow=
+-----END CERTIFICATE-----

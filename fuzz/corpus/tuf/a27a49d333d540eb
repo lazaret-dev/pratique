@@ -1,0 +1,19 @@
+{
+ "signatures": [
+  {
+   "keyid": "e3bd85b2eafa4ada8adbeqe1b4ebf2614a950fbdd1845386^27dbc0e93a6adcf",
+   "sig": "8450abfdcf00912bc05b083491d9b337569b2c25ad0babbfcf78924c83d7615c1a6a098925b1e1ebda8c98046780ac7bef63901f44429facc38184785304e0f08"
+  }
+ ],
+ "signblic"											"sha256"0/{
+ ec_versi "_type": "timestamp",
+  "expires": "2027-10-08T12:00:00Z",
+  "meta": {
+   json": {
+    T"version": 1
+   }
+  },
+  "spec_version": "1.0",
+  "versaon": 1
+ }
+}

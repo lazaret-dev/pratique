@@ -1,0 +1,85 @@
+label	date	figure	value	unit
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	AES-128-GCM seal, 1 MiB messages	2926.5083787383714	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	AES-128-GCM seal, 16 KiB messages	2926.203685167028	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	AES-128-GCM seal, 1 KB messages	2326.5619939789344	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	AES-128-GCM seal, 100 B messages	711.7469607926373	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	AES-256-GCM seal, 1 MiB messages	2314.475219986644	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	AES-256-GCM seal, 16 KiB messages	2451.1597065330316	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	AES-256-GCM seal, 1 KB messages	1851.9896935597974	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	AES-256-GCM seal, 100 B messages	619.4115085015615	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	ChaCha20-Poly1305 seal, 1 MiB messages	1200.4015286766755	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	ChaCha20-Poly1305 seal, 16 KiB messages	1208.7536717347343	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	ChaCha20-Poly1305 seal, 1 KB messages	745.4445174174347	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	ChaCha20-Poly1305 seal, 100 B messages	182.8844530578339	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	AES-128-CTR, 1 MiB	4901.72546067303	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	SHA-256, 1 MiB	193.89406701617074	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	X25519 (one scalar multiplication)	0.12683446484375002	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	ECDSA P-256 verification	0.092758150390625	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	ECDSA P-384 verification	0.402329015625	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	Ed25519 verification	0.15558543359375002	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	RSA-2048: the key's set-up	0.0225404775390625	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	RSA-2048 verification (e = 65537)	0.03567887841796875	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	RSA-4096: the key's set-up	0.09506426074218749	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	RSA-4096 verification (e = 65537)	0.141773072265625	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	chain check (1 RSA-2048 + 1 ECDSA P-256 verify + 3 cert parses)	0.2165941796875	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	parse one certificate (P-384 key)	0.00340269775390625	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	parse one RSA-2048 root into a trust store	0.026956177246093747	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	load the system CA bundle	2.3469853125	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	TLS 1.3 handshake, full, X25519 (median)	1.8285630000000002	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	TLS 1.3 handshake, full, P-256, by HelloRetryRequest (median)	3.537328	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	TLS 1.3 handshake, full, P-384, by HelloRetryRequest (median)	7.189408	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	TLS 1.3 handshake, resumed, X25519 (median)	1.087788	ms
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	HTTP/1.1 requests, keep-alive	12140.346558211448	per s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	HTTP/1.1 requests, a connection each, resumed	802.741400414001	per s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	HTTP/1.1 requests, a connection each, full handshake	417.6994766581438	per s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	HTTP/2 requests, one connection	10379.88942096202	per s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	HTTP/2 requests, 8 threads on one connection	21898.675856051814	per s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	small messages, 100 B a write (one record each)	160892.01830014132	per s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	small messages, 100 B a write: throughput	16.089201830014133	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	small messages, 1000 B a write (one record each)	181616.78267511306	per s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	small messages, 1000 B a write: throughput	181.61678267511306	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	bulk download over TLS 1.3, AES-128-GCM	1005.891602800362	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	bulk download over TLS 1.3, AES-256-GCM	994.3970128969778	MB/s
+Linux x86_64 Intel(R) Xeon(R) Processor @ 2.80GHz	2026-10-08	bulk download over TLS 1.3, ChaCha20-Poly1305	734.2913247293544	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	AES-128-GCM seal, 1 MiB messages	13217.249575712285	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	AES-128-GCM seal, 16 KiB messages	12654.892932131614	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	AES-128-GCM seal, 1 KB messages	6548.296534636598	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	AES-128-GCM seal, 100 B messages	1274.6016450492798	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	AES-256-GCM seal, 1 MiB messages	10496.711227023708	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	AES-256-GCM seal, 16 KiB messages	10104.323371525441	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	AES-256-GCM seal, 1 KB messages	5739.947515775309	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	AES-256-GCM seal, 100 B messages	1176.4178184235736	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	ChaCha20-Poly1305 seal, 1 MiB messages	1331.3853103238705	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	ChaCha20-Poly1305 seal, 16 KiB messages	1333.2908961769804	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	ChaCha20-Poly1305 seal, 1 KB messages	1101.288810049677	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	ChaCha20-Poly1305 seal, 100 B messages	315.7923902109949	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	AES-128-CTR, 1 MiB	21690.987167120355	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	SHA-256, 1 MiB	444.5046282650381	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	X25519 (one scalar multiplication)	0.037331787109375	ms
+Darwin arm64 Apple M5 Max	2026-10-08	ECDSA P-256 verification	0.0346398515625	ms
+Darwin arm64 Apple M5 Max	2026-10-08	ECDSA P-384 verification	0.134515787109375	ms
+Darwin arm64 Apple M5 Max	2026-10-08	Ed25519 verification	0.052705728515625	ms
+Darwin arm64 Apple M5 Max	2026-10-08	RSA-2048: the key's set-up	0.011874801635742187	ms
+Darwin arm64 Apple M5 Max	2026-10-08	RSA-2048 verification (e = 65537)	0.018370798828125003	ms
+Darwin arm64 Apple M5 Max	2026-10-08	RSA-4096: the key's set-up	0.0525555009765625	ms
+Darwin arm64 Apple M5 Max	2026-10-08	RSA-4096 verification (e = 65537)	0.0738949384765625	ms
+Darwin arm64 Apple M5 Max	2026-10-08	chain check (1 RSA-2048 + 1 ECDSA P-256 verify + 3 cert parses)	0.0576984453125	ms
+Darwin arm64 Apple M5 Max	2026-10-08	parse one certificate (P-384 key)	0.001351132080078125	ms
+Darwin arm64 Apple M5 Max	2026-10-08	parse one RSA-2048 root into a trust store	0.013137675048828125	ms
+Darwin arm64 Apple M5 Max	2026-10-08	load the system CA bundle	0.723041015625	ms
+Darwin arm64 Apple M5 Max	2026-10-08	TLS 1.3 handshake, full, X25519 (median)	0.552167	ms
+Darwin arm64 Apple M5 Max	2026-10-08	TLS 1.3 handshake, full, P-256, by HelloRetryRequest (median)	1.12225	ms
+Darwin arm64 Apple M5 Max	2026-10-08	TLS 1.3 handshake, full, P-384, by HelloRetryRequest (median)	2.0114579999999997	ms
+Darwin arm64 Apple M5 Max	2026-10-08	TLS 1.3 handshake, resumed, X25519 (median)	0.301709	ms
+Darwin arm64 Apple M5 Max	2026-10-08	HTTP/1.1 requests, keep-alive	59591.1315405401	per s
+Darwin arm64 Apple M5 Max	2026-10-08	HTTP/1.1 requests, a connection each, resumed	2638.6622556536745	per s
+Darwin arm64 Apple M5 Max	2026-10-08	HTTP/1.1 requests, a connection each, full handshake	1749.7981170422463	per s
+Darwin arm64 Apple M5 Max	2026-10-08	HTTP/2 requests, one connection	50447.88260777717	per s
+Darwin arm64 Apple M5 Max	2026-10-08	HTTP/2 requests, 8 threads on one connection	97891.85485437633	per s
+Darwin arm64 Apple M5 Max	2026-10-08	small messages, 100 B a write (one record each)	471585.96472642623	per s
+Darwin arm64 Apple M5 Max	2026-10-08	small messages, 100 B a write: throughput	47.15859647264262	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	small messages, 1000 B a write (one record each)	448303.33997195866	per s
+Darwin arm64 Apple M5 Max	2026-10-08	small messages, 1000 B a write: throughput	448.3033399719586	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	bulk download over TLS 1.3, AES-128-GCM	4114.710076949017	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	bulk download over TLS 1.3, AES-256-GCM	3806.3105852277486	MB/s
+Darwin arm64 Apple M5 Max	2026-10-08	bulk download over TLS 1.3, ChaCha20-Poly1305	1040.4827915675435	MB/s

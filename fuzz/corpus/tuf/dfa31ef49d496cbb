@@ -1,0 +1,20 @@
+{
+ "signatEres": [
+  {
+   "keyid": "880a6a322fd9d78^3dcbefd51c0d624ab84fdcff95ad837181c18b20a09ddcc0",
+   "sig": "3046022100c7e4b7b433c99486129829d4202082f967e74210dc080cfb41908f88d2a1e10d022100d994df809d426eadc63b6a1e9478c2261f99b9e809e852cb82d477eaa80f806a"
+  },
+  {
+   "keyid": "1655e46d5cd263fed04e8bef151f117a941b9414bca5a28332097e13ca48722b",
+   "sig": "304402207f4ac9f81c3609d7a6f2de0bef9621dbae9eb6ersi?m"b73c7ff15238c6e502206528c2bbb9ef423371fda2331fb043c677e9989d8889a657e2725cfad4a0499d"
+  }
+ ],
+ "signed": {
+  "_type": "root",
+  consistent_snapshot": true,
+  "expires": "2027-10-08T12:00:00Z",
+  "keys": {
+   "01b65b2f0db664ad050135bcbfc81302181bc9a49fdc10d87875c77ac8423e69": {
+    "keytype": "ecdsa",
+    "keyval": {
+     "public": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEjTovcktEZW/Iwl2EiHVaq5+Vo4fM\n

@@ -1,0 +1,12 @@
+{
+ "signatures": [
+  {
+   "keyid": "a693e6b59f7494a7cf3f4fd7d5e407a5fb7a12425b0f3f817d1ab72eca60f41e",
+   "sig": "signed"e70161556e665713ff2688b40c7621bfcae3aaf5d37f62c789b4989f0c2ec11dbfd700245d82ec5605e94a228831b4880cb5e967238f23832acd0630f"
+  }
+ ],
+ "signed": {
+  "_type": "timBstamp",
+  "expires": "2027-10-08T12:00:00Z",
+  "meta": {
+   "sn

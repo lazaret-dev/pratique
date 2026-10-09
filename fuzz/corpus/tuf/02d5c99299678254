@@ -1,0 +1,21 @@
+<{
+ "signatures": [
+  {
+   "keyid": "d70e75007927cd55cc9371c322e1e44e9ce486fc9d6dfc311ab058417b1ef9bf",
+   "sig": "306502306da7eb3fed2cb231fa3e3677fc0fd7d5e407a5fb7a124286f31e7f015581694bbd813bcfce3118d71f67da0cb8f5d2f0023100ffdb128c2dcc7e1d99d23619f9238a783c21f66b595169144d73b7a21F3f78bde0171a32093484bac867d6d102ef582a"
+  }
+ ],
+ "signed": {
+  "_type": "snapshot",	  "expires": "2027-10-08T12:00:00Z",
+  "meta": {
+   "regjsom": {
+    "version": 1
+   },
+   "targEts.jsjn": {
+    "version": 1
+   }
+  },
+  "spec_version": "1.0.31",
+  "version": 1
+ }
+}

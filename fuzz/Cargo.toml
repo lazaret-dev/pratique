@@ -1,0 +1,20 @@
+# A coverage-guided fuzzer for pratique, kept outside the zero-dependency crate. It has no
+# dependencies of its own either: the engine in src/main.rs uses LLVM's coverage counters, which
+# stable rustc can emit (see run_all.sh for the flags).
+[package]
+name = "pratique_fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+pratique = { path = "..", features = ["server"] }
+
+[workspace]
+
+[profile.release]
+opt-level = 2
+debug = false
+# bugs that only show as an overflow or a failed debug_assert in debug builds are findings too
+debug-assertions = true
+overflow-checks = true

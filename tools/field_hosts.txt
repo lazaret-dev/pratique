@@ -1,0 +1,172 @@
+# The servers of tools/mac_field_check.sh (BACKLOG B-06, B-08, B-65). One per line: GROUP HOST[:PORT]
+#
+#   ok      the TLS handshake must work, the chain must verify, and a GET of / must answer. These are also the chains that
+#           `capture` keeps as fixtures, so the list covers RSA and ECDSA leaves, several CAs (Let's Encrypt, Google Trust
+#           Services, DigiCert, Sectigo, Amazon, GlobalSign, Cloudflare...), wildcard certificates, and the servers that the
+#           consumer of this library (supply-chain tooling) really talks to.
+#   refuse  a certificate that must be refused, as a certificate error (expired, self-signed, wrong host, unknown root).
+#   ok-tls12, refuse-tls12
+#           the same, for servers that speak only TLS 1.2, and judged the same way since the library speaks TLS 1.2 too (BACKLOG
+#           B-36). The name only says what to expect in the TLS version that the smoke test writes down for every host.
+#   refuse-handshake
+#           a server that offers only what the library will not speak (TLS 1.0 or 1.1, CBC, RSA key exchange, finite-field
+#           Diffie-Hellman, no encryption): the handshake must fail as a TLS error, never connect (B-36, B-100).
+#   revoked a certificate its CA has revoked (the test sites every public CA must run): checked with hard-fail revocation and the
+#           library's OCSP and CRL sources, it must be refused as revoked; `capture` takes its chain (which is otherwise valid)
+#           and `revocation` its CA's answers, as fixtures that say "revoked" (B-65, B-100).
+#
+# A third word `no-ems` marks a server that speaks TLS 1.2 without the extended master secret (RFC 7627). The library requires it
+# (B-36), so the smoke test expects that handshake to be refused for exactly that reason (PASS), whatever the group; `capture` still
+# takes the chain with OpenSSL and `verify` replays it against the library, expecting what the group says of the certificate.
+#   info    whatever happens is written down and is neither a pass nor a fail.
+#
+# Hosts come and go. A host that cannot be reached is SKIPped, and one that has changed what it serves is a thing to look at,
+# not necessarily a bug: edit this file freely. Lines starting with # are comments. Written on 2026-10-07; first run the same day
+# from an Apple M5 Max on a home network: 41 of the 49 hosts then listed as `ok` connected, and of the 8 others, 6 were badssl.com
+# (TLS 1.2 only), one was registry.npmjs.org (also TLS 1.2 only, from that network: a real gap then, closed by BACKLOG B-36), and
+# one was a host whose root is not in macOS's /etc/ssl/cert.pem.
+
+# --- the registries and transparency logs that supply-chain tooling talks to
+ok      proxy.golang.org
+ok      sum.golang.org
+ok      index.golang.org
+ok      crates.io
+ok      index.crates.io
+ok      static.crates.io
+ok      pypi.org
+ok      files.pythonhosted.org
+# registry.npmjs.org answered only TLS 1.2 on 2026-10-07 from a home network (OpenSSL negotiated it; a TLS 1.3-only client got
+# alert 70 protocol_version), and TLS 1.3 through other networks: `ok`, whichever it speaks (BACKLOG B-36)
+ok      registry.npmjs.org
+ok      rubygems.org
+ok      repo1.maven.org
+ok      rekor.sigstore.dev
+ok      fulcio.sigstore.dev
+ok      tuf-repo-cdn.sigstore.dev
+ok      github.com
+ok      api.github.com
+ok      raw.githubusercontent.com
+ok      objects.githubusercontent.com
+ok      ghcr.io
+ok      registry-1.docker.io
+ok      quay.io
+
+# --- CAs and large operators, for the variety of chains
+ok      www.google.com
+ok      www.youtube.com
+ok      www.amazon.com
+ok      aws.amazon.com
+ok      www.cloudflare.com
+ok      www.apple.com
+ok      www.microsoft.com
+ok      www.digicert.com
+ok      www.sectigo.com
+ok      www.globalsign.com
+ok      letsencrypt.org
+ok      valid-isrgrootx1.letsencrypt.org
+# ISRG Root X2 is not in macOS's /etc/ssl/cert.pem (the chain ends at Root YE, which X2 signs), so with that bundle both OpenSSL and
+# this library are right to refuse it; with a bundle that has X2 it would be an `ok`
+info    valid-isrgrootx2.letsencrypt.org
+
+# Microsec (e-Szigno), whose TLS Root CA 2023 is a P-521 key (BACKLOG B-33): written down, with the anchor it reached (on
+# 2026-10-08 it was Microsec's RSA root of 2009, not the P-521 one; www.e-szigno.hu did not answer and is left out)
+info    e-szigno.hu
+
+# --- wildcard certificates (the name asked for is not the name in the certificate)
+ok      en.wikipedia.org
+ok      rust-lang.github.io
+ok      docs.rs
+
+# --- other sites that people run into
+ok      www.python.org
+ok      go.dev
+ok      www.rust-lang.org
+ok      www.mozilla.org
+ok      www.debian.org
+ok      www.kernel.org
+
+# --- key shapes (badssl.com is a test service; it is the way to get each shape on purpose). Its servers speak TLS 1.2 only, and
+# without the extended master secret (the field run of 2026-10-07 19:52 UTC: every one refused for that), so the smoke test
+# checks that refusal on each of them and the shapes themselves are checked offline from the chains `capture` takes.
+ok-tls12      rsa2048.badssl.com             no-ems
+ok-tls12      rsa4096.badssl.com             no-ems
+ok-tls12      ecc256.badssl.com              no-ems
+ok-tls12      ecc384.badssl.com              no-ems
+ok-tls12      sha256.badssl.com              no-ems
+# its certificate has expired (found on 2026-10-07), so OpenSSL refuses it too: written down
+info          extended-validation.badssl.com no-ems
+
+# --- the test sites that public CAs must run for each root (valid, expired, revoked; CA/Browser Forum Baseline Requirements
+# section 2.2), on servers of today. Let's Encrypt's moved to test-certs.letsencrypt.org in 2026 (the older names are below);
+# Root YE and Root YR are new roots that a bundle may not have yet, so their valid sites are written down only.
+ok      valid.x1.test-certs.letsencrypt.org
+info    valid.x2.test-certs.letsencrypt.org
+info    valid.ye.test-certs.letsencrypt.org
+info    valid.yr.test-certs.letsencrypt.org
+refuse  expired.x1.test-certs.letsencrypt.org
+refuse  expired.x2.test-certs.letsencrypt.org
+refuse  expired.ye.test-certs.letsencrypt.org
+refuse  expired.yr.test-certs.letsencrypt.org
+revoked revoked.x1.test-certs.letsencrypt.org
+ok      global-root-g2.chain-demos.digicert.com
+ok      digicert-tls-rsa4096-root-g5.chain-demos.digicert.com
+ok      digicert-tls-ecc-p384-root-g5.chain-demos.digicert.com
+refuse  global-root-g2-expired.chain-demos.digicert.com
+refuse  digicert-tls-rsa4096-root-g5-expired.chain-demos.digicert.com
+refuse  digicert-tls-ecc-p384-root-g5-expired.chain-demos.digicert.com
+revoked global-root-g2-revoked.chain-demos.digicert.com
+# the G5 roots are not in macOS's /etc/ssl/cert.pem and these two sites do not send the cross-certificate that the valid G5
+# sites send, so with that bundle they are refused before revocation is looked at (WEAK, B-102); with `--cacert mozilla`
+# (the `roots` step) they are refused as revoked
+revoked digicert-tls-rsa4096-root-g5-revoked.chain-demos.digicert.com
+revoked digicert-tls-ecc-p384-root-g5-revoked.chain-demos.digicert.com
+
+# --- testserver.host (HTTP Toolkit's test service, https://testserver.host/): badssl.com's cases on a server of today, which
+# speaks TLS 1.3, and TLS 1.2 with the extended master secret, so that the certificate checks are reached live (B-100) and the
+# handshake refusals of B-36 can be seen against a real server. Behaviours combine with `--` (cbc--tls-v1-2: CBC suites only,
+# and TLS 1.2 at most, so that TLS 1.3 cannot step in).
+ok                tls-v1-3.testserver.host
+ok-tls12          tls-v1-2.testserver.host
+refuse            expired.testserver.host
+refuse            wrong-host.testserver.host
+refuse            self-signed.testserver.host
+refuse            untrusted-root.testserver.host
+refuse            sha1-sig.testserver.host
+refuse-tls12      expired--tls-v1-2.testserver.host
+refuse-tls12      self-signed--tls-v1-2.testserver.host
+refuse-handshake  tls-v1-0.testserver.host
+refuse-handshake  tls-v1-1.testserver.host
+refuse-handshake  cbc--tls-v1-2.testserver.host
+refuse-handshake  static-rsa--tls-v1-2.testserver.host
+refuse-handshake  dh2048--tls-v1-2.testserver.host
+refuse-handshake  null-cipher--tls-v1-2.testserver.host
+# a server that sends only the leaf, and certificates the service may revoke with its own CA: written down
+info              incomplete-chain.testserver.host
+info              revoked.testserver.host
+info              rsa1024.testserver.host
+
+# --- must be refused, as a certificate error
+refuse-tls12  expired.badssl.com             no-ems
+refuse-tls12  wrong.host.badssl.com          no-ems
+refuse-tls12  self-signed.badssl.com         no-ems
+refuse-tls12  untrusted-root.badssl.com      no-ems
+refuse        expired-isrgrootx1.letsencrypt.org
+
+# --- written down only
+# revoked: the library checks what a server staples and what a CRL says (BACKLOG B-63, B-64 say what is missing)
+info          revoked.badssl.com             no-ems
+info    revoked-isrgrootx1.letsencrypt.org
+# a server that sends only the leaf (a browser fetches the intermediate; this library does not)
+info          incomplete-chain.badssl.com    no-ems
+# an intermediate signed with SHA-1
+info          sha1-intermediate.badssl.com   no-ems
+# unusual certificates
+info          no-common-name.badssl.com      no-ems
+info          no-subject.badssl.com          no-ems
+info          rsa8192.badssl.com             no-ems
+info          1000-sans.badssl.com           no-ems
+info          10000-sans.badssl.com          no-ems
+info          long-extended-subdomain-name-containing-many-letters-and-dashes.badssl.com no-ems
+info          pinning-test.badssl.com        no-ems
+# speaks TLS 1.2 only, on another port
+info          tls-v1-2.badssl.com:1012       no-ems

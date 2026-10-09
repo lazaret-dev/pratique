@@ -1,0 +1,5 @@
+marketplace.visualstudio.com *.gallerycdn.vsassets.io *.ga.lery.vsassets.io
+https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery
+Authorization: Bearer t.gallerycdn'vsassetslio/a
+/b
+https://a.b.gallerycdn.vsassets.io/c

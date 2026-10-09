@@ -1,0 +1,30 @@
+# pratique against ring, aws-lc-rs, RustCrypto and rustls on the same machine (BENCHMARKS.md, "Against other Rust
+# libraries"). Kept outside the zero-dependency crate, like fuzz/: this crate depends on the libraries it compares with.
+#
+#   sh make_certs.sh && cargo run --release
+[package]
+name = "pratique_compare"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+pratique = { path = "../.." }
+aes-gcm = "0.11.1"
+aws-lc-rs = "1.18.1"
+chacha20poly1305 = "0.11.0"
+ed25519-dalek = "3.0.0"
+libc = "0.2.190"
+p256 = "0.14.0"
+ring = "0.17.14"
+rsa = { version = "0.9.10", features = ["sha2"] }
+rustls = { version = "0.23.45", default-features = false, features = ["std", "tls12", "aws_lc_rs", "ring"] }
+rustls-pki-types = { version = "1.15.1", features = ["std", "alloc"] }
+sha2 = "0.11.0"
+x25519-dalek = { version = "3.0.0", features = ["static_secrets"] }
+
+[workspace]
+
+[[bin]]
+name = "compare"
+path = "src/main.rs"

@@ -1,0 +1,24 @@
+# build output
+/target*/
+/fuzz/target/
+/bench/compare/target/
+# made by bench/compare/make_certs.sh (includes a private key)
+/bench/compare/certs/
+# fuzz campaign output (corpus/ is kept)
+/fuzz/work/
+/fuzz/logs/
+/fuzz/logs.prev/
+/fuzz/artifacts/
+/fuzz/artifacts.prev/
+/fuzz/fuzz-results.tgz
+# what the Mac scripts write
+/native_report.txt
+/native_check_logs/
+/field_results/
+/field_results.tgz
+# never commit secrets
+.env
+.env.*
+!.env.example
+*.key
+.DS_Store

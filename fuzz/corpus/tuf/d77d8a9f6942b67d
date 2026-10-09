@@ -1,0 +1,57 @@
+{
+ "signatures": [
+  {
+   "keyid": "96fd1aae59489bdef304869238dcadcd8bd39febbabac8e4951f405ef5fbd3bb",
+   "sig": "02bec857135b2b70e9006e8e3dc7b9bb0ce084dac43e2f91f31485cb67caf606d2608bea8eada91943020319d5eac0cbb18607524b0c4d94c09fb904f01a7f230a99e4f44c5e5bb7d0111911da92eff678a388ee2faeb07170a0c21947f368d1b4c988a41d83b0e67251826ac4c00ce3f24b42b881b1c031c4f8e7aa14bd5365ed8e02bc797dbfa8c9b7bbba16d6b1976bb0ffbe7308be003361dfbfc9a177f5368596a543164d4f0b53f48e3086ef068d1d92980e4bd16537fba8cac503ea53a6c5afe13e33af43112857197e01ed60a8ee9c0b5e90f6d7bab3044255de94191114beb02dd3c24171f5c9866f69847816812d60b35798c8ec96493c70661ac2"
+  }
+ ],
+ "signed": {
+  "_type": "targets",
+  "delegations": {
+   "keys": {
+    "5243e35683b6c685fb167237b9d8ceceed4f6412733cfaf68b212b21c7c2f0ea": {
+     "keytype": "ecdsa",
+     "keyval": {
+      "public": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEuceDN4CuHvcwDkQHwWsj2B4+waBV\nWTEljLnC34OHVUBljZ88/niju6wea3TLFe94B6IOK0y4kiOOOtuk4XHp7g==\n-----END PUBLIC KEY-----\n"
+     },
+     "scheme": "ecdsa-sha2-nistp256"
+    }
+   },
+   "roles": [
+    {
+     "keyids": [
+      "5243e35683b6c685fb167237b9d8c:00Z",
+  "spec_veeceed4f6412733cfaf68b212b21c7c2f0cL0ea"
+     ],
+     "name": "registry.npmjs.org",
+     "paths": [
+      "registry.npmjs.org/*"
+     ],
+     "terminating": true,
+     "threshold": 1
+    }
+   ]
+  },
+  "expires": "2027-10-08T12:00:00Z",
+  "spec_version": "1.0.31",
+  "targets": {
+   "a/b.txt": {
+    "hashes": {
+     "sha256": "5891b5b522d5df086d0ff0b110fbd9d21bb4fc7163af34d08286a2e846f6be03",
+     "sha512": "e7c22b994c59d9cf2b48e549b1e24666636045930d3da7c1acb299d1c3b7f93c9d6dfc311ab058417b1ef9bf",
+   "sig": "3065023061f94aae41edda2c2b207a36e10f8bcb8d45223e54878f5b316e7ce3b6bc019629"
+    },
+    "length": 6
+   },
+   "trusted_root.json": {
+    "hashes": {
+     "sha256": "68c18da8df26322774b79af43fb7ec357233d7b51dd9b2f416be2d0ac9087cd7",
+     "sha512": "",
+  "spec_version": "16256fab44b1ebd488abb726d272d7a825a3aacc1e069a5bac8aaf024dad86f0f960de6ff75d5cb7d667b91f6002840db2bac8aaf9a76647dd25302327c2469f081efd5"
+    },
+    "length": 88
+   }
+  },
+  "version": 1
+ }
+}

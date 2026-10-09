@@ -1,0 +1,112 @@
+[package]
+name = "pratique"
+version = "0.1.0"
+edition = "2021"
+description = "A from-scratch HTTPS client for Rust with zero dependencies: TLS 1.3 (and 1.2), X.509 validation and HTTP/1.1, std only"
+license = "Apache-2.0"
+repository = "https://github.com/lazaret-dev/pratique"
+exclude = ["fuzz/", "target*/", "tools/"]
+
+[dependencies]
+
+[features]
+default = ["net"]
+# TLS, the HTTP client, sockets, OS randomness, the SIMD kernels and zeroizing of secrets: everything
+# that does I/O or needs `unsafe`. Without it (`default-features = false`) the crate is the pure
+# verification part (ASN.1, PEM, X.509 path validation, revocation checking, SHA-1/2, HMAC, RSA, ECDSA
+# and Ed25519 verification, signed notes, Merkle proofs, the Go checksum database check and decompression):
+# `#![forbid(unsafe_code)]`, no I/O, no threads, builds for wasm32. See "Features" in the README and
+# tools/check_features.sh.
+net = []
+# A TLS 1.3 SERVER (`tls::server`), with Ed25519 signing and a certificate writer, for tests and tools that need
+# a real peer for the client (keep-alive, streaming and HTTP/2 over TLS, interop checks). Experimental and not
+# for production: the signing is not constant-time and none of it has been reviewed. Off by default, so the
+# default build contains no server and no signing code. See src/tls/server.rs.
+server = ["net"]
+# Mozilla's root store for TLS servers, built in (`mozilla_roots::trust_store()`; roots/mozilla.pem, about 190 KB, made by
+# tools/gen_mozilla_roots.py from NSS's certdata.txt): for machines whose own CA bundle is missing or old. Pure: it
+# adds no I/O and works with or without `net`. Off by default; see src/mozilla_roots.rs.
+mozilla-roots = []
+
+[[example]]
+name = "async_get"
+required-features = ["net"]
+
+[[example]]
+name = "bench"
+required-features = ["net"]
+
+[[example]]
+name = "bench_net"
+required-features = ["server"]
+
+[[example]]
+name = "cms_verify"
+required-features = ["net"]
+
+[[example]]
+name = "fetch"
+required-features = ["net"]
+
+[[example]]
+name = "field_check"
+required-features = ["net"]
+
+[[example]]
+name = "quic_probe"
+required-features = ["net"]
+
+[[example]]
+name = "native_roots"
+required-features = ["net"]
+
+[[example]]
+name = "probe"
+required-features = ["net"]
+
+[[example]]
+name = "serve"
+required-features = ["server"]
+
+[[example]]
+name = "sumdb"
+required-features = ["net"]
+
+[[example]]
+name = "tuf_refresh"
+required-features = ["net"]
+
+[[test]]
+name = "interop_openssl"
+required-features = ["net"]
+
+[[test]]
+name = "system_roots"
+required-features = ["net"]
+
+[[test]]
+name = "native_roots"
+required-features = ["net"]
+
+[[test]]
+name = "mozilla_roots"
+required-features = ["mozilla-roots"]
+
+[[test]]
+name = "h2_client_interop"
+required-features = ["net"]
+
+[[test]]
+name = "h3_client_interop"
+required-features = ["net"]
+
+[lints.rust]
+# `--cfg pratique_portable` forces the portable (non-SIMD) ChaCha20 path; see src/crypto/chacha20poly1305.rs.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(pratique_portable)', 'cfg(pratique_fuzzing)'] }
+
+[profile.release]
+opt-level = 3
+debug = false
+
+[profile.test]
+opt-level = 2
