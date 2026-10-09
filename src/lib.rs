@@ -28,7 +28,9 @@
 //!   (`default-features = false`) the crate is only the pure part (ASN.1 and BER, PEM, X.509 path validation,
 //!   revocation checking, SHA-1/2, RSA, ECDSA and Ed25519 verification, CMS signatures, signed notes, Merkle
 //!   proofs, the checksum database check, Sigstore bundles and decompression), with `#![forbid(unsafe_code)]`, no I/O and no threads, and it
-//!   builds for `wasm32-unknown-unknown`.
+//!   builds for `wasm32-unknown-unknown`. `server` (off by default) adds a TLS 1.3 server with an HTTP/1.1 and HTTP/2
+//!   server on it, its runtime and ACME (`http::server`), and the scanning proxy for package registries (`proxy`); none
+//!   of it is to be relied on before the review of BACKLOG B-23.
 //!
 //! This crate has zero dependencies. It has not been audited; see README.
 
@@ -73,6 +75,9 @@ pub mod error;
 pub mod http;
 #[cfg(feature = "net")]
 pub mod native_roots;
+// The scanning proxy (B-78), on the server (behind `server`; not to be relied on yet).
+#[cfg(all(feature = "net", any(test, feature = "server")))]
+pub mod proxy;
 #[cfg(feature = "net")]
 pub mod quic;
 #[cfg(feature = "net")]

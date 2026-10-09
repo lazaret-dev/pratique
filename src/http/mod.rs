@@ -164,6 +164,8 @@ mod h3_transport;
 // a small HTTP/2 server for tests and tools: the same opt-in as `tls::server`
 #[cfg(any(test, feature = "server"))]
 pub mod h2_server;
+#[cfg(any(test, feature = "server"))]
+pub mod server;
 mod idle;
 pub(crate) mod parser;
 mod stream;
@@ -404,8 +406,30 @@ impl Proxy {
             return Err(Error::Http("unsupported proxy scheme".into()));
         }
         let port = if with_scheme.rsplit('/').next().map_or(false, |h| h.contains(':') && !h.ends_with(']')) { u.port } else { 8080 };
-        Ok(Proxy { host: u.host, port, auth: u.userinfo })
+        // the credentials as they are meant: `%40` is an `@` that the URL could not hold as it is
+        Ok(Proxy { host: u.host, port, auth: u.userinfo.map(|ui| percent_decoded(&ui)) })
     }
+}
+
+/// `s` with each `%XX` replaced by its byte (a `%` that does not start one is left as it is), as UTF-8 where it is.
+fn percent_decoded(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (b[i], hex) {
+            (b'%', Some(v)) => {
+                out.push(v);
+                i += 3;
+            }
+            (c, _) => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[derive(Clone)]
@@ -424,6 +448,8 @@ pub struct Client {
     total_timeout: Option<Duration>,
     pool: Option<Pool>,
     max_redirects: usize,
+    /// Whether redirects are followed at all: see [`Client::follow_redirects`].
+    follow_redirects: bool,
     user_agent: String,
     allow_insecure_http: bool,
     limits: Limits,
@@ -519,6 +545,7 @@ impl Client {
             total_timeout: None,
             pool: None,
             max_redirects: 10,
+            follow_redirects: true,
             user_agent: concat!("pratique/", env!("CARGO_PKG_VERSION")).to_string(),
             allow_insecure_http: false,
             limits: Limits::default(),
@@ -548,7 +575,7 @@ impl Client {
     }
 
     /// Limit for making a connection (default 10 s): resolving the host name and connecting, over all its addresses
-    /// (see [`connect`](crate::http::connect)).
+    /// (see [`connect`]).
     pub fn connect_timeout(mut self, t: Duration) -> Client {
         self.connect_timeout = t;
         self
@@ -556,15 +583,15 @@ impl Client {
 
     /// How long a host name's addresses are kept after a lookup (default [`connect::DEFAULT_DNS_TTL`], 30 s; zero keeps
     /// none). The system's resolver does not say how long a record may be kept, so this one time is used for all. The
-    /// cache is new, for this client and the clones made from it from now on (see [`connect`](crate::http::connect)).
+    /// cache is new, for this client and the clones made from it from now on (see [`connect`]).
     pub fn dns_cache(mut self, ttl: Duration) -> Client {
-        self.establish.resolver = Arc::new(connect::Resolver::new(ttl));
+        self.establish.resolver = Arc::new(self.establish.resolver.with_ttl(ttl));
         self
     }
 
     /// How long an attempt to connect to one of a host's addresses has before the next address is tried as well (RFC
     /// 8305, "Happy Eyeballs"; default [`connect::DEFAULT_ATTEMPT_DELAY`], 250 ms, kept between 10 ms and 2 s): what an
-    /// address that does not answer costs (see [`connect`](crate::http::connect)).
+    /// address that does not answer costs (see [`connect`]).
     pub fn connection_attempt_delay(mut self, delay: Duration) -> Client {
         self.establish.attempt_delay = delay.clamp(connect::MIN_ATTEMPT_DELAY, connect::MAX_ATTEMPT_DELAY);
         self
@@ -583,7 +610,7 @@ impl Client {
     }
 
     /// Lets this client's requests go through `scheduler` (and its limits on requests in flight, in all and per host, and
-    /// on bytes), which other clients, blocking or async, may share; see [`schedule`](crate::http::schedule).
+    /// on bytes), which other clients, blocking or async, may share; see [`schedule`].
     pub fn scheduler(mut self, scheduler: &Scheduler) -> Client {
         self.scheduler = Some(scheduler.clone());
         self
@@ -598,7 +625,7 @@ impl Client {
     /// Limit on the whole request, redirects included (default: none). The per-operation
     /// [`timeout`](Client::timeout) restarts on every read and write, so a server that sends one
     /// byte at a time can hold a request open indefinitely; this cannot be outlasted. Resolving a
-    /// host name counts too (the lookup runs on a thread of its own, see [`connect`](crate::http::connect)).
+    /// host name counts too (the lookup runs on a thread of its own, see [`connect`]).
     pub fn total_timeout(mut self, t: Duration) -> Client {
         self.total_timeout = Some(t);
         self
@@ -612,6 +639,21 @@ impl Client {
 
     pub fn max_redirects(mut self, n: usize) -> Client {
         self.max_redirects = n;
+        self
+    }
+
+    /// Whether redirects are followed (the default) or a 3xx is the answer, as a proxy passes it on: off, the response
+    /// to a request is the server's first, whatever its status.
+    pub fn follow_redirects(mut self, on: bool) -> Client {
+        self.follow_redirects = on;
+        self
+    }
+
+    /// The addresses of `host`, used instead of asking the system's resolver (as curl's `--resolve` does): for a test
+    /// server under a name of its own, or a name a local DNS does not know. For this client and the clones made from it
+    /// from now on.
+    pub fn resolve_host(mut self, host: &str, addrs: &[std::net::IpAddr]) -> Client {
+        self.establish.resolver = Arc::new(self.establish.resolver.with_fixed(host, addrs));
         self
     }
 
@@ -1434,6 +1476,9 @@ impl Client {
     /// Decides what a response means for the request: `Ok(true)` if `hop` now describes the
     /// redirected request to send next, `Ok(false)` if `resp` is the final answer.
     pub(crate) fn follow(&self, hop: &mut Hop, status: u16, headers: &[(String, String)], hops: &mut usize) -> Result<bool> {
+        if !self.follow_redirects {
+            return Ok(false);
+        }
         let location = if is_redirect(status) { headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("location")).map(|(_, v)| v.clone()) } else { None };
         let Some(location) = location else { return Ok(false) };
         if *hops >= self.max_redirects {
@@ -1881,6 +1926,18 @@ impl Client {
         }
         req.push_str("\r\n");
         req
+    }
+
+    /// A TCP connection to host:port for a tunnel of its own (the scanning proxy's): through the client's proxy, if it
+    /// has one for an `https` URL to that host, or straight there; the client's timeouts set on it.
+    #[cfg_attr(not(any(test, feature = "server")), allow(dead_code))]
+    pub(crate) fn tunnel(&self, host: &str, port: u16) -> Result<std::net::TcpStream> {
+        let url = Url::parse(&format!("https://{}:{port}/", if host.contains(':') { format!("[{host}]") } else { host.to_string() }))?;
+        let io = match self.proxy_for(&url)? {
+            Some(p) => self.proxy_tunnel(&p, host, port, None, None)?,
+            None => self.tcp_connect(host, port, None, None)?,
+        };
+        Ok(io.tcp)
     }
 
     /// Opens a CONNECT tunnel through `proxy` to host:port.

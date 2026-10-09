@@ -1,7 +1,7 @@
 //! SHA-256, SHA-384 and SHA-512 (FIPS 180-4).
 //!
 //! The block functions here are portable. Where the CPU has instructions for SHA-2 (ARMv8's SHA-256 and SHA-512, x86-64's
-//! SHA extensions), a build with `net` uses them instead: this file asks its parent once for [`Accel`], and the parent
+//! SHA extensions), a build with `net` uses them instead: this file asks its parent once for `Accel`, and the parent
 //! answers from `sha2_hw` (net builds, which check the instructions against these functions first) or with none (B-103).
 //! This file itself stays free of `unsafe` and of anything that names a CPU.
 

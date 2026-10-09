@@ -55,10 +55,11 @@ const MAX_COMPAT_CCS: u8 = 2;
 const MAX_WRITE: usize = 4 * MAX_PLAINTEXT;
 
 pub(super) fn alert_error(content: &[u8]) -> Error {
-    if content.len() == 2 {
-        Error::Alert(content[0], content[1])
-    } else {
-        Error::Tls("decode_error: malformed alert".into())
+    match content.len() {
+        2 => Error::Alert(content[0], content[1]),
+        // RFC 8446 section 5.4: an alert record with nothing in it is an unexpected_message
+        0 => Error::Tls("unexpected_message: empty alert record".into()),
+        _ => Error::Tls("decode_error: malformed alert".into()),
     }
 }
 
@@ -681,6 +682,10 @@ impl ClientConnection {
                     _ => return Err(Error::Tls("unexpected_message: non-handshake record during handshake".into())),
                 }
             } else {
+                // RFC 8446 section 5.1: no record of another type inside a handshake message split over records
+                if t != RT_HANDSHAKE && !self.hs_buf.is_empty() {
+                    return Err(Error::Tls("unexpected_message: a record of another type inside a handshake message".into()));
+                }
                 match t {
                     RT_APPLICATION_DATA => {
                         self.app_pos = start;
@@ -905,8 +910,12 @@ impl ClientConnection {
                     self.keep_ticket(ticket);
                 }
                 HS_KEY_UPDATE => {
-                    if msg.len() != 5 || msg[4] > 1 {
+                    if msg.len() != 5 {
                         return Err(Error::Tls("decode_error: malformed KeyUpdate".into()));
+                    }
+                    if msg[4] > 1 {
+                        // RFC 8446 section 4.6.3
+                        return Err(Error::Tls("illegal_parameter: a KeyUpdate that neither asks nor does not ask".into()));
                     }
                     if !self.hs_buf.is_empty() {
                         // RFC 8446 section 5.1: messages must not span a key change
@@ -1245,11 +1254,11 @@ mod tests {
             (err.to_string(), alerts[0].1[1])
         };
         let s = Suite::Aes128GcmSha256;
-        // an unknown request value, a wrong length either way
-        for bad in [vec![HS_KEY_UPDATE, 0, 0, 1, 2], vec![HS_KEY_UPDATE, 0, 0, 2, 0, 0], vec![HS_KEY_UPDATE, 0, 0, 0]] {
-            let (text, alert) = alert_for(s, &[bad.clone()]);
+        // an unknown request value (illegal_parameter, RFC 8446 section 4.6.3), a wrong length either way (decode_error)
+        for (bad, wanted) in [(vec![HS_KEY_UPDATE, 0, 0, 1, 2], 47), (vec![HS_KEY_UPDATE, 0, 0, 2, 0, 0], 50), (vec![HS_KEY_UPDATE, 0, 0, 0], 50)] {
+            let (text, alert) = alert_for(s, std::slice::from_ref(&bad));
             assert!(text.contains("KeyUpdate"), "{:?}: {}", bad, text);
-            assert_eq!(alert, 50, "decode_error for {:?}", bad);
+            assert_eq!(alert, wanted, "{:?}", bad);
         }
         // another handshake message in the same record, after the KeyUpdate (section 5.1)
         let (text, alert) = alert_for(s, &[vec![HS_KEY_UPDATE, 0, 0, 1, 0, HS_KEY_UPDATE, 0, 0, 1, 0]]);
@@ -1258,6 +1267,17 @@ mod tests {
         // a handshake message that is not allowed after the handshake
         let (_, alert) = alert_for(s, &[vec![HS_FINISHED, 0, 0, 1, 0]]);
         assert_eq!(alert, 10);
+    }
+
+    #[test]
+    fn a_handshake_message_split_across_records_may_not_have_other_records_between() {
+        // RFC 8446 section 5.1
+        let (mut c, mut peer) = Peer::connect(Suite::Aes128GcmSha256);
+        let first = peer.record(RT_HANDSHAKE, &[HS_KEY_UPDATE, 0]);
+        let between = peer.record(RT_APPLICATION_DATA, b"between");
+        let second = peer.record(RT_HANDSHAKE, &[0, 1, 0]);
+        let err = feed(&mut c, &[first, between, second].concat()).unwrap_err().to_string();
+        assert!(err.contains("inside a handshake message"), "{err}");
     }
 
     #[test]

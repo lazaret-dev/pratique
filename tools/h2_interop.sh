@@ -1,10 +1,15 @@
 #!/bin/sh
-# Checks pratique's HTTP/2 server (src/http/h2_server.rs, over its TLS 1.3 server, ALPN h2) against clients that
-# are not ours: curl (nghttp2), Go's net/http (tools/h2_interop.go) and python-h2 (tools/h2_interop.py). Each check
-# starts the `serve` example with some settings, connects, and compares what came back with what the server must
-# have sent. Also reads the server's own log: a request it found fault with is reported there.
+# Checks pratique's HTTP/2 servers against clients that are not ours: curl (nghttp2), Go's net/http
+# (tools/h2_interop.go) and python-h2 (tools/h2_interop.py). Each check starts the `serve` example with some settings,
+# connects, and compares what came back with what the server must have sent. Also reads the server's own log: a
+# request it found fault with is reported there.
+#
+# Every check runs twice: against the production server (src/http/server, B-111), and against the test server the
+# client's tests script (src/http/h2_server.rs, `serve server=test`). The production server never pushes, so the
+# PUSH_PROMISE checks are the test server's alone.
 #
 #   sh tools/h2_interop.sh            all the checks that the installed tools allow (skips the others)
+#   H2SPEC=/path/to/h2spec sh tools/h2_interop.sh   with h2spec too, if it is not on the PATH
 #   RELEASE=1 sh tools/h2_interop.sh  build with --release first
 #
 # python-h2 is found if `import h2` works; PYTHONPATH may point at a directory that has h2, hpack and hyperframe.
@@ -31,7 +36,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 start_server() {
     [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null
     : > "$WORK/log"
-    "$SERVE" ca="$WORK/root.pem" alpn=h2,http/1.1 "$@" > "$WORK/log" 2>&1 &
+    "$SERVE" ca="$WORK/root.pem" alpn=h2,http/1.1 server=$MODE "$@" > "$WORK/log" 2>&1 &
     SERVER_PID=$!
     n=0
     while ! grep -q '^listening' "$WORK/log"; do
@@ -42,14 +47,17 @@ start_server() {
     CA="$WORK/root.pem"
 }
 
-ok() { passed=$((passed + 1)); echo "ok   $*"; }
-bad() { fail=1; echo "FAIL $*"; echo "---- server log"; sed 's/^/     /' "$WORK/log" | tail -40; echo "----"; }
+ok() { passed=$((passed + 1)); echo "ok   [$MODE] $*"; }
+bad() { fail=1; echo "FAIL [$MODE] $*"; echo "---- server log"; sed 's/^/     /' "$WORK/log" | tail -40; echo "----"; }
 
 # the server's log must not say that it found fault with anything (the pages /reset, /goaway, /push are on purpose)
 log_clean() {
     ! grep -q 'complain\|fault' "$WORK/log"
 }
 
+for MODE in production test; do
+if [ "$MODE" = production ]; then NOPUSH_GO="-no-push"; NOPUSH_PY="--no-push"; else NOPUSH_GO=""; NOPUSH_PY=""; fi
+echo "======== the $MODE server"
 # ------------------------------------------------------------------------------------------------------ curl
 if have curl && curl --version | grep -q HTTP2; then
     echo "== curl ($(curl --version | head -1 | cut -d' ' -f1-2), $(curl --version | grep -o 'nghttp2/[0-9.]*'))"
@@ -85,8 +93,10 @@ if have curl && curl --version | grep -q HTTP2; then
     [ $? = 92 ] && ok "curl: RST_STREAM INTERNAL_ERROR is exit 92" || bad "curl /reset: $(cat "$WORK/err")"
     out=$(curl -sS --http2 --cacert "$CA" $R "$U/goaway" "$U/size/10" -o /dev/null -o /dev/null -w '%{http_code} ' 2>&1)
     [ "$out" = "200 200 " ] && ok "curl: GOAWAY after an answer, the next request goes to a new connection" || bad "curl goaway: $out"
-    curl -sS --http2 --cacert "$CA" $R "$U/push" -o /dev/null 2>/dev/null
-    [ $? != 0 ] && ok "curl: a PUSH_PROMISE it did not ask for is an error" || bad "curl accepted a PUSH_PROMISE"
+    if [ "$MODE" = test ]; then
+        curl -sS --http2 --cacert "$CA" $R "$U/push" -o /dev/null 2>/dev/null
+        [ $? != 0 ] && ok "curl: a PUSH_PROMISE it did not ask for is an error" || bad "curl accepted a PUSH_PROMISE"
+    fi
     log_clean && ok "curl: the server found nothing to complain of" || bad "the server complained"
     # records of 100 bytes: HTTP/2 frames split across TLS records
     start_server fragment=100
@@ -106,7 +116,7 @@ if have go; then
     go build -o "$WORK/h2_go" tools/h2_interop.go 2>"$WORK/err" || { cat "$WORK/err"; exit 2; }
     for opts in "" "fragment=100" "rekey=5" "suite=chacha group=p256" "suite=aes256 tickets=0"; do
         start_server $opts
-        if timeout 120 "$WORK/h2_go" -ca "$CA" -addr "127.0.0.1:$PORT" > "$WORK/go.out" 2>&1; then
+        if timeout 120 "$WORK/h2_go" -ca "$CA" -addr "127.0.0.1:$PORT" $NOPUSH_GO > "$WORK/go.out" 2>&1; then
             ok "go net/http HTTP/2 client with [$opts] ($(grep -c '^ok' "$WORK/go.out") checks)"
         else
             echo "---- go output"; cat "$WORK/go.out"; bad "go with [$opts]"
@@ -121,7 +131,7 @@ if have python3 && python3 -c 'import h2.connection' 2>/dev/null; then
     echo "== python-h2 ($(python3 -c 'import h2; print(h2.__version__)'))"
     for opts in "" "fragment=100" "rekey=5"; do
         start_server $opts
-        if timeout 120 python3 tools/h2_interop.py --ca "$CA" --addr "127.0.0.1:$PORT" > "$WORK/py.out" 2>&1; then
+        if timeout 120 python3 tools/h2_interop.py --ca "$CA" --addr "127.0.0.1:$PORT" $NOPUSH_PY > "$WORK/py.out" 2>&1; then
             ok "python-h2 client with [$opts] ($(grep -c '^ok' "$WORK/py.out") checks)"
         else
             echo "---- python output"; cat "$WORK/py.out"; bad "python-h2 with [$opts]"
@@ -129,6 +139,26 @@ if have python3 && python3 -c 'import h2.connection' 2>/dev/null; then
     done
 else
     skipped="$skipped python-h2"
+fi
+done
+
+# --------------------------------------------------------------------------------------------------- h2spec
+# The HTTP/2 conformance suite (github.com/summerwind/h2spec), against the production server over plain TCP with prior
+# knowledge (h2spec's client offers only TLS 1.2, and the server speaks TLS 1.3), in its normal and its strict mode.
+H2SPEC=${H2SPEC:-$(command -v h2spec || true)}
+MODE=production
+if [ -n "$H2SPEC" ] && [ -x "$H2SPEC" ]; then
+    echo "== h2spec ($("$H2SPEC" --version 2>&1 | head -1))"
+    for strict in "" "--strict"; do
+        start_server plain=h2
+        out=$(timeout 170 "$H2SPEC" -h 127.0.0.1 -p "$PORT" -o 3 $strict 2>&1 | tail -1)
+        case $out in
+            *" 0 failed") ok "h2spec $strict: $out" ;;
+            *) bad "h2spec $strict: $out" ;;
+        esac
+    done
+else
+    skipped="$skipped h2spec"
 fi
 
 echo

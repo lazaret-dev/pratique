@@ -12,8 +12,10 @@
 //! TLS 1.2, for servers that cannot do 1.3 (the npm registry was one, in 2026), with only what has no known weakness of its own:
 //! ECDHE, AEAD suites, the extended master secret required, the downgrade protection of TLS 1.3, no renegotiation, no
 //! resumption, and the same certificate checks (see [`tls12`]). [`ClientConfig::min_version`] turns it off.
+//! A client certificate, in TLS 1.3, when the server asks for one ([`ClientConfig::with_client_certificate`]).
 //! Not supported: TLS 1.1 and earlier, 0-RTT (early data, which can be replayed), resumption in TLS 1.2 and over QUIC,
-//! client certificates (an empty Certificate is sent if the server asks), post-quantum or finite-field key exchange groups.
+//! client certificates in TLS 1.2 (an empty Certificate is sent if the server asks), post-quantum or finite-field key
+//! exchange groups.
 //! Revocation: a stapled OCSP response is requested and checked by default, CRLs can be supplied or
 //! fetched, and the policy is in [`ClientConfig::revocation`] (see [`crate::revocation`]).
 
@@ -33,6 +35,8 @@ pub mod certs;
 pub mod pki;
 #[cfg(any(test, feature = "server"))]
 pub mod server;
+#[cfg(any(test, feature = "server"))]
+pub mod server_split;
 #[cfg(any(test, feature = "server"))]
 pub mod tickets;
 #[cfg(test)]

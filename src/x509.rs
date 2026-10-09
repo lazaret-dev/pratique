@@ -1348,6 +1348,11 @@ impl TrustStore {
         self.roots.is_empty()
     }
 
+    /// The trust anchors, DER, in the order they were added (to write them out as a bundle for other software).
+    pub fn certificates(&self) -> impl Iterator<Item = &[u8]> {
+        self.roots.iter().map(|r| r.der.as_slice())
+    }
+
     fn push_root(&mut self, der: &[u8], subject: &[u8], parsed: OnceLock<Option<Certificate>>) {
         let idx = self.roots.len();
         self.roots.push(Root { der: der.to_vec(), parsed, distrust_after: None });

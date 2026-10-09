@@ -192,6 +192,7 @@ def main():
     ap.add_argument("--ca", required=True)
     ap.add_argument("--addr", required=True)
     ap.add_argument("--name", default="localhost")
+    ap.add_argument("--no-push", action="store_true", help="skip the PUSH_PROMISE checks (the production server never pushes)")
     a = ap.parse_args()
 
     c = Conn(a.ca, a.addr, a.name)
@@ -300,23 +301,24 @@ def main():
     check(ok and r.body == b"going away\n" and c.goaway is not None and c.goaway[0] == 0, f"/goaway: answer, then GOAWAY {c.goaway}")
     c.close()
 
-    # PUSH_PROMISE to a client that has push disabled: python-h2 raises ProtocolError on it.
-    c2 = Conn(a.ca, a.addr, a.name, enable_push=0)
-    r, ok = c2.fetch("/size/5")          # the server has acknowledged our SETTINGS by now
-    sid = c2.request("/push")
-    raised = False
-    try:
-        c2.wait([sid], timeout=10)
-    except h2.exceptions.ProtocolError:
-        raised = True
-    check(raised, f"PUSH_PROMISE reaches a client that disabled push: python-h2 raises ProtocolError={raised}")
-    c2.close()
-    # ... and to one that did not, it is a well-formed PUSH_PROMISE with the promised request in it
-    c2 = Conn(a.ca, a.addr, a.name)
-    sid = c2.request("/push")
-    ok = c2.wait([sid], timeout=10)
-    check(ok and c2.results[sid].pushed == [2] and c2.results[sid].body == b"with a promise\n", f"PUSH_PROMISE to a client that allows it: pushed streams {c2.results[sid].pushed}")
-    c2.close()
+    if not a.no_push:
+        # PUSH_PROMISE to a client that has push disabled: python-h2 raises ProtocolError on it.
+        c2 = Conn(a.ca, a.addr, a.name, enable_push=0)
+        r, ok = c2.fetch("/size/5")          # the server has acknowledged our SETTINGS by now
+        sid = c2.request("/push")
+        raised = False
+        try:
+            c2.wait([sid], timeout=10)
+        except h2.exceptions.ProtocolError:
+            raised = True
+        check(raised, f"PUSH_PROMISE reaches a client that disabled push: python-h2 raises ProtocolError={raised}")
+        c2.close()
+        # ... and to one that did not, it is a well-formed PUSH_PROMISE with the promised request in it
+        c2 = Conn(a.ca, a.addr, a.name)
+        sid = c2.request("/push")
+        ok = c2.wait([sid], timeout=10)
+        check(ok and c2.results[sid].pushed == [2] and c2.results[sid].body == b"with a promise\n", f"PUSH_PROMISE to a client that allows it: pushed streams {c2.results[sid].pushed}")
+        c2.close()
 
     # Small windows on our side: the server has to wait for WINDOW_UPDATE.
     c3 = Conn(a.ca, a.addr, a.name, initial_window=1000, max_frame=16384)

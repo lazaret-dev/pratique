@@ -38,7 +38,16 @@ warning"). `SECURITY_REVIEW.md` is the brief for that review.
 The TLS server behind the `server` feature is being made ready for production (BACKLOG B-109 to B-114) and is not
 for production yet. Its signing (`pratique::sign`: ECDSA, Ed25519 and RSA, constant time; B-109) is part of the `net`
 build; a timing leak in it, or a key file it reads wrongly, is a security problem. So is a session ticket that can be
-forged, read or used for another name, or a client certificate the server takes without checking it (B-110). Reports about the server are welcome.
+forged, read or used for another name, or a client certificate the server takes without checking it (B-110); a request the
+HTTP server frames differently from what RFC 9112 says (request smuggling), or an HTTP/2 client that can make it use memory or
+time out of proportion to what it sends (B-111); a client that can hold a connection, a thread or memory past the limits and
+timeouts of the runtime (B-112); and in ACME (B-113), a challenge certificate served to anything but an ACME validator, an
+account or certificate key written where others can read it, a certificate taken up that is not for the names ordered or
+not for the key made for it, or an answer from a CA that can make the client do more than fail. The scanning proxy
+(`pratique::proxy`, B-78) has a threat model of its own, `PROXY_THREAT_MODEL.md`: a certificate its CA signs (or could be
+made to sign) that a client accepts for a name other than the hosts it intercepts, a response it passes on from a host
+whose certificate did not verify, or a body the scanner refused (or that was too large to inspect) that reaches the client
+in whole or in part, is a security problem. Reports about the server are welcome.
 
 ## Versions
 

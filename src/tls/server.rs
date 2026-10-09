@@ -20,11 +20,13 @@
 //!   [`TrustStore`] for client authentication and the CertificateVerify, and gives the chain to the application
 //!   ([`ServerStream::peer_certificates`]);
 //! * the edges (B-110): early data, never accepted, is skipped up to 64 KiB and refused past that; floods of
-//!   KeyUpdate messages or empty records are refused.
+//!   KeyUpdate messages or empty records are refused;
+//! * conformance (B-114): tlsfuzzer's TLS 1.3 scripts pass (`tools/tlsfuzzer.sh`, which names the tests for what the
+//!   server does not do), after twelve fixes to alerts, lengths and what a second ClientHello may carry.
 //!
-//! Still a test server's shortcut: no limits or timeouts of its own (a slow client holds a thread), no connection
-//! handling beyond one blocking stream; that is the runtime, B-112. The code has had no independent review (B-23's
-//! phase 3).
+//! A [`ServerStream`] has no limits or timeouts of its own: the runtime (`http::server::ServerBuilder`, B-112) gives each
+//! connection's socket deadlines (the handshake's among them) and bounds the connections. The code has had no
+//! independent review (B-23's phase 3).
 //!
 //! It is the same shape as the client: [`ServerConnection`] is the protocol as a state machine that does no
 //! I/O (bytes in with [`receive`](ServerConnection::receive), bytes out of [`output`](ServerConnection::output)),
@@ -32,12 +34,12 @@
 //!
 //! What it does: ClientHello parsing with the checks that matter to a server (versions, duplicate
 //! extensions, the legacy fields), X25519, P-256 and P-384 key exchange with a HelloRetryRequest when the
-//! client's share is not for a group it takes, the three TLS 1.3 cipher suites, ALPN, an optional stapled
-//! OCSP response, NewSessionTicket messages (resumable with PSK and a fresh key exchange, `psk_dhe_ke`),
-//! KeyUpdate in both directions, and close_notify. What it shares with the client: the key schedule and the
-//! record cipher (`suite.rs`), the message constants and the CertificateVerify content (`messages.rs`); the
-//! record layer around them (framing, fragmentation, buffering) is its own, so that a mistake there is not
-//! made the same way on both ends of a test.
+//! client's share is not for a group it takes, the three TLS 1.3 cipher suites, ALPN (and `acme-tls/1` for ACME's
+//! TLS-ALPN-01 challenge certificates, B-113), an optional stapled OCSP response, NewSessionTicket messages
+//! (resumable with PSK and a fresh key exchange, `psk_dhe_ke`), KeyUpdate in both directions, and close_notify. What
+//! it shares with the client: the key schedule and the record cipher (`suite.rs`), the message constants and the
+//! CertificateVerify content (`messages.rs`); the record layer around them (framing, fragmentation, buffering) is its
+//! own, so that a mistake there is not made the same way on both ends of a test.
 
 use super::certs::{CertStore, CertifiedKey, ClientHelloInfo, ResolvesServerCert};
 use super::messages::*;
@@ -61,11 +63,14 @@ use std::sync::Arc;
 /// RFC 8446 section 4.2.10: the client would send 0-RTT data. Only the server reads it (the client never offers
 /// early data), so it lives here rather than in `messages`, which the default build compiles without the server.
 pub(crate) const EXT_EARLY_DATA: u16 = 42;
+
+/// The ALPN protocol of ACME's TLS-ALPN-01 challenge (RFC 8737 section 6.2).
+pub const ACME_TLS_1: &[u8] = b"acme-tls/1";
 const MAX_HANDSHAKE_MESSAGE: usize = 1 << 18;
 const MAX_CIPHERTEXT_RECORD: usize = MAX_PLAINTEXT + 256;
 /// What one call to `write_plaintext` takes: four full records.
 const MAX_WRITE: usize = 4 * MAX_PLAINTEXT;
-const MAX_COMPAT_CCS: u8 = 2;
+const MAX_COMPAT_CCS: u8 = 1;
 /// Records of early data a client sends although this server never accepts it (RFC 8446 section 4.2.10), skipped up
 /// to this many bytes; more is an error.
 pub(crate) const MAX_EARLY_DATA_SKIP: usize = 1 << 16;
@@ -277,10 +282,11 @@ fn bad(msg: &str) -> Error {
 }
 
 fn alert_error(content: &[u8]) -> Error {
-    if content.len() == 2 {
-        Error::Alert(content[0], content[1])
-    } else {
-        bad("malformed alert")
+    match content.len() {
+        2 => Error::Alert(content[0], content[1]),
+        // RFC 8446 section 5.4: an alert record with nothing in it is an unexpected_message
+        0 => Error::Tls("unexpected_message: empty alert record".into()),
+        _ => bad("malformed alert"),
     }
 }
 
@@ -314,6 +320,7 @@ fn alert_description(err: &Error) -> Option<u8> {
 
 /// What the server needs from a ClientHello.
 struct Hello {
+    legacy_version: u16,
     random: [u8; 32],
     session_id: Vec<u8>,
     cipher_suites: Vec<u16>,
@@ -321,6 +328,9 @@ struct Hello {
     versions: Vec<u16>,
     groups: Vec<u16>,
     shares: Vec<(u16, Vec<u8>)>,
+    /// the extensions `supported_groups` and `key_share` are there (empty or not)
+    has_groups: bool,
+    has_key_share: bool,
     signature_algorithms: Option<Vec<u16>>,
     signature_algorithms_cert: Option<Vec<u16>>,
     alpn: Option<Vec<Vec<u8>>>,
@@ -345,7 +355,7 @@ fn u16_list(data: &[u8], what: &str) -> Result<Vec<u16>> {
 /// Parses the body of a ClientHello (RFC 8446 section 4.1.2).
 fn parse_hello(body: &[u8]) -> Result<Hello> {
     let mut r = Reader::new(body);
-    let _legacy_version = r.u16().ok_or_else(|| bad("ClientHello version"))?;
+    let legacy_version = r.u16().ok_or_else(|| bad("ClientHello version"))?;
     let random: [u8; 32] = r.take(32).and_then(|b| <[u8; 32]>::try_from(b).ok()).ok_or_else(|| bad("ClientHello random"))?;
     let session_id = r.vec8().ok_or_else(|| bad("ClientHello session id"))?.to_vec();
     if session_id.len() > 32 {
@@ -365,6 +375,7 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
         return Err(bad("trailing data in ClientHello"));
     }
     let mut hello = Hello {
+        legacy_version,
         random,
         session_id,
         cipher_suites,
@@ -372,6 +383,8 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
         versions: Vec::new(),
         groups: Vec::new(),
         shares: Vec::new(),
+        has_groups: false,
+        has_key_share: false,
         signature_algorithms: None,
         signature_algorithms_cert: None,
         alpn: None,
@@ -493,6 +506,8 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
             _ => {} // a server ignores extensions it does not know
         }
     }
+    hello.has_groups = seen.contains(&EXT_SUPPORTED_GROUPS);
+    hello.has_key_share = seen.contains(&EXT_KEY_SHARE);
     Ok(hello)
 }
 
@@ -949,6 +964,10 @@ impl ServerConnection {
                 return Ok(());
             }
             let Some((record_type, content)) = self.next_record()? else { return Ok(()) };
+            // RFC 8446 section 5.1: no record of another type inside a handshake message split over records
+            if record_type != RT_HANDSHAKE && !self.hs_buf.is_empty() {
+                return Err(Error::Tls("unexpected_message: a record of another type inside a handshake message".into()));
+            }
             if self.established {
                 match record_type {
                     RT_APPLICATION_DATA if content.is_empty() => {
@@ -1067,6 +1086,8 @@ impl ServerConnection {
                     }
                     return Ok(Some((t, content)));
                 }
+                // a client that cannot read our flight (it does not take our certificate, say) may say so in the clear
+                (Some(_), RT_ALERT) if !self.established && payload.len() == 2 => return Ok(Some((RT_ALERT, payload.to_vec()))),
                 (Some(_), _) => return Err(Error::Tls("unexpected_message: unprotected record after keys were established".into())),
                 (None, RT_HANDSHAKE) | (None, RT_ALERT) => return Ok(Some((record_type, payload.to_vec()))),
                 (None, _) => return Err(Error::Tls("unexpected_message: unexpected record type".into())),
@@ -1079,6 +1100,10 @@ impl ServerConnection {
             return Ok(None);
         }
         let len = ((self.hs_buf[1] as usize) << 16) | ((self.hs_buf[2] as usize) << 8) | self.hs_buf[3] as usize;
+        // a Finished is as long as a hash: one that says it is longer is a decode_error at once, before its bytes come
+        if self.hs_buf[0] == HS_FINISHED && len > 64 {
+            return Err(Error::Tls("decode_error: a Finished longer than any hash".into()));
+        }
         if len > MAX_HANDSHAKE_MESSAGE {
             return Err(Error::Tls("illegal_parameter: handshake message too large".into()));
         }
@@ -1117,6 +1142,14 @@ impl ServerConnection {
         if !hello.versions.contains(&VERSION_TLS13) {
             return Err(Error::Tls("protocol_version: the client does not offer TLS 1.3 (this server speaks TLS 1.3 only)".into()));
         }
+        // legacy_version is 0x0303 from a TLS 1.3 client; SSL 3.0 or older there is refused, as OpenSSL does
+        if hello.legacy_version < 0x0301 {
+            return Err(Error::Tls("protocol_version: legacy_version is SSL 3.0 or older".into()));
+        }
+        // RFC 8446 section 9.2: supported_groups and key_share go together, and without a pre_shared_key both are needed
+        if hello.has_groups != hello.has_key_share || (!hello.has_groups && hello.psk.is_none()) {
+            return Err(Error::Tls("missing_extension: supported_groups and key_share are not both there".into()));
+        }
         let config = self.config.clone();
         let suite = config
             .suites
@@ -1143,8 +1176,13 @@ impl ServerConnection {
             }));
         };
         hs.cert = Some(cert);
-        if hello.early_data {
-            self.skip_early = MAX_EARLY_DATA_SKIP;
+        // early data (never accepted) is skipped: after a HelloRetryRequest only until the second ClientHello, which may
+        // not offer it again (RFC 8446 section 4.2.10); a record that does not open after that is an error
+        match (hello.early_data, matches!(hs.stage, Stage::RetriedHello)) {
+            (true, true) => return Err(Error::Tls("illegal_parameter: early_data in the second ClientHello".into())),
+            (true, false) => self.skip_early = MAX_EARLY_DATA_SKIP,
+            (false, true) => self.skip_early = 0,
+            (false, false) => {}
         }
 
         // the second ClientHello must be the first with a new key share
@@ -1158,6 +1196,12 @@ impl ServerConnection {
             }
         }
 
+        // a share for a group of ours that supported_groups does not list (RFC 8446 section 4.2.8: MAY be refused);
+        // checked, as OpenSSL does, for the groups taken here alone, so that a share for one unknown here (GREASE) is
+        // passed over
+        if let Some((g, _)) = hello.shares.iter().find(|(g, _)| config.groups.contains(g) && !hello.groups.contains(g)) {
+            return Err(Error::Tls(format!("illegal_parameter: a key share for group {g:#06x}, which supported_groups does not list")));
+        }
         // the key share: the first group of ours that the client sent a share for
         let share = config.groups.iter().find_map(|g| hello.shares.iter().find(|(sg, _)| sg == g));
         let Some((group, client_public)) = share else {
@@ -1170,8 +1214,13 @@ impl ServerConnection {
             return self.send_retry(hs, msg, &hello, suite, wanted);
         };
 
-        // ALPN
+        // ALPN; a TLS-ALPN-01 challenge certificate (RFC 8737) goes with `acme-tls/1` and nothing else
+        let acme_challenge = hs.cert.as_ref().is_some_and(|c| c.is_acme_challenge());
         let alpn = match &hello.alpn {
+            Some(offered) if acme_challenge && offered.iter().any(|p| p == ACME_TLS_1) => Some(ACME_TLS_1.to_vec()),
+            _ if acme_challenge => {
+                return Err(Error::Tls("no_application_protocol: a TLS-ALPN-01 challenge certificate is only for a client that offers acme-tls/1".into()))
+            }
             Some(offered) if !config.alpn_protocols.is_empty() => {
                 match config.alpn_protocols.iter().find(|p| offered.contains(p)) {
                     Some(p) => Some(p.clone()),
@@ -1189,7 +1238,7 @@ impl ServerConnection {
         // still verifies; resumed with a fresh key exchange. Its binder must then be right (RFC 8446 section 4.2.11.2: a
         // wrong one ends the handshake). Any other ticket means a full handshake.
         let mut psk = None;
-        if let (Some((id, binder, binders_len)), true, Some(keys)) = (&hello.psk, hello.psk_dhe_ke, &config.ticket_keys) {
+        if let (Some((id, binder, binders_len)), true, Some(keys), false) = (&hello.psk, hello.psk_dhe_ke, &config.ticket_keys, acme_challenge) {
             let state = keys.open(id).and_then(|plain| TicketState::decode(&plain));
             let now = sys::now_unix();
             let usable = state.filter(|st| {
@@ -1458,8 +1507,8 @@ impl ServerConnection {
         let alg = hs.suite.hash();
         let content = client_certificate_verify_content(&alg.digest(&hs.transcript));
         let leaf = hs.client_leaf.as_ref().ok_or_else(|| Error::Tls("internal: no client certificate".into()))?;
-        super::signature::verify_tls13_signature(leaf, scheme, &content, &signature)
-            .map_err(|e| Error::Tls(format!("decrypt_error: the client's CertificateVerify: {e}")))?;
+        // (illegal_parameter for a scheme that does not go with the key, decrypt_error for a signature that is wrong)
+        super::signature::verify_tls13_signature(leaf, scheme, &content, &signature)?;
         hs.transcript.extend_from_slice(msg);
         hs.stage = Stage::ClientFinished;
         Ok(())
@@ -1467,6 +1516,9 @@ impl ServerConnection {
 
     fn on_client_finished(&mut self, hs: &mut Handshake, msg: &[u8]) -> Result<()> {
         let alg = hs.suite.hash();
+        if msg.len() - 4 != alg.output_len() {
+            return Err(Error::Tls("decode_error: the client Finished is not the length of the hash".into()));
+        }
         let expected = hmac(alg, &hs.client_finished_key, &alg.digest(&hs.transcript));
         if !ct_eq(&expected, &msg[4..]) {
             return Err(Error::Tls("decrypt_error: client Finished MAC is invalid".into()));
@@ -1486,10 +1538,12 @@ impl ServerConnection {
         hs.transcript.extend_from_slice(msg);
         let res_master = Zeroizing::new(derive_secret(alg, &hs.master_secret, "res master", &alg.digest(&hs.transcript)));
         self.resumption_secret = Some((hs.suite, res_master));
+        // no tickets on a TLS-ALPN-01 validation connection, which carries nothing after the handshake
+        let tickets = if self.alpn.as_deref() == Some(ACME_TLS_1) { 0 } else { self.config.tickets };
         if self.config.tickets_after_first_write {
-            self.late_tickets = self.config.tickets;
+            self.late_tickets = tickets;
         } else {
-            self.send_session_tickets(self.config.tickets)?;
+            self.send_session_tickets(tickets)?;
         }
         Ok(())
     }
@@ -1498,8 +1552,12 @@ impl ServerConnection {
         while let Some(msg) = self.take_handshake_message()? {
             match msg[0] {
                 HS_KEY_UPDATE => {
-                    if msg.len() != 5 || msg[4] > 1 {
+                    if msg.len() != 5 {
                         return Err(bad("malformed KeyUpdate"));
+                    }
+                    if msg[4] > 1 {
+                        // RFC 8446 section 4.6.3
+                        return Err(Error::Tls("illegal_parameter: a KeyUpdate that neither asks nor does not ask".into()));
                     }
                     self.key_updates_in_a_row += 1;
                     if self.key_updates_in_a_row > MAX_KEY_UPDATES_IN_A_ROW {
@@ -1632,6 +1690,21 @@ impl<S: Read + Write> ServerStream<S> {
     /// The connection state machine, for tests that steer it (KeyUpdate, tickets).
     pub fn connection_mut(&mut self) -> &mut ServerConnection {
         &mut self.conn
+    }
+
+    /// The connection and two handles to the transport, for [`split`](ServerStream::split). What is queued is sent
+    /// first; the stream left behind holds a connection that never started, so dropping it sends nothing.
+    pub(super) fn into_parts(mut self) -> io::Result<(ServerConnection, S, S)>
+    where
+        S: super::split::Duplex,
+    {
+        self.send_output()?;
+        self.io.flush()?;
+        let reader = self.io.duplicate()?;
+        let writer = self.io.duplicate()?;
+        let config = self.conn.config.clone();
+        let conn = std::mem::replace(&mut self.conn, ServerConnection::new(config));
+        Ok((conn, reader, writer))
     }
 
     /// Sends what the connection has queued (after a call that queued something directly).

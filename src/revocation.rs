@@ -589,6 +589,12 @@ pub fn ocsp_response_valid_until(response: &[u8]) -> Option<i64> {
     }
 }
 
+/// Whether `response` (DER) is a good, current OCSP answer about `cert` from its issuer `issuer` (or a responder the
+/// issuer authorized), signed and in its window at `now`: what a server checks before it staples a response.
+pub fn ocsp_response_is_good(response: &[u8], cert: &Certificate, issuer: &Certificate, now: i64) -> bool {
+    matches!(check_ocsp(response, cert, issuer, now), Verdict::Good)
+}
+
 /// Decides what the OCSP response `response` (DER) says about `cert`, whose issuer is `issuer`.
 fn check_ocsp(response: &[u8], cert: &Certificate, issuer: &Certificate, now: i64) -> Verdict {
     match check_ocsp_inner(response, cert, issuer, now) {

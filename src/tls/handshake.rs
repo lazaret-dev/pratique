@@ -498,7 +498,9 @@ impl Handshake {
                     }
                     leaf
                 } else {
-                    Certificate::from_der(&chain[0])?
+                    // nothing is verified, so nothing is refused for an extension it does not know either (an ACME
+                    // validator reads a TLS-ALPN-01 challenge certificate, whose acmeIdentifier extension is critical)
+                    Certificate::parse(&chain[0])?
                 });
                 events.push(Event::PeerCertificates(chain));
                 self.transcript.add(msg);
@@ -637,6 +639,9 @@ impl Handshake {
         let keys = self.keys.as_ref().ok_or_else(|| Error::Tls("internal: no handshake keys".into()))?;
         let (alg, suite) = (keys.alg, keys.suite);
         let hash_len = alg.output_len();
+        if body.len() != hash_len {
+            return Err(Error::Tls("decode_error: the server Finished is not the length of the hash".into()));
+        }
         let finished_key = Zeroizing::new(expand_label(alg, &keys.s_hs, "finished", &[], hash_len));
         let expected = hmac(alg, &finished_key, &self.transcript.hash(alg));
         if !ct_eq(&expected, body) {

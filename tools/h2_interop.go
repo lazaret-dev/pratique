@@ -95,6 +95,7 @@ func main() {
 	caFile := flag.String("ca", "root.pem", "root certificate (PEM)")
 	addr := flag.String("addr", "127.0.0.1:0", "server address")
 	name := flag.String("name", "localhost", "server name to ask for and verify")
+	noPush := flag.Bool("no-push", false, "skip the PUSH_PROMISE check (the production server never pushes)")
 	flag.Parse()
 
 	pem, err := os.ReadFile(*caFile)
@@ -318,7 +319,7 @@ func main() {
 	}
 
 	// A PUSH_PROMISE to a client that switched push off is a connection error; Go must see an error, not hang.
-	{
+	if !*noPush {
 		c2 := newClient(pool, *addr, *name, nil)
 		_, _, err := c2.get("/push")
 		check(err != nil, "PUSH_PROMISE from the server fails the request (%v)", err)

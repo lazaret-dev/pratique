@@ -16,6 +16,18 @@ pub fn trust_store_from_pem_file(path: impl AsRef<Path>) -> Result<TrustStore> {
     Ok(store)
 }
 
+/// Where the systems keep their CA bundle file, in the order they are looked for.
+pub(crate) const BUNDLE_FILES: [&str; 8] = [
+    "/etc/ssl/certs/ca-certificates.crt",
+    "/etc/pki/tls/certs/ca-bundle.crt",
+    "/etc/ssl/ca-bundle.pem",
+    "/etc/ssl/cert.pem",
+    "/usr/local/etc/openssl@3/cert.pem",
+    "/usr/local/etc/openssl/cert.pem",
+    "/opt/homebrew/etc/openssl@3/cert.pem",
+    "/usr/local/share/certs/ca-root-nss.crt",
+];
+
 /// Loads the operating system's CA bundle from its conventional file location.
 ///
 /// Honors `SSL_CERT_FILE` first. Common Linux, macOS and BSD bundle paths follow. On Windows, which has no bundle file,
@@ -26,16 +38,7 @@ pub fn system_trust_store() -> Result<TrustStore> {
     if let Ok(p) = std::env::var("SSL_CERT_FILE") {
         candidates.push(p);
     }
-    for p in [
-        "/etc/ssl/certs/ca-certificates.crt",
-        "/etc/pki/tls/certs/ca-bundle.crt",
-        "/etc/ssl/ca-bundle.pem",
-        "/etc/ssl/cert.pem",
-        "/usr/local/etc/openssl@3/cert.pem",
-        "/usr/local/etc/openssl/cert.pem",
-        "/opt/homebrew/etc/openssl@3/cert.pem",
-        "/usr/local/share/certs/ca-root-nss.crt",
-    ] {
+    for p in BUNDLE_FILES {
         candidates.push(p.to_string());
     }
     for c in &candidates {

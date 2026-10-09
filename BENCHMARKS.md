@@ -121,6 +121,25 @@ The ladder has a row of its own since B-104 (`X25519 (shared secret, the ladder)
 which B-103 took off the ladder. On x86-64 the X25519 ladder and ECDSA P-256's point operations run from copies compiled for
 BMI2 where the CPU has it, and Poly1305 takes four blocks at a time with AVX2 from 2 KiB (B-104 in BACKLOG.md).
 
+What B-112 measured (`sh tools/bench_server.sh 5 32`, 2026-10-09, the x86-64 VM, two cores shared by the servers and the
+load generator, so the figures compare the two servers rather than give a capacity): pratique's HTTP server under its
+runtime (`examples/serve`) against Go 1.24's `net/http`, the same certificate (P-256, made by OpenSSL), TLS 1.3, 32 workers
+sending requests one after another for 5 s over keep-alive connections (HTTP/1.1: a connection each; HTTP/2: one
+connection, a stream each), one run of each; the CPU time is the server process's, per thousand requests:
+
+| Protocol, page | pratique req/s | Go req/s | pratique p99 | Go p99 | pratique CPU | Go CPU |
+|---|---|---|---|---|---|---|
+| HTTP/1.1, a short text | 15,341 | 15,592 | 8.1 ms | 8.5 ms | 48 ms | 50 ms |
+| HTTP/1.1, 100 KB | 5,675 | 6,125 | 19.4 ms | 18.2 ms | 166 ms | 153 ms |
+| HTTP/2, a short text | 15,626 | 11,882 | 6.0 ms | 7.0 ms | 58 ms | 73 ms |
+| HTTP/2, 100 KB | 3,336 | 2,567 | 20.9 ms | 26.6 ms | 262 ms | 334 ms |
+
+The first run of it found HTTP/2 at less than half Go's rate for short responses (6,311 against 13,205 a second, 181 ms of
+CPU per thousand against 66): a thread was made and ended for each stream's handler (`strace -c` counted about fifteen
+system calls a request for that alone). The handlers now run on a pool of threads that wait for work for ten seconds, and a
+whole small response is framed under one lock and sent in one write; that is the table above. (The page of 100 KB had also
+been made afresh for each request, which Go's server does not do; `examples/serve` keeps it now.)
+
 ## Against other Rust libraries
 
 `bench/compare` (a crate of its own, like `fuzz/`, so the library keeps no dependencies) runs the same operations through

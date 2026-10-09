@@ -140,6 +140,12 @@ impl CertSpec {
 /// self-signed certificate when that is `None`.
 pub fn issue(spec: &CertSpec, subject_key: &KeyPair, issuer: Option<(&str, &KeyPair)>) -> Vec<u8> {
     let (issuer_name, issuer_key) = issuer.unwrap_or((spec.common_name.as_str(), subject_key));
+    issue_for_spki(spec, &subject_key.signing_key().public_key_spki(), issuer_name, issuer_key)
+}
+
+/// A certificate for the public key in `subject_spki` (a `SubjectPublicKeyInfo`, as a certificate request carries it),
+/// signed by the CA named `issuer_name` with `issuer_key`.
+pub fn issue_for_spki(spec: &CertSpec, subject_spki: &[u8], issuer_name: &str, issuer_key: &KeyPair) -> Vec<u8> {
     let algorithm = issuer_key.signing_key().x509_algorithm();
 
     let mut tbs = Vec::new();
@@ -149,15 +155,23 @@ pub fn issue(spec: &CertSpec, subject_key: &KeyPair, issuer: Option<(&str, &KeyP
     tbs.extend(name(issuer_name));
     tbs.extend(tlv(0x30, &[time(spec.not_before), time(spec.not_after)].concat()));
     tbs.extend(name(&spec.common_name));
-    tbs.extend(subject_key.signing_key().public_key_spki());
-    tbs.extend(tlv(0xA3, &tlv(0x30, &extensions(spec, subject_key, issuer_key))));
+    tbs.extend(subject_spki);
+    tbs.extend(tlv(0xA3, &tlv(0x30, &extensions(spec, &spki_key_bits(subject_spki), &issuer_key.public()))));
     let tbs = tlv(0x30, &tbs);
 
     let signature = issuer_key.sign(&tbs);
     tlv(0x30, &[tbs, algorithm, bit_string(0, &signature)].concat())
 }
 
-fn extensions(spec: &CertSpec, subject_key: &KeyPair, issuer_key: &KeyPair) -> Vec<u8> {
+/// The subjectPublicKey bits of a `SubjectPublicKeyInfo` (empty if it does not parse).
+fn spki_key_bits(spki: &[u8]) -> Vec<u8> {
+    let mut d = crate::asn1::Der::new(spki);
+    let Ok(mut seq) = d.sequence() else { return Vec::new() };
+    let _ = seq.next();
+    seq.next().ok().and_then(|t| crate::asn1::bit_string_bytes(&t).ok().map(<[u8]>::to_vec)).unwrap_or_default()
+}
+
+fn extensions(spec: &CertSpec, subject_public: &[u8], issuer_public: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     // basicConstraints (critical): cA, and the path length if there is one
     let mut bc = Vec::new();
@@ -210,9 +224,9 @@ fn extensions(spec: &CertSpec, subject_key: &KeyPair, issuer_key: &KeyPair) -> V
         out.extend(extension(&[0x55, 0x1D, 0x1F], false, &tlv(0x30, &points)));
     }
     // subjectKeyIdentifier and authorityKeyIdentifier: the keys' own hashes (RFC 5280's method 1)
-    let key_id = |key: &KeyPair| <crate::crypto::sha2::Sha256 as crate::crypto::sha2::Hash>::digest(&key.public())[..20].to_vec();
-    out.extend(extension(&[0x55, 0x1D, 0x0E], false, &tlv(0x04, &key_id(subject_key))));
-    out.extend(extension(&[0x55, 0x1D, 0x23], false, &tlv(0x30, &tlv(0x80, &key_id(issuer_key)))));
+    let key_id = |public: &[u8]| <crate::crypto::sha2::Sha256 as crate::crypto::sha2::Hash>::digest(public)[..20].to_vec();
+    out.extend(extension(&[0x55, 0x1D, 0x0E], false, &tlv(0x04, &key_id(subject_public))));
+    out.extend(extension(&[0x55, 0x1D, 0x23], false, &tlv(0x30, &tlv(0x80, &key_id(issuer_public)))));
     out
 }
 
@@ -350,7 +364,7 @@ fn bit_string(unused: u8, bytes: &[u8]) -> Vec<u8> {
 }
 
 /// UTCTime for the years 1950 to 2049, GeneralizedTime outside them (RFC 5280 section 4.1.2.5).
-fn time(unix: i64) -> Vec<u8> {
+pub(crate) fn time(unix: i64) -> Vec<u8> {
     let days = unix.div_euclid(86_400);
     let secs = unix.rem_euclid(86_400);
     let (y, m, d) = civil_from_days(days);

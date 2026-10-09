@@ -1,9 +1,13 @@
 //! A small HTTPS test server on pratique's TLS 1.3 server, for pointing other programs at: `openssl s_client`,
 //! `curl`, a Go client, a browser that has been told to trust the root.
 //!
-//! FOR TESTS: the server is not ready for production yet (BACKLOG B-109 to B-114: no limits or timeouts against abusive
-//! clients, no review). The throwaway certificate and its key are made fresh at each start and mean nothing. Do not
-//! expose this to a network.
+//! The HTTP is the production server's (`pratique::http::server`, B-111: HTTP/1.1, and HTTP/2 when ALPN picks `h2`),
+//! under its runtime (`ServerBuilder`, B-112: the default limits and timeouts), with the pages below as its handler; `server=test` runs the test servers the crate's own client tests script
+//! instead (an HTTP/1.1 loop written here, and `pratique::http::h2_server`), which can also push.
+//!
+//! FOR TESTS: the server is not ready for production yet (BACKLOG B-114: no review yet; `acme_serve` is the example
+//! with ACME). The throwaway certificate and its key are made fresh at each start and mean nothing. Do not expose this to
+//! a network.
 //!
 //!     cargo run --release --features server --example serve -- [options]
 //!
@@ -24,6 +28,10 @@
 //!   tickets=N         NewSessionTicket messages after the handshake (default 1)
 //!   late_tickets=1    send them after the first response bytes instead of before
 //!   rekey=N           rotate our keys after N records
+//!   server=test       the test servers instead of the production one (see above)
+//!   plain=1           plain HTTP instead of TLS (the production server: HTTP/1.1, or HTTP/2 with prior knowledge)
+//!   plain=h2          plain HTTP/2 with prior knowledge only (what h2spec expects of a server)
+//!   quiet=1           no line per request (for load tests)
 //!
 //! It prints `listening 127.0.0.1:PORT` once it is ready, and one line per connection and per request.
 //!
@@ -31,14 +39,14 @@
 //! request body; `/chunked/N` N bytes sent chunked; `/close` answers and closes the connection; `/slow/N` N
 //! bytes, one at a time with a pause. Connections are kept alive as HTTP/1.1 does.
 //!
-//! With `alpn=h2` (or `h2,http/1.1`) a client that offers h2 gets HTTP/2 (`pratique::http::h2_server`), with
-//! the same pages (`/chunked/N` is N bytes in pieces of 1000) and some more: `/trailers` (a body and trailers),
-//! `/interim` (a 103 and then the answer), `/reset` (RST_STREAM INTERNAL_ERROR after a part of a body), `/goaway`
-//! (the answer, then a GOAWAY with no error: the client is to use another connection), `/headers/N` (N header
-//! fields of 100 bytes in the response, so that the header block takes CONTINUATION frames), `/status/N`
-//! (status N, no body), and `/push` (a PUSH_PROMISE, which a client that switched push off must treat as an
-//! error). Each request is checked as it comes; a request the server finds fault with is reported on the
-//! connection's line.
+//! With `alpn=h2` (or `h2,http/1.1`) a client that offers h2 gets HTTP/2, with the same pages (`/chunked/N` is N
+//! bytes in pieces of 1000) and some more: `/trailers` (a body and trailers), `/interim` (a 103 and then the answer),
+//! `/reset` (RST_STREAM INTERNAL_ERROR after a part of a body; over HTTP/1.1, a chunked body that is cut off),
+//! `/goaway` (the answer, then a GOAWAY with no error: the client is to use another connection), `/headers/N` (N
+//! header fields of 100 bytes in the response, so that the header block takes CONTINUATION frames), `/status/N`
+//! (status N, no body), and, from the test server only, `/push` (a PUSH_PROMISE, which a client that switched push off
+//! must treat as an error). Each request is checked as it comes; a connection the server finds fault with is reported
+//! on its line ("the server found fault").
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -46,6 +54,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use pratique::http::h2_server::{self, Action, Step};
+use pratique::http::server::{Request, Response, ServerBuilder, Version};
 use pratique::crypto::ecdsa::Curve;
 use pratique::tls::certs::{CertStore, CertifiedKey};
 use pratique::tls::pki::{issue, CertSpec, KeyPair, TestPki};
@@ -143,8 +152,36 @@ fn main() {
         config = config.with_rekey_after_records(n.parse().expect("rekey=N"));
     }
     let config = Arc::new(config);
-
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", get("port", "0"))).expect("bind");
+    let test_server = get("server", "production") == "test";
+    QUIET.store(opts.contains_key("quiet"), std::sync::atomic::Ordering::Relaxed);
+    let plain = opts.contains_key("plain");
+    let h2c = opts.get("plain").is_some_and(|v| v == "h2");
+    let addr = format!("127.0.0.1:{}", get("port", "0"));
+    if !test_server {
+        // the production server, under its runtime (B-112): its listener, limits and timeouts
+        let builder = ServerBuilder::new(page)
+            .error_log(|peer, e| {
+                let who = peer.map(|p| p.to_string()).unwrap_or_default();
+                if e.kind() == std::io::ErrorKind::InvalidData {
+                    println!("connection from {who}: the server found fault: {e}");
+                } else {
+                    println!("connection from {who}: ended: {e}");
+                }
+            });
+        let builder = if h2c {
+            builder.h2c(&addr)
+        } else if plain {
+            builder.plain(&addr)
+        } else {
+            builder.tls(&addr, config)
+        };
+        let server = builder.start().expect("start the server");
+        println!("listening {}", server.local_addrs()[0]);
+        println!("root certificate in {ca_path}");
+        server.wait();
+        return;
+    }
+    let listener = TcpListener::bind(&addr).expect("bind");
     println!("listening {}", listener.local_addr().unwrap());
     println!("root certificate in {ca_path}");
     for (n, socket) in listener.incoming().enumerate() {
@@ -329,5 +366,91 @@ fn h2_page(r: &h2_server::Request) -> Vec<Step> {
         vec![head(200, vec![pair("content-length", "5")], true)]
     } else {
         h2_server::response(200, &[], b"hello from pratique\n")
+    }
+}
+
+static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The pages, for the production server.
+fn page(req: Request) -> Response {
+    let pattern = |len: usize| -> Vec<u8> { (0..len).map(|i| b'a' + (i % 26) as u8).collect() };
+    let path = req.path().to_string();
+    let number = |prefix: &str| path.strip_prefix(prefix).and_then(|k| k.parse::<usize>().ok());
+    if !QUIET.load(std::sync::atomic::Ordering::Relaxed) {
+        let tls = req.connection().tls.as_ref().map(|t| format!(" {} alpn {:?} sni {:?} resumed {} client certificates {}", t.cipher_suite.unwrap_or("?"), t.alpn, t.server_name, t.resumed, t.client_certificates.len())).unwrap_or_default();
+        println!("request from {}: {} {} {}{tls}", req.connection().peer.map(|p| p.to_string()).unwrap_or_default(), req.method(), req.target(), req.version());
+    }
+    if let Some(k) = number("/size/") {
+        Response::bytes(200, "text/plain", cached_pattern(k))
+    } else if path == "/echo" {
+        let length = req.content_length();
+        Response::reader(200, req.into_body(), length)
+    } else if let Some(k) = number("/chunked/") {
+        Response::stream(200, move |w| {
+            for piece in pattern(k).chunks(1000) {
+                w.write_all(piece)?;
+                w.flush()?;
+            }
+            Ok(())
+        })
+    } else if let Some(k) = number("/slow/") {
+        Response::reader(200, Slow(pattern(k), 0), Some(k as u64))
+    } else if path == "/close" {
+        let text: &[u8] = if req.version() == Version::Http2 { b"closing\n" } else { b"hello from pratique\n" };
+        Response::bytes(200, "text/plain", text.to_vec()).with_header("connection", "close")
+    } else if path == "/trailers" {
+        Response::stream(200, |w| {
+            w.write_all(b"a body with trailers\n")?;
+            w.set_trailers(vec![("x-sum".into(), "21".into())]);
+            Ok(())
+        })
+        .with_header("trailer", "x-sum")
+    } else if path == "/interim" {
+        let _ = req.send_interim(103, &[("link", "</style.css>; rel=preload")]);
+        Response::text(200, "after the interim response\n")
+    } else if path == "/reset" {
+        Response::stream(200, move |w| {
+            w.write_all(&pattern(1000))?;
+            w.flush()?;
+            Err(std::io::Error::other("the page stops here, on purpose"))
+        })
+    } else if path == "/goaway" {
+        Response::text(200, "going away\n").with_header("connection", "close")
+    } else if let Some(k) = number("/headers/") {
+        let mut r = Response::text(200, "many headers\n");
+        for i in 0..k {
+            r = r.with_header(&format!("x-header-{i}"), &format!("{i:0>100}"));
+        }
+        r
+    } else if let Some(k) = number("/status/") {
+        Response::new(k as u16)
+    } else {
+        Response::text(200, "hello from pratique\n")
+    }
+}
+
+/// The pattern of `/size/N`, made once per size (as the Go server of tools/bench_server.go does), and copied.
+fn cached_pattern(n: usize) -> Vec<u8> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<usize, Arc<Vec<u8>>>>> = std::sync::OnceLock::new();
+    if n > 16 << 20 {
+        return (0..n).map(|i| b'a' + (i % 26) as u8).collect();
+    }
+    let cache = CACHE.get_or_init(Default::default);
+    let mut c = cache.lock().unwrap();
+    c.entry(n).or_insert_with(|| Arc::new((0..n).map(|i| b'a' + (i % 26) as u8).collect())).as_ref().clone()
+}
+
+/// A body that comes a byte at a time, 20 ms apart.
+struct Slow(Vec<u8>, usize);
+
+impl Read for Slow {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.1 == self.0.len() || buf.is_empty() {
+            return Ok(0);
+        }
+        thread::sleep(Duration::from_millis(20));
+        buf[0] = self.0[self.1];
+        self.1 += 1;
+        Ok(1)
     }
 }

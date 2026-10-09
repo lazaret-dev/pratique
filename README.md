@@ -18,7 +18,7 @@ A working HTTPS client: you can `get`/`post` over TLS 1.3 (or TLS 1.2, with a se
 | HTTP/1.1 client, keep-alive pool, streaming bodies, redirects, CONNECT proxy | Unit tests, HTTPS tests against OpenSSL, and tests against the in-crate TLS server (tickets, rekeys, stale connections) |
 | DEFLATE, zlib and gzip decompression (`inflate`, pure, written from scratch, with limits on the size and the ratio) and, opt-in, `Content-Encoding` in the clients; `Expect: 100-continue`; an opt-in cookie jar | 256 streams made by zlib, gzip(1), zlib-flate, Go's `compress/*` and by hand decode at every cutting of input and output, and 1,039 damaged copies get exactly zlib's verdict (Go agrees on all but the gzip headers with a reserved flag bit, which it ignores and zlib and RFC 1952 refuse: `tests/inflate_vectors.rs`, `tools/gen_inflate_vectors.py`); a fuzz target (`inflate`: the answer does not depend on how the stream is cut, nothing past the limit); bombs of 1,032 to 1 stopped at the limit over HTTP/1.1, HTTP/2 and the async client; the 100-continue wait over TCP and TLS against scripted servers; the cookie rules of RFC 6265 and 6265bis, host-only |
 | HTTP/2 client (opt-in, blocking `Client`): HPACK, framing, flow control, one shared connection per origin | HPACK checked against Go's and Python's implementations in both directions; 15 tests against Go's own HTTP/2 server; the in-crate server (below) against curl, Go and python-h2; 4 fuzz targets; real servers (pypi.org, npm) answer it over h2 |
-| TLS 1.3 / HTTP/2 server (`server` feature; being made ready for production, B-109 to B-114: today **for tests and tools only**), with constant-time signing by ECDSA P-256/P-384, Ed25519 and RSA keys read from PEM (B-109), certificates chosen by name and by what the client can verify, stateless tickets under rotating keys, and client certificates (B-110) | Against `openssl s_client`, curl, headless Chromium and Go's `crypto/tls`: 67 checks, with certificates and keys of every kind OpenSSL writes; its HTTP/2 against curl, Go and python-h2: 21 checks |
+| TLS 1.3 server and HTTP/1.1 and HTTP/2 server (`server` feature; being made ready for production, B-109 to B-114: **not reviewed yet**), with constant-time signing by ECDSA P-256/P-384, Ed25519 and RSA keys read from PEM (B-109), certificates chosen by name and by what the client can verify, stateless tickets under rotating keys, and client certificates (B-110), one handler API for both versions of HTTP, strict about request smuggling and the HTTP/2 floods (B-111), and a runtime with limits, timeouts a slow client cannot stretch, graceful shutdown and certificates kept fresh (B-112), and ACME: certificates got and renewed from Let's Encrypt or any ACME CA, by TLS-ALPN-01, HTTP-01 or DNS-01, renewal by ARI (B-113); and the scanning proxy for package registries: a CA in memory limited by a name constraint, requests scanned and made again, files read whole and refused before the client has them (B-78) | Against `openssl s_client`, curl, headless Chromium and Go's `crypto/tls` and `net/http`: 67 checks, with certificates and keys of every kind OpenSSL writes; HTTP/2 against curl, Go and python-h2: 41 checks; h2spec: 146 of 146 (147 of 147 strict); slowloris in each phase, shutdown and the limits in unit tests; a load test against Go's `net/http`; ACME against Pebble, Let's Encrypt's test CA, which validates each challenge: 24 checks, and against a CA of its own in unit tests; the proxy with pip, uv, npm, Yarn, pnpm, curl, Python and Go against the real PyPI and npm, and behind a re-signing gateway: 21 checks, and the name constraint as OpenSSL reads it; tlsfuzzer's TLS 1.3 scripts: 1,582 tests passed in 40 scripts, the rest for what the server does not do (B-114); testssl.sh: no finding |
 | QUIC client transport for HTTP/3 (`net` feature, work in progress: B-91): packet and header protection (all three TLS 1.3 suites, key updates followed and, before the AEAD's limit, started: B-91, AEAD limits), the frame codec, transport parameters, the TLS 1.3 handshake in CRYPTO frames, Retry and Version Negotiation, loss recovery (RFC 9002) with NewReno and pacing, streams with flow control, closing and draining, the idle timeout, and keep-alive PINGs while a request waits; sans-IO, one `Connection` per path | The RFC 9001 appendix vectors; 72 packets made by aioquic 1.3.0 (each also under the next key generation) open, and what is sealed here is read by it; 1,745 frame payloads read by quic-go's own parser and by this one with the same result; a live handshake, requests (`GET`, bulk, `POST` echo) and the close against an aioquic server, with Retry, and through a relay that drops and delays datagrams, a 2 MB echo with the client's keys updated every 200 packets, and a connection kept alive past its idle timeout (`examples/quic_probe.rs`, `tools/quic_interop_server.py`); 7 fuzz targets, three of which run models (a set of numbers, a map of bytes, a list of outstanding packets) beside the code, and one a whole connection against the test server over a network that loses, duplicates, corrupts and reorders; 32 deliberate bugs in the packet protection, each caught by a test, and 21 in the buffers, flow control, transport parameters, loss recovery and connection, each caught by a fuzz target, and 5 in the key updates and keep-alive, each caught by a unit test (`fuzz/mutate.py`; two more change nothing that anyone could see) |
 | HTTP/3 (`net` feature, opt-in on the blocking `Client` with `http3`: B-91): the client side described in the next section, over QPACK (RFC 9204: static and dynamic tables, the encoder and decoder streams, blocked streams, the required insert count), the frame reader of RFC 9114 (request and control streams, the rules for frames that may not be there, field-section limits) and the client connection on `quic::Connection` (control stream and SETTINGS both ways, the QPACK streams, request streams with trailers and `content-length` checked, interim responses, GOAWAY, streams of unknown types, push refused, flow-controlled reads, a bounded write buffer, a response that waits for the table) | QPACK: the static table checked against ls-qpack's (the library under aioquic), the examples of RFC 9204 appendix B, ls-qpack's output as a fixture and live in both directions with sections and instructions late, out of order and cut (`tools/qpack_interop.py`; it found that ls-qpack misreads the required insert count when the announced capacity is less than the maximum, so the encoder announces the maximum); the frame reader against a second parser that has the whole stream before it, under every cutting of the bytes; the connection against a model server (well-made responses, a table filled, delayed and acknowledged, resets, GOAWAY, bytes that mean nothing) with every request the client wrote decoded by a reference decoder: 148,000 responses read back byte for byte; 5 fuzz targets (`h3_qpack`, `h3_qpack_exchange`, `h3_qpack_encoder`, `h3_frames`, `h3_connection`); 58 deliberate bugs, each caught by a fuzz target or a unit test (`fuzz/mutate.py`); and over a UDP socket with a reader and a timer thread per connection, the Alt-Svc cache (RFC 7838) and the fallback to TCP | QPACK: the static table checked against ls-qpack's (the library under aioquic), the examples of RFC 9204 appendix B, ls-qpack's output as a fixture and live in both directions with sections and instructions late, out of order and cut (`tools/qpack_interop.py`; it found that ls-qpack misreads the required insert count when the announced capacity is less than the maximum, so the encoder announces the maximum); the frame reader against a second parser that has the whole stream before it, under every cutting of the bytes; the connection against a model server (well-made responses, a table filled, delayed and acknowledged, resets, GOAWAY, bytes that mean nothing) with every request the client wrote decoded by a reference decoder: 148,000 responses read back byte for byte; 5 fuzz targets (`h3_qpack`, `h3_qpack_exchange`, `h3_qpack_encoder`, `h3_frames`, `h3_connection`); 58 deliberate bugs, each caught by a fuzz target or a unit test (`fuzz/mutate.py`); the client against aioquic (`tests/h3_client_interop.rs`, 21 tests: bodies of every size, parallel streams on one connection, redirects, resets, size limits, Alt-Svc heeded and taken back, a network that refuses or silently drops UDP costing one try, a connection that dies under a request) and 11 unit tests of the registry's rules; the Alt-Svc parser by a sixth fuzz target (`alt_svc`) and 12 more deliberate bugs in the client's use of HTTP/3, each caught by a test |
 | Revocation: OCSP stapling, OCSP responders asked (B-63), CRLs (supplied or fetched, with a bounded cache refreshed ahead of time), the leaf or the whole chain (B-64), must-staple, soft-fail / hard-fail; the async client asks its sources on its worker pool | Fixture tests (45 files from an independent implementation), a scripted TLS server, and `openssl s_server` / `ocsp` / `ca`: our OCSP request is byte for byte `openssl ocsp`'s, and a live `openssl ocsp` responder settles hard-fail for the TLS stream and both clients and refuses a revoked certificate; chains, responses and CRLs from the test PKI for the intermediates, the deferred check and the caches; 20 real OCSP responses and 13 real CRLs from eight public CAs (GlobalSign, Sectigo, Amazon, DigiCert, Apple, Microsoft, Google, Let's Encrypt), five of them saying revoked (the CAs' revoked test sites), replayed at the time they were fetched, altered byte by byte, and tried on other certificates and shards (B-65, B-102); live, the revoked test sites of DigiCert and Let's Encrypt are refused as revoked under hard-fail |
@@ -27,7 +27,7 @@ A working HTTPS client: you can `get`/`post` over TLS 1.3 (or TLS 1.2, with a se
 | CMS / PKCS#7 signatures (Java `META-INF/*.RSA`, `.p7s`, S/MIME) and RFC 3161 time stamps: BER reader, signer verification (RSA PKCS#1 and PSS, ECDSA P-256/P-384, Ed25519), chain to the caller's roots at the signature's time (pure, no I/O) | 45 messages made by OpenSSL and the JDK's `jarsigner` verify; 1,886 damaged messages judged by `openssl cms -verify` and replayed, each region of a message pinned as exactly OpenSSL's verdict, stricter, or deliberately more lenient; 2 fuzz targets; not Authenticode yet (B-70 phase 2, B-80) |
 
 Checked against real public servers from a normal network (B-97 in `BACKLOG.md`): 43 of 49 live hosts, and 52 real certificate chains replayed offline. The six that failed were servers that spoke only TLS 1.2 to the client of then, `registry.npmjs.org` among them. With TLS 1.2 (B-36, see "TLS versions" below) the same network gave 42 of 42 hosts that must connect, npm and `www.globalsign.com` over TLS 1.2; the badssl.com test servers are refused, by design, because they do not do the extended master secret. A second run on 2026-10-08 (B-102), with the test sites of B-100: 48 of 48 hosts that must connect, every refusal for the right reason (15 certificates, 6 servers offering only TLS 1.0, 1.1, CBC, RSA key exchange, finite-field DH or no encryption, 21 without the extended master secret), the revoked test sites refused as revoked (4 of 4 with the built-in Mozilla roots; 2 of 4 with macOS's bundle, which lacks the roots of the other two), and 74 real chains replayed offline.
-Test run at last check: 1,488 unit (including the mutation fuzzers; 24 more are ignored by default: 20 timing tests, two long random runs, a live QPACK peer and a replay of fuzz inputs; 336 of them also run without the `net` feature), 2 Go-vector, 1 CMS-vector, 2 inflate-vector (1,295 cases), 6 real-chain, 6 real-revocation, 2 Wycheproof (894 vectors), 4 built-in-roots (`mozilla-roots`), 15 real Sigstore, 5 synthetic Sigstore, 3 real Rekor, 3 synthetic TUF (58 repositories judged by python-tuf), 52 OpenSSL interop (12 of them TLS 1.2, 2 with a live OCSP responder, 1 of session resumption), 17 HTTP/2 client against Go's server, 22 HTTP/3 client against aioquic (they skip without `python3` and aioquic), 1 real-root, 1 native-store (B-101), 16 doc tests (17 with `mozilla-roots`), no warnings; `tools/server_interop.sh` (67 checks) and `tools/h2_interop.sh` (21) pass.
+Test run at last check: 1,564 unit (including the mutation fuzzers; 24 more are ignored by default: 20 timing tests, two long random runs, a live QPACK peer and a replay of fuzz inputs; 336 of them also run without the `net` feature), 2 Go-vector, 1 CMS-vector, 2 inflate-vector (1,295 cases), 6 real-chain, 6 real-revocation, 2 Wycheproof (894 vectors), 4 built-in-roots (`mozilla-roots`), 15 real Sigstore, 5 synthetic Sigstore, 3 real Rekor, 3 synthetic TUF (58 repositories judged by python-tuf), 52 OpenSSL interop (12 of them TLS 1.2, 2 with a live OCSP responder, 1 of session resumption), 17 HTTP/2 client against Go's server, 22 HTTP/3 client against aioquic (they skip without `python3` and aioquic), 1 real-root, 1 native-store (B-101), 16 doc tests (17 with `mozilla-roots`, 21 with `server` as well), no warnings; `tools/server_interop.sh` (67 checks), `tools/h2_interop.sh` (41, and 43 with h2spec: 146 of 146, and 147 of 147 strict), `tools/acme_interop.sh` (24, against Pebble), `tools/proxy_interop.sh` (21, with real package managers and registries) and `tools/tlsfuzzer.sh` (41 runs of 40 scripts) pass.
 
 ## Security warning
 
@@ -402,17 +402,96 @@ pratique = { version = "0.1", default-features = false }   # verification only
 ```
 
 `server` (off by default, and always built for this crate's own tests) adds a TLS 1.3 server with an HTTP/1.1 and HTTP/2 server on top of it
-(`tls::server`, `tls::pki`, `http::h2_server`, and `cargo run --features server --example serve`). It began so that tests and tools have a
-real peer to talk to: keep-alive, streaming and HTTP/2 are tested against it, and `tools/server_interop.sh` and `tools/h2_interop.sh` check it
-against OpenSSL, curl, headless Chromium, Go and python-h2. It is being made into a server for real services (BACKLOG B-109 to B-114: real certificates, the
-HTTP server, limits and timeouts, ACME, then the scanning proxy of B-78). Done so far: signing in constant time with ECDSA P-256 and P-384,
+(`tls::server`, `http::server`, and `cargo run --features server --example serve`; `tls::pki` writes test certificates, and
+`http::h2_server` is the scripted HTTP/2 peer the client's tests use). It began so that tests and tools have a real peer to talk to, and
+is being made into a server for real services (BACKLOG B-109 to B-114: real certificates, the HTTP server, limits and timeouts, ACME,
+then the scanning proxy of B-78); `tools/server_interop.sh` and `tools/h2_interop.sh` check it against OpenSSL, curl, headless Chromium,
+Go, python-h2 and h2spec, `tools/tlsfuzzer.sh` runs tlsfuzzer's TLS 1.3 conformance scripts against it, and
+`tools/acme_interop.sh` checks it against Pebble. Done so far: signing in constant time with ECDSA P-256 and P-384,
 Ed25519 and RSA keys of 2048 to 8192 bits, read from the PEM files CAs and tools write (`pratique::sign::SigningKey`;
 `ServerConfig::from_pem(chain, key)`, B-109); any number of certificates, chosen by the name the client asks for and by the signatures
 it can verify, replaceable while the server runs (`tls::certs::CertStore`, or a resolver of your own); stateless session tickets
 under rotating keys that several servers can share (`tls::tickets::TicketKeys`); client certificates, optional or required, checked
-against a trust store (`ClientAuth`); early data skipped up to a limit, and KeyUpdate and empty-record floods refused (B-110).
-**It is not for production yet**: it has no limits or timeouts of its own against slow or abusive clients (B-112), and has had no
-review.
+against a trust store (`ClientAuth`); early data skipped up to a limit, and KeyUpdate and empty-record floods refused (B-110); and
+the HTTP server (B-111): a `Handler` gets a `Request` whose body is a stream and returns a `Response` whose body is bytes, a reader or
+a function that writes it, with trailers, interim responses and upgrades (CONNECT, 101), the same for HTTP/1.1 and HTTP/2; HTTP/1.1
+refuses every ambiguous framing that request smuggling depends on, and HTTP/2 holds a client to its windows and to budgets for the
+known floods (rapid reset, CONTINUATION, the 2019 advisories, HPACK bombs). `http::server::redirect_to_https` and
+`AcmeHttp01` are for a plain listener. And the runtime (B-112): `ServerBuilder` starts a `Server` with listeners, limits on
+connections in all and from one address, timeouts that a slow client cannot stretch (the handshake, an idle connection, a request
+head from its first byte, a body as a minimum rate, each write), graceful shutdown, an access log, and certificates and OCSP staples
+kept fresh while it runs (`reload_certificates`, `refresh_ocsp_staples`). Under load it keeps up with Go's `net/http` on the same
+machine (`tools/bench_server.sh`; BENCHMARKS.md). And ACME (B-113, `http::server::acme`): the server gets its certificates
+from Let's Encrypt or any other ACME CA and renews them while it runs, when the CA's renewal information (ARI) says to;
+challenges TLS-ALPN-01 (on the TLS listener itself, so port 443 is all it needs), HTTP-01 (on the plain listener) and DNS-01
+(through your DNS provider, for wildcards); IP addresses, external account binding, certificate profiles; the account and the
+certificates kept in a state directory. `tools/acme_interop.sh` has Pebble, Let's Encrypt's test CA, validate each of them.
+
+```rust
+use pratique::http::server::acme::{self, Acme, AcmeConfig, AcmeTlsAlpn01};
+use pratique::http::server::{redirect_to_https, AcmeHttp01, Request, Response, ServerBuilder};
+use pratique::tls::certs::CertStore;
+use pratique::tls::server::ServerConfig;
+use std::sync::Arc;
+
+let (http01, tls_alpn01) = (AcmeHttp01::new(), AcmeTlsAlpn01::new());
+let mut tls = ServerConfig::with_certificates(CertStore::new()).with_alpn(&["h2", "http/1.1"]);
+let store = tls.store.clone().expect("a store");
+tls.certs = tls_alpn01.wrap(tls.certs.clone());
+let acme = Acme::new(AcmeConfig::new(acme::LETS_ENCRYPT, "/var/lib/example/acme")
+    .contact("mailto:admin@example.com").agree_to_terms().tls_alpn01(&tls_alpn01).http01(&http01))?;
+let server = ServerBuilder::new(|req: Request| Response::text(200, format!("you asked for {}\n", req.path())))
+    .tls("[::]:443", Arc::new(tls))
+    .plain_with("[::]:80", http01.wrap(redirect_to_https(None)))
+    .start()?;
+let _renewals = acme::manage(acme, vec![vec!["example.com".into(), "www.example.com".into()]], store, |m| eprintln!("acme: {m}"));
+server.wait();
+```
+
+(`cargo run --features server --example acme_serve -- names=example.com` is that server, asking Let's Encrypt's staging service
+until it is told `directory=production`.) With certificates from files instead, `ServerConfig::from_pem(chain, key)` and
+`reload_certificates`.
+
+**It is not for production yet**: it has had no independent review (B-23). tlsfuzzer and testssl.sh have been run against it (B-114).
+
+The same feature carries **the scanning proxy** (B-78, `pratique::proxy`): an HTTP proxy that opens the TLS of the package
+registries (PyPI's and npm's hosts by default) so that a scanner sees every request for a package and every file the
+registry sends, and can refuse a package, or read a file whole and refuse it, before the package manager has a byte of it;
+every other host is tunnelled untouched, or refused. Its certificate authority is made in memory for one run, valid for a
+day, and limited by a critical name constraint to the hosts it opens (with every IP address excluded); the leaves are for
+the host of the CONNECT alone. Requests inside a tunnel are parsed by the strict HTTP server and made again by the client,
+which verifies the real registry as any client would; a host that does not verify, or a body too large to inspect, is a
+502, never passed on unread. `Proxy::client_env` gives the variables that point pip, uv, Poetry, npm, Yarn, pnpm, curl,
+Python and Go at it and make them trust its CA (`write_trust_files` writes the CA, and a bundle of the machine's roots and
+the CA). Behind a gateway that inspects TLS (Zscaler, Netskope), the proxy trusts the company's root wherever the machine
+has it (the CA bundle file, the macOS Keychain or the Windows store, the files `SSL_CERT_FILE` and the like name), puts it
+in the programs' bundle too, and goes through the proxy its own `HTTPS_PROXY` names.
+
+```rust
+use pratique::proxy::{Decision, Exchange, Proxy, Scanner};
+
+struct Policy;
+impl Scanner for Policy {
+    fn request(&self, ex: &Exchange) -> Decision {
+        match ex.package() {
+            Some(p) if p.name == "left-pad" => Decision::Block("not here".into()),
+            _ => Decision::Allow,
+        }
+    }
+}
+
+let proxy = Proxy::builder(Policy).build()?;
+let server = proxy.start("127.0.0.1:0")?;
+let files = proxy.write_trust_files(std::path::Path::new("/tmp/scan-proxy"))?;
+let env = proxy.client_env(server.local_addrs()[0], &files); // HTTPS_PROXY, NODE_EXTRA_CA_CERTS, SSL_CERT_FILE, ...
+std::process::Command::new("npm").args(["install"]).envs(env).status()?;
+```
+
+`cargo run --features server --example scan_proxy -- block=left-pad inspect=1 -- npm install` does that from the command
+line. `tools/proxy_interop.sh` runs pip, uv, npm, Yarn, pnpm, curl, Python's urllib and Go through it against the real
+registries, and behind a gateway that re-signs TLS (played by a second proxy). It is not to be relied on until the review of B-23 covers it; `PROXY_THREAT_MODEL.md` is its threat model, and
+`PROXY_CONFIGURATION.md` says how to run it on each kind of network (an explicit corporate proxy, Zscaler or Netskope, a
+system proxy or a PAC file, CI runners, containers) and how to scan a private registry or mirror.
 
 `mozilla-roots` (off by default, pure, works with or without `net`) builds Mozilla's root store for TLS servers into the
 crate: `pratique::mozilla_roots::trust_store()`, the certificates NSS (and so Firefox) trusts as CAs for TLS servers, with
@@ -471,7 +550,10 @@ src/http/altsvc.rs  the `Alt-Svc` field (RFC 7838)
 src/http/hostrules.rs  `HostRules`: the hosts a client may reach (one-label wildcards, default port only), applied to the request and every redirect
 src/http/decode.rs  `Content-Encoding`: what to ask for and decode, and the sans-IO body decoder both clients drive
 src/http/cookie.rs  `CookieJar` (RFC 6265 and 6265bis, host-only)
-src/tls/server.rs, pki.rs, src/http/h2_server.rs   the `server` feature: a TLS 1.3 and HTTP/2 server (not for production yet: B-109 to B-114)
+src/tls/server.rs, server_split.rs, pki.rs   the `server` feature: the TLS 1.3 server, its stream split for two threads, test certificates (not for production yet: B-109 to B-114)
+src/http/server/   the HTTP server (B-111): the handler API (mod.rs), HTTP/1.1 (h1.rs), HTTP/2 (h2.rs), redirect and ACME HTTP-01 (helpers.rs), the runtime (runtime.rs, B-112), and ACME (acme.rs, B-113)
+src/proxy/         the scanning proxy (B-78): the CONNECT and the tunnels (mod.rs), its CA (ca.rs), the relay and the scanner (relay.rs), the variables and trust files (env.rs), package URLs (registry.rs)
+src/http/h2_server.rs   the scripted HTTP/2 server the client's tests talk to
 src/tls/certs.rs, tickets.rs   a server's certificates and the resolver that picks one (also the client's certificate); stateless session tickets (B-110)
 src/sign.rs        private keys (`SigningKey`): PEM and DER in PKCS#8, SEC 1 and PKCS#1, TLS 1.3 and X.509 signatures (B-109)
 src/crypto/ecdsa_sign.rs, ed25519_sign.rs, rsa_sign.rs, ct_mod.rs   constant-time signing: ECDSA (RFC 6979, hedged), Ed25519, RSA (CRT, blinded, checked), and the arithmetic modulo group orders and secret primes
@@ -481,10 +563,10 @@ src/sys.rs         the clock, the CA bundle files and the native store
 src/native_roots.rs  the operating system's own store of roots: the macOS Keychain's trust settings, the Windows ROOT and Disallowed stores (FFI)
 src/zeroize.rs     wiping secrets (with the SIMD kernels, OS randomness and the few calls into the OS, the only `unsafe`)
 
-examples/       fetch (curl-like; `--http2`, `--http3` (QUIC first, TCP if that fails), `--alt-svc` (QUIC where the origin said it offers it), `--parallel N`, `--max-bytes N`), serve (the test server: HTTP/1.1 and HTTP/2 over TLS 1.3, needs `--features server`), async_get, probe (negotiation report), sumdb (look a module up in the Go checksum database), cms_verify (check a CMS / PKCS#7 signature file), sigstore_verify (check Sigstore attestations of a file), native_roots (what the OS's own store trusts and leaves out), bench (the primitives) and bench_net (handshakes, requests and transfers on loopback, `--features server`; see BENCHMARKS.md)
+examples/       fetch (curl-like; `--http2`, `--http3` (QUIC first, TCP if that fails), `--alt-svc` (QUIC where the origin said it offers it), `--parallel N`, `--max-bytes N`), serve (the HTTP server over TLS 1.3 or plain TCP with pages for tests and tools, needs `--features server`), async_get, probe (negotiation report), sumdb (look a module up in the Go checksum database), cms_verify (check a CMS / PKCS#7 signature file), sigstore_verify (check Sigstore attestations of a file), native_roots (what the OS's own store trusts and leaves out), bench (the primitives) and bench_net (handshakes, requests and transfers on loopback, `--features server`; see BENCHMARKS.md)
 tests/          OpenSSL interop tests, the HTTP/2 client against Go's server (h2_client_interop.rs), the HTTP/3 client against aioquic (h3_client_interop.rs), replays of vectors judged by Go (go_vectors.rs) and by OpenSSL (cms_vectors.rs) and fixtures (tests/data)
-tools/          bench.sh (runs the benchmarks, compares with and records into bench/results.tsv; see BENCHMARKS.md), generators for test vectors and fixtures (Python, uses the `cryptography` package; the CMS ones also run the `openssl` command line tool and the JDK's `jarsigner`), check_features.sh, go_oracle.sh (runs Go's sumdb packages as an independent judge), server_interop.sh and h2_interop.sh (the test server against OpenSSL, curl, Go and python-h2), h2_oracle_server.go (Go's HTTP/2 server for `tests/h2_client_interop.rs`), bench_h2.sh with bench_client.go and bench_delay_proxy.go (the benchmark against Go's client above), hpack_oracle.* and h2_frame_oracle.py (HPACK and frames against Go, Python and hyperframe), gen_quic_vectors.py (packets made by aioquic), quicgo_oracle/ (frame payloads read by quic-go's parser), quic_interop_server.py (an aioquic HTTP/3 server, with an HTTPS side on TCP that advertises it, for `examples/quic_probe.rs` and `tests/h3_client_interop.rs`) and qpack_interop.py (QPACK against ls-qpack)
-fuzz/           coverage-guided fuzzer (std-only, stable Rust) and its 50 targets: `sh fuzz/run_all.sh 3600`
+tools/          bench.sh (runs the benchmarks, compares with and records into bench/results.tsv; see BENCHMARKS.md), generators for test vectors and fixtures (Python, uses the `cryptography` package; the CMS ones also run the `openssl` command line tool and the JDK's `jarsigner`), check_features.sh, go_oracle.sh (runs Go's sumdb packages as an independent judge), server_interop.sh and h2_interop.sh (the server against OpenSSL, curl, headless Chromium, Go, python-h2 and h2spec), bench_server.sh with bench_server.go (the server's load test against Go's `net/http`), h2_oracle_server.go (Go's HTTP/2 server for `tests/h2_client_interop.rs`), bench_h2.sh with bench_client.go and bench_delay_proxy.go (the benchmark against Go's client above), hpack_oracle.* and h2_frame_oracle.py (HPACK and frames against Go, Python and hyperframe), gen_quic_vectors.py (packets made by aioquic), quicgo_oracle/ (frame payloads read by quic-go's parser), quic_interop_server.py (an aioquic HTTP/3 server, with an HTTPS side on TCP that advertises it, for `examples/quic_probe.rs` and `tests/h3_client_interop.rs`) and qpack_interop.py (QPACK against ls-qpack)
+fuzz/           coverage-guided fuzzer (std-only, stable Rust) and its 52 targets: `sh fuzz/run_all.sh 3600`
 ```
 
 ## Usage
@@ -810,7 +892,7 @@ cargo test --test interop_openssl     # needs the `openssl` command line tool; s
 cargo test --test h2_client_interop   # the HTTP/2 client against Go's server; builds it with `go`, skipped if there is none
 AIOQUIC_PATH=/dir cargo test --test h3_client_interop   # the HTTP/3 client against aioquic (pip install --target /dir aioquic==1.3.0); skipped if python3 or openssl is missing
 sh tools/server_interop.sh            # the TLS server against OpenSSL, curl, headless Chromium (Python Playwright and certutil) and Go (67 checks)
-sh tools/h2_interop.sh                # its HTTP/2 against curl, Go and python-h2 (PYTHONPATH may point at h2 and hyperframe)
+sh tools/h2_interop.sh                # its HTTP/2 against curl, Go, python-h2 and h2spec, the production server and the test one (41 checks; PYTHONPATH may point at h2 and hyperframe, H2SPEC at h2spec)
 cargo test --test system_roots        # checks the system CA bundle, if present
 cargo test --test real_chains         # replays the 74 real certificate chains captured by tools/mac_field_check.sh
 cargo test --test real_revocation     # replays 20 real OCSP responses and 13 real CRLs at the time they were fetched

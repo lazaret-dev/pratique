@@ -1,6 +1,10 @@
 //! A small HTTP/2 server (RFC 9113) for tests and tools: something real for the client's HTTP/2 to talk to, over
 //! the crate's own TLS server (`tls::server`, ALPN `h2`) and in memory, and a peer that scripts what it does.
 //!
+//! The server for real services is [`crate::http::server`] (B-111); this one stays because a test of the client needs a
+//! peer that does what the test says, when it says, including what no good server does (push to a client that turned
+//! push off, a reset in the middle of a body).
+//!
 //! **Experimental, and not for production** (behind the `server` feature, always built for this crate's own tests):
 //! it keeps whole request bodies in memory, answers whatever the handler says, and takes every shortcut that keeps
 //! a test simple. What it does do properly is read what the client sends the way a server must, because a test

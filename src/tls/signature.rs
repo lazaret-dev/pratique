@@ -19,12 +19,13 @@ pub fn verify_tls13_signature(cert: &Certificate, scheme: u16, signed_content: &
         (0x0804, PublicKey::Rsa(k)) => k.verify_pss(HashAlg::Sha256, signed_content, signature),
         (0x0805, PublicKey::Rsa(k)) => k.verify_pss(HashAlg::Sha384, signed_content, signature),
         (0x0806, PublicKey::Rsa(k)) => k.verify_pss(HashAlg::Sha512, signed_content, signature),
-        _ => return Err(Error::Tls(format!("unsupported or mismatched signature scheme {:#06x}", scheme))),
+        // a scheme that does not go with the key is the peer's mistake, not a failed check (as OpenSSL answers it)
+        _ => return Err(Error::Tls(format!("illegal_parameter: signature scheme {scheme:#06x} does not go with the certificate's key"))),
     };
     if ok {
         Ok(())
     } else {
-        Err(Error::Tls("CertificateVerify signature is invalid".into()))
+        Err(Error::Tls("decrypt_error: the CertificateVerify signature is invalid".into()))
     }
 }
 

@@ -66,6 +66,8 @@ pub(crate) struct Resolver {
     ttl: Duration,
     lookup: Arc<Lookup>,
     names: Arc<Mutex<HashMap<String, Name>>>,
+    /// Names whose addresses were given (`Client::resolve_host`), lower case: never looked up.
+    fixed: HashMap<String, Vec<IpAddr>>,
 }
 
 #[derive(Default)]
@@ -108,7 +110,19 @@ impl Resolver {
 
     /// The same with another way to look names up (for tests).
     pub(crate) fn with_lookup(ttl: Duration, lookup: Arc<Lookup>) -> Resolver {
-        Resolver { ttl, lookup, names: Arc::new(Mutex::new(HashMap::new())) }
+        Resolver { ttl, lookup, names: Arc::new(Mutex::new(HashMap::new())), fixed: HashMap::new() }
+    }
+
+    /// A new resolver like this one (the same lookup and given names, an empty cache) that keeps answers for `ttl`.
+    pub(crate) fn with_ttl(&self, ttl: Duration) -> Resolver {
+        Resolver { ttl, lookup: self.lookup.clone(), names: Arc::new(Mutex::new(HashMap::new())), fixed: self.fixed.clone() }
+    }
+
+    /// A new resolver like this one that answers for `host` with `addrs`.
+    pub(crate) fn with_fixed(&self, host: &str, addrs: &[IpAddr]) -> Resolver {
+        let mut r = self.with_ttl(self.ttl);
+        r.fixed.insert(host.trim_end_matches('.').to_ascii_lowercase(), addrs.to_vec());
+        r
     }
 
     /// The addresses of `host` in the order to try them, waiting for the lookup until `until` at the latest.
@@ -117,6 +131,9 @@ impl Resolver {
             return Ok(vec![ip]);
         }
         let key = host.to_ascii_lowercase();
+        if let Some(addrs) = self.fixed.get(key.trim_end_matches('.')) {
+            return Ok(addrs.clone());
+        }
         let now = Instant::now();
         let (pending, mine) = {
             let mut names = lock(&self.names);

@@ -122,8 +122,70 @@ pub fn all() -> Vec<Target> {
         Target { name: "tls_post", run: tls_post, seeds: seeds_tls_post, dict: TLS_DICT, max_len: 2048, alloc_base: 1 << 21, alloc_per_byte: 256 },
         Target { name: "tls12_flight", run: tls12_flight, seeds: seeds_tls12_flight, dict: TLS_DICT, max_len: 4096, alloc_base: 1 << 22, alloc_per_byte: 256 },
         Target { name: "tls_server", run: tls_server, seeds: pratique::tls::server_fuzz::server_exchange_seeds, dict: TLS_DICT, max_len: 4096, alloc_base: 1 << 23, alloc_per_byte: 512 },
+        Target { name: "http_server_h1", run: pratique::http::server::fuzz::h1_exchange, seeds: pratique::http::server::fuzz::h1_seeds, dict: HTTP1_SERVER_DICT, max_len: 4096, alloc_base: 1 << 21, alloc_per_byte: 256 },
+        Target { name: "h2_server", run: pratique::http::server::fuzz::h2_engine, seeds: pratique::http::server::fuzz::h2_seeds, dict: crate::h2_targets::H2_DICT, max_len: 8192, alloc_base: 1 << 22, alloc_per_byte: 512 },
+        Target { name: "proxy_registry", run: proxy_registry, seeds: seeds_proxy_registry, dict: REGISTRY_DICT, max_len: 512, alloc_base: 1 << 16, alloc_per_byte: 64 },
     ]
 }
+
+/// The scanning proxy's reading of a registry URL (B-78, B-114): `host\ntarget`. What it says of a URL does not depend on
+/// the case of the host, a trailing dot, or a query or fragment; a name it gives is a name (PyPI's in PEP 503's normal
+/// form); a file is only ever given with its version.
+fn proxy_registry(data: &[u8]) {
+    use pratique::proxy::registry::{package, pypi_normalize, Ecosystem, Kind};
+    let text = String::from_utf8_lossy(data);
+    let (host, target) = text.split_once('\n').unwrap_or(("registry.npmjs.org", &text));
+    let once = pypi_normalize(target);
+    assert_eq!(pypi_normalize(&once), once, "PEP 503's normal form is its own normal form");
+    let found = package(host, target);
+    assert_eq!(package(&host.to_ascii_uppercase(), target), found, "the host's case");
+    if !host.ends_with('.') {
+        assert_eq!(package(&format!("{host}."), target), found, "a trailing dot");
+    }
+    if !target.contains(['?', '#']) {
+        assert_eq!(package(host, &format!("{target}?x=1")), found, "a query");
+        assert_eq!(package(host, &format!("{target}#f")), found, "a fragment");
+    }
+    let Some(p) = found else { return };
+    assert!(!p.name.is_empty() && p.version.as_deref() != Some(""), "{p:?}");
+    match p.ecosystem {
+        Ecosystem::PyPI => assert_eq!(pypi_normalize(&p.name), p.name, "{p:?}"),
+        Ecosystem::Npm => {
+            let parts = p.name.matches('/').count();
+            assert!(parts == 0 || (parts == 1 && p.name.starts_with('@')), "{p:?}");
+        }
+    }
+    if p.kind == Kind::Artifact {
+        assert!(p.file.is_some() && p.version.is_some(), "{p:?}");
+    }
+    if let Some(file) = &p.file {
+        assert!(!file.contains('/'), "{p:?}");
+    }
+}
+
+fn seeds_proxy_registry() -> Vec<Vec<u8>> {
+    [
+        "registry.npmjs.org\n/left-pad",
+        "registry.npmjs.org\n/left-pad/1.3.0",
+        "registry.npmjs.org\n/left-pad/-/left-pad-1.3.0.tgz",
+        "registry.npmjs.org\n/@types%2fnode?write=true",
+        "registry.yarnpkg.com\n/@types/node/-/node-20.11.5.tgz",
+        "pypi.org\n/simple/Django_Rest.Framework/",
+        "pypi.org\n/pypi/requests/2.31.0/json",
+        "files.pythonhosted.org\n/packages/ab/cd/requests-2.31.0-py3-none-any.whl",
+        "files.pythonhosted.org\n/packages/ab/cd/requests-2.31.0-py3-none-any.whl.metadata",
+        "files.pythonhosted.org\n/packages/source/r/requests/requests-2.31.0.tar.gz",
+        "test-files.pythonhosted.org\n/packages/x/zope.interface-6.0-1.zip",
+    ]
+    .iter()
+    .map(|s| s.as_bytes().to_vec())
+    .collect()
+}
+
+const REGISTRY_DICT: &[&[u8]] = &[
+    b"registry.npmjs.org\n", b"pypi.org\n", b"files.pythonhosted.org\n", b"/simple/", b"/pypi/", b"/json", b"/-/", b".tgz", b".whl",
+    b".tar.gz", b".zip", b".metadata", b"/packages/", b"%2f", b"%2F", b"@", b"-1.0.0", b"-py3-none-any", b"?", b"#", b"%", b"..",
+];
 
 /// Targets that misbehave on purpose, to check that the engine notices and saves the input (run
 /// them with `run selftest_hang` and so on; they are not part of a campaign).
@@ -248,6 +310,12 @@ fn is_known_good(set: &'static [(&'static str, &'static [u8])], data: &[u8]) -> 
 }
 
 // ------------------------------------------------------------------------------------ dictionaries
+
+const HTTP1_SERVER_DICT: &[&[u8]] = &[
+    b"GET ", b"POST ", b"HEAD ", b"CONNECT ", b"OPTIONS * ", b" HTTP/1.1\r\n", b" HTTP/1.0\r\n", b"\r\n", b"\r\n\r\n", b"\n", b"\r",
+    b"Host: a\r\n", b"Content-Length: ", b"Transfer-Encoding: chunked\r\n", b"Transfer-Encoding: ", b"Expect: 100-continue\r\n",
+    b"Connection: close\r\n", b"Connection: keep-alive\r\n", b"0\r\n\r\n", b";ext=\"v\"", b"ffffffffffffffff", b"http://x.example/", b" ", b"\t",
+];
 
 const DER_DICT: &[&[u8]] = &[
     b"\x30\x82",

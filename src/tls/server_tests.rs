@@ -419,6 +419,8 @@ struct HelloBuilder {
     duplicate: Option<u16>,
     trailing: Vec<u8>,
     extra: Vec<(u16, Vec<u8>)>,
+    legacy_version: u16,
+    no_key_share: bool,
 }
 
 impl HelloBuilder {
@@ -437,6 +439,8 @@ impl HelloBuilder {
             duplicate: None,
             trailing: Vec::new(),
             extra: Vec::new(),
+            legacy_version: 0x0303,
+            no_key_share: false,
         }
     }
 
@@ -464,7 +468,7 @@ impl HelloBuilder {
         if let Some(g) = &self.groups {
             ext(&mut exts, EXT_SUPPORTED_GROUPS, &list16(g));
         }
-        if !self.shares.is_empty() || self.groups.is_some() {
+        if (!self.shares.is_empty() || self.groups.is_some()) && !self.no_key_share {
             let mut shares = Vec::new();
             for (g, k) in &self.shares {
                 shares.extend_from_slice(&g.to_be_bytes());
@@ -503,7 +507,7 @@ impl HelloBuilder {
             ext(&mut exts, t, &[0, 0]);
             ext(&mut exts, t, &[0, 0]);
         }
-        let mut body = vec![3, 3];
+        let mut body = self.legacy_version.to_be_bytes().to_vec();
         body.extend_from_slice(&[0x42; 32]);
         body.push(self.session_id.len() as u8);
         body.extend_from_slice(&self.session_id);
@@ -573,7 +577,7 @@ fn a_well_formed_hello_is_answered_with_a_flight() {
 #[test]
 fn a_hello_that_is_wrong_is_refused_with_the_alert_that_says_why() {
     type Edit = fn(&mut HelloBuilder);
-    let cases: [(&str, Edit, u8, &str); 17] = [
+    let cases: [(&str, Edit, u8, &str); 23] = [
         ("no supported_versions", |b| b.versions = None, 70, "protocol_version"),
         ("only TLS 1.2", |b| b.versions = Some(vec![0x0303]), 70, "protocol_version"),
         ("no extensions at all", |b| b.extensions = false, 70, "protocol_version"),
@@ -591,6 +595,13 @@ fn a_hello_that_is_wrong_is_refused_with_the_alert_that_says_why() {
         ("an all-zero X25519 share", |b| b.shares = vec![(GROUP_X25519, vec![0; 32])], 47, "all-zero"),
         ("a P-256 share that is not on the curve", |b| { b.groups = Some(vec![GROUP_SECP256R1]); b.shares = vec![(GROUP_SECP256R1, vec![4; 65])]; }, 47, "not a valid point"),
         ("an empty ALPN name", |b| b.alpn = Some(vec![""]), 50, "empty ALPN"),
+        // what tlsfuzzer found (BACKLOG B-114)
+        ("SSL 3.0 in legacy_version", |b| b.legacy_version = 0x0300, 70, "legacy_version"),
+        ("an SSL 2 legacy_version", |b| b.legacy_version = 0x0002, 70, "legacy_version"),
+        ("supported_groups without key_share", |b| b.no_key_share = true, 109, "not both there"),
+        ("key_share without supported_groups", |b| b.groups = None, 109, "not both there"),
+        ("neither, and no PSK", |b| { b.groups = None; b.shares.clear(); }, 109, "not both there"),
+        ("a share for a group of ours that supported_groups does not list", |b| b.groups = Some(vec![GROUP_SECP256R1]), 47, "does not list"),
     ];
     for (name, edit, alert_wanted, text) in cases {
         let mut b = HelloBuilder::new();
@@ -955,6 +966,131 @@ fn a_finished_in_the_wrong_place_and_other_wrong_messages_are_refused() {
     assert!(conn.process().err().unwrap().to_string().contains("after the client Finished"));
 }
 
+/// The alert the server queued, opened with the keys it writes with at that point (after its Finished, the
+/// application keys).
+fn alert_sent(conn: &ServerConnection, suite: Suite, secret: &[u8]) -> Vec<u8> {
+    let out = conn.output().to_vec();
+    let (t, alert) = RecordCipher::new(suite, secret).decrypt(&out[..5].try_into().unwrap(), &out[5..]).unwrap();
+    assert_eq!(t, RT_ALERT);
+    alert
+}
+
+#[test]
+fn what_tlsfuzzer_found_in_the_records_and_the_finished_is_refused_as_the_rfc_says() {
+    let suite = Suite::Aes128GcmSha256;
+    let config = || default_config().with_suites(&[suite]);
+    let alg = suite.hash();
+    let finished = |flight: &Flight| {
+        let key = expand_label(alg, &flight.c_hs, "finished", &[], alg.output_len());
+        handshake_message(HS_FINISHED, &hmac(alg, &key, &alg.digest(&flight.transcript)))
+    };
+
+    // a Finished padded to the largest record: the inner plaintext is over 2^14 + 1 (record_overflow, RFC 8446 5.4) ...
+    let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
+    let fin = finished(&flight);
+    let padding = MAX_PLAINTEXT + 256 - fin.len() - 1 - 16;
+    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt_padded(RT_HANDSHAKE, &fin, padding));
+    assert!(conn.process().err().unwrap().to_string().contains("record_overflow"));
+    assert_eq!(alert_sent(&conn, suite, &flight.application_secrets().1), [2, 22]);
+    // ... and one padded to exactly 2^14 + 1 is taken
+    let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
+    let fin = finished(&flight);
+    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt_padded(RT_HANDSHAKE, &fin, MAX_PLAINTEXT - fin.len()));
+    conn.process().unwrap();
+    assert!(conn.is_established());
+
+    // a Finished that is not the length of the hash is a decode_error, not a decrypt_error
+    let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
+    let mut long = finished(&flight)[4..].to_vec();
+    long.splice(0..0, [0u8; 16]);
+    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt(RT_HANDSHAKE, &handshake_message(HS_FINISHED, &long)));
+    assert!(conn.process().err().unwrap().to_string().contains("decode_error"));
+    assert_eq!(alert_sent(&conn, suite, &flight.application_secrets().1), [2, 50]);
+    // and one that says it is far longer is refused at once, before its bytes come
+    let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
+    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt(RT_HANDSHAKE, &[HS_FINISHED, 0xff, 0xff, 0xff, 0, 0]));
+    assert!(conn.process().err().unwrap().to_string().contains("decode_error"));
+
+    // an alert record with nothing in it, under the handshake keys or the application keys, is an unexpected_message
+    let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
+    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt_padded(RT_ALERT, &[], 5));
+    assert!(conn.process().err().unwrap().to_string().contains("empty alert"));
+    assert_eq!(alert_sent(&conn, suite, &flight.application_secrets().1), [2, 10]);
+    let (mut conn, flight) = first_flight(config().with_tickets(0), &HelloBuilder::new());
+    conn.receive(&flight.client_finished_record(None));
+    conn.process().unwrap();
+    let (c_ap, s_ap) = flight.application_secrets();
+    conn.receive(&RecordCipher::new(suite, &c_ap).encrypt(RT_ALERT, &[]));
+    assert!(conn.process().err().unwrap().to_string().contains("empty alert"));
+    assert_eq!(alert_sent(&conn, suite, &s_ap), [2, 10]);
+
+    // one compatibility change_cipher_spec is skipped; a second is an unexpected_message
+    let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
+    conn.receive(&record(RT_CHANGE_CIPHER_SPEC, &[1]));
+    conn.process().unwrap();
+    conn.receive(&record(RT_CHANGE_CIPHER_SPEC, &[1]));
+    assert!(conn.process().err().unwrap().to_string().contains("change_cipher_spec"));
+    assert_eq!(alert_sent(&conn, suite, &flight.application_secrets().1), [2, 10]);
+
+    // a client that cannot read our flight may say so in the clear: its alert ends the handshake, unanswered
+    let (mut conn, _) = first_flight(config(), &HelloBuilder::new());
+    conn.receive(&record(RT_ALERT, &[2, 48]));
+    assert!(matches!(conn.process(), Err(Error::Alert(2, 48))));
+    assert!(conn.is_failed() && !conn.wants_write());
+    // (once the handshake is over, only protected alerts count)
+    let (mut conn, flight) = first_flight(config().with_tickets(0), &HelloBuilder::new());
+    conn.receive(&flight.client_finished_record(None));
+    conn.process().unwrap();
+    conn.receive(&record(RT_ALERT, &[2, 48]));
+    assert!(conn.process().err().unwrap().to_string().contains("unprotected record"));
+
+    // TLS 1.0 in legacy_version is taken (only SSL 3.0 and older are refused)
+    let mut b = HelloBuilder::new();
+    b.legacy_version = 0x0301;
+    let (result, _, _) = run_hello(config(), &record(RT_HANDSHAKE, &b.build()));
+    result.unwrap();
+}
+
+#[test]
+fn a_second_client_hello_may_not_offer_early_data_again() {
+    // tlsfuzzer's test-tls13-0rtt-garbage found early data skipped after a retry (RFC 8446 section 4.2.10)
+    let config = default_config().with_groups(&[GROUP_SECP256R1]);
+    let mut first = HelloBuilder::new();
+    first.groups = Some(vec![GROUP_X25519, GROUP_SECP256R1]);
+    first.extra = vec![(EXT_EARLY_DATA, Vec::new())];
+    let (_, p256_public) = crate::crypto::ecdh::generate(crate::crypto::ecdsa::Curve::P256).unwrap();
+    let mut second = HelloBuilder::new();
+    second.groups = first.groups.clone();
+    second.shares = vec![(GROUP_SECP256R1, p256_public)];
+    for (again, wanted) in [(true, Some("early_data in the second ClientHello")), (false, None)] {
+        let mut conn = ServerConnection::new(Arc::new(config.clone()));
+        conn.receive(&record(RT_HANDSHAKE, &first.build()));
+        conn.process().unwrap();
+        let n = conn.output().len();
+        conn.consume_output(n);
+        // early data sent with the first hello, before the second, is skipped
+        conn.receive(&record(RT_APPLICATION_DATA, &[0x55; 100]));
+        conn.process().unwrap();
+        let mut hello = HelloBuilder::new();
+        hello.groups = second.groups.clone();
+        hello.shares = second.shares.clone();
+        if again {
+            hello.extra = first.extra.clone();
+        }
+        conn.receive(&record(RT_HANDSHAKE, &hello.build()));
+        match (conn.process(), wanted) {
+            (Err(e), Some(text)) => assert!(e.to_string().contains(text), "{e}"),
+            (Ok(()), None) => assert_eq!(conn.group(), Some(GROUP_SECP256R1)),
+            (r, w) => panic!("{r:?} where {w:?} was wanted"),
+        }
+        if !again {
+            // and after it, a record that does not open is an error, not more early data
+            conn.receive(&record(RT_APPLICATION_DATA, &[0x55; 100]));
+            assert!(conn.process().is_err());
+        }
+    }
+}
+
 #[test]
 fn a_key_update_from_the_client_is_followed_and_answered_when_asked_for() {
     let suite = Suite::Aes256GcmSha384;
@@ -983,15 +1119,26 @@ fn a_key_update_from_the_client_is_followed_and_answered_when_asked_for() {
     let (t, plain) = server_read.decrypt(&rest[..5].try_into().unwrap(), &rest[5..]).unwrap();
     assert_eq!((t, plain.as_slice()), (RT_APPLICATION_DATA, &b"reply"[..]));
 
-    // malformed KeyUpdates
-    for bad in [vec![HS_KEY_UPDATE, 0, 0, 2, 1, 0], vec![HS_KEY_UPDATE, 0, 0, 1, 2], vec![HS_KEY_UPDATE, 0, 0, 0]] {
+    // malformed KeyUpdates (a request_update other than 0 or 1 is an illegal_parameter, RFC 8446 section 4.6.3)
+    for (bad, wanted) in [(vec![HS_KEY_UPDATE, 0, 0, 2, 1, 0], "decode_error"), (vec![HS_KEY_UPDATE, 0, 0, 1, 2], "illegal_parameter"), (vec![HS_KEY_UPDATE, 0, 0, 0], "decode_error")] {
         let (mut conn, flight) = first_flight(default_config().with_suites(&[suite]).with_tickets(0), &HelloBuilder::new());
         conn.receive(&flight.client_finished_record(None));
         conn.process().unwrap();
         let (c_ap, _) = flight.application_secrets();
         conn.receive(&RecordCipher::new(suite, &c_ap).encrypt(RT_HANDSHAKE, &bad));
-        assert!(conn.process().is_err(), "{bad:?}");
+        let err = conn.process().err().unwrap_or_else(|| panic!("{bad:?} taken")).to_string();
+        assert!(err.contains(wanted), "{bad:?}: {err}");
     }
+    // a KeyUpdate split over two records with application data between them (RFC 8446 section 5.1, tlsfuzzer's
+    // test-tls13-keyupdate)
+    let (mut conn, flight) = first_flight(default_config().with_suites(&[suite]).with_tickets(0), &HelloBuilder::new());
+    conn.receive(&flight.client_finished_record(None));
+    conn.process().unwrap();
+    let mut w = RecordCipher::new(suite, &flight.application_secrets().0);
+    conn.receive(&w.encrypt(RT_HANDSHAKE, &[HS_KEY_UPDATE, 0, 0, 1]));
+    conn.receive(&w.encrypt(RT_APPLICATION_DATA, b"between"));
+    conn.receive(&w.encrypt(RT_HANDSHAKE, &[0]));
+    assert!(conn.process().err().unwrap().to_string().contains("inside a handshake message"));
     // and anything else after the handshake
     let (mut conn, flight) = first_flight(default_config().with_suites(&[suite]).with_tickets(0), &HelloBuilder::new());
     conn.receive(&flight.client_finished_record(None));
@@ -1197,7 +1344,7 @@ fn a_client_certificate_verify_that_is_wrong_is_refused() {
     let (server, _) = ServerConfig::for_names(&["server.test"]).unwrap();
     let (client_cert, roots) = client_ca();
     let config = server.with_client_auth(ClientAuth::Required(roots));
-    let (mut conn, flight) = first_flight(config, &HelloBuilder::new());
+    let (_, flight) = first_flight(config.clone(), &HelloBuilder::new());
     let kinds: Vec<u8> = flight.messages.iter().map(|m| m[0]).collect();
     assert_eq!(kinds, [HS_ENCRYPTED_EXTENSIONS, HS_CERTIFICATE_REQUEST, HS_CERTIFICATE, HS_CERTIFICATE_VERIFY, HS_FINISHED]);
     let request = parse_certificate_request(&flight.messages[1][4..]).unwrap();
@@ -1214,15 +1361,20 @@ fn a_client_certificate_verify_that_is_wrong_is_refused() {
     body.extend_from_slice(&list);
     let certificate = handshake_message(HS_CERTIFICATE, &body);
     let signature = client_cert.key().sign_tls(0x0503, &client_certificate_verify_content(&[0u8; 32])).unwrap();
-    let mut v = 0x0503u16.to_be_bytes().to_vec();
-    v.extend_from_slice(&(signature.len() as u16).to_be_bytes());
-    v.extend_from_slice(&signature);
-    let verify = handshake_message(HS_CERTIFICATE_VERIFY, &v);
-    let mut cipher = RecordCipher::new(flight.suite, &flight.c_hs);
-    conn.receive(&cipher.encrypt(RT_HANDSHAKE, &certificate));
-    conn.receive(&cipher.encrypt(RT_HANDSHAKE, &verify));
-    let err = conn.process().unwrap_err().to_string();
-    assert!(err.contains("decrypt_error"), "{err}");
+    // signed over the wrong transcript: decrypt_error; a scheme our request offers that does not go with the key (P-256
+    // for a P-384 key, tlsfuzzer's test-tls13-ecdsa-in-certificate-verify): illegal_parameter
+    for (scheme, wanted) in [(0x0503u16, "decrypt_error"), (0x0403, "illegal_parameter"), (0x0807, "illegal_parameter")] {
+        let mut v = scheme.to_be_bytes().to_vec();
+        v.extend_from_slice(&(signature.len() as u16).to_be_bytes());
+        v.extend_from_slice(&signature);
+        let verify = handshake_message(HS_CERTIFICATE_VERIFY, &v);
+        let (mut conn, flight) = first_flight(config.clone(), &HelloBuilder::new());
+        let mut cipher = RecordCipher::new(flight.suite, &flight.c_hs);
+        conn.receive(&cipher.encrypt(RT_HANDSHAKE, &certificate));
+        conn.receive(&cipher.encrypt(RT_HANDSHAKE, &verify));
+        let err = conn.process().unwrap_err().to_string();
+        assert!(err.contains(wanted), "{scheme:#06x}: {err}");
+    }
 }
 
 #[test]

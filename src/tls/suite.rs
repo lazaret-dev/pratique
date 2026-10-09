@@ -268,6 +268,10 @@ impl RecordCipher {
             .open_in_place(&nonce, header, payload)
             .ok_or_else(|| Error::Tls("bad_record_mac: record failed authentication".into()))?;
         self.seq += 1;
+        // the whole TLSInnerPlaintext, padding included, is at most 2^14 + 1 octets (RFC 8446 section 5.4)
+        if n > MAX_PLAINTEXT + 1 {
+            return Err(Error::Tls("record_overflow: inner plaintext too long".into()));
+        }
         // Strip the optional zero padding; the last non-zero byte is the true content type.
         while n > 0 && payload[n - 1] == 0 {
             n -= 1;
@@ -276,11 +280,22 @@ impl RecordCipher {
             return Err(Error::Tls("unexpected_message: record with no content type".into()));
         }
         let inner_type = payload[n - 1];
-        let len = n - 1;
-        if len > MAX_PLAINTEXT {
-            return Err(Error::Tls("record_overflow: inner plaintext too long".into()));
-        }
-        Ok((inner_type, len))
+        Ok((inner_type, n - 1))
+    }
+
+    /// Like `encrypt`, with `padding` zeros after the content type (RFC 8446 section 5.4) and no limit on the length.
+    #[cfg(test)]
+    pub fn encrypt_padded(&mut self, inner_type: u8, content: &[u8], padding: usize) -> Vec<u8> {
+        let ct_len = content.len() + 1 + padding + AEAD_TAG_LEN;
+        let header = [RT_APPLICATION_DATA, 0x03, 0x03, (ct_len >> 8) as u8, ct_len as u8];
+        let mut rec = header.to_vec();
+        rec.extend_from_slice(content);
+        rec.push(inner_type);
+        rec.resize(5 + ct_len, 0);
+        let nonce = self.nonce();
+        self.aead.seal_in_place(&nonce, &header, &mut rec[5..]);
+        self.seq += 1;
+        rec
     }
 
     /// Opens a protected record; returns (true content type, content).
@@ -296,6 +311,28 @@ impl RecordCipher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_inner_plaintext_padding_included_is_at_most_2_to_the_14_plus_1() {
+        // RFC 8446 section 5.4; tlsfuzzer's test-tls13-record-layer-limits found the padding was not counted
+        for suite in Suite::ALL {
+            let secret = vec![7u8; suite.hash().output_len()];
+            let (mut enc, mut dec) = (RecordCipher::new(suite, &secret), RecordCipher::new(suite, &secret));
+            for (content, padding, ok) in [(36, MAX_PLAINTEXT - 36, true), (36, MAX_PLAINTEXT - 35, false), (MAX_PLAINTEXT, 0, true), (MAX_PLAINTEXT - 8, 9, false)] {
+                let rec = enc.encrypt_padded(RT_HANDSHAKE, &vec![1u8; content], padding);
+                let header: [u8; 5] = rec[..5].try_into().unwrap();
+                match dec.decrypt(&header, &rec[5..]) {
+                    Ok((t, body)) => assert!(ok && t == RT_HANDSHAKE && body.len() == content, "{content} + {padding}"),
+                    Err(e) => {
+                        assert!(!ok && e.to_string().contains("record_overflow"), "{content} + {padding}: {e}");
+                        // (the sequence moved on: the record opened)
+                        dec = RecordCipher::new(suite, &secret);
+                        enc = RecordCipher::new(suite, &secret);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn record_roundtrip_all_suites() {

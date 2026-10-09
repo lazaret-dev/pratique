@@ -30,6 +30,10 @@ server = ["net"]
 mozilla-roots = []
 
 [[example]]
+name = "acme_serve"
+required-features = ["server"]
+
+[[example]]
 name = "async_get"
 required-features = ["net"]
 
@@ -64,6 +68,10 @@ required-features = ["net"]
 [[example]]
 name = "probe"
 required-features = ["net"]
+
+[[example]]
+name = "scan_proxy"
+required-features = ["server"]
 
 [[example]]
 name = "serve"

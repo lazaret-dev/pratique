@@ -295,10 +295,18 @@ impl Decoder {
         while pos < block.len() {
             let first = block[pos];
             let field = if first & 0x80 != 0 {
-                // indexed field
+                // indexed field: measured before it is copied, so that a block of one-byte references to a large
+                // entry costs nothing once the list is over the limit (an "HPACK bomb")
                 let index = decode_int(block, &mut pos, 7)?;
                 let (name, value) = self.table.get(index).ok_or(Error::Index(index))?;
-                Field { name: name.to_vec(), value: value.to_vec() }
+                started = true;
+                list = list.saturating_add(name.len() + value.len() + ENTRY_OVERHEAD);
+                if list > self.max_list_size {
+                    within = false;
+                } else {
+                    out.push(Field { name: name.to_vec(), value: value.to_vec() });
+                }
+                continue;
             } else if first & 0x40 != 0 {
                 // literal field, added to the table
                 let field = self.literal(block, &mut pos, 6, string_limit)?;
@@ -320,7 +328,7 @@ impl Decoder {
                 self.literal(block, &mut pos, 4, string_limit)?
             };
             started = true;
-            list += field.size();
+            list = list.saturating_add(field.size());
             if list > self.max_list_size {
                 within = false;
             } else {

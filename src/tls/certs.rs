@@ -37,6 +37,8 @@ pub struct CertifiedKey {
     /// clients)
     chain_schemes: Vec<u16>,
     not_after: i64,
+    /// a TLS-ALPN-01 challenge certificate (RFC 8737), made by `acme_tls_alpn_challenge`
+    acme_challenge: bool,
 }
 
 impl std::fmt::Debug for CertifiedKey {
@@ -44,6 +46,9 @@ impl std::fmt::Debug for CertifiedKey {
         write!(f, "CertifiedKey({:?}, {}, {} certificates)", self.dns_names, self.key.algorithm(), self.chain.len())
     }
 }
+
+/// id-pe-acmeIdentifier (RFC 8737 section 6.1).
+const OID_ACME_IDENTIFIER: &str = "1.3.6.1.5.5.7.1.31";
 
 /// The TLS SignatureScheme that stands for a certificate's signature algorithm, as `signature_algorithms_cert` names
 /// them (an ECDSA signature by its hash: the curve is the issuer's, which the scheme names only loosely).
@@ -102,7 +107,39 @@ impl CertifiedKey {
             chain,
             key,
             ocsp_staple: None,
+            acme_challenge: false,
         })
+    }
+
+    /// A TLS-ALPN-01 challenge certificate (RFC 8737; `http::server::acme` makes these): `der`, self-signed for the one
+    /// DNS name or IP address being validated, with the critical acmeIdentifier extension (which [`Certificate::from_der`]
+    /// refuses, as software that is not an ACME validator must), and its key. A handshake that picks it chooses the ALPN
+    /// protocol `acme-tls/1` (the client must offer it) and resumes no session, and the HTTP server closes the connection
+    /// once it is done. Refused if the certificate has no acmeIdentifier extension or `key` is not its key.
+    pub fn acme_tls_alpn_challenge(der: Vec<u8>, key: SigningKey) -> Result<CertifiedKey> {
+        let c = Certificate::parse(&der)?;
+        let oid = crate::asn1::oid_from_string(OID_ACME_IDENTIFIER).expect("a valid OID");
+        if !c.extension(&oid).is_some_and(|e| e.critical) {
+            return Err(Error::Key("not a TLS-ALPN-01 challenge certificate: no critical acmeIdentifier extension".into()));
+        }
+        if c.spki_der() != key.public_key_spki() {
+            return Err(Error::Key(format!("the {} private key is not the challenge certificate's key", key.algorithm())));
+        }
+        Ok(CertifiedKey {
+            dns_names: c.dns_names.iter().map(|n| n.to_ascii_lowercase()).collect(),
+            ip_addrs: c.ip_addrs.clone(),
+            not_after: c.not_after,
+            chain_schemes: Vec::new(),
+            chain: vec![der],
+            key,
+            ocsp_staple: None,
+            acme_challenge: true,
+        })
+    }
+
+    /// Whether this is a TLS-ALPN-01 challenge certificate.
+    pub fn is_acme_challenge(&self) -> bool {
+        self.acme_challenge
     }
 
     /// A CA's "fullchain" PEM (the leaf first, then the intermediates) and the leaf's private key in PEM (see
