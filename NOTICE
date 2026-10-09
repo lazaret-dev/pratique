@@ -1,0 +1,67 @@
+pratique
+Copyright 2026 The pratique authors
+
+pratique is licensed under the Apache License, Version 2.0 (LICENSE). This file names the material in this
+repository that comes from elsewhere, and keeps the notices its licences ask for.
+
+
+1. Mozilla's root store: roots/mozilla.pem
+
+Made by tools/gen_mozilla_roots.py from Mozilla NSS's certdata.txt (https://github.com/nss-dev/nss,
+lib/ckfw/builtins/certdata.txt). The file names the NSS builtins version and the SHA-256 of the certdata.txt it
+was made from. It is built into the library only with the `mozilla-roots` feature, which is off by default.
+
+    This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL
+    was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+
+2. BearSSL: src/crypto/aes_ct.rs, src/crypto/ghash.rs
+
+The bitsliced AES S-box (the circuit of Boyar and Peralta) has its gates in the order BearSSL's aes_ct writes
+them, and the constant-time carry-less multiplication without CPU support (bmul64) uses the technique of
+BearSSL's ghash_ctmul64. BearSSL is under the MIT licence:
+
+    Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>
+
+    Permission is hereby granted, free of charge, to any person obtaining
+    a copy of this software and associated documentation files (the
+    "Software"), to deal in the Software without restriction, including
+    without limitation the rights to use, copy, modify, merge, publish,
+    distribute, sublicense, and/or sell copies of the Software, and to
+    permit persons to whom the Software is furnished to do so, subject to
+    the following conditions:
+
+    The above copyright notice and this permission notice shall be
+    included in all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+    EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+    MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+    NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+    BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+    ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+
+3. Sigstore's TUF root: roots/sigstore_tuf_root.json
+
+The root metadata of Sigstore's TUF repository (https://github.com/sigstore/root-signing), which src/tuf.rs
+builds in: Apache License, Version 2.0.
+
+
+4. Test data (tests/data/; the tests read it, the library does not contain it)
+
+- tests/data/wycheproof/: Project Wycheproof test vectors (https://github.com/C2SP/wycheproof), Apache License,
+  Version 2.0. See the README there.
+- tests/data/sigstore/: the npm packages sigstore 0.2.0, 2.2.0 and 4.0.0 (sigstore-js) with their attestations,
+  the pypi-attestations 0.0.30 wheel with its provenance, and Sigstore's trusted root as sigstore-python embeds
+  it: Apache License, Version 2.0, each package with its own LICENSE inside. See the README there.
+- tests/data/ed25519_sign_input.txt: cases from the sign.input of the Ed25519 reference software of Daniel J.
+  Bernstein et al. (public domain), as Go's crypto/ed25519 ships it.
+- Certificates, CRLs, OCSP responses, transparency-log data and attestations captured from public servers and
+  registries (tests/data/real_chains, real_revocation, sumdb, rekor, sigstore): public data. The README or
+  header next to each says where and when it was captured.
+- Expected results recorded from other implementations (Go, OpenSSL, Python's cryptography and zlib, quic-go,
+  ls-qpack, python-h2, hyperframe, aioquic, python-tuf) are their outputs; none of their code is in this
+  repository.

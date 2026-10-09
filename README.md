@@ -34,7 +34,7 @@ Test run at last check: 1,453 unit (including the mutation fuzzers; 21 more are 
 This is hand-written, unaudited cryptography. Nothing has had an independent side-channel or code review. Do not use
 it to protect sensitive data until the hardening items in the backlog are done. Revocation is checked only with the
 evidence the server staples and the CRLs you supply or let the library fetch, and by default a missing answer is
-ignored (soft-fail); see Revocation below.
+ignored (soft-fail); see Revocation below. To report a vulnerability, see `SECURITY.md`.
 
 `SECURITY_REVIEW.md` is the brief for an independent reviewer: what the verification code claims, the threat model, the evidence so far, what has not been done, and where to attack first.
 
@@ -410,9 +410,10 @@ time, it resumes only from tickets it keeps in memory, has one certificate, and 
 `mozilla-roots` (off by default, pure, works with or without `net`) builds Mozilla's root store for TLS servers into the
 crate: `pratique::mozilla_roots::trust_store()`, the certificates NSS (and so Firefox) trusts as CAs for TLS servers, with
 the dates after which Mozilla no longer trusts a CA's new certificates (`roots/mozilla.pem`, about 190 KB, made from NSS's
-`certdata.txt` by `tools/gen_mozilla_roots.py`, which names the NSS version). It is for machines whose own bundle is missing or
-old (macOS's `/etc/ssl/cert.pem` lacked ISRG Root X2 in the first field run) and for programs that want the same roots
-everywhere; the price is that the roots are as new as the crate's copy (B-31).
+`certdata.txt` by `tools/gen_mozilla_roots.py`, which names the NSS version; like NSS, it is under the Mozilla Public
+License 2.0: see `NOTICE`). It is for machines whose own bundle is missing or old (macOS's `/etc/ssl/cert.pem` lacked ISRG
+Root X2 in the first field run) and for programs that want the same roots everywhere; the price is that the roots are as
+new as the crate's copy (B-31).
 
 ```toml
 pratique = { version = "0.1", features = ["mozilla-roots"] }
@@ -588,8 +589,8 @@ let outcome = check.finish(&tiles)?;                            // nothing is vo
 `cargo run --release --example sumdb -- golang.org/x/mod v0.17.0` does all of it through `Client` (`--state FILE` keeps the
 tree head between runs, so a log that later rewrites history is caught as a fork). A log that has shown two histories is
 `tlog::Error::Fork`; a tile that does not hash to its parent's entry is `TileDoesNotMatchParent`. Go's own client before x/mod
-0.40.0 (Go before 1.25.13) did not check some tiles against their parents (CVE-2026-56865), which let a server swap a leaf tile;
-this code replays that attack against real tiles and refuses it.
+0.40.0 (Go before 1.25.13, and 1.26 before 1.26.6) did not check some tiles against their parents (CVE-2026-56865), which let a
+server swap a leaf tile; this code replays that attack against real tiles and refuses it.
 
 Where Go is lenient this is not (documented in `sumdb`): Base64 must be canonical, record numbers and tree sizes are plain
 decimals, lookup paths use only the characters real module paths use, and two signed heads of one size with different roots are a
@@ -838,4 +839,5 @@ while its secret arithmetic runs: key exchange, the AEADs, AES and HMAC (`crypto
 
 ## Licence
 
-Apache License, Version 2.0; see `LICENSE`.
+Apache License, Version 2.0; see `LICENSE`. `NOTICE` names what comes from elsewhere: the one file under another licence
+is `roots/mozilla.pem` (Mozilla Public License 2.0, from NSS), which is built in only with the `mozilla-roots` feature.

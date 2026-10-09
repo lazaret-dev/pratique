@@ -24,8 +24,9 @@ net = []
 # default build contains no server and no signing code. See src/tls/server.rs.
 server = ["net"]
 # Mozilla's root store for TLS servers, built in (`mozilla_roots::trust_store()`; roots/mozilla.pem, about 190 KB, made by
-# tools/gen_mozilla_roots.py from NSS's certdata.txt): for machines whose own CA bundle is missing or old. Pure: it
-# adds no I/O and works with or without `net`. Off by default; see src/mozilla_roots.rs.
+# tools/gen_mozilla_roots.py from NSS's certdata.txt, and like NSS under the Mozilla Public License 2.0: see NOTICE): for
+# machines whose own CA bundle is missing or old. Pure: it adds no I/O and works with or without `net`. Off by default;
+# see src/mozilla_roots.rs.
 mozilla-roots = []
 
 [[example]]
