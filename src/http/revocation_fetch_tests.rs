@@ -69,7 +69,8 @@ impl Chain {
     }
 
     fn trust(&self) -> TrustStore {
-        let mut t = TrustStore::empty();
+        // (Ed25519 keys: a private PKI, without the CA/Browser Forum's rules)
+        let mut t = TrustStore::empty().with_web_pki_rules(false);
         t.add_der(&self.root).unwrap();
         t
     }

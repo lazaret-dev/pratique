@@ -424,7 +424,9 @@ impl TestPki {
 
     /// A trust store that holds the root.
     pub fn trust_store(&self) -> crate::x509::TrustStore {
-        let mut store = crate::x509::TrustStore::empty();
+        // (a private PKI, whose keys are Ed25519 by default: the CA/Browser Forum's rules, which allow RSA and ECDSA only,
+        // are not its rules; see `TrustStore::with_web_pki_rules`)
+        let mut store = crate::x509::TrustStore::empty().with_web_pki_rules(false);
         store.add_der(&self.root).expect("the root certificate parses");
         store
     }
@@ -530,7 +532,8 @@ mod tests {
         let root = issue(&root_spec, &root_key, None);
         let inter = issue(&inter_spec, &inter_key, Some(("root", &root_key)));
         let leaf = issue(&CertSpec::server(&["server.test"]), &server_key, Some(("intermediate", &inter_key)));
-        let mut store = crate::x509::TrustStore::empty();
+        // (Ed25519 keys: a private PKI, without the CA/Browser Forum's rules, under which a leaf must name serverAuth)
+        let mut store = crate::x509::TrustStore::empty().with_web_pki_rules(false);
         store.add_der(&root).unwrap();
         let now = sys::now_unix();
         store.verify_server_chain(&[leaf.clone(), inter.clone()], "server.test", now).unwrap();

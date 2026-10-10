@@ -539,6 +539,30 @@ MUTANTS.update({
     "sysproxy_pac_query": (SYSP, "let shown = pac.split(['?', '#']).next().unwrap_or(\"\");", "let shown = pac.as_str();", "test:http::system_proxy"),
 })
 
+# --- the CA/Browser Forum's rules for a TLS server's chain (x509::check_web_pki, 2026-10-10): tests/chain_cases.rs ----------
+X509 = "src/x509.rs"
+CC = "itest:chain_cases:every_generated"
+MUTANTS.update({
+    # a leaf with no extendedKeyUsage is accepted
+    "webpki_eku_none": (X509, "        None => return Err(path_err(leaf, \"leaf certificate has no extendedKeyUsage, which the CA/Browser Forum's rules require to name serverAuth\")),", "        None => {}", CC),
+    # a leaf whose extendedKeyUsage is anyExtendedKeyUsage is accepted
+    "webpki_eku_any": (X509, "Some(list) if list.iter().any(|o| o == OID_EKU_ANY) => {", "Some(list) if false && list.iter().any(|o| o == OID_EKU_ANY) => {", CC),
+    # an Ed25519 key or signature is accepted
+    "webpki_ed25519": (X509, "if matches!(c.public_key, PublicKey::Ed25519(_)) || c.sig_alg == Some(SigAlg::Ed25519) {", "if false && (matches!(c.public_key, PublicKey::Ed25519(_)) || c.sig_alg == Some(SigAlg::Ed25519)) {", CC),
+    # an issuer name equal only after folding is accepted
+    "webpki_issuer_bytes": (X509, "if child.issuer_der != issuer.subject_der {", "if false && child.issuer_der != issuer.subject_der {", CC),
+    # a mismatched authorityKeyIdentifier is accepted
+    "webpki_aki": (X509, "            if aki != ski {", "            if false && aki != ski {", CC),
+    # the rules are never applied
+    "webpki_off": (X509, "let web = opts.web_pki && self.web_pki_rules && opts.purpose == Purpose::ServerAuth;", "let web = false && opts.web_pki && self.web_pki_rules && opts.purpose == Purpose::ServerAuth;", CC),
+    # a TLS server's options leave the rules off
+    "webpki_tls_server_off": (X509, "            accept_critical: Vec::new(),\n            web_pki: true,", "            accept_critical: Vec::new(),\n            web_pki: false,", CC),
+    # a new store is one of private anchors
+    "webpki_store_default": (X509, "min_rsa_bits: DEFAULT_MIN_RSA_BITS, web_pki_rules: true }", "min_rsa_bits: DEFAULT_MIN_RSA_BITS, web_pki_rules: false }", CC),
+    # a store of private anchors is held to the rules all the same
+    "webpki_store_private": (X509, "let web = opts.web_pki && self.web_pki_rules && opts.purpose", "let web = opts.web_pki && opts.purpose", "itest:chain_cases:a_store_of_private_anchors"),
+})
+
 EQUIVALENT = {
     "connection_stream_acked_twice": "acknowledging a chunk twice is the same as once (acknowledgments are idempotent by design)",
     "connection_crypto_acked_never": "the buffers of the handshake's crypto data are dropped with the keys of their space, and the client sends none later",

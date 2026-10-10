@@ -1189,7 +1189,8 @@ use crate::x509::TrustStore;
 
 /// A root and a store of certificates under it, one per name list, the first the default.
 fn store_under_one_root(name_lists: &[&[&str]]) -> (CertStore, ClientConfig) {
-    let root_key = KeyPair::generate().unwrap();
+    // (ECDSA throughout, so that the client's default rules, the CA/Browser Forum's, hold)
+    let root_key = KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P256).unwrap();
     let root_spec = CertSpec::ca("pratique test root");
     let root = issue(&root_spec, &root_key, None);
     let store = CertStore::new();

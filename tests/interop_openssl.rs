@@ -28,6 +28,8 @@ fn run(args: &[&str], dir: &Path) {
 
 struct Fixture {
     dir: PathBuf,
+    /// An Ed25519 key in the chain: a private PKI's (the CA/Browser Forum's rules allow RSA and ECDSA only).
+    ed25519: bool,
 }
 
 impl Fixture {
@@ -88,10 +90,16 @@ impl Fixture {
         args.extend(&digest);
         args.extend(["-extfile", "ext.cnf"]);
         run(&args, &dir);
-        Fixture { dir }
+        Fixture { dir, ed25519: ca_kind == "ed25519" || key_kind == "ed25519" }
     }
 
+    /// The CA as the only anchor: under the CA/Browser Forum's rules, unless the chain has an Ed25519 key.
     fn trust(&self) -> TrustStore {
+        self.default_trust().with_web_pki_rules(!self.ed25519)
+    }
+
+    /// The CA as the only anchor, under the CA/Browser Forum's rules whatever the chain.
+    fn default_trust(&self) -> TrustStore {
         pratique::sys::trust_store_from_pem_file(self.dir.join("ca.pem")).unwrap()
     }
 }
@@ -209,6 +217,10 @@ fn ed25519_chains_in_every_pairing() {
         let config = ClientConfig::new(fx.trust());
         let mut tls = connect(&server, "localhost", &config).unwrap_or_else(|e| panic!("CA {ca}, server key {key}: {e}"));
         assert!(get_root(&mut tls).starts_with("HTTP/1.0 200 ok"), "CA {ca}, server key {key}");
+        // (a store of private anchors, above; under the CA/Browser Forum's rules, which allow RSA and ECDSA only, refused)
+        let server = start_server(&fx, &["-www", "-tls1_3"]);
+        let e = connect(&server, "localhost", &ClientConfig::new(fx.default_trust())).err().unwrap_or_else(|| panic!("CA {ca}, key {key}: accepted"));
+        assert!(e.to_string().contains("Ed25519"), "CA {ca}, server key {key}: {e}");
     }
 }
 
@@ -247,14 +259,17 @@ fn p521_keys_and_rsa_pss_certificate_signatures() {
 
 /// B-34: chain building matches an issuer name to a subject name as OpenSSL does (RFC 5280 section 7.1: string types,
 /// ASCII case and white space do not matter; other characters do), so that the two agree on chains whose names are
-/// written differently (tools/gen_name_fixtures.py).
+/// written differently (tools/gen_name_fixtures.py). That is a store of private anchors: the CA/Browser Forum's rules,
+/// which a TLS server's chain is held to by default, want the issuer name byte for byte (rule 7.1.4.1), so the default
+/// store refuses the chains whose names are written differently.
 #[test]
 fn names_written_differently_are_matched_as_openssl_matches_them() {
     if !have_openssl() {
         return;
     }
     let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data");
-    let ts = pratique::sys::trust_store_from_pem_file(data.join("nm_root.pem")).unwrap();
+    let web = pratique::sys::trust_store_from_pem_file(data.join("nm_root.pem")).unwrap();
+    let ts = pratique::sys::trust_store_from_pem_file(data.join("nm_root.pem")).unwrap().with_web_pki_rules(false);
     let der = |name: &str| pratique::pem::parse(&fs::read_to_string(data.join(format!("{name}.pem"))).unwrap()).remove(0).data;
     let mut agreed = 0;
     for (leaf, inter, want) in [("nm_leaf", "nm_inter", true), ("nm_leaf_u_ascii", "nm_inter_u", true), ("nm_leaf_u_lower", "nm_inter_u", false)] {
@@ -269,9 +284,19 @@ fn names_written_differently_are_matched_as_openssl_matches_them() {
         let ours = ts.verify_server_chain(&[der(leaf), der(inter)], "name.example.test", pratique::sys::now_unix());
         assert_eq!(out.status.success(), want, "OpenSSL on {leaf}: {}", String::from_utf8_lossy(&out.stdout));
         assert_eq!(ours.is_ok(), want, "the library on {leaf}: {:?}", ours.err());
+        let byte_for_byte = cert_issuer_is_subject(&der(leaf), &der(inter));
+        let default = web.verify_server_chain(&[der(leaf), der(inter)], "name.example.test", pratique::sys::now_unix());
+        assert_eq!(default.is_ok(), want && byte_for_byte, "the default store on {leaf}: {:?}", default.err());
         agreed += 1;
     }
     assert_eq!(agreed, 3);
+}
+
+/// Whether the leaf's issuer name is, byte for byte, the issuer's subject name.
+fn cert_issuer_is_subject(leaf: &[u8], issuer: &[u8]) -> bool {
+    let leaf = pratique::x509::Certificate::from_der(leaf).unwrap();
+    let issuer = pratique::x509::Certificate::from_der(issuer).unwrap();
+    leaf.issuer_der == issuer.subject_der
 }
 
 /// Starts `openssl s_server` with its standard output in the file `log`.

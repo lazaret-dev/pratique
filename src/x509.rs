@@ -7,7 +7,10 @@
 //! trust anchors; a host name is optional. The result carries the leaf and the path. Everything a
 //! leaf says about its holder is readable: [`Certificate::subject_alt_names`] (DNS, IP, e-mail,
 //! URI, directory and other names) and [`Certificate::extension`] (any extension by OID, with its
-//! critical flag). [`TrustStore::verify_server_chain`] is the TLS server case of the same code.
+//! critical flag). [`TrustStore::verify_server_chain`] is the TLS server case of the same code, and holds the chain to
+//! the CA/Browser Forum's rules as well ([`VerifyOptions::web_pki`]: serverAuth named in the leaf, RSA and ECDSA only,
+//! issuer names byte for byte, matching key identifiers) unless the store's anchors are a private PKI's
+//! ([`TrustStore::with_web_pki_rules`]).
 //!
 //! Supported: RSA (PKCS#1 v1.5, SHA-256/384/512), ECDSA (P-256/P-384) and Ed25519 (RFC 8410) signatures; validity
 //! periods; basicConstraints (including pathLen); keyUsage; extendedKeyUsage; name constraints on
@@ -798,6 +801,12 @@ impl Certificate {
         };
 
         if let Some(exts) = tbs.optional(0xa3)? {
+            // (extensions are version 3's: a certificate that says version 1 or 2 and has some is malformed, RFC 5280 4.1.2.1;
+            // reading them would let it be a CA, or name hosts, that its version says it cannot be. Found by tools/chain_judges.sh
+            // against OpenSSL, which refuses it, and Go, which ignores the extensions.)
+            if version != 2 {
+                return Err(Error::Certificate(format!("extensions in a certificate of version {}", version + 1)));
+            }
             let mut list = Der::new(exts.content).sequence()?;
             let mut seen: Vec<Vec<u8>> = Vec::new();
             while !list.is_empty() {
@@ -1159,15 +1168,30 @@ pub struct VerifyOptions {
     /// do not make the chain unacceptable. Any other critical extension this code does not know
     /// does, in every certificate of the path.
     pub accept_critical: Vec<Vec<u8>>,
+    /// Holds a TLS server's chain ([`Purpose::ServerAuth`]) to the CA/Browser Forum's Baseline Requirements where they
+    /// bind what a client accepts, beyond RFC 5280 (set by [`VerifyOptions::tls_server`]; a store can turn it off for its
+    /// anchors, [`TrustStore::with_web_pki_rules`]):
+    ///
+    /// * the leaf's extendedKeyUsage is there and names serverAuth, and does not name anyExtendedKeyUsage (BR 7.1.2.7.10);
+    /// * no key or signature in the path is Ed25519: the rules allow RSA and ECDSA only (BR 6.1.5, 7.1.3);
+    /// * each certificate's issuer name is, byte for byte, the subject name of the certificate that issued it (BR 7.1.4.1),
+    ///   where RFC 5280 compares names without case and with spaces folded;
+    /// * a certificate's authorityKeyIdentifier, when it has a keyIdentifier, is the issuer's subjectKeyIdentifier, when the
+    ///   issuer has one (BR 7.1.2).
+    ///
+    /// These are the rules on which this library was looser than Apple's verifier (`tools/chain_judges.sh`, BACKLOG B-92).
+    pub web_pki: bool,
 }
 
 impl VerifyOptions {
     /// Options for `purpose` at `time`, with no host name check and a leaf that must name the purpose.
     pub fn new(purpose: Purpose, time: i64) -> VerifyOptions {
-        VerifyOptions { purpose, time, hostname: None, allow_missing_leaf_eku: false, accept_critical: Vec::new() }
+        VerifyOptions { purpose, time, hostname: None, allow_missing_leaf_eku: false, accept_critical: Vec::new(), web_pki: false }
     }
 
-    /// Options for a TLS server certificate for `hostname` at `time`.
+    /// Options for a TLS server certificate for `hostname` at `time`, under the CA/Browser Forum's rules
+    /// ([`web_pki`](VerifyOptions::web_pki)); for a store whose anchors have them turned off, RFC 5280's, with a leaf that
+    /// may have no extendedKeyUsage, as browsers once allowed.
     pub fn tls_server(hostname: &str, time: i64) -> VerifyOptions {
         VerifyOptions {
             purpose: Purpose::ServerAuth,
@@ -1175,6 +1199,7 @@ impl VerifyOptions {
             hostname: Some(hostname.to_string()),
             allow_missing_leaf_eku: true,
             accept_critical: Vec::new(),
+            web_pki: true,
         }
     }
 
@@ -1302,6 +1327,8 @@ pub struct TrustStore {
     /// Smallest RSA modulus accepted for the keys of the leaf and of intermediates (trust anchors
     /// are exempt: they are trusted explicitly, and some old roots still carry 1024-bit keys).
     min_rsa_bits: usize,
+    /// Whether [`VerifyOptions::web_pki`] applies under these anchors: see [`TrustStore::with_web_pki_rules`].
+    web_pki_rules: bool,
 }
 
 /// Default for [`TrustStore::with_min_rsa_bits`]: the CA/Browser Forum baseline.
@@ -1335,8 +1362,17 @@ impl TrustStore {
         self
     }
 
+    /// Whether TLS server chains that end in these anchors are held to the CA/Browser Forum's rules
+    /// ([`VerifyOptions::web_pki`]: serverAuth in the leaf, no Ed25519, issuer names byte for byte, matching key
+    /// identifiers); on by default. Turn it off for a store of private anchors whose certificates follow RFC 5280 alone (an
+    /// internal CA that issues without extendedKeyUsage, or with Ed25519 keys); the rest of the checks stay.
+    pub fn with_web_pki_rules(mut self, on: bool) -> TrustStore {
+        self.web_pki_rules = on;
+        self
+    }
+
     pub fn empty() -> TrustStore {
-        TrustStore { roots: Vec::new(), by_subject: HashMap::new(), min_rsa_bits: DEFAULT_MIN_RSA_BITS }
+        TrustStore { roots: Vec::new(), by_subject: HashMap::new(), min_rsa_bits: DEFAULT_MIN_RSA_BITS, web_pki_rules: true }
     }
 
     /// Number of trust anchors in the store.
@@ -1537,7 +1573,8 @@ impl TrustStore {
             let distrusted = distrust_after.filter(|&t| path[0].not_before > t).map(|t| {
                 path_err(root, &format!("the leaf was issued ({}) after the date ({}) from which certificates are not trusted under the root", utc_date(path[0].not_before), utc_date(t)))
             });
-            match distrusted.map_or_else(|| check_path(path, opts, self.min_rsa_bits), Err) {
+            let web = opts.web_pki && self.web_pki_rules && opts.purpose == Purpose::ServerAuth;
+            match distrusted.map_or_else(|| check_path(path, opts, self.min_rsa_bits, web), Err) {
                 Ok(()) => return true,
                 Err(e) => *last_err = Some(e),
             }
@@ -1771,8 +1808,57 @@ fn check_one_name(ca: &Certificate, nc: &NameConstraints, name: &GeneralName) ->
     Ok(())
 }
 
-/// Checks everything about a candidate path (leaf first, trust anchor last) except signatures.
-fn check_path(path: &[&Certificate], opts: &VerifyOptions, min_rsa_bits: usize) -> Result<()> {
+/// The keyIdentifier of a certificate's authorityKeyIdentifier, if it has one that reads.
+fn authority_key_id(c: &Certificate) -> Option<&[u8]> {
+    let ext = c.extension(&[0x55, 0x1d, 0x23])?;
+    let mut outer = Der::new(&ext.value);
+    let mut aki = outer.sequence().ok()?;
+    aki.optional(0x80).ok().flatten().map(|k| k.content)
+}
+
+/// A certificate's subjectKeyIdentifier, if it has one that reads.
+fn subject_key_id(c: &Certificate) -> Option<&[u8]> {
+    let ext = c.extension(&[0x55, 0x1d, 0x0e])?;
+    Der::new(&ext.value).expect(asn1::TAG_OCTET_STRING).ok().map(|k| k.content)
+}
+
+/// The CA/Browser Forum's rules that bind a client, for a TLS server's path (leaf first, anchor last): see
+/// [`VerifyOptions::web_pki`].
+fn check_web_pki(path: &[&Certificate]) -> Result<()> {
+    let leaf = path[0];
+    match &leaf.ext_key_usage {
+        None => return Err(path_err(leaf, "leaf certificate has no extendedKeyUsage, which the CA/Browser Forum's rules require to name serverAuth")),
+        Some(list) if list.iter().any(|o| o == OID_EKU_ANY) => {
+            return Err(path_err(leaf, "leaf certificate's extendedKeyUsage names anyExtendedKeyUsage, which the CA/Browser Forum's rules forbid"))
+        }
+        Some(list) if !list.iter().any(|o| o == OID_EKU_SERVER_AUTH) => {
+            return Err(path_err(leaf, "leaf certificate's extendedKeyUsage does not name serverAuth"))
+        }
+        Some(_) => {}
+    }
+    // (the anchor's own key is reached through the signature on the certificate it issued)
+    for c in &path[..path.len() - 1] {
+        if matches!(c.public_key, PublicKey::Ed25519(_)) || c.sig_alg == Some(SigAlg::Ed25519) {
+            return Err(path_err(c, "Ed25519 is not a key or signature algorithm of the CA/Browser Forum's rules (RSA and ECDSA only), in"));
+        }
+    }
+    for pair in path.windows(2) {
+        let (child, issuer) = (pair[0], pair[1]);
+        if child.issuer_der != issuer.subject_der {
+            return Err(path_err(child, "the issuer name is not, byte for byte, the subject name of the certificate that issued it (CA/Browser Forum rule 7.1.4.1), in"));
+        }
+        if let (Some(aki), Some(ski)) = (authority_key_id(child), subject_key_id(issuer)) {
+            if aki != ski {
+                return Err(path_err(child, "the authorityKeyIdentifier is not the subjectKeyIdentifier of the certificate that issued it, in"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Checks everything about a candidate path (leaf first, trust anchor last) except signatures; `web`: the CA/Browser
+/// Forum's rules as well ([`VerifyOptions::web_pki`]).
+fn check_path(path: &[&Certificate], opts: &VerifyOptions, min_rsa_bits: usize, web: bool) -> Result<()> {
     let leaf = path[0];
     for c in path {
         if opts.time < c.not_before {
@@ -1857,6 +1943,9 @@ fn check_path(path: &[&Certificate], opts: &VerifyOptions, min_rsa_bits: usize) 
             check_name_constraints(ca, nc, &path[..i])?;
         }
     }
+    if web {
+        check_web_pki(path)?;
+    }
     Ok(())
 }
 
@@ -1879,6 +1968,15 @@ mod tests {
 
     fn store(names: &[Vec<u8>]) -> TrustStore {
         let mut s = TrustStore::empty();
+        for n in names {
+            s.add_der(n).unwrap();
+        }
+        s
+    }
+
+    /// A store of private anchors: RFC 5280 alone, without the CA/Browser Forum's rules for TLS servers.
+    fn private(names: &[Vec<u8>]) -> TrustStore {
+        let mut s = TrustStore::empty().with_web_pki_rules(false);
         for n in names {
             s.add_der(n).unwrap();
         }
@@ -2665,8 +2763,11 @@ mod tests {
 
     #[test]
     fn an_all_ed25519_chain_verifies() {
-        let ts = store(&[fixture!("ed_root")]);
+        // (under the CA/Browser Forum's rules, which allow RSA and ECDSA only, it is refused; a store of private anchors takes it)
         let chain = vec![fixture!("ed_leaf"), fixture!("ed_inter")];
+        let msg = err_text(store(&[fixture!("ed_root")]).verify_server_chain(&chain, "ed.example.test", NOW));
+        assert!(msg.contains("Ed25519 is not a key or signature algorithm"), "{msg}");
+        let ts = private(&[fixture!("ed_root")]);
         let leaf = ts.verify_server_chain(&chain, "ed.example.test", NOW).unwrap();
         assert!(is_ed25519(&leaf));
         assert_eq!(leaf.sig_alg, Some(SigAlg::Ed25519));
@@ -2684,14 +2785,17 @@ mod tests {
 
     #[test]
     fn ed25519_and_other_keys_mix_in_one_chain() {
-        // a P-256 leaf under an Ed25519 intermediate under an Ed25519 root
-        let ts = store(&[fixture!("ed_root")]);
+        // a P-256 leaf under an Ed25519 intermediate under an Ed25519 root (a private PKI's: the CA/Browser Forum's rules
+        // refuse the Ed25519 signature on the leaf)
         let chain = vec![fixture!("ed_leaf_p256"), fixture!("ed_inter")];
+        assert!(err_text(store(&[fixture!("ed_root")]).verify_server_chain(&chain, "ed.example.test", NOW)).contains("Ed25519"));
+        let ts = private(&[fixture!("ed_root")]);
         let leaf = ts.verify_server_chain(&chain, "ed.example.test", NOW).unwrap();
         assert!(matches!(leaf.public_key, PublicKey::Ec { curve: Curve::P256, .. }));
         assert_eq!(leaf.sig_alg, Some(SigAlg::Ed25519));
-        // an Ed25519 leaf under a P-256 root
-        let ts = store(&[fixture!("ed_ec_root")]);
+        // an Ed25519 leaf under a P-256 root (and the CA/Browser Forum's rules refuse its key)
+        assert!(err_text(store(&[fixture!("ed_ec_root")]).verify_server_chain(&[fixture!("ed_leaf_by_ec")], "ed.example.test", NOW)).contains("Ed25519"));
+        let ts = private(&[fixture!("ed_ec_root")]);
         let leaf = ts.verify_server_chain(&[fixture!("ed_leaf_by_ec")], "ed.example.test", NOW).unwrap();
         assert!(is_ed25519(&leaf));
         assert!(matches!(leaf.sig_alg, Some(SigAlg::Ecdsa(HashAlg::Sha256))));
@@ -2789,7 +2893,12 @@ mod tests {
 
     #[test]
     fn a_chain_whose_names_are_written_differently_is_built_like_openssl_builds_it() {
-        let ts = store(&[fixture!("nm_root")]);
+        // (RFC 5280's comparison: what a store of private anchors, and every purpose but a TLS server's, does; the CA/Browser
+        // Forum's rule 7.1.4.1 wants the bytes, and a TLS server's chain under the default store is refused)
+        let msg = err_text(store(&[fixture!("nm_root")]).verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW));
+        assert!(msg.contains("byte for byte"), "{msg}");
+        store(&[fixture!("nm_root")]).verify_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], &VerifyOptions::new(Purpose::ServerAuth, NOW).with_hostname("name.example.test")).unwrap();
+        let ts = private(&[fixture!("nm_root")]);
         // issuer names that differ from their issuer's subject in string type, case and white space
         let leaf = ts.verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW).unwrap();
         assert_ne!(leaf.issuer_der, Certificate::from_der(&fixture!("nm_inter")).unwrap().subject_der);
@@ -2799,13 +2908,13 @@ mod tests {
         assert!(msg.contains("is neither a trusted root nor sent by the server"), "{msg}");
         // a name that matches does not make a signature: a root with the same name and another key is tried and refused,
         // and with both in the store the right one is found
-        let twin = store(&[fixture!("nm_root_twin")]);
+        let twin = private(&[fixture!("nm_root_twin")]);
         let msg = err_text(twin.verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW));
         assert!(msg.contains("signature"), "{msg}");
-        let both = store(&[fixture!("nm_root_twin"), fixture!("nm_root")]);
+        let both = private(&[fixture!("nm_root_twin"), fixture!("nm_root")]);
         both.verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW).unwrap();
         // and the bulk loader, which reads only the subject, finds the anchor the same way
-        let mut bulk = TrustStore::empty();
+        let mut bulk = TrustStore::empty().with_web_pki_rules(false);
         assert_eq!(bulk.add_pem(include_str!("../tests/data/nm_root.pem")), 1);
         bulk.verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW).unwrap();
     }
@@ -2816,8 +2925,9 @@ mod tests {
         let root = fixture!("nm_root");
         // name constraints imposed on an anchor that has none of its own (NSS does this for a few roots)
         let nc = |dns: &str| tlv(0x30, &tlv(0xa0, &tlv(0x30, &tlv(0x82, dns.as_bytes()))));
+        // (a chain whose names are written differently, so a store of private anchors: see the test above)
         let with = |limits: AnchorLimits| {
-            let mut ts = TrustStore::empty();
+            let mut ts = TrustStore::empty().with_web_pki_rules(false);
             ts.add_der_with_limits(&root, &limits).unwrap();
             ts.verify_server_chain(&chain, "name.example.test", NOW)
         };
@@ -3133,6 +3243,36 @@ mod tests {
         }
         // version 1 has no extensions at all, so the old roots of that kind are CAs by being in the store
         rv_server("anchor_v1", &["anchor_v1_leaf"]).unwrap();
+    }
+
+    #[test]
+    fn extensions_are_refused_in_a_certificate_that_is_not_version_3() {
+        // (found by tools/chain_judges.sh, B-92: the library read the extensions of a certificate that said version 2, where
+        // OpenSSL refuses it and Go ignores them)
+        let v3 = rv("anchor_v3_nobc_leaf");
+        let at = v3.windows(5).position(|w| w == [0xa0, 0x03, 0x02, 0x01, 0x02]).expect("a version 3 certificate's version field");
+        Certificate::from_der(&v3).unwrap();
+        let mut v2 = v3.clone();
+        v2[at + 4] = 0x01;
+        let err = Certificate::from_der(&v2).map(|_| ()).expect_err("a version 2 certificate with extensions parsed").to_string();
+        assert!(err.contains("extensions in a certificate of version 2"), "{err}");
+        // version 1 (the field left out) with extensions: the TBS and the certificate are five bytes shorter
+        let mut v1 = v3[..at].to_vec();
+        v1.extend_from_slice(&v3[at + 5..]);
+        let shrink = |d: &mut Vec<u8>, at: usize| {
+            // a long-form length of two bytes at `at` (82 hh ll), less five
+            assert_eq!(d[at], 0x82);
+            let n = u16::from_be_bytes([d[at + 1], d[at + 2]]) - 5;
+            d[at + 1..at + 3].copy_from_slice(&n.to_be_bytes());
+        };
+        if v1[1] == 0x82 && v1[5] == 0x82 {
+            shrink(&mut v1, 1);
+            shrink(&mut v1, 5);
+            let err = Certificate::from_der(&v1).map(|_| ()).expect_err("a version 1 certificate with extensions parsed").to_string();
+            assert!(err.contains("extensions in a certificate of version 1"), "{err}");
+        }
+        // a version 1 certificate without extensions still parses (the old roots)
+        Certificate::from_der(&rv("anchor_v1")).unwrap();
     }
 
     #[test]

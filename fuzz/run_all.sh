@@ -3,6 +3,9 @@
 #
 #   sh run_all.sh [SECONDS] [JOBS]     fuzz for SECONDS in total (default 600) using JOBS processes
 #                                       (default: one per core); examples:  sh run_all.sh 3600
+#   FUZZ_TARGETS="der chain ..." sh run_all.sh 3600
+#                                       the same, for those targets alone (they get all the cores)
+#   sh run_all.sh list                  the names of the targets
 #   sh run_all.sh build                 only build
 #   sh run_all.sh check                 only build and check that coverage feedback works
 #   sh run_all.sh replay TARGET FILE... run saved inputs (for example artifacts/chain/crash-*) once
@@ -77,8 +80,28 @@ campaign() {
         echo "Please send the output above back." >&2
         exit 1
     }
-    TARGETS=$("$BIN" list)
+    ALL=$("$BIN" list)
+    if [ -n "${FUZZ_TARGETS:-}" ]; then
+        TARGETS=""
+        for t in $FUZZ_TARGETS; do
+            echo "$ALL" | grep -qx "$t" || {
+                echo "there is no fuzz target named $t (sh run_all.sh list names them)" >&2
+                exit 1
+            }
+            TARGETS="$TARGETS
+$t"
+        done
+        TARGETS=$(echo "$TARGETS" | sed '/^$/d' | sort -u)
+    else
+        TARGETS=$ALL
+    fi
     N=$(echo "$TARGETS" | wc -l | tr -d ' ')
+    # the spare cores go to the heavy targets among those chosen, in turn; if none of them is heavy, to all of them
+    SPARE=""
+    for t in $HEAVY; do
+        echo "$TARGETS" | grep -qx "$t" && SPARE="$SPARE $t"
+    done
+    [ -z "$SPARE" ] && SPARE=$TARGETS
     stray=$(pgrep -f 'pratique_fuzz (run|child) ' 2>/dev/null | wc -l | tr -d ' ')
     if [ "${stray:-0}" -gt 0 ] && [ -z "${FUZZ_FORCE:-}" ]; then
         echo "$stray fuzzer processes from an earlier run are still running; they would compete for the cores." >&2
@@ -102,7 +125,7 @@ campaign() {
     done
     extra=$((CPUS - N))
     while [ "$extra" -gt 0 ]; do
-        for t in $HEAVY; do
+        for t in $SPARE; do
             [ "$extra" -le 0 ] && break
             n=$(cat "work/$t/.n")
             echo $((n + 1)) >"work/$t/.n"
@@ -205,7 +228,7 @@ summary() {
     printf '| %-16s | %8s | %8s | %8s |\n' target corpus edges findings
     echo '| ---------------- | -------: | -------: | -------: |'
     found=0
-    for t in $("$BIN" list); do
+    for t in ${TARGETS:-$("$BIN" list)}; do
         c=$(ls "corpus/$t" 2>/dev/null | wc -l | tr -d ' ')
         a=$(ls "artifacts/$t" 2>/dev/null | wc -l | tr -d ' ')
         e=$(grep "^fuzz\[$t\]: .* kept" logs/merge.log 2>/dev/null | tail -n 1 | sed 's/.*(\([0-9]*\) edges).*/\1/')
@@ -229,6 +252,10 @@ summary() {
 
 case "${1:-}" in
 build) build ;;
+list)
+    build >/dev/null
+    "$BIN" list
+    ;;
 check)
     build
     "$BIN" check

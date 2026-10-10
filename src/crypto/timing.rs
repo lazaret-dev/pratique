@@ -1602,12 +1602,22 @@ fn a_coarse_clock_makes_the_harness_time_several_calls_together() {
     assert!((r.median_ns as u64) < tick, "median per call: {} ns (tick {tick} ns)", r.median_ns);
     // a call that takes about a tick gets just enough company to make a sample span about twenty ticks (not one call per sample,
     // which a sample of a tick would be, nor thousands)
-    let per_step = ns_per_step();
-    let few = (tick as f64 / per_step) as u32;
-    let r = with_tick(tick, || measure("a tick", Duration::from_millis(100), |rng, _| rng.next_u64(), chain(few)));
-    let span = r.reps as u64 * r.median_ns as u64;
-    assert!((5..=80).contains(&r.reps), "reps {} median {} ns (tick {tick} ns, {per_step:.2} ns a step)", r.reps, r.median_ns);
-    assert!((10 * tick..=45 * tick).contains(&span), "a sample spans {span} ns ({} calls of {} ns; tick {tick} ns)", r.reps, r.median_ns);
+    // (the speed of a step is measured before the run it sizes, and the other tests running beside this one can change it in
+    // between, so a run that comes out of range is tried again with a new measure, up to three times)
+    let mut tries = 0;
+    let per_step = loop {
+        tries += 1;
+        let per_step = ns_per_step();
+        let few = (tick as f64 / per_step) as u32;
+        let r = with_tick(tick, || measure("a tick", Duration::from_millis(100), |rng, _| rng.next_u64(), chain(few)));
+        let span = r.reps as u64 * r.median_ns as u64;
+        let fits = (5..=80).contains(&r.reps) && (10 * tick..=45 * tick).contains(&span);
+        if fits || tries == 3 {
+            assert!((5..=80).contains(&r.reps), "reps {} median {} ns (tick {tick} ns, {per_step:.2} ns a step)", r.reps, r.median_ns);
+            assert!((10 * tick..=45 * tick).contains(&span), "a sample spans {span} ns ({} calls of {} ns; tick {tick} ns)", r.reps, r.median_ns);
+            break per_step;
+        }
+    };
     // a call that takes many more than twenty ticks is timed on its own
     let long = (300.0 * tick as f64 / per_step).min(5_000_000.0) as u32;
     let r = with_tick(tick, || measure("long", Duration::from_millis(100), |rng, _| rng.next_u64(), chain(long)));

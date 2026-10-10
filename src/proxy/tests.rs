@@ -75,7 +75,9 @@ fn registry_handler(hits: Arc<AtomicUsize>) -> impl Fn(Request) -> Response + Se
 }
 
 fn registry() -> Registry {
-    let pki = TestPki::new(&["registry.test", "other.test"]).unwrap();
+    // (ECDSA keys, as a real registry's or gateway's are, so that a client's default rules, the CA/Browser Forum's, hold)
+    let p256 = || crate::tls::pki::KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P256).unwrap();
+    let pki = TestPki::with_keys(crate::tls::pki::CertSpec::server(&["registry.test", "other.test"]), &p256(), p256());
     let hits = Arc::new(AtomicUsize::new(0));
     let tls = Arc::new(ServerConfig::from_pki(&pki).with_alpn(&["h2", "http/1.1"]));
     let server = ServerBuilder::new(registry_handler(hits.clone())).tls("127.0.0.1:0", tls).start().unwrap();
