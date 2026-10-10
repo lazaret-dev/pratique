@@ -109,6 +109,11 @@ fn main() {
             std::hint::black_box(ecdh::shared_secret(curve, &k, &peer));
         });
         r.row(&format!("ECDH {name} (shared secret)"), secs * 1e3, "ms");
+        // a key pair: [k]G by the generator's table (B-115), what a TLS key share and an ECDSA nonce point cost
+        let secs = best_secs(|| {
+            std::hint::black_box(ecdh::public_key(curve, &k));
+        });
+        r.row(&format!("ECDH {name} (key pair, [k]G)"), secs * 1e3, "ms");
     }
     // RFC 6979 A.2.5 and A.2.6 (message "sample")
     let p256_pub = hex("0460FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB67903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299");

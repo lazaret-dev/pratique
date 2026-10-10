@@ -91,8 +91,8 @@ netsh winhttp show proxy                           # Windows (and Internet Optio
 | a public CA (DigiCert, Let's Encrypt, ...) and no proxy variables | direct | nothing |
 | `HTTPS_PROXY` is set in the environment | explicit proxy | nothing: the proxy goes through it ([below](#an-explicit-corporate-proxy)) |
 | `Zscaler Root CA`, `Netskope`, or a company's own CA | a gateway that inspects TLS | usually nothing ([below](#a-gateway-that-inspects-tls-zscaler-netskope)) |
-| a proxy in `scutil --proxy` or Internet Options, but not in the environment | a system proxy | give it to the proxy yourself ([below](#a-system-proxy-or-a-pac-file)) |
-| `ProxyAutoConfigURLString`, `AutoConfigURL`, "Automatically detect settings" | a PAC file | not supported directly ([below](#a-system-proxy-or-a-pac-file)) |
+| a proxy in `scutil --proxy` or Internet Options, but not in the environment | a system proxy | nothing: the proxy reads it ([below](#a-system-proxy-or-a-pac-file)) |
+| `ProxyAutoConfigURLString`, `AutoConfigURL`, "Automatically detect settings" | a PAC file | reported, not followed: set `HTTPS_PROXY` ([below](#a-system-proxy-or-a-pac-file)) |
 
 ### An explicit corporate proxy
 
@@ -129,24 +129,49 @@ signs again, still verify for them.
   set `SSL_CERT_FILE` (or any of the variables above) to a PEM file with it **in Lazaret's environment**.
 - **The gateway's policy** can block a registry, a package or the proxy's connections. The proxy passes the
   gateway's answer on, or fails; it never goes around the gateway.
-- The macOS Keychain path has not yet been tried on a Mac behind a real Zscaler or Netskope. `tools/native_check.sh`
-  checks that the Keychain is read. To try a gateway: run `scan_proxy -- pip download six` on such a Mac.
+- **Checking the Keychain path without a gateway**: `tools/gateway_check_mac.sh`, run in Terminal on any Mac, plays the
+  gateway with a second `scan_proxy` that re-signs PyPI. It puts that gateway's root in the Keychain for the length of
+  the run and nowhere else, and checks that pip gets a package through both proxies. Before the root is added and after
+  it is taken out, the same run must fail with a `502`. `--admin` puts the root where device management does (the
+  System keychain, administrator's trust settings) instead of your login keychain. It passed on an M5 Mac both ways
+  (2026-10-09). On a Mac behind a real Zscaler or Netskope, `scan_proxy -- pip download six` is the
+  check.
 
 ### A system proxy, or a PAC file
 
-The proxy reads proxy settings from the environment only. That has two consequences on macOS and Windows:
+The proxy's default client reads the environment first and, when the environment says nothing about proxies (none of
+`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY` is set, in either case), the operating system's settings
+(`Client::proxy_from_system`, B-117). That is the order Python's urllib keeps, so the proxy goes where pip would.
 
-- **A static system proxy** (set in System Settings or Internet Options, not in the environment). Python's urllib, and
-  so pip, find it; Node and the proxy don't. If direct connections are blocked, Lazaret should read the setting
-  (`scutil --proxy`, or the `ProxyServer` value under
-  `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`) and pass it on: either set `HTTPS_PROXY`
-  in its own environment before building the proxy, or give the builder a client (see "Your own client").
-- **A PAC file** (a `FindProxyForURL` script, often found through WPAD) is not supported. pip, uv and npm don't read
-  PAC files either. On such networks developers already set `HTTPS_PROXY` by hand for those tools, and the proxy picks
-  up the same setting. To find the value, see which proxy the PAC file gives for `pypi.org` (open the file and read
-  it, or ask IT) and set it in Lazaret's environment. Running the PAC file through the operating system's own
-  evaluator (WinHTTP, CFNetwork) is possible later if users need it; NTLM or Kerberos would probably have to come
-  with it.
+- **A static system proxy** (set in System Settings or Internet Options, or by device management) is used:
+  - **macOS**: the "Secure web proxy (HTTPS)" of the network in use, and its "Bypass proxy settings for these hosts &
+    domains" (globs such as `*.local`, address prefixes such as `169.254/16`) and "Exclude simple hostnames";
+  - **Windows**: `ProxyServer` under `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings` when
+    `ProxyEnable` is set (one `host:port` for every scheme, or the `https=` entry of a list), and `ProxyOverride`
+    (with `<local>`).
+
+  A web proxy for plain http alone is not used for https, as in Python. The settings are read once, when the proxy is
+  built; a change made later needs a new proxy. `Proxy::upstream_notes()` says which proxy was taken from them, for
+  Lazaret's log. `localhost` and loopback addresses always go direct.
+- **A PAC file** (a `FindProxyForURL` script, often found through WPAD) is **reported and not followed**:
+  `upstream_notes()` says the settings name one (its URL without the query) and that it is not followed, and the same
+  for "Automatically detect settings" and a SOCKS proxy. pip, uv and npm don't read PAC files either. On such networks
+  developers already set `HTTPS_PROXY` by hand for those tools, and the proxy picks up the same setting. To find the
+  value, see which proxy the PAC file gives for `pypi.org` (open the file and read it, or ask IT) and set it in
+  Lazaret's environment. Lazaret should show the notes to the user when the run fails with "connect" errors. Running
+  the PAC file through the operating system's own evaluator (WinHTTP, CFNetwork) is possible later if users need it;
+  NTLM or Kerberos would probably have to come with it.
+- **Checking it on a Mac without such a network**: `tools/system_proxy_check_mac.sh`, run in Terminal, plays the
+  company's proxy with a second `scan_proxy`, sets it as the secure web proxy of the network in use for the length of
+  the run (with `sudo networksetup`, put back when it ends), and checks that pip gets a package through both, that a
+  host in the bypass list goes direct, that an environment that says anything takes the settings out of play, and that
+  a PAC file is reported. It refuses to run where a secure web proxy or a PAC file is set already. It passed on an M5
+  Mac (2026-10-09), 5 of 5. `networksetup` cannot empty the server field, so after the run the secure web proxy is off
+  and still shows `127.0.0.1` and the check's port; clear it in System Settings if you like (it does nothing while off).
+- **A rule for the proxy**: `Client::allowed_proxies(HostRules::new(["proxy.corp.example:3128"])?)` on the proxy's
+  client (see "Your own client") refuses a proxy that is not in it, however it was named; a request is then refused,
+  never sent direct. Use it when the corporate proxy is known, so that a variable set by something else cannot send
+  the proxy's connections elsewhere.
 
 ### CI runners
 
@@ -198,33 +223,35 @@ variables above, as for a gateway.
 
 ## Your own client
 
-When the defaults don't fit (a proxy from the system settings, a different set of roots, other timeouts), give the
-builder its own client. It replaces both defaults, so set them again:
+When the defaults don't fit (a different set of roots, a rule for the proxy, other timeouts), give the builder its own
+client. It replaces both defaults, so set them again:
 
 ```rust
-use pratique::http::Client;
+use pratique::http::{Client, HostRules};
 use pratique::proxy::local_roots;
 use pratique::tls::ClientConfig;
 
 let client = Client::with_tls_config(ClientConfig::new(local_roots()?))   // or a TrustStore of your own
-    .proxy("http://proxy.corp:8080")?;                                    // or .proxy_from_env(), or no proxy
+    .proxy_from_system()                                                  // or .proxy(url)?, .proxy_from_env(), or no proxy
+    .allowed_proxies(HostRules::new(["proxy.corp:8080"])?);               // optional: the proxies it may use
 let proxy = Proxy::builder(scanner).client(client).build()?;
 ```
 
 The proxy turns off redirects, decoding and the body limit on that client. A client given this way also skips the
-`start` check for a proxy that names itself.
+`start` check for a proxy that names itself (the default client's check covers `HTTPS_PROXY` and the system's setting).
 
 ## When it doesn't work
 
 | symptom | likely cause | what to do |
 |---------|--------------|------------|
 | every intercepted request is a `502`, `Fail` "certificate" events | the proxy doesn't trust the gateway's or the mirror's root | put the root in `SSL_CERT_FILE` (or the like) in Lazaret's environment |
-| every request a `502` or a timeout, `Fail` "connect" events | direct connections are blocked, and the proxy doesn't know the corporate proxy | set `HTTPS_PROXY` for Lazaret (a system proxy or a PAC file: above) |
+| every request a `502` or a timeout, `Fail` "connect" events | direct connections are blocked, and the proxy doesn't know the corporate proxy (a PAC file, or a proxy variable that takes the system's setting out of play) | look at `upstream_notes()`; set `HTTPS_PROXY` for Lazaret ([above](#a-system-proxy-or-a-pac-file)) |
+| `Fail` events "proxy not allowed" | the client's `allowed_proxies` rule does not name the proxy that was found | add it to the rule, or find who set the variable |
 | `Fail` events naming a `407` | the corporate proxy wants credentials, or NTLM or Kerberos | Basic: put them in the URL; NTLM or Kerberos: Px or Cntlm |
 | the package manager: "certificate verify failed", "self-signed certificate in chain" | it isn't using the bundle: a config file names other CAs (`.npmrc` `cafile=` or `ca=`, `pip.conf` `cert=` is overridden by `PIP_CERT`), or it keeps its own (Java) | set its own CA option to `bundle.pem` for the run (`npm_config_cafile`), or remove the config entry |
 | the package manager: `407` from the proxy | a tool that doesn't take credentials from the proxy URL | turn credentials off for that run, or set the tool's own proxy credentials |
 | nothing is scanned, but installs work | a mirror the proxy doesn't intercept, or a tool that ignores the variables | see "Private registries and mirrors"; on CI, `Others::Refuse` and a firewall |
-| `start` fails: "names this proxy itself" | Lazaret's own environment already points at a proxy of Lazaret's | clear `HTTPS_PROXY` for Lazaret, or pass a client |
+| `start` fails: "names this proxy itself" | Lazaret's own environment (or the system's setting) already points at a proxy of Lazaret's | clear `HTTPS_PROXY` for Lazaret, or pass a client |
 | `413` on a publish | a request body over `max_request_body` (256 MiB) | raise it |
 
 The event log (`ProxyBuilder::events`) has the host or URL, the action, the status and the reason. Log it at least
@@ -234,7 +261,7 @@ when a run fails.
 
 These are deliberate, or left for later:
 
-- **NTLM or Kerberos** to a corporate proxy, and **PAC files**: see above.
+- **NTLM or Kerberos** to a corporate proxy, and **PAC files** (reported, not followed): see above.
 - **Clients that speak only TLS 1.2**: the proxy's TLS server is TLS 1.3 only (B-116). Every package manager above
   speaks TLS 1.3.
 - **HTTP/3**: package managers don't use it.

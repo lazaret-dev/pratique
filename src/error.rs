@@ -47,7 +47,8 @@ pub struct Refused {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RefusedBy {
-    /// The rule about hosts of [`Client::allowed_hosts`](crate::http::Client::allowed_hosts).
+    /// The rule about hosts of [`Client::allowed_hosts`](crate::http::Client::allowed_hosts), or of the request
+    /// ([`RequestBuilder::allowed_hosts`](crate::http::RequestBuilder::allowed_hosts)).
     HostRule,
     /// A limit on the URL of [`Client::url_limits`](crate::http::Client::url_limits) (its length, its characters, credentials in it, a scheme).
     UrlLimit,
@@ -55,6 +56,8 @@ pub enum RefusedBy {
     Scheme,
     /// The hook of [`Client::hop_headers`](crate::http::Client::hop_headers) said no.
     Hook,
+    /// The proxy the request was to go through is not one of [`Client::allowed_proxies`](crate::http::Client::allowed_proxies).
+    ProxyRule,
 }
 
 impl Refused {

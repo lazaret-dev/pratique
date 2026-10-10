@@ -9,11 +9,12 @@
 //!   signing): a broken random source still gives RFC 6979's nonce, and the randomness keeps an attacker who can
 //!   cause a fault in one signature from getting a second with the same nonce to compare. [`EcdsaSigningKey::sign_deterministic`]
 //!   leaves it out, for the RFC's test vectors and for anyone who wants the same signature each time.
-//! * **\[k\]G** is `ecdh`'s constant-time scalar multiplication (fixed 4-bit windows, complete formulas, every table
-//!   entry read).
+//! * **\[k\]G** is `ecdh`'s constant-time multiplication of the generator: a table of its multiples made once, signed
+//!   4-bit digits, complete formulas, every entry of a row read (B-115: about seven times quicker than the
+//!   variable-base windows it replaced, on P-256).
 //! * **Everything modulo n** (the hash and r brought below n, r d, the sum, the inverse of k, the product) is
 //!   `ct_mod`'s: no branch and no memory address depends on k, d or s, and the inverse is Fermat's with the public
-//!   exponent n - 2.
+//!   exponent n - 2, in windows of 4 bits.
 //! * What does depend on the data: whether a candidate nonce is rejected (it is 0 or not below n: about 2^-32 of
 //!   candidates on P-256, 2^-190 on P-384) and whether r or s came out zero (never, in practice); each just takes the
 //!   next nonce, which tells nothing about the key.

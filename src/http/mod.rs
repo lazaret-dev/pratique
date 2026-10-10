@@ -116,22 +116,36 @@
 //!
 //! [`Client::allowed_hosts`] limits a client to the hosts of a [`HostRules`] (hosts, `host:port`, addresses, `*.example.com`); the rule is
 //! applied to the request and to every redirect it follows, before anything connects, by the blocking and the async client alike. The
-//! rule is loose unless it is told otherwise: [`one_label_wildcards`](HostRules::one_label_wildcards) makes `*.example.com` match exactly one
-//! label, [`default_port_only`](HostRules::default_port_only) makes an entry match the default port only, and
-//! [`Client::url_limits`] with [`UrlLimits::strict`] refuses a URL that is not https, has credentials, is not printable ASCII or is longer
-//! than 2,048 bytes. [`Client::hop_headers`] gives each hop (the request and every redirect) the headers the hook says for the host it goes
-//! to, which is where credentials belong: a token is sent to that host and does not follow a redirect to another.
+//! rule is tight unless it is told otherwise: `*.example.com` matches exactly one label, and an entry without a port matches the default
+//! port only ([`one_label_wildcards(false)`](HostRules::one_label_wildcards) and [`default_port_only(false)`](HostRules::default_port_only)
+//! loosen it). [`Client::url_limits`] with [`UrlLimits::strict`] refuses a URL that is not https, has credentials, is not printable ASCII
+//! or is longer than 2,048 bytes. [`Client::hop_headers`] gives each hop (the request and every redirect) the headers the hook says for the
+//! host it goes to, which is where credentials belong (a token is sent to that host and does not follow a redirect to another), and can
+//! refuse a hop on any ground. A request can narrow the client's rule with one of its own ([`RequestBuilder::allowed_hosts`]), and set its
+//! own [`timeout`](RequestBuilder::timeout), [`total_timeout`](RequestBuilder::total_timeout) and
+//! [`max_redirects`](RequestBuilder::max_redirects); [`Client::allowed_proxies`] is a rule for the proxy a request goes through.
 //!
 //! ```no_run
 //! use pratique::http::{HostRules, UrlLimits};
 //! let module = pratique::Client::new()?
-//!     .allowed_hosts(HostRules::new(["api.example.com", "*.cdn.example.net"])?.one_label_wildcards(true).default_port_only(true))
+//!     .allowed_hosts(HostRules::new(["api.example.com", "*.cdn.example.net"])?)
 //!     .url_limits(UrlLimits::strict());
 //! let r = module.request("POST", "https://api.example.com/v1/search").header("Accept", "application/json")
 //!     .header("Content-Type", "application/json").body(r#"{"q":"tools"}"#).send()?;
 //! assert!(module.get("https://elsewhere.example.org/").is_err()); // not in the rule: nothing is sent
-//! # let _ = r; Ok::<(), pratique::error::Error>(())
+//! assert!(module.get("https://a.b.cdn.example.net/").is_err());   // a wildcard is one label
+//! // one request: a rule of its own (both must allow), and limits of its own
+//! let r2 = module.request("GET", "https://x.cdn.example.net/file").allowed_hosts(HostRules::new(["*.cdn.example.net"])?)
+//!     .total_timeout(std::time::Duration::from_secs(60)).max_redirects(0).send()?;
+//! # let _ = (r, r2); Ok::<(), pratique::error::Error>(())
 //! ```
+//!
+//! # Proxies
+//!
+//! A client tunnels https requests (`CONNECT`) through the proxy it is given ([`Client::proxy`]), the one `HTTPS_PROXY` names
+//! ([`Client::proxy_from_env`], with `NO_PROXY`), or, with [`Client::proxy_from_system`], the environment's and, when the environment
+//! says nothing about proxies, the one macOS or Windows is set to use ([`SystemProxy`]: a PAC file is reported, not followed). Basic
+//! credentials in the proxy's URL are sent; NTLM and Kerberos are not spoken. Plain http requests go direct.
 
 mod altsvc;
 mod async_client;
@@ -169,6 +183,8 @@ pub mod server;
 mod idle;
 pub(crate) mod parser;
 mod stream;
+// the proxy the operating system is set to use (macOS, Windows)
+mod system_proxy;
 #[cfg(test)]
 mod egress_tests;
 #[cfg(pratique_fuzzing)]
@@ -181,6 +197,8 @@ mod h2_server_tests;
 mod h2_testserver;
 #[cfg(test)]
 mod pool_tests;
+#[cfg(test)]
+mod proxy_tests;
 #[cfg(test)]
 mod establish_tests;
 #[cfg(test)]
@@ -198,6 +216,7 @@ pub use tuf_source::TufSource;
 pub use hostrules::HostRules;
 pub use schedule::{Batch, Scheduler};
 pub use stream::ResponseStream;
+pub use system_proxy::{SettingsSource, SystemProxy};
 pub use url::{Url, UrlLimits};
 
 /// Entry points for the coverage-guided fuzzer in `fuzz/`; compiled only with
@@ -385,7 +404,11 @@ impl Response {
     }
 }
 
-#[derive(Clone, Debug)]
+/// The port of a proxy whose URL names none (`http://proxy.example`).
+pub const DEFAULT_PROXY_PORT: u16 = 8080;
+
+/// An HTTP proxy that https requests are tunnelled through (`CONNECT`).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Proxy {
     pub host: String,
     pub port: u16,
@@ -405,7 +428,7 @@ impl Proxy {
         if u.scheme != "http" {
             return Err(Error::Http("unsupported proxy scheme".into()));
         }
-        let port = if with_scheme.rsplit('/').next().map_or(false, |h| h.contains(':') && !h.ends_with(']')) { u.port } else { 8080 };
+        let port = if with_scheme.rsplit('/').next().map_or(false, |h| h.contains(':') && !h.ends_with(']')) { u.port } else { DEFAULT_PROXY_PORT };
         // the credentials as they are meant: `%40` is an `@` that the URL could not hold as it is
         Ok(Proxy { host: u.host, port, auth: u.userinfo.map(|ui| percent_decoded(&ui)) })
     }
@@ -436,7 +459,59 @@ fn percent_decoded(s: &str) -> String {
 enum ProxySetting {
     None,
     FromEnv,
+    /// The environment if it says anything about proxies, else these (the operating system's, read once).
+    FromSystem(Arc<SystemProxy>),
     Explicit(Proxy),
+}
+
+/// The variables that make the environment the one that says which proxy is used when one of them is set (and not empty), as Python's
+/// `getproxies` has it: the operating system's settings are then not looked at.
+const PROXY_VARIABLES: [&str; 8] = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"];
+
+/// What the environment says about the proxy of an https request.
+#[derive(Debug, PartialEq, Eq)]
+enum EnvProxy {
+    /// Nothing: none of [`PROXY_VARIABLES`] is set.
+    Silent,
+    /// Go direct: no proxy for https, or `NO_PROXY` names the host.
+    Direct,
+    Via(Proxy),
+}
+
+/// A variable of the process's environment.
+#[cfg(not(test))]
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The environment that proxies are chosen with on this thread, in place of the process's (for the tests of the choice, which cannot
+    /// change the process's environment under the tests that run beside them).
+    pub(crate) static PROXY_ENV: std::cell::RefCell<Option<Vec<(&'static str, String)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A variable of the process's environment, or of the one a test set for this thread ([`PROXY_ENV`]).
+#[cfg(test)]
+fn env_var(name: &str) -> Option<String> {
+    match PROXY_ENV.with(|e| e.borrow().as_ref().map(|vars| vars.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone()))) {
+        Some(set) => set,
+        None => std::env::var(name).ok(),
+    }
+}
+
+/// What the environment `var` reads says about an https request to `host`: `HTTPS_PROXY` (else `https_proxy`), unless `NO_PROXY` (else
+/// `no_proxy`) names the host.
+fn env_proxy(var: &dyn Fn(&str) -> Option<String>, host: &str) -> Result<EnvProxy> {
+    if !PROXY_VARIABLES.iter().any(|n| var(n).is_some_and(|v| !v.trim().is_empty())) {
+        return Ok(EnvProxy::Silent);
+    }
+    let https = var("HTTPS_PROXY").or_else(|| var("https_proxy")).unwrap_or_default();
+    let no_proxy = var("NO_PROXY").or_else(|| var("no_proxy")).unwrap_or_default();
+    if https.trim().is_empty() || no_proxy_matches(&no_proxy, host) {
+        return Ok(EnvProxy::Direct);
+    }
+    Ok(EnvProxy::Via(Proxy::parse(&https)?))
 }
 
 /// An HTTP(S) client. Cheap to clone.
@@ -463,6 +538,11 @@ pub struct Client {
     h3: Option<H3Support>,
     /// The hosts a request may go to, if there is a rule: see [`Client::allowed_hosts`].
     hosts: Option<Arc<HostRules>>,
+    /// The rule of the request being made, which holds as well as the client's: see [`RequestBuilder::allowed_hosts`]. Only on the clone a
+    /// request is made with ([`Client::narrowed`]).
+    request_hosts: Option<Arc<HostRules>>,
+    /// The proxies a request may go through, if there is a rule: see [`Client::allowed_proxies`].
+    proxy_hosts: Option<Arc<HostRules>>,
     /// What the URL of a request, and of every redirect, may not be: see [`Client::url_limits`].
     url_limits: UrlLimits,
     /// What gives each hop its own headers (its host's credentials): see [`Client::hop_headers`].
@@ -555,6 +635,8 @@ impl Client {
             h2: None,
             h3: None,
             hosts: None,
+            request_hosts: None,
+            proxy_hosts: None,
             url_limits: UrlLimits::new(),
             hop_hook: None,
             decompress: false,
@@ -893,16 +975,18 @@ impl Client {
 
     /// Limits the hosts this client (and what is cloned from it afterwards) may reach to those the rule names (none by default: any host).
     /// The rule is applied to the URL of the request and to the URL of **every redirect that is followed**, before anything is sent to
-    /// that host; a request or a redirect to a host that the rule does not name is an error (`Error::Http`, whose message begins
-    /// `host not allowed`) and nothing is sent. See [`HostRules`] for what an entry may be (a host, an address, `*.example.com`, `host:port`),
-    /// for what a wildcard does and does not cover, and for the two switches that make a rule tighter
-    /// ([`one_label_wildcards`](HostRules::one_label_wildcards), [`default_port_only`](HostRules::default_port_only)). With a rule, an HTTP/3
-    /// alternative offered by an origin is used only if the rule allows its host and port too.
+    /// that host; a request or a redirect to a host that the rule does not name is refused ([`Error::Refused`], by
+    /// [`RefusedBy::HostRule`], whose reason begins `host not allowed`) and nothing is sent. See [`HostRules`] for what an entry may be (a
+    /// host, an address, `*.example.com`, `host:port`), for what a wildcard does and does not cover, and for the two switches, which are on
+    /// unless the rule is told otherwise ([`one_label_wildcards`](HostRules::one_label_wildcards): a wildcard is one label;
+    /// [`default_port_only`](HostRules::default_port_only): an entry without a port is the default port). With a rule, an HTTP/3 alternative
+    /// offered by an origin is used only if the rule allows its host and port too.
     ///
     /// Clones share their connections, so one client can serve several callers that each have a rule of their own:
     /// `client.clone().allowed_hosts(rules)` is a client for that caller (the limits of [`timeout`](Client::timeout),
     /// [`total_timeout`](Client::total_timeout), [`max_redirects`](Client::max_redirects), [`max_body_bytes`](Client::max_body_bytes) and
-    /// [`url_limits`](Client::url_limits) can be set on the clone in the same way).
+    /// [`url_limits`](Client::url_limits) can be set on the clone in the same way). One request can have a rule of its own as well
+    /// ([`RequestBuilder::allowed_hosts`]), which holds together with the client's.
     pub fn allowed_hosts(mut self, rules: HostRules) -> Client {
         self.hosts = Some(Arc::new(rules));
         self
@@ -912,6 +996,31 @@ impl Client {
     pub fn any_host(mut self) -> Client {
         self.hosts = None;
         self
+    }
+
+    /// Limits the proxies this client may go through to those the rule names (none by default: any proxy it is told of). The rule is
+    /// applied to the proxy a request is to go through, however it was named ([`proxy`](Client::proxy), `HTTPS_PROXY`, the system's
+    /// settings), before anything connects to it: a request whose proxy the rule does not name is refused ([`Error::Refused`], by
+    /// [`RefusedBy::ProxyRule`]) and is **not** sent direct instead. A request that goes direct is not affected.
+    ///
+    /// It is for a process that does not trust all of its environment: a variable that something else set (a package's install script, a
+    /// step of a build) cannot then send the requests through a proxy of its choosing. The entries are those of [`HostRules`]; the default
+    /// port of a proxy is [`DEFAULT_PROXY_PORT`] (8080, what a proxy URL without a port has), so with the rule as it is made an entry for a
+    /// proxy on another port says it: `proxy.corp.example:3128`.
+    pub fn allowed_proxies(mut self, rules: HostRules) -> Client {
+        self.proxy_hosts = Some(Arc::new(rules));
+        self
+    }
+
+    /// Takes the rule of [`allowed_proxies`](Client::allowed_proxies) away: any proxy the client is told of may be used.
+    pub fn any_proxy(mut self) -> Client {
+        self.proxy_hosts = None;
+        self
+    }
+
+    /// Whether the host rules allow `host` on `port`: the client's, and the request's if it has one.
+    fn host_allowed(&self, host: &str, port: u16, default_port: u16) -> bool {
+        [&self.hosts, &self.request_hosts].into_iter().flatten().all(|rules| rules.allows(host, port, default_port))
     }
 
     /// Sets what the URL of a request, and the URL of every redirect that is followed, may not be (nothing is refused by default): see
@@ -928,6 +1037,14 @@ impl Client {
     /// that URL and before anything is sent there, and the headers it returns are sent with that hop and with no other (a redirect to another
     /// host gets what `f` says for that host, not what the host before it was given). An `Err` from `f` refuses the hop: nothing is sent
     /// there and the request fails with that error.
+    ///
+    /// It is also where a caller **approves or refuses a hop on any ground**, not only for its credentials: `f` sees the URL (its scheme,
+    /// host, port, path and query), the method the hop will be sent with, the hop's number, the URL it came from and whether that crossed an
+    /// origin, and returns `Ok(vec![])` to let the hop go with no headers of its own or an `Err` to refuse it (a redirect to a path the
+    /// caller does not expect, one that makes a GET of a POST, a chain longer than this caller wants, a hop to another origin). A refusal is
+    /// [`Error::Refused`] by [`RefusedBy::Hook`], with the hop's number and the hook's words as its reason (a refusal the hook makes itself,
+    /// as an `Error::Refused`, keeps its rule and its reason). The hook is asked last: after the host rules and the limits on a URL have
+    /// allowed the hop, so that it never sees a URL that they refuse.
     ///
     /// A header that `f` gives replaces a header of the same name that the caller set on the request (so `Authorization` from `f` is the
     /// one sent), and is checked as the caller's are (a bad name or value is an error, and so is `Host`, `Connection` or `Content-Length`,
@@ -988,17 +1105,18 @@ impl Client {
         self.url_limits.check_text(text).map_err(|reason| Error::Refused(Refused { hop, by: RefusedBy::UrlLimit, reason }))
     }
 
-    /// Refuses a URL that a limit or the host rule does not allow. Called for the first URL and for every redirect, before a connection.
+    /// Refuses a URL that a limit or a host rule (the client's, the request's) does not allow. Called for the first URL and for every
+    /// redirect, before a connection.
     pub(crate) fn check_target(&self, url: &Url, hop: usize) -> Result<()> {
         self.url_limits.check(url).map_err(|reason| Error::Refused(Refused { hop, by: RefusedBy::UrlLimit, reason }))?;
-        match &self.hosts {
-            Some(rules) if !rules.allows_url(url) => Err(Error::Refused(Refused {
-                hop,
-                by: RefusedBy::HostRule,
-                reason: format!("host not allowed: {} is not in the allowed hosts", url.host_header()),
-            })),
-            _ => Ok(()),
+        let refused = |whose: &str| Error::Refused(Refused { hop, by: RefusedBy::HostRule, reason: format!("host not allowed: {} is not in the {whose}", url.host_header()) });
+        if self.hosts.as_ref().is_some_and(|rules| !rules.allows_url(url)) {
+            return Err(refused("allowed hosts"));
         }
+        if self.request_hosts.as_ref().is_some_and(|rules| !rules.allows_url(url)) {
+            return Err(refused("request's allowed hosts"));
+        }
+        Ok(())
     }
 
     /// Tunnels https requests through the proxy named by `HTTPS_PROXY`/`https_proxy`
@@ -1006,6 +1124,41 @@ impl Client {
     pub fn proxy_from_env(mut self) -> Client {
         self.proxy = ProxySetting::FromEnv;
         self
+    }
+
+    /// Tunnels https requests through the proxy the environment names, as [`proxy_from_env`](Client::proxy_from_env) does, or, when the
+    /// environment says nothing about proxies (none of `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY` and `NO_PROXY` is set, in either case),
+    /// through the one the operating system is set to use: macOS's secure web proxy, Windows' proxy server, with their lists of hosts that
+    /// go direct ([`SystemProxy`], which says what is read and what is not followed: a PAC file, discovery). That is the order Python's
+    /// `urllib` keeps, so that pip and this client go the same way.
+    ///
+    /// The system's settings are read now, once, and kept by this client and its clones (a change made later is not seen: make the client
+    /// again for it); the environment is read for each request, as by `proxy_from_env`. [`system_proxy`](Client::system_proxy) gives what was
+    /// read, for a log: its [`notes`](SystemProxy::notes) say what is set and what is not followed. On Linux and the other systems, which have
+    /// no such settings, this is `proxy_from_env`.
+    pub fn proxy_from_system(self) -> Client {
+        self.with_system_proxy(SystemProxy::read())
+    }
+
+    /// [`proxy_from_system`](Client::proxy_from_system) with settings the caller read (or made: for a test, or settings of its own).
+    pub fn with_system_proxy(mut self, settings: SystemProxy) -> Client {
+        self.proxy = ProxySetting::FromSystem(Arc::new(settings));
+        self
+    }
+
+    /// The operating system's proxy settings this client was given ([`proxy_from_system`](Client::proxy_from_system)), if it was.
+    pub fn system_proxy(&self) -> Option<&SystemProxy> {
+        match &self.proxy {
+            ProxySetting::FromSystem(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The proxy a request to `url` would go through now (`None` for one that goes direct), or why it could not be made: a proxy the
+    /// environment names that cannot be read, one that [`allowed_proxies`](Client::allowed_proxies) does not allow. For a log, or a check
+    /// that a configuration does what it should.
+    pub fn proxy_for_url(&self, url: &str) -> Result<Option<Proxy>> {
+        self.proxy_for(&Url::parse(url)?, 0)
     }
 
     /// Tunnels https requests through an HTTP proxy using CONNECT.
@@ -1094,6 +1247,34 @@ impl<'a> RequestBuilder<'a> {
     /// Largest response body accepted for this request, in bytes; see [`Client::max_body_bytes`].
     pub fn max_body_bytes(mut self, n: u64) -> Self {
         self.opts.max_body = Some(n);
+        self
+    }
+
+    /// The limit on each read and write of this request, in place of the client's ([`Client::timeout`]): on a new connection and on one
+    /// that the pool gives it, which is given this request's limit for as long as the request has it.
+    pub fn timeout(mut self, t: Duration) -> Self {
+        self.opts.timeout = Some(t);
+        self
+    }
+
+    /// The limit on the whole of this request, redirects included, in place of the client's ([`Client::total_timeout`]); a batch's deadline
+    /// still holds as well, whichever comes first.
+    pub fn total_timeout(mut self, t: Duration) -> Self {
+        self.opts.total_timeout = Some(t);
+        self
+    }
+
+    /// The most redirects this request follows, in place of the client's ([`Client::max_redirects`]); 0 follows none and fails on a redirect.
+    pub fn max_redirects(mut self, n: usize) -> Self {
+        self.opts.max_redirects = Some(n);
+        self
+    }
+
+    /// A rule about the hosts this request (and every redirect it follows) may go to, which holds **as well as** the client's
+    /// ([`Client::allowed_hosts`]): a host has to be allowed by both, so a request can narrow what the client allows and cannot widen it.
+    /// A host this rule does not allow is refused as the client's rule refuses one ([`RefusedBy::HostRule`]), before anything is sent there.
+    pub fn allowed_hosts(mut self, rules: HostRules) -> Self {
+        self.opts.hosts = Some(Arc::new(rules));
         self
     }
 
@@ -1279,8 +1460,8 @@ fn is_redirect(status: u16) -> bool {
     matches!(status, 301 | 302 | 303 | 307 | 308)
 }
 
-fn no_proxy_matches(host: &str) -> bool {
-    let list = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")).unwrap_or_default();
+/// Whether `list` (the value of `NO_PROXY`) names `host`: `*`, the host, or a domain it is under.
+fn no_proxy_matches(list: &str, host: &str) -> bool {
     list.split(',').map(str::trim).filter(|e| !e.is_empty()).any(|e| {
         let e = e.trim_start_matches('.').to_ascii_lowercase();
         e == "*" || host == e || host.ends_with(&format!(".{}", e))
@@ -1375,9 +1556,35 @@ impl Client {
         opts.decompress.unwrap_or(self.decompress).then(|| DecodeLimits { max_output: opts.max_decoded.or(self.decode.max_output), ..self.decode })
     }
 
+    /// This client with what a request sets over its own settings, if it sets any: its timeouts, its redirect limit, its rule about hosts
+    /// (which holds as well as the client's). The clone shares the connections, the pools and everything else, and the request is made with
+    /// it; what it took is taken out of `opts`.
+    pub(crate) fn narrowed(&self, opts: &mut RequestOpts) -> Option<Client> {
+        if opts.timeout.is_none() && opts.total_timeout.is_none() && opts.max_redirects.is_none() && opts.hosts.is_none() {
+            return None;
+        }
+        let mut client = self.clone();
+        if let Some(t) = opts.timeout.take() {
+            client.timeout = t;
+        }
+        if let Some(t) = opts.total_timeout.take() {
+            client.total_timeout = Some(t);
+        }
+        if let Some(n) = opts.max_redirects.take() {
+            client.max_redirects = n;
+        }
+        if let Some(rules) = opts.hosts.take() {
+            client.request_hosts = Some(rules);
+        }
+        Some(client)
+    }
+
     /// Sends the request, follows redirects, and returns the final response as soon as its headers
     /// have arrived.
-    fn execute_stream(&self, method: String, url: &str, headers: Vec<(String, String)>, body: Vec<u8>, opts: RequestOpts, whole: bool) -> Result<ResponseStream> {
+    fn execute_stream(&self, method: String, url: &str, headers: Vec<(String, String)>, body: Vec<u8>, mut opts: RequestOpts, whole: bool) -> Result<ResponseStream> {
+        if let Some(client) = self.narrowed(&mut opts) {
+            return client.execute_stream(method, url, headers, body, opts, whole);
+        }
         let membership = self.membership(&opts)?;
         let running = membership.as_ref().map(|m| m.running.clone());
         let mut hop = self.start(method, url, headers, body)?;
@@ -1443,12 +1650,11 @@ impl Client {
         if !hop.url.is_https() {
             return;
         }
-        let key = match self.proxy_for(&hop.url) {
+        let key = match self.proxy_for(&hop.url, hop.index) {
             Ok(None) => pool_key(&hop.url, None, self.min_tls_for(hop)),
             _ => return,
         };
-        let hosts = self.hosts.as_deref();
-        h3.registry.learn(&key, resp.headers_named("alt-svc"), &|host, port| hosts.map_or(true, |rules| rules.allows(host, port, 443)));
+        h3.registry.learn(&key, resp.headers_named("alt-svc"), &|host, port| self.host_allowed(host, port, 443));
     }
 
     pub(crate) fn deadline(&self) -> Option<Instant> {
@@ -1566,7 +1772,7 @@ impl Client {
     fn once(&self, hop: &Hop, deadline: Option<Instant>, limits: Limits, whole: bool) -> Result<ResponseStream> {
         let mut headers = self.request_headers(hop)?;
         let (method, url, body) = (hop.method.as_str(), &hop.url, hop.body.as_slice());
-        let proxy = self.proxy_for(url)?;
+        let proxy = self.proxy_for(url, hop.index)?;
         let key = pool_key(url, proxy.as_ref(), self.min_tls_for(hop));
         let mut head = wire::write_request_head(method, &url.path_and_query, &headers);
         // a body that waits for the server's go-ahead (over HTTP/1.1)
@@ -1719,7 +1925,11 @@ impl Client {
         }
         let (conn, reused) = match support.registry.acquire(key, &hop.url.host, hop.url.port, support.eager, waits, opts.connect_timeout + opts.timeout) {
             h3_transport::Acquired::Skip => return Ok(H3Step::Skip),
+            // (the alternatives are shared by the clones, which may have rules of their own, and by requests that have one: a connection to an
+            // alternative that this request's rules do not allow is not used for it, and nor is one dialed; the request goes over TCP)
+            h3_transport::Acquired::Conn(conn) if !self.host_allowed(conn.endpoint().0, conn.endpoint().1, 443) => return Ok(H3Step::Skip),
             h3_transport::Acquired::Conn(conn) => (conn, true),
+            h3_transport::Acquired::Dial(_, host, port) if !self.host_allowed(&host, port, 443) => return Ok(H3Step::Skip),
             h3_transport::Acquired::Dial(ticket, host, port) => {
                 // an origin that merely said it offers QUIC is not waited for long; one that the caller said speaks it is
                 let handshake_timeout = if support.eager { self.connect_timeout } else { self.connect_timeout.min(h3_transport::ALT_HANDSHAKE_TIMEOUT) };
@@ -1850,20 +2060,36 @@ impl Client {
         ConnectOptions { connect_timeout: self.connect_timeout, timeout: self.timeout, deadline }
     }
 
-    fn proxy_for(&self, url: &Url) -> Result<Option<Proxy>> {
+    /// The proxy a request to `url` goes through, if any, once the rule of [`allowed_proxies`](Client::allowed_proxies) has allowed it
+    /// (`hop` is the hop the request is, for the refusal).
+    fn proxy_for(&self, url: &Url, hop: usize) -> Result<Option<Proxy>> {
+        let proxy = self.choose_proxy(url, &env_var)?;
+        if let (Some(p), Some(rules)) = (&proxy, &self.proxy_hosts) {
+            if !rules.allows(&p.host, p.port, DEFAULT_PROXY_PORT) {
+                let host = if p.host.contains(':') { format!("[{}]", p.host) } else { p.host.clone() };
+                return Err(Error::Refused(Refused { hop, by: RefusedBy::ProxyRule, reason: format!("proxy not allowed: {host}:{} is not in the allowed proxies", p.port) }));
+            }
+        }
+        Ok(proxy)
+    }
+
+    /// The proxy the client's setting gives for `url`, with the environment that `var` reads.
+    fn choose_proxy(&self, url: &Url, var: &dyn Fn(&str) -> Option<String>) -> Result<Option<Proxy>> {
         if !url.is_https() {
             return Ok(None);
         }
         match &self.proxy {
             ProxySetting::None => Ok(None),
             ProxySetting::Explicit(p) => Ok(Some(p.clone())),
-            ProxySetting::FromEnv => {
-                let var = std::env::var("HTTPS_PROXY").or_else(|_| std::env::var("https_proxy")).unwrap_or_default();
-                if var.trim().is_empty() || no_proxy_matches(&url.host) {
-                    return Ok(None);
-                }
-                Ok(Some(Proxy::parse(&var)?))
-            }
+            ProxySetting::FromEnv => match env_proxy(var, &url.host)? {
+                EnvProxy::Via(p) => Ok(Some(p)),
+                EnvProxy::Silent | EnvProxy::Direct => Ok(None),
+            },
+            ProxySetting::FromSystem(system) => match env_proxy(var, &url.host)? {
+                EnvProxy::Via(p) => Ok(Some(p)),
+                EnvProxy::Direct => Ok(None),
+                EnvProxy::Silent => Ok(system.proxy_for(url).cloned()),
+            },
         }
     }
 
@@ -1933,7 +2159,7 @@ impl Client {
     #[cfg_attr(not(any(test, feature = "server")), allow(dead_code))]
     pub(crate) fn tunnel(&self, host: &str, port: u16) -> Result<std::net::TcpStream> {
         let url = Url::parse(&format!("https://{}:{port}/", if host.contains(':') { format!("[{host}]") } else { host.to_string() }))?;
-        let io = match self.proxy_for(&url)? {
+        let io = match self.proxy_for(&url, 0)? {
             Some(p) => self.proxy_tunnel(&p, host, port, None, None)?,
             None => self.tcp_connect(host, port, None, None)?,
         };

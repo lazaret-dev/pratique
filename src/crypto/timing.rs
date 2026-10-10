@@ -666,11 +666,32 @@ fn ecdh_on_p256_and_p384_is_constant_time() {
             move |rng, c| (fixed.clone(), if c { pool_c[rng.below(32)].clone() } else { generator_c.clone() }),
             op,
         );
-        // the public key of a secret scalar is also computed from it
+        // the public key of a secret scalar is also computed from it, by the generator's table (B-115): few digits
+        // against random ones, every digit +1 against every digit about -8 (the first entries against the last, negated),
+        // and every digit 0 (the sum made and not kept) against random
         let (rs, small_b) = (random_scalar.clone(), small.clone());
         expect_constant_time(
             &format!("ecdh {label} public key: scalar 3 vs random"),
             move |rng, c| if c { rs(rng) } else { small_b.clone() },
+            move |k: &Vec<u8>| ecdh::public_key(curve, k),
+        );
+        expect_constant_time(
+            &format!("ecdh {label} public key: digits +1 vs about -8 (0x11.. vs 0x88..)"),
+            move |_, c| vec![if c { 0x88u8 } else { 0x11 }; size],
+            move |k: &Vec<u8>| ecdh::public_key(curve, k),
+        );
+        let rs = random_scalar.clone();
+        expect_constant_time(
+            &format!("ecdh {label} public key: digits 0 (one set bit) vs random"),
+            move |rng, c| {
+                if c {
+                    rs(rng)
+                } else {
+                    let mut k = vec![0u8; size];
+                    k[size / 2] = 0x10;
+                    k
+                }
+            },
             move |k: &Vec<u8>| ecdh::public_key(curve, k),
         );
     }
@@ -762,42 +783,51 @@ fn ed25519_signing_is_constant_time() {
     finish();
 }
 
-#[test]
-#[ignore = "statistical timing run; see the module documentation"]
-fn rsa_signing_is_constant_time() {
-    use super::rsa_sign::{pow_for_timing, RsaSigningKey};
-    // the exponentiation modulo a secret prime of RSA-2048's size: a fixed odd modulus with its top bit set
-    let mut rng = Rng::new(2048);
-    let mut m = [0u64; 16];
+/// The constant-time power modulo a fixed odd modulus of `N` limbs with its top bit set: the exponent all zero and all
+/// ones against random ones, and the base 0 against random bases.
+fn rsa_power_is_constant_time<const N: usize>(label: &str) {
+    use super::rsa_sign::pow_for_timing;
+    let mut rng = Rng::new(64 * N as u64);
+    let mut m = [0u64; N];
     for l in m.iter_mut() {
         *l = rng.next_u64();
     }
     m[0] |= 1;
-    m[15] |= 1 << 63;
-    let limbs = |rng: &mut Rng, c: bool, fill: u64| -> [u64; 16] {
-        let mut a = [0u64; 16];
+    m[N - 1] |= 1 << 63;
+    let limbs = |rng: &mut Rng, c: bool, fill: u64| -> [u64; N] {
+        let mut a = [0u64; N];
         for l in a.iter_mut() {
             *l = rng.next_u64();
         }
         if !c {
-            a = [fill; 16];
+            a = [fill; N];
         }
-        a[15] &= u64::MAX >> 1; // below the modulus either way
+        a[N - 1] &= u64::MAX >> 1; // below the modulus either way
         a
     };
     let base = limbs(&mut Rng::new(1), true, 0);
     expect_constant_time(
-        "rsa power: exponent all zero vs random",
+        &format!("{label} power: exponent all zero vs random"),
         move |rng, c| limbs(rng, c, 0),
-        move |e: &[u64; 16]| pow_for_timing(&m, &base, e),
+        move |e: &[u64; N]| pow_for_timing(&m, &base, e),
     );
     expect_constant_time(
-        "rsa power: exponent all ones vs random",
+        &format!("{label} power: exponent all ones vs random"),
         move |rng, c| limbs(rng, c, u64::MAX),
-        move |e: &[u64; 16]| pow_for_timing(&m, &base, e),
+        move |e: &[u64; N]| pow_for_timing(&m, &base, e),
     );
     let exp = limbs(&mut Rng::new(2), true, 0);
-    expect_constant_time("rsa power: base 0 vs random", move |rng, c| limbs(rng, c, 0), move |b: &[u64; 16]| pow_for_timing(&m, b, &exp));
+    expect_constant_time(&format!("{label} power: base 0 vs random"), move |rng, c| limbs(rng, c, 0), move |b: &[u64; N]| pow_for_timing(&m, b, &exp));
+}
+
+#[test]
+#[ignore = "statistical timing run; see the module documentation"]
+fn rsa_signing_is_constant_time() {
+    use super::rsa_sign::RsaSigningKey;
+    // the exponentiation modulo a secret prime of RSA-2048's size (16 limbs, products by rows) and of RSA-4096's (32
+    // limbs, by columns since B-115)
+    rsa_power_is_constant_time::<16>("rsa-2048");
+    rsa_power_is_constant_time::<32>("rsa-4096");
     // whole signatures with a real key: the message (so the encoded value) all zeros vs random
     let line = include_str!("../../tests/data/rsa_signing_keys.txt").lines().find(|l| l.starts_with("2048 ")).unwrap();
     let key = RsaSigningKey::from_pkcs1_der(&crate::util::unhex(line.split(' ').nth(1).unwrap())).unwrap();

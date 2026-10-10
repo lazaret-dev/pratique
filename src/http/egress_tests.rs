@@ -13,8 +13,14 @@ use crate::error::Error;
 use crate::http::{Url, UrlLimits};
 use std::sync::{Arc, Mutex};
 
+/// A rule as `HostRules::new` makes it: the tight one (one label under a wildcard, the default port for an entry without a port).
 fn rules(entries: &[&str]) -> HostRules {
     HostRules::new(entries.iter().copied()).unwrap()
+}
+
+/// A rule for the test servers, which listen on ports that are not the default: an entry without a port is any port.
+fn local(entries: &[&str]) -> HostRules {
+    rules(entries).default_port_only(false)
 }
 
 /// The URL of `server` with its host written as `host` (`localhost` reaches the same server as `127.0.0.1` does).
@@ -36,10 +42,11 @@ fn port_of(server: &TestServer) -> u16 {
 }
 
 /// A client with the rule that a module reaching the Marketplace has: the hosts of its CDNs (one label under each domain, on the default
-/// port), and the strictest limits on a URL. It has no connection to make: the tests ask it what it decides.
+/// port: the rule as it is made, with no switch to set), and the strictest limits on a URL. It has no connection to make: the tests ask it
+/// what it decides.
 fn marketplace() -> crate::Client {
     crate::Client::with_tls_config(crate::tls::ClientConfig::new(crate::x509::TrustStore::empty()))
-        .allowed_hosts(rules(&["marketplace.visualstudio.com", "*.gallerycdn.vsassets.io", "*.gallery.vsassets.io"]).one_label_wildcards(true).default_port_only(true))
+        .allowed_hosts(rules(&["marketplace.visualstudio.com", "*.gallerycdn.vsassets.io", "*.gallery.vsassets.io"]))
         .url_limits(UrlLimits::strict())
 }
 
@@ -88,7 +95,7 @@ fn a_request_to_a_host_the_rule_does_not_name_is_refused_and_nothing_connects() 
     }
     assert_eq!(server.connections(), 0, "a host that is refused is not connected to");
     // the rule names the host: it goes through
-    let client = server.client().allowed_hosts(rules(&["api.example.com", "127.0.0.1"]));
+    let client = server.client().allowed_hosts(local(&["api.example.com", "127.0.0.1"]));
     assert_eq!(client.get(&server.url("/")).unwrap().text(), "hello");
     // (the same for a request that is streamed, and for the other methods)
     let none = server.client().allowed_hosts(rules(&["api.example.com"]));
@@ -104,7 +111,7 @@ fn a_redirect_to_a_host_the_rule_does_not_name_is_refused_before_anything_is_sen
     let target = TestServer::start(|_| ok("target"));
     let landed = as_host(&target, "localhost", "/landed");
     let origin = TestServer::start(move |_| Reply::Send(response(302, &[&format!("Location: {landed}")], b"moved")));
-    let client = origin.client().allowed_hosts(rules(&["127.0.0.1"]));
+    let client = origin.client().allowed_hosts(local(&["127.0.0.1"]));
     let e = client.get(&origin.url("/")).unwrap_err();
     assert!(refused(&e) && e.to_string().contains("localhost"), "{e}");
     assert_eq!((origin.connections(), target.connections()), (1, 0), "the redirect was seen, and the host it names was not connected to");
@@ -112,7 +119,7 @@ fn a_redirect_to_a_host_the_rule_does_not_name_is_refused_before_anything_is_sen
     assert!(refused(&client.get_stream(&origin.url("/")).err().unwrap()));
     assert_eq!(target.connections(), 0);
     // with the host in the rule, the same redirect is followed
-    let client = origin.client().allowed_hosts(rules(&["127.0.0.1", "localhost"]));
+    let client = origin.client().allowed_hosts(local(&["127.0.0.1", "localhost"]));
     assert_eq!(client.get(&origin.url("/")).unwrap().text(), "target");
     assert_eq!(target.connections(), 1);
     // and with no rule at all
@@ -130,19 +137,19 @@ fn every_hop_is_checked_not_only_the_first_and_the_last() {
     let b = TestServer::start(move |_| Reply::Send(response(302, &[&format!("Location: {c_url}")], b"")));
     let b_url = b.url("/b");
     let a = TestServer::start(move |_| Reply::Send(response(302, &[&format!("Location: {b_url}")], b"")));
-    let client = a.client().allowed_hosts(rules(&["127.0.0.1"]));
+    let client = a.client().allowed_hosts(local(&["127.0.0.1"]));
     let e = client.get(&a.url("/a")).unwrap_err();
     assert!(refused(&e), "{e}");
     assert_eq!((a.connections(), b.connections(), c.connections(), last.connections()), (1, 1, 0, 0));
     // a rule that names all of them follows the chain to the end
-    let client = a.client().allowed_hosts(rules(&["127.0.0.1", "localhost"]));
+    let client = a.client().allowed_hosts(local(&["127.0.0.1", "localhost"]));
     assert_eq!(client.get(&a.url("/a")).unwrap().text(), "end");
 }
 
 #[test]
 fn a_user_name_in_the_url_does_not_make_a_host_allowed() {
     let server = TestServer::start(|_| ok("hello"));
-    let client = server.client().allowed_hosts(rules(&["127.0.0.1"]));
+    let client = server.client().allowed_hosts(local(&["127.0.0.1"]));
     // the host is what follows the last `@`, whatever comes before it
     let evil = server.url("/").replace("://127.0.0.1", "://127.0.0.1@localhost");
     assert!(refused(&client.get(&evil).unwrap_err()), "{evil}");
@@ -152,7 +159,7 @@ fn a_user_name_in_the_url_does_not_make_a_host_allowed() {
     let target = TestServer::start(|_| ok("target"));
     let landed = target.url("/").replace("://127.0.0.1", "://127.0.0.1@localhost");
     let origin = TestServer::start(move |_| Reply::Send(response(302, &[&format!("Location: {landed}")], b"")));
-    assert!(refused(&origin.client().allowed_hosts(rules(&["127.0.0.1"])).get(&origin.url("/")).unwrap_err()));
+    assert!(refused(&origin.client().allowed_hosts(local(&["127.0.0.1"])).get(&origin.url("/")).unwrap_err()));
     assert_eq!(target.connections(), 0);
 }
 
@@ -160,7 +167,7 @@ fn a_user_name_in_the_url_does_not_make_a_host_allowed() {
 fn a_clone_has_the_rule_that_was_set_on_it() {
     let server = TestServer::start(|_| ok("hello"));
     let shared = server.client();
-    let module_a = shared.clone().allowed_hosts(rules(&["127.0.0.1"]));
+    let module_a = shared.clone().allowed_hosts(local(&["127.0.0.1"]));
     let module_b = shared.clone().allowed_hosts(rules(&["api.example.com"]));
     assert_eq!(module_a.get(&server.url("/")).unwrap().text(), "hello");
     assert!(refused(&module_b.get(&server.url("/")).unwrap_err()));
@@ -181,7 +188,8 @@ fn the_wildcard_is_applied_to_the_hop_that_a_redirect_makes() {
     // (where the redirect goes, the host it ends up at if it is followed)
     for (to, goes_to) in [
         ("https://a.cdn.example.net/x", Some("a.cdn.example.net")),
-        ("https://a.b.cdn.example.net/x", Some("a.b.cdn.example.net")),
+        // (the rule as it is made: one label under the wildcard)
+        ("https://a.b.cdn.example.net/x", None),
         ("https://API.example.com/x", Some("api.example.com")),
         ("/relative", Some("api.example.com")),
         ("https://cdn.example.net/x", None),
@@ -211,7 +219,7 @@ fn the_async_client_applies_the_rule_too() {
     let target = TestServer::start(|_| ok("target"));
     let landed = as_host(&target, "localhost", "/landed");
     let origin = TestServer::start(move |s| if s.path() == "/ok" { ok("fine") } else { Reply::Send(response(302, &[&format!("Location: {landed}")], b"")) });
-    let client = origin.client().allowed_hosts(rules(&["127.0.0.1"])).into_async();
+    let client = origin.client().allowed_hosts(local(&["127.0.0.1"])).into_async();
     assert_eq!(block_on(client.get(&origin.url("/ok"))).unwrap().text(), "fine");
     let e = block_on(client.get(&origin.url("/redirect"))).unwrap_err();
     assert!(refused(&e), "{e}");
@@ -219,7 +227,7 @@ fn the_async_client_applies_the_rule_too() {
     let e = block_on(client.get(&as_host(&origin, "localhost", "/ok"))).unwrap_err();
     assert!(refused(&e), "{e}");
     // (and the blocking client's `*_async` methods)
-    let e = block_on(origin.client().allowed_hosts(rules(&["127.0.0.1"])).get_async(&origin.url("/redirect"))).unwrap_err();
+    let e = block_on(origin.client().allowed_hosts(local(&["127.0.0.1"])).get_async(&origin.url("/redirect"))).unwrap_err();
     assert!(refused(&e), "{e}");
     assert_eq!(target.connections(), 0);
 }
@@ -233,7 +241,7 @@ fn the_limits_hold_at_every_hop_of_a_followed_redirect() {
         "/slow" => Reply::Send(response(302, &["Location: /big"], b"")),
         _ => ok("hello"),
     });
-    let client = server.client().allowed_hosts(rules(&["127.0.0.1"]));
+    let client = server.client().allowed_hosts(local(&["127.0.0.1"]));
     let e = client.clone().max_redirects(3).get(&server.url("/loop")).unwrap_err();
     assert!(e.to_string().contains("too many redirects"), "{e}");
     assert_eq!(server.requests().iter().filter(|s| s.path() == "/loop").count(), 4, "the first request and three redirects");
@@ -250,7 +258,7 @@ fn a_post_of_json_that_says_what_it_accepts() {
         let body = String::from_utf8_lossy(&s.body).to_string();
         Reply::Send(response(200, &["Content-Type: application/json"], format!("{{\"got\":{}}}", body.len()).as_bytes()))
     });
-    let client = server.client().allowed_hosts(rules(&["127.0.0.1"]));
+    let client = server.client().allowed_hosts(local(&["127.0.0.1"]));
     let json = r#"{"module":"market","query":"café \"quoted\"","n":[1,2,3]}"#;
     let r = client
         .request("POST", &server.url("/api/v1/search"))
@@ -287,7 +295,7 @@ fn a_redirect_that_keeps_the_method_keeps_the_json_and_what_is_accepted() {
         };
         Reply::Send(response(status, &[&format!("Location: {landed}")], b""))
     });
-    let client = origin.client().allowed_hosts(rules(&["127.0.0.1"]));
+    let client = origin.client().allowed_hosts(local(&["127.0.0.1"]));
     let post = |path: &str| {
         client
             .request("POST", &origin.url(path))
@@ -401,11 +409,11 @@ fn the_rule_of_a_module_that_reaches_the_marketplace_holds_on_every_redirect() {
 }
 
 #[test]
-fn without_the_switches_the_rule_is_the_loose_one() {
-    // the same locations through a client that has the hosts but neither switch nor a limit: any depth, any port, credentials and
-    // a long URL are what the rule lets through (a caller that wants less says so)
+fn with_the_switches_off_the_rule_is_the_loose_one() {
+    // the same locations through a client that has the hosts with both switches off and no limit: any depth, any port, credentials and
+    // a long URL are what the rule lets through (a caller that wants that says so)
     let client = crate::Client::with_tls_config(crate::tls::ClientConfig::new(crate::x509::TrustStore::empty()))
-        .allowed_hosts(rules(&["marketplace.visualstudio.com", "*.gallerycdn.vsassets.io"]));
+        .allowed_hosts(rules(&["marketplace.visualstudio.com", "*.gallerycdn.vsassets.io"]).one_label_wildcards(false).default_port_only(false));
     let from = "https://marketplace.visualstudio.com/start";
     let long = format!("https://{CDN}/{}", "a".repeat(3000));
     for (location, want) in [
@@ -424,24 +432,25 @@ fn without_the_switches_the_rule_is_the_loose_one() {
     assert_eq!(first(&client, " https://u:p@a.b.gallerycdn.vsassets.io:8443/a").unwrap(), "a.b.gallerycdn.vsassets.io");
     // one switch at a time
     let one_label = crate::Client::with_tls_config(crate::tls::ClientConfig::new(crate::x509::TrustStore::empty()))
-        .allowed_hosts(rules(&["*.gallerycdn.vsassets.io"]).one_label_wildcards(true));
+        .allowed_hosts(rules(&["*.gallerycdn.vsassets.io"]).default_port_only(false));
     assert!(refused(&first(&one_label, "https://a.b.gallerycdn.vsassets.io/").unwrap_err()));
-    assert!(first(&one_label, "https://a.gallerycdn.vsassets.io:8443/").is_ok(), "a port is not looked at unless the rule asks");
+    assert!(first(&one_label, "https://a.gallerycdn.vsassets.io:8443/").is_ok(), "a port is not looked at when the rule is told not to");
     let default_port = crate::Client::with_tls_config(crate::tls::ClientConfig::new(crate::x509::TrustStore::empty()))
-        .allowed_hosts(rules(&["*.gallerycdn.vsassets.io"]).default_port_only(true));
+        .allowed_hosts(rules(&["*.gallerycdn.vsassets.io"]).one_label_wildcards(false));
     assert!(refused(&first(&default_port, "https://a.gallerycdn.vsassets.io:8443/").unwrap_err()));
-    assert!(first(&default_port, "https://a.b.gallerycdn.vsassets.io/").is_ok(), "the depth is not looked at unless the rule asks");
+    assert!(first(&default_port, "https://a.b.gallerycdn.vsassets.io/").is_ok(), "the depth is not looked at when the rule is told not to");
 }
 
 #[test]
 fn a_port_is_judged_at_every_hop_and_nothing_is_connected_to_that_is_refused() {
-    // origin and target are on the same host and on different ports: with the default port only and an entry for the origin's port, the
+    // origin and target are on the same host and on different ports: with the default port only (the rule as it is made) and an entry for
+    // the origin's port, the
     // redirect to the target's port is refused (the host is the one the rule names), and with an entry for each it is followed
     let target = TestServer::start(|_| ok("target"));
     let landed = target.url("/landed");
     let origin = TestServer::start(move |_| Reply::Send(response(302, &[&format!("Location: {landed}")], b"moved")));
     let (po, pt) = (port_of(&origin), port_of(&target));
-    let tight = |entries: &[String]| origin.client().allowed_hosts(HostRules::new(entries.iter().map(|e| e.as_str())).unwrap().default_port_only(true));
+    let tight = |entries: &[String]| origin.client().allowed_hosts(HostRules::new(entries.iter().map(|e| e.as_str())).unwrap());
     let e = tight(&[format!("127.0.0.1:{po}")]).get(&origin.url("/")).unwrap_err();
     assert!(refused(&e) && e.to_string().contains(&pt.to_string()), "{e}");
     assert_eq!((origin.connections(), target.connections()), (1, 0));
@@ -451,7 +460,7 @@ fn a_port_is_judged_at_every_hop_and_nothing_is_connected_to_that_is_refused() {
     assert_eq!(origin.connections(), 1, "nothing was connected to for that");
     assert_eq!(tight(&[format!("127.0.0.1:{po}"), format!("127.0.0.1:{pt}")]).get(&origin.url("/")).unwrap().text(), "target");
     // the loose rule: a host is every port, and an entry with a port is that port
-    assert_eq!(origin.client().allowed_hosts(rules(&["127.0.0.1"])).get(&origin.url("/")).unwrap().text(), "target");
+    assert_eq!(origin.client().allowed_hosts(local(&["127.0.0.1"])).get(&origin.url("/")).unwrap().text(), "target");
     let by_port = origin.client().allowed_hosts(rules(&[&format!("127.0.0.1:{po}")]));
     assert!(refused(&by_port.get(&origin.url("/")).unwrap_err()));
 }
@@ -471,7 +480,7 @@ fn a_redirect_that_a_limit_refuses_is_refused_before_anything_is_sent_there() {
         let at = location.clone();
         let reached = target.connections();
         let origin = TestServer::start(move |_| Reply::Send(response(302, &[&format!("Location: {at}")], b"moved")));
-        let client = origin.client().allowed_hosts(rules(&["127.0.0.1"])).url_limits(limits);
+        let client = origin.client().allowed_hosts(local(&["127.0.0.1"])).url_limits(limits);
         let e = client.get(&origin.url("/")).unwrap_err();
         assert!(limited(&e), "{limits:?}: {e}");
         assert!(limited(&client.get_stream(&origin.url("/")).err().unwrap()));
@@ -638,7 +647,7 @@ fn the_hook_is_not_asked_about_a_url_that_the_rule_or_a_limit_refuses() {
     let landed = as_host(&target, "localhost", "/landed");
     let origin = TestServer::start(move |_| Reply::Send(response(302, &[&format!("Location: {landed}")], b"")));
     let log: Log = Default::default();
-    let client = origin.client().allowed_hosts(rules(&["127.0.0.1"])).hop_headers(noting(&log, |_| Ok(vec![h("Authorization", "Bearer t")])));
+    let client = origin.client().allowed_hosts(local(&["127.0.0.1"])).hop_headers(noting(&log, |_| Ok(vec![h("Authorization", "Bearer t")])));
     assert!(refused(&client.get(&origin.url("/")).unwrap_err()));
     // asked for the first URL, which the rule allows, and not for the redirect that it does not
     assert_eq!(log.lock().unwrap().len(), 1);
@@ -740,7 +749,7 @@ fn a_refusal_is_not_a_network_error_and_says_which_hop_and_which_rule_refused() 
     let b_url = b.url("/b");
     let a = TestServer::start(move |_| Reply::Send(response(302, &[&format!("Location: {b_url}")], b"")));
     // the host rule, at the third hop of a chain of redirects (the request itself is hop 0)
-    let client = a.client().allowed_hosts(rules(&["127.0.0.1"]));
+    let client = a.client().allowed_hosts(local(&["127.0.0.1"]));
     let r = refusal(client.get(&a.url("/a")).unwrap_err());
     assert_eq!((r.hop, r.by, r.is_redirect()), (2, RefusedBy::HostRule, true));
     assert!(r.reason.starts_with("host not allowed: localhost"), "{}", r.reason);
@@ -823,4 +832,184 @@ fn a_request_can_require_tls13_and_cannot_allow_tls12_on_a_client_that_requires_
         let key = super::pool_key(&hop(asked).url, None, client.min_tls_for(&hop(asked)));
         assert_eq!(key.min_tls, expected);
     }
+}
+
+// ------------------------------------------------------------------------------------------------ the hook as a check of each hop
+
+#[test]
+fn the_hook_approves_or_refuses_a_hop_on_any_ground() {
+    let target = TestServer::start(|_| ok("target"));
+    let (to_admin, to_x) = (target.url("/admin/delete"), target.url("/x"));
+    let origin = TestServer::start(move |s| {
+        let to = match s.path() {
+            "/to-admin" => to_admin.clone(),
+            "/chain" => "/chain2".to_string(),
+            _ => to_x.clone(),
+        };
+        Reply::Send(response(302, &[&format!("Location: {to}")], b""))
+    });
+    // a caller that goes to no path under /admin, follows one redirect at most, never sends a DELETE, and gives no header at all
+    let checking = |info: &HopInfo<'_>| -> Result<Vec<(String, String)>, Error> {
+        if info.url.path_and_query.starts_with("/admin") {
+            return Err(Error::Http("not a path this caller goes to".into()));
+        }
+        if info.hop > 1 {
+            return Err(Error::Http("more than one redirect".into()));
+        }
+        if info.method == "DELETE" {
+            return Err(Error::Http("this caller deletes nothing".into()));
+        }
+        Ok(vec![])
+    };
+    let client = origin.client().hop_headers(checking);
+    let at = |path: &str| origin.url(path);
+    // approved: one redirect, to a path it goes to
+    assert_eq!(client.get(&at("/to-x")).unwrap().text(), "target");
+    let reached = target.connections();
+    // refused, each with the hop it was and the hook's words, and nothing sent to where it would have gone
+    for (method, path, hop, why) in [("GET", "/to-admin", 1, "not a path"), ("GET", "/chain", 2, "more than one"), ("DELETE", "/to-x", 0, "deletes nothing")] {
+        let before = origin.connections();
+        let r = refusal(client.request(method, &at(path)).send().unwrap_err());
+        assert_eq!((r.hop, r.by), (hop, RefusedBy::Hook), "{method} {path}");
+        assert!(r.reason.contains(why), "{method} {path}: {}", r.reason);
+        if hop == 0 {
+            assert_eq!(origin.connections(), before, "{method} {path}: the first hop was refused, and nothing connected");
+        }
+    }
+    assert_eq!(target.connections(), reached, "the target was not reached by a refused hop");
+    // a caller that stays on the origin it was sent to: the hop that crosses to another is refused, the one that does not is not
+    let same_origin = origin.client().hop_headers(|info| if info.crosses_origin() { Err(Error::Http("another origin".into())) } else { Ok(vec![]) });
+    let r = refusal(same_origin.get(&at("/chain")).unwrap_err());
+    assert_eq!((r.hop, r.reason.as_str()), (2, "another origin"));
+    assert_eq!(target.connections(), reached);
+    // (and the async client asks it the same)
+    let r = refusal(block_on(client.clone().into_async().get(&at("/to-admin"))).unwrap_err());
+    assert_eq!((r.hop, r.by), (1, RefusedBy::Hook));
+    assert_eq!(target.connections(), reached);
+}
+
+// ------------------------------------------------------------------------------------------------ what one request sets for itself
+
+#[test]
+fn a_request_has_a_rule_about_hosts_of_its_own_which_holds_with_the_clients() {
+    let target = TestServer::start(|_| ok("target"));
+    let landed = as_host(&target, "localhost", "/landed");
+    let origin = TestServer::start(move |s| if s.path() == "/ok" { ok("fine") } else { Reply::Send(response(302, &[&format!("Location: {landed}")], b"")) });
+    let only_origin = || local(&["127.0.0.1"]);
+    // a client with no rule: the request's alone, at every hop
+    let client = origin.client();
+    assert_eq!(client.request("GET", &origin.url("/ok")).allowed_hosts(only_origin()).send().unwrap().text(), "fine");
+    let r = refusal(client.request("GET", &origin.url("/redirect")).allowed_hosts(only_origin()).send().unwrap_err());
+    assert_eq!((r.hop, r.by), (1, RefusedBy::HostRule));
+    assert!(r.reason.starts_with("host not allowed: localhost") && r.reason.contains("request's allowed hosts"), "{}", r.reason);
+    assert_eq!(target.connections(), 0);
+    // the request that comes after it, with no rule, is not held by it
+    assert_eq!(client.get(&origin.url("/redirect")).unwrap().text(), "target");
+    // on a client with a rule, the request's narrows it and cannot widen it
+    let wide = origin.client().allowed_hosts(local(&["127.0.0.1", "localhost"]));
+    assert_eq!(wide.get(&origin.url("/redirect")).unwrap().text(), "target");
+    assert!(refused(&wide.request("GET", &origin.url("/redirect")).allowed_hosts(only_origin()).send().unwrap_err()));
+    let narrow = origin.client().allowed_hosts(only_origin());
+    let e = narrow.request("GET", &origin.url("/redirect")).allowed_hosts(local(&["127.0.0.1", "localhost"])).send().unwrap_err();
+    assert!(refused(&e) && e.to_string().contains("is not in the allowed hosts"), "{e}");
+    // streamed, the blocking client's futures, and the async client
+    let before = target.connections();
+    let at = origin.url("/redirect");
+    assert!(refused(&client.request("GET", &at).allowed_hosts(only_origin()).send_stream().err().unwrap()));
+    assert!(refused(&block_on(client.request("GET", &at).allowed_hosts(only_origin()).send_async()).unwrap_err()));
+    let a = origin.client().into_async();
+    assert!(refused(&block_on(a.request("GET", &at).allowed_hosts(only_origin()).send()).unwrap_err()));
+    assert!(refused(&block_on(a.request("GET", &at).allowed_hosts(only_origin()).send_stream()).err().unwrap()));
+    assert_eq!(target.connections(), before, "no request that had the rule reached the target");
+    assert_eq!(block_on(a.get(&at)).unwrap().text(), "target");
+    // the rule as it is made is the tight one: the test server is not on the default port
+    assert!(refused(&client.request("GET", &origin.url("/ok")).allowed_hosts(rules(&["127.0.0.1"])).send().unwrap_err()));
+}
+
+#[test]
+fn a_request_has_time_limits_of_its_own_also_on_a_connection_from_the_pool() {
+    use std::time::{Duration, Instant};
+    let server = TestServer::start(|s| match s.path() {
+        "/slow" => Reply::Run(Box::new(|w| {
+            std::thread::sleep(Duration::from_millis(900));
+            let _ = w.write_all(&response(200, &[], b"slow"));
+            true
+        })),
+        _ => ok("hello"),
+    });
+    // (the client's limit is five seconds)
+    let client = server.client();
+    assert_eq!(client.get(&server.url("/")).unwrap().text(), "hello");
+    // the pooled connection was made under the client's limit: the request's is the one that holds on it
+    let started = Instant::now();
+    let e = client.request("GET", &server.url("/slow")).timeout(Duration::from_millis(200)).send().unwrap_err();
+    assert!(started.elapsed() < Duration::from_millis(700), "{:?}: {e}", started.elapsed());
+    assert_eq!(server.connections(), 1, "it went on the connection from the pool");
+    // the next request has the client's limit again
+    assert_eq!(client.get(&server.url("/slow")).unwrap().text(), "slow");
+    // a total limit of its own, in place of the client's: shorter, and longer
+    let started = Instant::now();
+    assert!(client.request("GET", &server.url("/slow")).total_timeout(Duration::from_millis(200)).send().is_err());
+    assert!(started.elapsed() < Duration::from_millis(700), "{:?}", started.elapsed());
+    let hurried = server.client().total_timeout(Duration::from_millis(200));
+    assert!(hurried.get(&server.url("/slow")).is_err());
+    assert_eq!(hurried.request("GET", &server.url("/slow")).total_timeout(Duration::from_secs(10)).send().unwrap().text(), "slow");
+    // the async client: its own pool, the same rule
+    let a = server.client().into_async();
+    assert_eq!(block_on(a.get(&server.url("/"))).unwrap().text(), "hello");
+    let started = Instant::now();
+    assert!(block_on(a.request("GET", &server.url("/slow")).timeout(Duration::from_millis(200)).send()).is_err());
+    assert!(started.elapsed() < Duration::from_millis(700), "{:?}", started.elapsed());
+    assert_eq!(block_on(a.get(&server.url("/slow"))).unwrap().text(), "slow");
+}
+
+#[test]
+fn a_request_has_a_redirect_limit_of_its_own() {
+    let server = TestServer::start(|s| match s.path().strip_prefix("/hop").and_then(|n| n.parse::<usize>().ok()) {
+        Some(0) => ok("end"),
+        Some(n) => Reply::Send(response(302, &[&format!("Location: /hop{}", n - 1)], b"")),
+        None => ok("hello"),
+    });
+    let client = server.client().max_redirects(1);
+    assert!(client.get(&server.url("/hop3")).unwrap_err().to_string().contains("too many redirects (limit 1)"));
+    assert_eq!(client.request("GET", &server.url("/hop3")).max_redirects(3).send().unwrap().text(), "end");
+    assert!(client.request("GET", &server.url("/hop3")).max_redirects(2).send().unwrap_err().to_string().contains("limit 2"));
+    // none at all: the first redirect is the end of it, and nothing is sent where it points
+    let before = server.requests().len();
+    assert!(server.client().request("GET", &server.url("/hop1")).max_redirects(0).send().is_err());
+    assert_eq!(server.requests().len(), before + 1);
+    // the async client
+    let a = client.clone().into_async();
+    assert_eq!(block_on(a.request("GET", &server.url("/hop3")).max_redirects(3).send()).unwrap().text(), "end");
+    assert!(block_on(a.get(&server.url("/hop3"))).is_err());
+}
+
+#[test]
+fn an_http3_alternative_that_the_requests_rule_does_not_allow_is_not_dialed() {
+    // the alternatives an origin offers are shared by the clones and by the requests, whose rules differ: the one a request's rule does
+    // not allow is not dialed for it (the request goes over TCP), and the origin is not marked as unreachable for the others
+    let closed = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let alt_port = closed.local_addr().unwrap().port();
+    drop(closed);
+    let client = crate::Client::with_tls_config(crate::tls::ClientConfig::new(crate::x509::TrustStore::empty()))
+        .http3(true)
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .allowed_hosts(rules(&["origin.example", &format!("127.0.0.1:{alt_port}")]));
+    let url = Url::parse("https://origin.example/").unwrap();
+    let key = super::pool_key(&url, None, crate::tls::TlsVersion::Tls12);
+    let registry = client.h3.as_ref().unwrap().registry.clone();
+    registry.learn(&key, [format!(r#"h3="127.0.0.1:{alt_port}""#).as_str()].into_iter(), &|_, _| true);
+    let hop = Hop { method: "GET".into(), url, headers: vec![], body: vec![], granted: vec![], index: 0, decode: None, min_tls: None, running: None };
+    let step = |c: &crate::Client| {
+        let mut tries = super::H3Tries { attempts: 0, repeat_allowed: true };
+        matches!(c.h3_step(&hop, &[], &key, None, super::wire::Limits::default(), true, &mut tries), Ok(super::H3Step::Skip))
+    };
+    // a request whose rule names the origin and not the alternative: over TCP, and no dial was made (nothing failed)
+    let mut opts = super::RequestOpts { hosts: Some(Arc::new(rules(&["origin.example"]))), ..Default::default() };
+    let narrowed = client.narrowed(&mut opts).unwrap();
+    assert!(step(&narrowed));
+    assert!(!registry.standing(&key).0, "the origin was not left to TCP: nothing was dialed");
+    // the client's own rule allows it: it is dialed (nothing answers there, so the origin is then left to TCP for a while)
+    assert!(step(&client));
+    assert!(registry.standing(&key).0, "the alternative was dialed and failed");
 }

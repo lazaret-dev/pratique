@@ -6,7 +6,7 @@
 //! constant time:
 //!
 //! * the arithmetic modulo p and q is `ct_mod`'s, with constants made without the variable-time code
-//!   (`Modulus::new_secret`);
+//!   (`Modulus::new_secret`), its products by rows, and by columns from RSA-4096's primes up (B-115);
 //! * the exponentiation runs fixed windows of 4 bits over every bit of the exponent's limbs, with four squarings and one
 //!   product each, and reads all 16 table entries to pick one (`Modulus::pow_secret`);
 //! * the recombination's subtraction, product and addition are fixed loops over all limbs.
@@ -411,11 +411,12 @@ impl RsaSigningKey {
     }
 }
 
-/// For the timing tests: the constant-time power modulo a secret modulus of 16 limbs (an RSA-2048 prime).
+/// For the timing tests: the constant-time power modulo a secret modulus of `N` limbs (16: an RSA-2048 prime, by rows;
+/// 32: an RSA-4096 prime, by columns).
 #[cfg(test)]
-pub(crate) fn pow_for_timing(m: &[u64; 16], base: &[u64; 16], exp: &[u64; 16]) -> [u64; 16] {
+pub(crate) fn pow_for_timing<const N: usize>(m: &[u64; N], base: &[u64; N], exp: &[u64; N]) -> [u64; N] {
     let _dit = Dit::on();
-    let k = Modulus::<16>::new_secret(*m);
+    let k = Modulus::<N>::new_secret(*m);
     k.pow_secret(&k.to_mont(base), exp)
 }
 

@@ -114,8 +114,35 @@ full handshake, and of ECDH on the NIST curves, which a client pays after a Hell
 | RSA-2048 / RSA-3072 / RSA-4096 signing (PSS, CRT, blinded, checked) | 1.26 / 4.96 / 12.0 ms |
 | ECDH P-256 / P-384 (a shared secret) | 0.38 / 0.93 ms |
 
-ECDSA signing is nearly all [k]G by `ecdh.rs`'s windows over a variable base; a fixed-base table, as X25519 key generation
-has, would cut it about five times, and RSA signing takes about twice OpenSSL's time (both B-115 in BACKLOG.md).
+ECDSA signing was nearly all [k]G by `ecdh.rs`'s windows over a variable base; B-115 below gave it a table of the
+generator's multiples.
+
+What B-115 changed (`examples/bench.rs`, 2026-10-09, best of several runs; "before" is the code of the 09x package, built
+and run beside the new one on each machine; the M5 figures are from the Linux VM on it):
+
+| Figure | x86-64 VM before | after | M5 VM before | after |
+|---|---|---|---|---|
+| ECDSA P-256 signing | 0.436 ms | 0.058 ms | 0.167 ms | 0.021 ms |
+| ECDSA P-384 signing | 1.06 ms | 0.19 ms | 0.404 ms | 0.070 ms |
+| ECDH P-256, a key pair ([k]G; a new row) | about 0.40 ms (the shared secret's windows) | 0.037 ms | 0.159 ms | 0.015 ms |
+| ECDH P-384, a key pair | about 0.97 ms | 0.143 ms | 0.381 ms | 0.054 ms |
+| ECDH P-256, a shared secret | 0.40 ms | 0.148 ms | 0.160 ms | 0.060 ms |
+| ECDH P-384, a shared secret | 0.97 ms | 0.56 ms | 0.381 ms | 0.210 ms |
+| RSA-2048 signing (PSS) | 1.22 ms | 1.15 ms | 0.49 ms | 0.465 ms |
+| RSA-3072 signing | 4.41 ms | 4.50 ms | 1.83 ms | 1.89 ms |
+| RSA-4096 signing | 12.2 ms | 10.5 ms | 5.85 ms | 3.55 ms |
+
+What made the difference: for [k]G, a table of j 256^i G (j from 1 to 8, made once, affine), so that a key pair or a
+nonce point is about 2 len additions of an affine point instead of 8 len doublings and 2 len additions; for every
+operation on the two curves, field arithmetic compiled for each size (it looped over a limb count read at run time) with
+P-256's own reduction, the dedicated complete doubling of Renes, Costello and Batina, and Fermat inversions (the affine
+conversion, and k^-1 mod n) in windows of four bits. For RSA, products and squares by columns from 32 limbs, the primes of
+RSA-4096 (as `bignum::fixed` found for public values in B-103: much quicker on the M5, about a sixth on x86-64). RSA-2048
+and -3072 (primes of 16 and 24 limbs, by rows as before) moved within a few percent: a product fused with its reduction, two
+products in lockstep, a copy compiled for BMI2 and ADX, a separate square by rows and columns were all tried at 16 limbs and
+none was quicker on the x86-64 VM; closing the gap to OpenSSL there (about twice) would take its assembly's `mulx`, `adcx`
+and `adox`. All of it is constant time by the same rules as before, and `crypto::timing` checks it (the key pair's digits,
+whole ECDSA signatures, the RSA-4096 power by columns).
 
 The ladder has a row of its own since B-104 (`X25519 (shared secret, the ladder)`); the row before it is key generation,
 which B-103 took off the ladder. On x86-64 the X25519 ladder and ECDSA P-256's point operations run from copies compiled for

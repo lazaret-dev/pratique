@@ -113,6 +113,8 @@ pub(super) struct Shared {
     idle_timeout: Duration,
     /// Set when the connection is over: the threads end when they see it.
     done: AtomicBool,
+    /// The host and port that were dialed (the origin's, or its alternative's).
+    endpoint: (String, u16),
 }
 
 /// What a registry sees of a connection.
@@ -160,7 +162,7 @@ pub(super) fn dial(host: &str, port: u16, server_name: &str, tls: &ClientConfig,
         // (an address that does not answer is not given all the time there is when another may)
         let until = Instant::now() + if i + 1 < addrs.len() { left / 2 } else { left };
         match handshake(*addr, server_name, tls, until) {
-            Ok((socket, quic)) => return Shared::start_threads(socket, quic, opts.idle_timeout),
+            Ok((socket, quic)) => return Shared::start_threads(socket, quic, opts.idle_timeout, (host.to_ascii_lowercase(), port)),
             Err(e) => last = Some(e),
         }
     }
@@ -224,7 +226,12 @@ fn describe_close(reason: &CloseReason) -> String {
 }
 
 impl Shared {
-    fn start_threads(socket: UdpSocket, quic: QuicConnection, idle_timeout: Duration) -> Result<Arc<Shared>, Error> {
+    /// The host and port this connection was dialed to.
+    pub(super) fn endpoint(&self) -> (&str, u16) {
+        (&self.endpoint.0, self.endpoint.1)
+    }
+
+    fn start_threads(socket: UdpSocket, quic: QuicConnection, idle_timeout: Duration, endpoint: (String, u16)) -> Result<Arc<Shared>, Error> {
         let state = State {
             quic,
             h3: H3Connection::new(H3Config::default()),
@@ -237,7 +244,7 @@ impl Shared {
             slots: HashMap::new(),
             timer_at: None,
         };
-        let shared = Arc::new(Shared { state: Mutex::new(state), timer: Condvar::new(), socket, idle_timeout, done: AtomicBool::new(false) });
+        let shared = Arc::new(Shared { state: Mutex::new(state), timer: Condvar::new(), socket, idle_timeout, done: AtomicBool::new(false), endpoint });
         shared.socket.set_read_timeout(Some(READ_WAIT))?;
         {
             // (the HTTP/3 layer opens its three streams and says its SETTINGS)

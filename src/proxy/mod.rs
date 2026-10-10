@@ -177,8 +177,10 @@ impl ProxyBuilder {
     /// decode bodies, and to take bodies of any length. The default trusts the roots this machine trusts
     /// ([`local_roots`]: the system's file and store, and the files the usual variables name, where a TLS-inspecting
     /// gateway's root is) and goes through the proxy `HTTPS_PROXY` names in this process's environment, except for the
-    /// hosts `NO_PROXY` names (an explicit corporate proxy; it may ask for Basic credentials in its URL, not NTLM or
-    /// Kerberos).
+    /// hosts `NO_PROXY` names, or, when the environment names no proxy at all, through the one the operating system is set
+    /// to use (macOS's secure web proxy, Windows' proxy server: [`Client::proxy_from_system`], read when the proxy is
+    /// built; a PAC file is not followed, and [`Proxy::upstream_notes`] says so). An explicit corporate proxy may ask for
+    /// Basic credentials in its URL, not NTLM or Kerberos.
     pub fn client(mut self, client: Client) -> ProxyBuilder {
         self.client = Some(client);
         self
@@ -255,10 +257,10 @@ impl ProxyBuilder {
         }
         let names: Vec<&str> = self.intercept.iter().map(String::as_str).collect();
         let ca = Arc::new(ProxyCa::new(&self.ca_name, &names, self.ca_lifetime)?);
-        let from_env = self.client.is_none();
+        let default_client = self.client.is_none();
         let client = match self.client {
             Some(c) => c,
-            None => Client::with_tls_config(ClientConfig::new(env::local_roots()?)).proxy_from_env(),
+            None => Client::with_tls_config(ClientConfig::new(env::local_roots()?)).proxy_from_system(),
         };
         let client = client.follow_redirects(false).decompress(false).max_body_bytes(u64::MAX).allow_insecure_http(true);
         // the TLS of every tunnel: these settings, and the certificate of the tunnel's host (set per tunnel)
@@ -284,7 +286,7 @@ impl ProxyBuilder {
             spool,
             spool_made: Mutex::new(false),
             events: self.events,
-            client_from_env: from_env,
+            default_client,
         })))
     }
 }
@@ -319,8 +321,8 @@ struct Inner {
     spool: PathBuf,
     spool_made: Mutex<bool>,
     events: Option<EventLog>,
-    /// the client is the default one, which goes through the proxy `HTTPS_PROXY` names
-    client_from_env: bool,
+    /// the client is the default one, which goes through the proxy `HTTPS_PROXY` (or the system's settings) names
+    default_client: bool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -390,19 +392,35 @@ impl Proxy {
         })
     }
 
+    /// The proxy the client takes from the operating system's settings, and what those settings say that it does not
+    /// follow (a PAC file, discovery, a SOCKS proxy), for a log; empty when the client does not read them
+    /// ([`Client::proxy_from_system`], which the default client does) or nothing is set. See
+    /// [`SystemProxy::notes`](crate::http::SystemProxy::notes).
+    pub fn upstream_notes(&self) -> Vec<String> {
+        self.0.client.system_proxy().map(|s| s.notes()).unwrap_or_default()
+    }
+
     /// Starts the proxy on `addr` (`127.0.0.1:0` for a free port on this machine alone), under the server's runtime.
     pub fn start(&self, addr: &str) -> io::Result<Server> {
         let server = ServerBuilder::new(self.handler()).plain(addr).http_config(self.0.http.clone()).limits(self.0.limits.clone()).start()?;
-        // the default client goes through the proxy HTTPS_PROXY names: not this one, which would send its own requests
-        // round and round (a shell that has this proxy's variables already, say)
-        if self.0.client_from_env {
+        // the default client goes through the proxy HTTPS_PROXY (or the system's settings) names: not this one, which would
+        // send its own requests round and round (a shell that has this proxy's variables already, say)
+        if self.0.default_client {
+            let mut named: Vec<(String, crate::http::Proxy)> = Vec::new();
             for name in ["HTTPS_PROXY", "https_proxy"] {
-                let Some(p) = std::env::var(name).ok().and_then(|v| crate::http::Proxy::parse(&v).ok()) else { continue };
+                if let Some(p) = std::env::var(name).ok().and_then(|v| crate::http::Proxy::parse(&v).ok()) {
+                    named.push((name.to_string(), p));
+                    break;
+                }
+            }
+            if let Some(p) = self.0.client.system_proxy().and_then(|s| s.https.clone()) {
+                named.push(("the system's proxy setting".to_string(), p));
+            }
+            for (name, p) in named {
                 if server.local_addrs().iter().any(|a| names_address(&p.host, p.port, *a)) {
                     server.shutdown(Duration::ZERO);
                     return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{name} names this proxy itself ({}:{}), so it would send its own requests to itself", p.host, p.port)));
                 }
-                break;
             }
         }
         Ok(server)

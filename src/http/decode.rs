@@ -49,6 +49,14 @@ pub(crate) struct RequestOpts {
     pub(crate) batch: Option<super::schedule::Batch>,
     /// How many bytes it expects to bring, for a scheduler's byte budget.
     pub(crate) expected: Option<u64>,
+    /// The limit on one read or write, over the client's.
+    pub(crate) timeout: Option<std::time::Duration>,
+    /// The limit on the whole request, over the client's.
+    pub(crate) total_timeout: Option<std::time::Duration>,
+    /// The most redirects it follows, over the client's.
+    pub(crate) max_redirects: Option<usize>,
+    /// A rule about hosts of its own, which holds as well as the client's.
+    pub(crate) hosts: Option<std::sync::Arc<super::HostRules>>,
 }
 
 /// The coding of the body of a response that this client undoes, if it is one: a single `gzip`, `x-gzip` or `deflate`, on a response

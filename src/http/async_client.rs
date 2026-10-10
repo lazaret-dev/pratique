@@ -146,11 +146,12 @@ impl Connect for ThreadConnector {
 /// clones), not the blocking client's.
 pub struct AsyncClient<C: Connect = ThreadConnector> {
     client: Client,
-    connector: C,
+    /// (shared, so that a request with settings of its own can be made with a client of its own: see [`Client::narrowed`])
+    connector: Arc<C>,
     idle: Arc<IdlePool<AsyncConn<C::Stream>>>,
 }
 
-impl<C: Connect + Clone> Clone for AsyncClient<C> {
+impl<C: Connect> Clone for AsyncClient<C> {
     fn clone(&self) -> AsyncClient<C> {
         AsyncClient { client: self.client.clone(), connector: self.connector.clone(), idle: self.idle.clone() }
     }
@@ -171,7 +172,7 @@ impl<C: Connect> AsyncClient<C> {
         // a per-host connection limit counts this client's connections, apart from the blocking client's (whose idle
         // connections it could not close to make room)
         client.conn_limit = client.conn_limit.as_ref().map(|s| Slots::new(s.max()));
-        AsyncClient { client, connector, idle: Arc::new(IdlePool::new()) }
+        AsyncClient { client, connector: Arc::new(connector), idle: Arc::new(IdlePool::new()) }
     }
 
     pub async fn get(&self, url: &str) -> Result<Response> {
@@ -220,6 +221,11 @@ impl<C: Connect> AsyncClient<C> {
         body: Vec<u8>,
         opts: RequestOpts,
     ) -> Result<AsyncResponseStream<C::Stream>> {
+        let mut opts = opts;
+        if let Some(client) = self.client.narrowed(&mut opts) {
+            let narrowed = AsyncClient { client, connector: self.connector.clone(), idle: self.idle.clone() };
+            return Box::pin(narrowed.execute_stream_controlled(method, url, headers, body, opts)).await;
+        }
         let membership = self.client.membership(&opts)?;
         let Some(running) = membership.as_ref().map(|m| m.running.clone()) else {
             return self.execute_stream(method, url, headers, body, opts, None).await;
@@ -288,7 +294,7 @@ impl<C: Connect> AsyncClient<C> {
     async fn once(&self, hop: &Hop, deadline: Option<Instant>, limits: Limits) -> Result<AsyncResponseStream<C::Stream>> {
         let mut headers = self.client.request_headers(hop)?;
         let (method, url, body) = (hop.method.as_str(), &hop.url, hop.body.as_slice());
-        let proxy = self.client.proxy_for(url)?;
+        let proxy = self.client.proxy_for(url, hop.index)?;
         let key = pool_key(url, proxy.as_ref(), self.client.min_tls_for(hop));
         let mut head = wire::write_request_head(method, &url.path_and_query, &headers);
         // a body that waits for the server's go-ahead
@@ -541,6 +547,31 @@ impl<'a, C: Connect> AsyncRequestBuilder<'a, C> {
     /// Largest response body accepted for this request, in bytes; see [`Client::max_body_bytes`].
     pub fn max_body_bytes(mut self, n: u64) -> Self {
         self.opts.max_body = Some(n);
+        self
+    }
+
+    /// The limit on each read and write of this request; see [`RequestBuilder::timeout`](super::RequestBuilder::timeout).
+    pub fn timeout(mut self, t: Duration) -> Self {
+        self.opts.timeout = Some(t);
+        self
+    }
+
+    /// The limit on the whole of this request; see [`RequestBuilder::total_timeout`](super::RequestBuilder::total_timeout).
+    pub fn total_timeout(mut self, t: Duration) -> Self {
+        self.opts.total_timeout = Some(t);
+        self
+    }
+
+    /// The most redirects this request follows; see [`RequestBuilder::max_redirects`](super::RequestBuilder::max_redirects).
+    pub fn max_redirects(mut self, n: usize) -> Self {
+        self.opts.max_redirects = Some(n);
+        self
+    }
+
+    /// A rule about hosts of this request's own, which holds as well as the client's; see
+    /// [`RequestBuilder::allowed_hosts`](super::RequestBuilder::allowed_hosts).
+    pub fn allowed_hosts(mut self, rules: super::HostRules) -> Self {
+        self.opts.hosts = Some(Arc::new(rules));
         self
     }
 

@@ -2,15 +2,17 @@
 //!
 //! A rule is a list of entries, each a host (`api.example.com`, an IPv4 address, an IPv6 address with or without brackets), a host with a
 //! port (`api.example.com:8443`, `[::1]:8443`) or a wildcard (`*.example.com`). What the entries let through depends on two switches, which
-//! are off by default and which a caller that wants a tight rule turns on:
+//! are **on by default** (the tight rule, the one Lazaret's modules keep to) and which a caller that wants the loose rule turns off:
 //!
-//! * **Wildcards.** By default `*.example.com` matches a host that has one label or more before the suffix, at any depth (`a.example.com`,
-//!   `a.b.example.com`), and **never the suffix itself** (the bare domain needs an entry of its own, so that a rule says what it lets through).
-//!   With [`one_label_wildcards`](HostRules::one_label_wildcards) it matches exactly one label (`a.example.com`, not `a.b.example.com`), and
-//!   the label has to be a valid one: `a` to `z`, digits and inner hyphens, at most 63 bytes (no underscore).
-//! * **Ports.** By default an entry without a port matches the host on any port, and an entry with one matches that port only. With
-//!   [`default_port_only`](HostRules::default_port_only) an entry without a port, a wildcard included, matches the default port of the scheme only
-//!   (so 443 for https, written or not), and a host on another port is let through only by an entry that has that port, `host:port`; never by a wildcard.
+//! * **Wildcards.** By default `*.example.com` matches exactly one label before the suffix (`a.example.com`, not `a.b.example.com`), and the
+//!   label has to be a valid one: `a` to `z`, digits and inner hyphens, at most 63 bytes (no underscore). With
+//!   [`one_label_wildcards(false)`](HostRules::one_label_wildcards) it matches a host that has one label or more before the suffix, at any depth
+//!   (`a.example.com`, `a.b.example.com`). Either way it **never matches the suffix itself** (the bare domain needs an entry of its own, so that a
+//!   rule says what it lets through).
+//! * **Ports.** By default an entry without a port, a wildcard included, matches the default port of the scheme only (so 443 for https, written
+//!   or not), and a host on another port is let through only by an entry that has that port, `host:port`; never by a wildcard. With
+//!   [`default_port_only(false)`](HostRules::default_port_only) an entry without a port matches the host on any port (an entry with one still
+//!   matches that port only).
 //!
 //! Comparison is of the host the client will connect to, as the URL gave it: ASCII, lower case (a trailing dot is ignored), so an
 //! internationalized name is matched in its `xn--` form, and an address written another way (`2130706433`, `0x7f.1`) does not match the entry
@@ -25,7 +27,7 @@ use crate::error::{Error, Result};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 /// A list of hosts a client may reach. Empty allows nothing (use no rule at all to allow everything).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostRules {
     /// Hosts, normalized (lower case, no trailing dot, IPv6 without brackets in its shortest form), with the port if the entry had one.
     exact: Vec<(String, Option<u16>)>,
@@ -33,6 +35,13 @@ pub struct HostRules {
     suffixes: Vec<String>,
     one_label: bool,
     default_port_only: bool,
+}
+
+/// An empty rule with both switches on: what [`HostRules::new`] starts from.
+impl Default for HostRules {
+    fn default() -> HostRules {
+        HostRules { exact: Vec::new(), suffixes: Vec::new(), one_label: true, default_port_only: true }
+    }
 }
 
 fn bad(entry: &str, why: &str) -> Error {
@@ -92,8 +101,8 @@ impl HostRules {
     /// (`*.example.com`; not `*.com`, which would be most of the internet; not a `*` anywhere else, and no port on a wildcard). An entry that is not
     /// one of those is an error, so that a rule that was meant to refuse something does not quietly allow it, or the other way round.
     ///
-    /// The rule it makes has the looser meaning of each switch (wildcards at any depth, ports as the entries say); see
-    /// [`one_label_wildcards`](HostRules::one_label_wildcards) and [`default_port_only`](HostRules::default_port_only).
+    /// The rule it makes has both switches on (a wildcard is one label, an entry without a port is the default port); turn them off with
+    /// [`one_label_wildcards(false)`](HostRules::one_label_wildcards) and [`default_port_only(false)`](HostRules::default_port_only).
     pub fn new<I>(entries: I) -> Result<HostRules>
     where
         I: IntoIterator,
@@ -158,14 +167,14 @@ impl HostRules {
     }
 
     /// Whether a wildcard matches exactly one label, a valid one, before its domain (`*.example.com` allows `a.example.com` and neither
-    /// `a.b.example.com` nor `example.com`), or any number of labels (the default).
+    /// `a.b.example.com` nor `example.com`; the default), or any number of labels (`false`).
     pub fn one_label_wildcards(mut self, on: bool) -> HostRules {
         self.one_label = on;
         self
     }
 
-    /// Whether an entry without a port, a wildcard included, matches the default port only (the default is not to look at the port). A host
-    /// that is written with a port is then allowed on that port by an entry that has it, and by nothing else.
+    /// Whether an entry without a port, a wildcard included, matches the default port only (the default), so that a host that is written with
+    /// another port is allowed on that port by an entry that has it and by nothing else; or matches the host on any port (`false`).
     pub fn default_port_only(mut self, on: bool) -> HostRules {
         self.default_port_only = on;
         self
@@ -228,6 +237,11 @@ mod tests {
         HostRules::new(entries.iter().copied()).unwrap()
     }
 
+    /// With both switches off.
+    fn loose(entries: &[&str]) -> HostRules {
+        rules(entries).one_label_wildcards(false).default_port_only(false)
+    }
+
     /// On the default port of https.
     fn ok(r: &HostRules, host: &str) -> bool {
         r.allows(host, 443, 443)
@@ -244,8 +258,22 @@ mod tests {
     }
 
     #[test]
+    fn the_rule_is_the_tight_one_unless_it_is_told_otherwise() {
+        // (Lazaret's rule: one label under a wildcard, the default port for an entry without one)
+        for r in [rules(&["*.example.com", "a.example.org"]), HostRules::default()] {
+            assert!(r.one_label && r.default_port_only, "{r:?}");
+        }
+        let r = rules(&["*.example.com", "a.example.org"]);
+        assert!(ok(&r, "x.example.com") && ok(&r, "a.example.org"));
+        assert!(!ok(&r, "x.y.example.com") && !ok(&r, "x_y.example.com"));
+        assert!(!r.allows("x.example.com", 8443, 443) && !r.allows("a.example.org", 8443, 443));
+        let r = r.one_label_wildcards(false).default_port_only(false);
+        assert!(ok(&r, "x.y.example.com") && r.allows("a.example.org", 8443, 443));
+    }
+
+    #[test]
     fn a_wildcard_allows_what_is_under_it_at_any_depth_and_not_the_domain_itself() {
-        let r = rules(&["*.example.com"]);
+        let r = loose(&["*.example.com"]);
         for yes in ["a.example.com", "a.b.example.com", "A.B.C.example.com", "x-1.example.com", "_dmarc.example.com", "a.example.com."] {
             assert!(ok(&r, yes), "{yes}");
         }
@@ -253,7 +281,7 @@ mod tests {
             assert!(!ok(&r, no), "{no}");
         }
         // the domain on its own is named on its own
-        let r = rules(&["*.example.com", "example.com"]);
+        let r = loose(&["*.example.com", "example.com"]);
         assert!(ok(&r, "example.com") && ok(&r, "www.example.com"));
     }
 
@@ -288,8 +316,8 @@ mod tests {
     }
 
     #[test]
-    fn ports_are_not_looked_at_unless_the_rule_asks() {
-        let r = rules(&["a.example.com", "*.example.org", "b.example.com:8443"]);
+    fn ports_are_not_looked_at_when_the_rule_is_told_not_to() {
+        let r = loose(&["a.example.com", "*.example.org", "b.example.com:8443"]);
         // an entry with no port: any port; one with a port: that port
         for port in [443u16, 80, 8443, 1] {
             assert!(r.allows("a.example.com", port, 443) && r.allows("x.example.org", port, 443), "{port}");
@@ -319,16 +347,16 @@ mod tests {
     #[test]
     fn an_address_is_never_under_a_wildcard() {
         // found by the fuzz target `egress`: `*.0.0.1` ends as an address does, and let 127.0.0.1 through
-        for r in [rules(&["*.0.0.1", "*.168.1.1", "*.1.1"]), rules(&["*.0.0.1", "*.168.1.1", "*.1.1"]).one_label_wildcards(true)] {
+        for r in [loose(&["*.0.0.1", "*.168.1.1", "*.1.1"]), rules(&["*.0.0.1", "*.168.1.1", "*.1.1"])] {
             for host in ["127.0.0.1", "192.168.1.1", "10.1.1", "1.1.1.1", "0.0.0.1"] {
                 assert!(!ok(&r, host), "{host}");
             }
         }
         // (a host that ends in a number is an address to a URL parser, so no wildcard has it; one that does not is a name)
         for host in ["a.0.0.1", "x.0.0x7f", "x.1.0x", "x.1.127", "10.0.0x1"] {
-            assert!(!ok(&rules(&["*.0.0.1", "*.0.0x7f", "*.1.0x", "*.1.127", "*.0.0x1"]), host), "{host}");
+            assert!(!ok(&loose(&["*.0.0.1", "*.0.0x7f", "*.1.0x", "*.1.127", "*.0.0x1"]), host), "{host}");
         }
-        assert!(ok(&rules(&["*.0.0.1", "*.example.com"]), "a.1.example.com") && ok(&rules(&["*.example.com"]), "0x7f.example.com"));
+        assert!(ok(&loose(&["*.0.0.1", "*.example.com"]), "a.1.example.com") && ok(&rules(&["*.example.com"]), "0x7f.example.com"));
         // (and an entry for the host itself is a host's own)
         assert!(ok(&rules(&["10.1.1", "a.0.0.1"]), "10.1.1") && ok(&rules(&["a.0.0.1"]), "a.0.0.1"));
     }
@@ -376,7 +404,7 @@ mod tests {
 
     #[test]
     fn a_url_is_judged_by_its_host_and_its_port() {
-        let r = rules(&["a.example.com", "*.example.org", "b.example.com:8443"]).default_port_only(true).one_label_wildcards(true);
+        let r = rules(&["a.example.com", "*.example.org", "b.example.com:8443"]);
         let url = |s: &str| Url::parse(s).unwrap();
         assert!(r.allows_url(&url("https://a.example.com/x")) && r.allows_url(&url("https://a.example.com:443/x")) && r.allows_url(&url("https://x.example.org/")));
         assert!(!r.allows_url(&url("https://a.example.com:8443/x")) && !r.allows_url(&url("https://x.example.org:8443/")) && !r.allows_url(&url("https://a.b.example.org/")));

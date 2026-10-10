@@ -17,11 +17,13 @@
 //!   dir=DIR            where the CA (ca.pem) and the bundle of roots and CA (bundle.pem) are written (default: a new
 //!                      directory in the system's temporary directory)
 //!   user=U pass=P      credentials the proxy requires (they go into the proxy URL of the variables)
+//!   ca_name=NAME       the common name of the proxy's CA (default "pratique scanning proxy CA")
 //!   upstream_ca=FILE   the roots the proxy trusts for the real hosts (PEM; default: the roots this machine trusts:
 //!                      the system's file and store, and the files SSL_CERT_FILE and the like name, where a gateway
 //!                      that inspects TLS, Zscaler or Netskope, has its root)
 //!   upstream_proxy=URL a proxy the proxy goes through itself (default: the one HTTPS_PROXY names, if any, except for
-//!                      the hosts NO_PROXY names; `none` for none)
+//!                      the hosts NO_PROXY names, and when the environment names no proxy at all the one the system is
+//!                      set to use, macOS's secure web proxy or Windows' proxy server; `none` for none)
 //!   resolve=host:ip    where a host is, instead of asking DNS (for tests; repeat with commas)
 //!   quiet=1            no line for each request
 //!
@@ -142,7 +144,7 @@ fn main() {
         match opts.get("upstream_proxy").map(String::as_str) {
             Some("none") => client,
             Some(p) => client.proxy(p).expect("upstream_proxy"),
-            None => client.proxy_from_env(),
+            None => client.proxy_from_system(),
         }
     });
 
@@ -172,6 +174,9 @@ fn main() {
     if let (Some(u), Some(p)) = (opts.get("user"), opts.get("pass")) {
         builder = builder.credentials(u, p);
     }
+    if let Some(name) = opts.get("ca_name") {
+        builder = builder.ca_name(name);
+    }
     let proxy = builder.build().unwrap_or_else(|e| panic!("{e}"));
     let server = proxy.start(&opts.get("listen").cloned().unwrap_or_else(|| "127.0.0.1:0".into())).unwrap_or_else(|e| panic!("listening: {e}"));
     let addr = server.local_addrs()[0];
@@ -179,6 +184,9 @@ fn main() {
     let files = proxy.write_trust_files(&dir).unwrap_or_else(|e| panic!("the trust files: {e}"));
     let env = proxy.client_env(addr, &files);
     eprintln!("scan_proxy: listening {addr}; CA in {}, valid until {}", files.ca.display(), proxy.ca().not_after());
+    for note in proxy.upstream_notes() {
+        eprintln!("scan_proxy: {note}");
+    }
 
     if command.is_empty() {
         print!("{}", shell_exports(&env));

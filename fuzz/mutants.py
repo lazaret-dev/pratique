@@ -226,7 +226,7 @@ MUTANTS.update({
     # the limits on a URL are not applied to what a check of the target does
     "hostrule_target_limits": (HTTP, "        self.url_limits.check(url).map_err(|reason| Error::Refused(Refused { hop, by: RefusedBy::UrlLimit, reason }))?;\n", "", "test:http::egress_tests"),
     # the rule looks at the host and the scheme's port, not at the port the URL has
-    "hostrule_target_port": (HTTP, "Some(rules) if !rules.allows_url(url) => Err(Error::Refused(Refused {", "Some(rules) if !rules.allows(&url.host, url.default_port(), url.default_port()) => Err(Error::Refused(Refused {", "test:http::egress_tests"),
+    "hostrule_target_port": (HTTP, "if self.hosts.as_ref().is_some_and(|rules| !rules.allows_url(url)) {", "if self.hosts.as_ref().is_some_and(|rules| !rules.allows(&url.host, url.default_port(), url.default_port())) {", "test:http::egress_tests"),
     # the text the caller gave is not looked at before it is parsed
     "hostrule_text_first": (HTTP, "        self.check_text(url, 0)?;\n        let url = Url::parse(url)?;", "        let url = Url::parse(url)?;", "test:http::egress_tests"),
     # the text of a redirect's Location is not looked at as it came
@@ -268,7 +268,7 @@ MUTANTS.update({
     # an alternative with no host is the origin's, and the rule is not asked about its port
     "hostrule_alt_svc_port": (H3T, "host_allowed(a.host.as_deref().unwrap_or(&key.host), a.port)", "host_allowed(a.host.as_deref().unwrap_or(&key.host), key.port)", "test:h3_transport"),
     # a client's rule is not given to Alt-Svc learning
-    "hostrule_alt_svc_open": (HTTP, "&|host, port| hosts.map_or(true, |rules| rules.allows(host, port, 443))", "&|_, _| true", "itest:h3_client_interop:alt_svc_makes"),
+    "hostrule_alt_svc_open": (HTTP, "&|host, port| self.host_allowed(host, port, 443)", "&|_, _| true", "itest:h3_client_interop:alt_svc_makes"),
     # the limits on a URL: a length of exactly the limit is refused
     "urllimit_length_edge": (URLRS, "if text.len() > max {", "if text.len() >= max {", "test:http::url::tests"),
     # a length is of characters, not of bytes
@@ -349,7 +349,7 @@ MUTANTS.update({
     # a hop does not know which one it is
     "refused_index_kept": (HTTP, "        hop.index = *hops;\n", "", "test:http::egress_tests"),
     # a host that the rule refuses is said to be refused by a limit
-    "refused_rule_by": (HTTP, "                by: RefusedBy::HostRule,\n                reason: format!(\"host not allowed", "                by: RefusedBy::UrlLimit,\n                reason: format!(\"host not allowed", "test:http::egress_tests"),
+    "refused_rule_by": (HTTP, "Error::Refused(Refused { hop, by: RefusedBy::HostRule, reason: format!(\"host not allowed", "Error::Refused(Refused { hop, by: RefusedBy::UrlLimit, reason: format!(\"host not allowed", "test:http::egress_tests"),
     # the redirect of a refusal is not one
     "refused_is_redirect": (ERR, "        self.hop > 0\n", "        self.hop > 1\n", "test:http::egress_tests"),
     # a request is said to be a redirect
@@ -389,7 +389,7 @@ MUTANTS.update({
     # a dial that failed is not remembered: every request pays for it again
     "h3c_no_backoff": (H3T, "            origin.dialing = false;\n            let failures = origin.backoff.as_ref().map_or(0, |b| b.failures).saturating_add(1);\n            origin.backoff = Some(Backoff { until: Instant::now() + backoff_for(failures), failures });", "            origin.dialing = false;", "itest:h3_client_interop:a_network_that_drops_udp"),
     # what the origin says in Alt-Svc is not noted
-    "h3c_no_learn": (HTTP, "        h3.registry.learn(&key, resp.headers_named(\"alt-svc\"), &|host, port| hosts.map_or(true, |rules| rules.allows(host, port, 443)));", "        let _ = (&h3, &key, resp, hosts);", "itest:h3_client_interop:alt_svc_makes"),
+    "h3c_no_learn": (HTTP, "        h3.registry.learn(&key, resp.headers_named(\"alt-svc\"), &|host, port| self.host_allowed(host, port, 443));", "        let _ = (&h3, &key, resp);", "itest:h3_client_interop:alt_svc_makes"),
     # `clear` does not close what was made
     "h3c_clear_keeps_connection": (H3T, "                for c in &origin.conns {\n                    c.drain();\n                }\n", "", "itest:h3_client_interop:alt_svc_clear"),
     # a client that assumes QUIC does not try it
@@ -487,6 +487,56 @@ MUTANTS.update({
     "b91_no_keep_alive": (Q + "connection.rs", "        if self.keep_alive_at().is_some_and(|t| now >= t) {\n            self.ping_pending = true;", "        if self.keep_alive_at().is_some_and(|t| now >= t) {\n            self.ping_pending = false;", "test:quic::connection"),
     # keep-alive PINGs keep a connection to a peer that never answers alive
     "b91_keep_alive_restarts_idle": (Q + "connection.rs", "            self.last_keep_alive = Some(now);\n", "            self.last_keep_alive = Some(now);\n            self.last_activity = now;\n", "test:quic::connection"),
+})
+
+# What one request sets for itself (B-75: its rule about hosts, which holds as well as the client's, its timeouts and redirect limit), the
+# rule for the proxy, and the choice between the environment's proxy and the system's (B-117): each way of letting a request go where the
+# rules say it may not, or through a proxy they do not allow, is a bug the tests have to find.
+ASYNC = "src/http/async_client.rs"
+SYSP = "src/http/system_proxy.rs"
+MUTANTS.update({
+    # the request's rule is not looked at
+    "request_rule_ignored": (HTTP, "        if self.request_hosts.as_ref().is_some_and(|rules| !rules.allows_url(url)) {", "        if false && self.request_hosts.as_ref().is_some_and(|rules| !rules.allows_url(url)) {", "test:http::egress_tests"),
+    # either rule is enough (a request widens the client's rule)
+    "request_rule_widens": (HTTP, ".flatten().all(|rules| rules.allows(host, port, default_port))", ".flatten().any(|rules| rules.allows(host, port, default_port))", "test:http::egress_tests"),
+    # the request's rule is not given to the clone it is made with
+    "request_rule_dropped": (HTTP, "            client.request_hosts = Some(rules);", "            let _ = rules;", "test:http::egress_tests"),
+    # the request's timeout is not given to the clone
+    "request_timeout_dropped": (HTTP, "            client.timeout = t;", "            let _ = t;", "test:http::egress_tests"),
+    # the request's total limit is not given to the clone
+    "request_total_dropped": (HTTP, "            client.total_timeout = Some(t);", "            let _ = t;", "test:http::egress_tests"),
+    # the request's redirect limit is not given to the clone
+    "request_redirects_dropped": (HTTP, "            client.max_redirects = n;", "            let _ = n;", "test:http::egress_tests"),
+    # the async client does not make a request with its own settings
+    "request_async_unnarrowed": (ASYNC, "        if let Some(client) = self.client.narrowed(&mut opts) {", "        if let Some(client) = None::<super::Client> {", "test:http::egress_tests"),
+    # an HTTP/3 alternative is dialed whatever the request's rule says
+    "request_h3_dial_unchecked": (HTTP, "            h3_transport::Acquired::Dial(_, host, port) if !self.host_allowed(&host, port, 443) => return Ok(H3Step::Skip),\n", "", "test:http::egress_tests"),
+    # the proxy's rule is not looked at
+    "proxy_rule_off": (HTTP, "        if let (Some(p), Some(rules)) = (&proxy, &self.proxy_hosts) {", "        if let (Some(p), Some(rules)) = (&proxy, &None::<Arc<HostRules>>) {", "test:http::proxy_tests"),
+    # a proxy's own port is its default (an entry without a port allows it on any)
+    "proxy_rule_port": (HTTP, "rules.allows(&p.host, p.port, DEFAULT_PROXY_PORT)", "rules.allows(&p.host, p.port, p.port)", "test:http::proxy_tests"),
+    # a proxy refused at a redirect is said to be refused at the request
+    "proxy_rule_hop": (HTTP, "        let proxy = self.proxy_for(url, hop.index)?;", "        let proxy = self.proxy_for(url, 0)?;", "test:http::proxy_tests"),
+    # the system's proxy is never used
+    "proxy_system_ignored": (HTTP, "                EnvProxy::Silent => Ok(system.proxy_for(url).cloned()),", "                EnvProxy::Silent => Ok(None),", "test:http::proxy_tests"),
+    # the system's proxy is used when the environment says to go direct
+    "proxy_system_over_env": (HTTP, "                EnvProxy::Direct => Ok(None),\n                EnvProxy::Silent", "                EnvProxy::Direct => Ok(system.proxy_for(url).cloned()),\n                EnvProxy::Silent", "test:http::proxy_tests"),
+    # the environment says something only when it names a proxy for https
+    "proxy_env_https_only": (HTTP, "    if !PROXY_VARIABLES.iter().any(", "    if !PROXY_VARIABLES[..2].iter().any(", "test:http::proxy_tests"),
+    # loopback goes through the system's proxy
+    "sysproxy_loopback": (SYSP, "        if is_loopback(host) || (self.bypass_simple", "        if (self.bypass_simple", "test:http::system_proxy"),
+    # macOS's address prefixes are not read as prefixes
+    "sysproxy_prefix_off": (SYSP, "            if self.source == Some(SettingsSource::MacOs) {", "            if false {", "test:http::system_proxy"),
+    # a glob matches the start of a host (Python's reading of Windows' list)
+    "sysproxy_glob_start": (SYSP, "    p[i..].iter().all(|&c| c == b'*')\n}", "    let _ = i;\n    true\n}", "test:http::system_proxy"),
+    # Windows' proxy for http is taken for https
+    "sysproxy_windows_scheme": (SYSP, "if scheme.trim().eq_ignore_ascii_case(\"https\") => https = Some(address),", "if scheme.trim().eq_ignore_ascii_case(\"http\") => https = Some(address),", "test:http::system_proxy"),
+    # Windows' proxy is used though ProxyEnable is off
+    "sysproxy_windows_enable": (SYSP, "let Some(server) = server.filter(|_| w.proxy_enable) else { return s };", "let Some(server) = server else { return s };", "test:http::system_proxy"),
+    # macOS's secure web proxy is used though it is off
+    "sysproxy_mac_enable": (SYSP, "match (m.https_enable, present(m.https_proxy.as_deref())) {", "match (true, present(m.https_proxy.as_deref())) {", "test:http::system_proxy"),
+    # the note says a PAC file's query
+    "sysproxy_pac_query": (SYSP, "let shown = pac.split(['?', '#']).next().unwrap_or(\"\");", "let shown = pac.as_str();", "test:http::system_proxy"),
 })
 
 EQUIVALENT = {

@@ -148,11 +148,25 @@ stricter than the gateway, whose own check of the registry stands in for it. Wha
   for them; `NODE_EXTRA_CA_CERTS` names the bundle, not the proxy's CA alone, so that a company root an administrator
   had put there is kept.
 - It goes through the proxy `HTTPS_PROXY` names in its own environment (not the programs': theirs names it), except for
-  the hosts `NO_PROXY` names, with Basic credentials if the URL has some; it refuses to start when that is itself.
+  the hosts `NO_PROXY` names, with Basic credentials if the URL has some; when its environment says nothing about
+  proxies, through the one macOS's or Windows' network settings name (the secure web proxy, `ProxyServer`), with their
+  list of hosts that go direct (B-117, read once when the proxy is built, as Python's urllib reads them). It refuses to
+  start when either is itself. A caller that knows its corporate proxy can give the client a rule for it
+  (`Client::allowed_proxies`): a proxy that a variable set by something else names is then refused, not used, and the
+  request is not sent direct instead. *Checked:* `proxy_tests` (the order of the environment and the settings, the
+  bypass lists, the rule, on the blocking and the async client and the proxy's tunnels), `system_proxy` (the settings of
+  each system as recorded; the Windows registry read under Wine); `tools/system_proxy_check_mac.sh` sets a secure web
+  proxy on a Mac for the length of a run and checks that pip gets a package through the scanning proxy and it (passed
+  on an M5 Mac, 5 of 5, with the bypass list, an environment that takes the settings out of play, and a PAC file
+  reported).
 - *Residual:* an explicit proxy that wants NTLM or Kerberos is not supported (the gateways' agents, Zscaler Client
-  Connector and the Netskope Client, steer traffic without one); nor are PAC files. A gateway's policy may block a
+  Connector and the Netskope Client, steer traffic without one); PAC files and proxy discovery (WPAD) are reported
+  (`Proxy::upstream_notes`) and not followed, so on a network that has only a PAC file the proxy goes direct until
+  `HTTPS_PROXY` is set. A gateway's policy may block a
   registry, a file or the proxy itself: the proxy passes the gateway's answer on, or fails. Reading the macOS Keychain is
-  tested on a Mac by `tools/native_check.sh`, not on every run.
+  tested on a Mac by `tools/native_check.sh`, not on every run; `tools/gateway_check_mac.sh` plays the gateway on a Mac
+  that has none, with its root in the Keychain alone (the user's trust settings, or with `--admin` the administrator's):
+  passed on an M5 Mac with each.
 
 ## What it does not do
 
