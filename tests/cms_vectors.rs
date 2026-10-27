@@ -15,7 +15,9 @@ const FIXTURES: &str = include_str!("data/cms_fixtures.txt");
 const VECTORS: &str = include_str!("data/cms_vectors.txt");
 
 fn unhex(s: &str) -> Vec<u8> {
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+        .collect()
 }
 
 fn apply(base: &[u8], edits: &str) -> Vec<u8> {
@@ -25,7 +27,11 @@ fn apply(base: &[u8], edits: &str) -> Vec<u8> {
     }
     for e in edits.split(',') {
         let mut p = e.splitn(3, ':');
-        let (kind, off, arg) = (p.next().unwrap(), p.next().unwrap().parse::<usize>().unwrap(), p.next().unwrap());
+        let (kind, off, arg) = (
+            p.next().unwrap(),
+            p.next().unwrap().parse::<usize>().unwrap(),
+            p.next().unwrap(),
+        );
         match kind {
             "x" => b[off] ^= unhex(arg)[0],
             "d" => {
@@ -46,7 +52,9 @@ fn apply(base: &[u8], edits: &str) -> Vec<u8> {
 
 /// Whether every signer of the message verifies, as `openssl cms -verify -noverify` would say.
 fn ours(msg: &[u8], detached: Option<&[u8]>) -> &'static str {
-    let Ok(sd) = SignedData::parse(msg) else { return "bad" };
+    let Ok(sd) = SignedData::parse(msg) else {
+        return "bad";
+    };
     if sd.signers().is_empty() {
         return "bad";
     }
@@ -99,7 +107,10 @@ fn rule(region: &str) -> Rule {
 fn damaged_messages_judged_by_openssl() {
     let mut blobs = std::collections::BTreeMap::new();
     let mut contents = std::collections::BTreeMap::new();
-    for line in FIXTURES.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+    for line in FIXTURES
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
         let p: Vec<&str> = line.split(' ').collect();
         match p[0] {
             "blob" => drop(blobs.insert(p[1], unhex(p[2]))),
@@ -109,7 +120,9 @@ fn damaged_messages_judged_by_openssl() {
     }
     let detached_of = |name: &str| -> Option<&Vec<u8>> {
         match name {
-            "rsa_sha256_detached" | "rsa_noattr_detached" | "pkcs7_detached" => contents.get("hello"),
+            "rsa_sha256_detached" | "rsa_noattr_detached" | "pkcs7_detached" => {
+                contents.get("hello")
+            }
             "jar_rsa" | "jar_p256" => contents.get(name),
             _ => None,
         }
@@ -119,7 +132,10 @@ fn damaged_messages_judged_by_openssl() {
     // how many vectors OpenSSL calls ok or bad, by region
     let mut counts = std::collections::BTreeMap::<(String, &str), usize>::new();
     let mut cases = 0;
-    for line in VECTORS.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+    for line in VECTORS
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
         let f: Vec<&str> = line.split(' ').collect();
         assert_eq!(f[0], "case", "{line}");
         let (base, region, edits, openssl) = (f[1], f[2], f[3], f[4]);
@@ -135,17 +151,43 @@ fn damaged_messages_judged_by_openssl() {
                 Rule::Free => true,
             };
         if !fine {
-            disagreements.push(format!("{base} {region} {edits}: OpenSSL says {openssl}, this crate {mine}"));
+            disagreements.push(format!(
+                "{base} {region} {edits}: OpenSSL says {openssl}, this crate {mine}"
+            ));
         }
     }
-    assert!(disagreements.is_empty(), "{} of {cases}:\n{}", disagreements.len(), disagreements.iter().take(40).cloned().collect::<Vec<_>>().join("\n"));
+    assert!(
+        disagreements.is_empty(),
+        "{} of {cases}:\n{}",
+        disagreements.len(),
+        disagreements
+            .iter()
+            .take(40)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
 
     // the vectors cover both verdicts in every region that matters, so they cannot all be agreeing about nothing
     assert!(cases > 1800, "{cases}");
     for region in ["content", "attrs", "sig", "signer_sid", "signer_algs"] {
-        assert!(counts.get(&(region.to_string(), "bad")).copied().unwrap_or(0) > 40, "{region}");
+        assert!(
+            counts
+                .get(&(region.to_string(), "bad"))
+                .copied()
+                .unwrap_or(0)
+                > 40,
+            "{region}"
+        );
     }
     for region in ["none", "tail", "certs", "signer_version"] {
-        assert!(counts.get(&(region.to_string(), "ok")).copied().unwrap_or(0) > 10, "{region}");
+        assert!(
+            counts
+                .get(&(region.to_string(), "ok"))
+                .copied()
+                .unwrap_or(0)
+                > 10,
+            "{region}"
+        );
     }
 }

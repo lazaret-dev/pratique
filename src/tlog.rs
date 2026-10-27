@@ -58,8 +58,8 @@ pub type Hash = [u8; HASH_SIZE];
 
 /// The root of the empty tree: `SHA-256("")`.
 pub const EMPTY_ROOT: Hash = [
-    0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c,
-    0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55,
+    0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f, 0xb9, 0x24,
+    0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b, 0x78, 0x52, 0xb8, 0x55,
 ];
 
 /// The largest tree size accepted, 2^62 leaves, so that every position and storage offset fits a
@@ -90,7 +90,11 @@ pub enum Error {
     /// The older tree's root, recomputed from the newer tree's tiles, is not the root that was
     /// vouched for the older tree: both heads are authentic, so the log has shown two histories
     /// (or, for equal sizes, two roots). Keep both heads as evidence.
-    Fork { size: u64, expected: Hash, computed: Hash },
+    Fork {
+        size: u64,
+        expected: Hash,
+        computed: Hash,
+    },
 }
 
 impl fmt::Display for Error {
@@ -160,7 +164,13 @@ pub struct Node {
 /// Checks that `leaf` (the hash of the record, see [`record_hash`]) is leaf number `index` of the
 /// tree of `size` leaves whose root is `root`, given the audit `proof` (the sibling hashes from the
 /// leaf up, RFC 9162 section 2.1.3.2).
-pub fn verify_inclusion(proof: &[Hash], size: u64, root: &Hash, index: u64, leaf: &Hash) -> Result<()> {
+pub fn verify_inclusion(
+    proof: &[Hash],
+    size: u64,
+    root: &Hash,
+    index: u64,
+    leaf: &Hash,
+) -> Result<()> {
     if size > MAX_TREE_SIZE {
         return Err(Error::Invalid("tree is too large"));
     }
@@ -198,12 +208,24 @@ pub fn verify_inclusion(proof: &[Hash], size: u64, root: &Hash, index: u64, leaf
 /// leaves and root `old_root`, given the consistency `proof` (RFC 9162 section 2.1.4.2). Both
 /// sizes must be at least 1 and `old_size <= new_size`; for equal sizes the proof must be empty and
 /// the roots equal.
-pub fn verify_consistency(proof: &[Hash], old_size: u64, old_root: &Hash, new_size: u64, new_root: &Hash) -> Result<()> {
+pub fn verify_consistency(
+    proof: &[Hash],
+    old_size: u64,
+    old_root: &Hash,
+    new_size: u64,
+    new_root: &Hash,
+) -> Result<()> {
     if old_size == 0 || old_size > new_size || new_size > MAX_TREE_SIZE {
-        return Err(Error::Invalid("consistency needs 1 <= old size <= new size <= the largest tree"));
+        return Err(Error::Invalid(
+            "consistency needs 1 <= old size <= new size <= the largest tree",
+        ));
     }
     if old_size == new_size {
-        return if proof.is_empty() && old_root == new_root { Ok(()) } else { Err(Error::BadProof) };
+        return if proof.is_empty() && old_root == new_root {
+            Ok(())
+        } else {
+            Err(Error::BadProof)
+        };
     }
     // A power-of-two old tree is a complete subtree of the new one, so its root starts the proof
     // and the proof does not repeat it.
@@ -267,7 +289,8 @@ impl Tile {
     /// `2^height` if it fits a tile's width (a `u32`), else `None`. (A tile that failed
     /// [`Tile::validate`] can have any height, and a shift by 32 or more must not panic.)
     fn full_width(&self) -> Option<u32> {
-        1u64.checked_shl(self.height).and_then(|w| u32::try_from(w).ok())
+        1u64.checked_shl(self.height)
+            .and_then(|w| u32::try_from(w).ok())
     }
 
     /// Whether the tile has all `2^height` entries. (False for a height that no tile can have.)
@@ -278,7 +301,10 @@ impl Tile {
     /// The tile with every entry, same place. (A tile whose height is too large for that comes back
     /// unchanged; [`Tile::validate`] refuses it.)
     pub fn full(&self) -> Tile {
-        Tile { width: self.full_width().unwrap_or(self.width), ..*self }
+        Tile {
+            width: self.full_width().unwrap_or(self.width),
+            ..*self
+        }
     }
 
     /// The number of bytes of tile data: `width * 32`.
@@ -312,7 +338,11 @@ impl Tile {
             n /= 1000;
             k = format!("x{:03}/{}", n % 1000, k);
         }
-        let partial = if self.is_full() { String::new() } else { format!(".p/{}", self.width) };
+        let partial = if self.is_full() {
+            String::new()
+        } else {
+            format!(".p/{}", self.width)
+        };
         format!("tile/{}/{}/{}{}", self.height, self.level, k, partial)
     }
 
@@ -330,11 +360,15 @@ impl Tile {
         if f.len() < 4 || f[0] != "tile" {
             return Err(BAD);
         }
-        let height = number(f[1]).filter(|h| (1..=MAX_TILE_HEIGHT as u64).contains(h)).ok_or(BAD)? as u32;
+        let height = number(f[1])
+            .filter(|h| (1..=MAX_TILE_HEIGHT as u64).contains(h))
+            .ok_or(BAD)? as u32;
         let level = number(f[2]).filter(|l| *l <= 62).ok_or(BAD)? as u32;
         let mut width = 1u64 << height;
         if f[f.len() - 2].ends_with(".p") {
-            let w = number(f[f.len() - 1]).filter(|w| *w >= 1 && *w < width).ok_or(BAD)?;
+            let w = number(f[f.len() - 1])
+                .filter(|w| *w >= 1 && *w < width)
+                .ok_or(BAD)?;
             width = w;
             let at = f.len() - 2;
             let name = f[at];
@@ -345,9 +379,17 @@ impl Tile {
         for part in &f[3..] {
             let digits = part.strip_prefix('x').unwrap_or(part);
             let v = number(digits).filter(|v| *v < 1000).ok_or(BAD)?;
-            index = index.checked_mul(1000).and_then(|i| i.checked_add(v)).ok_or(BAD)?;
+            index = index
+                .checked_mul(1000)
+                .and_then(|i| i.checked_add(v))
+                .ok_or(BAD)?;
         }
-        let tile = Tile { height, level, index, width: width as u32 };
+        let tile = Tile {
+            height,
+            level,
+            index,
+            width: width as u32,
+        };
         if tile.validate().is_err() || tile.path() != path {
             return Err(BAD);
         }
@@ -386,7 +428,10 @@ impl TileSet {
             return Some(d);
         }
         let n = tile.data_len() as usize;
-        self.tiles.get(&tile.full()).filter(|d| d.len() >= n).map(|d| &d[..n])
+        self.tiles
+            .get(&tile.full())
+            .filter(|d| d.len() >= n)
+            .map(|d| &d[..n])
     }
 
     pub fn len(&self) -> usize {
@@ -406,7 +451,10 @@ fn subtree_hash(entries: &[u8]) -> Hash {
         return h;
     }
     let mid = entries.len() / 2;
-    node_hash(&subtree_hash(&entries[..mid]), &subtree_hash(&entries[mid..]))
+    node_hash(
+        &subtree_hash(&entries[..mid]),
+        &subtree_hash(&entries[mid..]),
+    )
 }
 
 /// The maximal perfect subtrees that make up a tree of `size` leaves, largest (leftmost) first. At
@@ -416,7 +464,10 @@ fn subtrees(size: u64) -> Vec<Node> {
     let mut at = 0u64;
     for level in (0..=62u32).rev() {
         if size >> level & 1 == 1 {
-            out.push(Node { level, index: at >> level });
+            out.push(Node {
+                level,
+                index: at >> level,
+            });
             at += 1 << level;
         }
     }
@@ -443,8 +494,17 @@ fn node_tile(height: u32, node: Node) -> (Tile, usize, usize) {
     let sub = node.level - level * height; // level of the node within its tile
     let index = (node.index << sub) >> height;
     let within = node.index - ((index << height) >> sub);
-    let tile = Tile { height, level, index, width: ((within + 1) << sub) as u32 };
-    (tile, (within << sub) as usize, ((within + 1) << sub) as usize)
+    let tile = Tile {
+        height,
+        level,
+        index,
+        width: ((within + 1) << sub) as u32,
+    };
+    (
+        tile,
+        (within << sub) as usize,
+        ((within + 1) << sub) as usize,
+    )
 }
 
 /// The tile `k` levels above `t` that holds `t`'s entry, widened to what a tree of `size` leaves
@@ -465,7 +525,12 @@ fn tile_ancestor(t: Tile, k: u32, size: u64) -> Option<Tile> {
         }
         width = max as u128 - start;
     }
-    Some(Tile { height: t.height, level, index, width: width as u32 })
+    Some(Tile {
+        height: t.height,
+        level,
+        index,
+        width: width as u32,
+    })
 }
 
 /// What `read_nodes` will look at: the tiles to fetch and where each requested node is.
@@ -497,7 +562,8 @@ fn plan(tree: &Tree, height: u32, nodes: &[Node]) -> Result<Plan> {
     // The tiles that recompute the root.
     for x in subtrees(tree.size) {
         let (t, _, _) = node_tile(height, x);
-        let t = tile_ancestor(t, 0, tree.size).ok_or(Error::Invalid("no tile for a right-edge node"))?;
+        let t = tile_ancestor(t, 0, tree.size)
+            .ok_or(Error::Invalid("no tile for a right-edge node"))?;
         let at = *order.entry(t).or_insert_with(|| {
             tiles.push(t);
             tiles.len() - 1
@@ -540,7 +606,12 @@ fn plan(tree: &Tree, height: u32, nodes: &[Node]) -> Result<Plan> {
         }
         node_tile_of.push(mine);
     }
-    Ok(Plan { tiles, edge, edge_tiles, node_tile: node_tile_of })
+    Ok(Plan {
+        tiles,
+        edge,
+        edge_tiles,
+        node_tile: node_tile_of,
+    })
 }
 
 /// The tiles needed to read `nodes` of the tree head `tree`, in the order [`read_nodes`] checks
@@ -575,13 +646,24 @@ pub fn read_nodes(tree: &Tree, height: u32, nodes: &[Node], tiles: &TileSet) -> 
         return Err(Error::TilesDoNotMatchRoot);
     }
     // 2. everything else must hang off an authenticated parent (parents are listed before children)
-    let position: BTreeMap<Tile, usize> = plan.tiles.iter().enumerate().map(|(i, t)| (*t, i)).collect();
+    let position: BTreeMap<Tile, usize> = plan
+        .tiles
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (*t, i))
+        .collect();
     for i in plan.edge_tiles..plan.tiles.len() {
         let t = plan.tiles[i];
         let parent = tile_ancestor(t, 1, tree.size).ok_or(Error::Invalid("no parent tile"))?;
-        let pj = *position.get(&parent).filter(|pj| **pj < i).ok_or(Error::Invalid("a tile was planned before its parent"))?;
+        let pj = *position
+            .get(&parent)
+            .filter(|pj| **pj < i)
+            .ok_or(Error::Invalid("a tile was planned before its parent"))?;
         // the parent lists this tile's root: tree level height*(level+1), number t.index
-        let entry = Node { level: parent.level * height, index: t.index };
+        let entry = Node {
+            level: parent.level * height,
+            index: t.index,
+        };
         if hash_from_tile(&parent, data[pj], entry)? != subtree_hash(data[i]) {
             return Err(Error::TileDoesNotMatchParent(t));
         }
@@ -617,7 +699,13 @@ pub fn tiles_for_record(tree: &Tree, height: u32, index: u64) -> Result<Vec<Tile
 
 /// Checks that record number `index` of the log described by `tree` has the hash `leaf`
 /// (see [`record_hash`]), reading the log's own hash from authenticated tiles.
-pub fn check_record(tree: &Tree, height: u32, index: u64, leaf: &Hash, tiles: &TileSet) -> Result<()> {
+pub fn check_record(
+    tree: &Tree,
+    height: u32,
+    index: u64,
+    leaf: &Hash,
+    tiles: &TileSet,
+) -> Result<()> {
     if index >= tree.size {
         return Err(Error::Invalid("record index is not inside the tree"));
     }
@@ -636,7 +724,9 @@ pub fn tiles_for_prefix(newer: &Tree, height: u32, older_size: u64) -> Result<Ve
         return Err(Error::Invalid("tree is larger than 2^62 leaves"));
     }
     if older_size > newer.size {
-        return Err(Error::Invalid("the older tree is larger than the newer one"));
+        return Err(Error::Invalid(
+            "the older tree is larger than the newer one",
+        ));
     }
     if older_size == 0 || older_size == newer.size {
         return Ok(Vec::new());
@@ -652,7 +742,9 @@ pub fn check_prefix(older: &Tree, newer: &Tree, height: u32, tiles: &TileSet) ->
         return Err(Error::Invalid("tree is larger than 2^62 leaves"));
     }
     if older.size > newer.size {
-        return Err(Error::Invalid("the older tree is larger than the newer one"));
+        return Err(Error::Invalid(
+            "the older tree is larger than the newer one",
+        ));
     }
     let computed = if older.size == 0 {
         EMPTY_ROOT
@@ -663,7 +755,11 @@ pub fn check_prefix(older: &Tree, newer: &Tree, height: u32, tiles: &TileSet) ->
         fold_subtrees(&hashes)
     };
     if computed != older.root {
-        return Err(Error::Fork { size: older.size, expected: older.root, computed });
+        return Err(Error::Fork {
+            size: older.size,
+            expected: older.root,
+            computed,
+        });
     }
     Ok(())
 }
@@ -693,7 +789,10 @@ mod tests {
             let mut levels = vec![leaves];
             while levels.last().unwrap().len() >= 2 {
                 let prev = levels.last().unwrap();
-                let next = prev.chunks_exact(2).map(|p| node_hash(&p[0], &p[1])).collect();
+                let next = prev
+                    .chunks_exact(2)
+                    .map(|p| node_hash(&p[0], &p[1]))
+                    .collect();
                 levels.push(next);
             }
             Reference { levels }
@@ -717,7 +816,10 @@ mod tests {
         }
 
         fn tree(&self, n: u64) -> Tree {
-            Tree { size: n, root: self.root(n) }
+            Tree {
+                size: n,
+                root: self.root(n),
+            }
         }
 
         /// PATH(m, D[lo:hi]) with `m` counted from `lo`.
@@ -746,7 +848,11 @@ mod tests {
         fn subproof(&self, m: u64, lo: u64, hi: u64, b: bool) -> Vec<Hash> {
             let n = hi - lo;
             if m == n {
-                return if b { Vec::new() } else { vec![self.mth(lo, hi)] };
+                return if b {
+                    Vec::new()
+                } else {
+                    vec![self.mth(lo, hi)]
+                };
             }
             let k = n.next_power_of_two() / 2;
             if m <= k {
@@ -826,11 +932,22 @@ mod tests {
         ];
         let reference = Reference::with_leaves(leaves.iter().map(|l| record_hash(l)).collect());
         for (i, want) in roots.iter().enumerate() {
-            assert_eq!(hex(&reference.root(i as u64 + 1)), *want, "tree of {} leaves", i + 1);
+            assert_eq!(
+                hex(&reference.root(i as u64 + 1)),
+                *want,
+                "tree of {} leaves",
+                i + 1
+            );
         }
         // and the empty tree
-        assert_eq!(hex(&reference.root(0)), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(EMPTY_ROOT, <[u8; 32]>::try_from(Sha256::digest(b"").as_slice()).unwrap());
+        assert_eq!(
+            hex(&reference.root(0)),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            EMPTY_ROOT,
+            <[u8; 32]>::try_from(Sha256::digest(b"").as_slice()).unwrap()
+        );
     }
 
     // ------------------------------------------------------------------------ proofs
@@ -842,7 +959,11 @@ mod tests {
             let root = reference.root(n);
             for i in 0..n {
                 let proof = reference.inclusion(i, n);
-                assert_eq!(verify_inclusion(&proof, n, &root, i, &leaf(i)), Ok(()), "leaf {i} of {n}");
+                assert_eq!(
+                    verify_inclusion(&proof, n, &root, i, &leaf(i)),
+                    Ok(()),
+                    "leaf {i} of {n}"
+                );
             }
         }
     }
@@ -854,30 +975,47 @@ mod tests {
             let root = reference.root(n);
             for i in 0..n {
                 let proof = reference.inclusion(i, n);
-                let ok = |p: &[Hash], size: u64, r: &Hash, idx: u64, l: &Hash| verify_inclusion(p, size, r, idx, l).is_ok();
+                let ok = |p: &[Hash], size: u64, r: &Hash, idx: u64, l: &Hash| {
+                    verify_inclusion(p, size, r, idx, l).is_ok()
+                };
                 let l = leaf(i);
-                assert!(!ok(&proof, n, &root, i, &leaf(i + 1000)), "another leaf: {i} of {n}");
-                assert!(!ok(&proof, n, &flip(&root, i as usize), i, &l), "another root: {i} of {n}");
+                assert!(
+                    !ok(&proof, n, &root, i, &leaf(i + 1000)),
+                    "another leaf: {i} of {n}"
+                );
+                assert!(
+                    !ok(&proof, n, &flip(&root, i as usize), i, &l),
+                    "another root: {i} of {n}"
+                );
                 // A proof does not pin the size down by itself (a leaf in a tree of 3 has the same
                 // audit path as in a tree of 4 when the right subtree hangs off the same node), so a
                 // wrong size is only certain to fail when it changes how many hashes the path has.
                 for other in [n - 1, n + 1] {
                     if other > i && reference.inclusion(i, other).len() != proof.len() {
-                        assert!(!ok(&proof, other, &root, i, &l), "size {other} instead of {n}, leaf {i}");
+                        assert!(
+                            !ok(&proof, other, &root, i, &l),
+                            "size {other} instead of {n}, leaf {i}"
+                        );
                     }
                 }
                 if n > 1 && !proof.is_empty() {
                     let other = (i + 1) % n;
                     if reference.inclusion(other, n)[0] != proof[0] || other < i {
                         // (a sibling pair shares its first hash only by being each other's sibling)
-                        assert!(!ok(&proof, n, &root, other, &l), "index {other} instead of {i} of {n}");
+                        assert!(
+                            !ok(&proof, n, &root, other, &l),
+                            "index {other} instead of {i} of {n}"
+                        );
                     }
                 }
                 assert!(!ok(&proof, n, &root, i + n, &l), "index outside the tree");
                 for k in 0..proof.len() {
                     let mut p = proof.clone();
                     p[k] = flip(&p[k], 7 * k + i as usize);
-                    assert!(!ok(&p, n, &root, i, &l), "bit flipped in hash {k}: {i} of {n}");
+                    assert!(
+                        !ok(&p, n, &root, i, &l),
+                        "bit flipped in hash {k}: {i} of {n}"
+                    );
                     let mut p = proof.clone();
                     p.remove(k);
                     assert!(!ok(&p, n, &root, i, &l), "hash {k} removed: {i} of {n}");
@@ -887,22 +1025,35 @@ mod tests {
                     if k + 1 < proof.len() && proof[k] != proof[k + 1] {
                         let mut p = proof.clone();
                         p.swap(k, k + 1);
-                        assert!(!ok(&p, n, &root, i, &l), "hashes {k} and next swapped: {i} of {n}");
+                        assert!(
+                            !ok(&p, n, &root, i, &l),
+                            "hashes {k} and next swapped: {i} of {n}"
+                        );
                     }
                 }
                 let mut p = proof.clone();
                 p.push([0; 32]);
-                assert!(!ok(&p, n, &root, i, &l), "extra hash at the end: {i} of {n}");
+                assert!(
+                    !ok(&p, n, &root, i, &l),
+                    "extra hash at the end: {i} of {n}"
+                );
                 // the proof of the neighbour is not a proof for this leaf (unless the two share it)
                 if i + 1 < n {
                     let other = reference.inclusion(i + 1, n);
                     if other != proof {
-                        assert!(!ok(&other, n, &root, i, &l), "the proof of leaf {}: {i} of {n}", i + 1);
+                        assert!(
+                            !ok(&other, n, &root, i, &l),
+                            "the proof of leaf {}: {i} of {n}",
+                            i + 1
+                        );
                     }
                 }
             }
         }
-        assert_eq!(verify_inclusion(&[], 0, &EMPTY_ROOT, 0, &leaf(0)), Err(Error::Invalid("leaf index is not inside the tree")));
+        assert_eq!(
+            verify_inclusion(&[], 0, &EMPTY_ROOT, 0, &leaf(0)),
+            Err(Error::Invalid("leaf index is not inside the tree"))
+        );
     }
 
     #[test]
@@ -910,12 +1061,24 @@ mod tests {
         let h = [7u8; 32];
         let proof = [h; 63];
         for size in [MAX_TREE_SIZE + 1, u64::MAX] {
-            assert!(matches!(verify_inclusion(&proof, size, &h, size / 2, &h), Err(Error::Invalid(_))));
-            assert!(matches!(verify_consistency(&proof, 5, &h, size, &h), Err(Error::Invalid(_))));
+            assert!(matches!(
+                verify_inclusion(&proof, size, &h, size / 2, &h),
+                Err(Error::Invalid(_))
+            ));
+            assert!(matches!(
+                verify_consistency(&proof, 5, &h, size, &h),
+                Err(Error::Invalid(_))
+            ));
         }
         // at the limit the checks run (and refuse these made-up hashes the ordinary way)
-        assert_eq!(verify_inclusion(&proof[..62], MAX_TREE_SIZE, &h, 1 << 61, &h), Err(Error::BadProof));
-        assert_eq!(verify_consistency(&proof[..61], 5, &h, MAX_TREE_SIZE, &h), Err(Error::BadProof));
+        assert_eq!(
+            verify_inclusion(&proof[..62], MAX_TREE_SIZE, &h, 1 << 61, &h),
+            Err(Error::BadProof)
+        );
+        assert_eq!(
+            verify_consistency(&proof[..61], 5, &h, MAX_TREE_SIZE, &h),
+            Err(Error::BadProof)
+        );
     }
 
     #[test]
@@ -924,7 +1087,11 @@ mod tests {
         for n in 1..=70u64 {
             for m in 1..=n {
                 let proof = reference.consistency(m, n);
-                assert_eq!(verify_consistency(&proof, m, &reference.root(m), n, &reference.root(n)), Ok(()), "{m} to {n}");
+                assert_eq!(
+                    verify_consistency(&proof, m, &reference.root(m), n, &reference.root(n)),
+                    Ok(()),
+                    "{m} to {n}"
+                );
             }
         }
     }
@@ -932,20 +1099,31 @@ mod tests {
     #[test]
     fn altered_consistency_proofs_are_refused() {
         let reference = Reference::new(50);
-        let ok = |p: &[Hash], m: u64, mr: &Hash, n: u64, nr: &Hash| verify_consistency(p, m, mr, n, nr).is_ok();
+        let ok = |p: &[Hash], m: u64, mr: &Hash, n: u64, nr: &Hash| {
+            verify_consistency(p, m, mr, n, nr).is_ok()
+        };
         for n in 2..=48u64 {
             for m in 1..n {
                 let proof = reference.consistency(m, n);
                 let (mr, nr) = (reference.root(m), reference.root(n));
                 let why = format!("{m} to {n}");
                 assert!(ok(&proof, m, &mr, n, &nr), "{why}");
-                assert!(!ok(&proof, m, &flip(&mr, n as usize), n, &nr), "another old root: {why}");
-                assert!(!ok(&proof, m, &mr, n, &flip(&nr, m as usize)), "another new root: {why}");
+                assert!(
+                    !ok(&proof, m, &flip(&mr, n as usize), n, &nr),
+                    "another old root: {why}"
+                );
+                assert!(
+                    !ok(&proof, m, &mr, n, &flip(&nr, m as usize)),
+                    "another new root: {why}"
+                );
                 assert!(!ok(&proof, m, &nr, n, &mr), "roots swapped: {why}");
                 // as for inclusion proofs, a wrong size is only certain to fail when it changes the length
                 for (m2, n2) in [(m + 1, n), (m - 1, n), (m, n + 1), (m, n - 1)] {
                     if m2 >= 1 && m2 < n2 && reference.consistency(m2, n2).len() != proof.len() {
-                        assert!(!ok(&proof, m2, &mr, n2, &nr), "sizes {m2} to {n2} instead of {why}");
+                        assert!(
+                            !ok(&proof, m2, &mr, n2, &nr),
+                            "sizes {m2} to {n2} instead of {why}"
+                        );
                     }
                 }
                 for k in 0..proof.len() {
@@ -961,7 +1139,10 @@ mod tests {
                     if k + 1 < proof.len() && proof[k] != proof[k + 1] {
                         let mut p = proof.clone();
                         p.swap(k, k + 1);
-                        assert!(!ok(&p, m, &mr, n, &nr), "hashes {k} and next swapped: {why}");
+                        assert!(
+                            !ok(&p, m, &mr, n, &nr),
+                            "hashes {k} and next swapped: {why}"
+                        );
                     }
                 }
                 let mut p = proof.clone();
@@ -982,10 +1163,25 @@ mod tests {
         let reference = Reference::new(9);
         let r = reference.root(9);
         assert_eq!(verify_consistency(&[], 9, &r, 9, &r), Ok(()));
-        assert_eq!(verify_consistency(&[], 9, &r, 9, &flip(&r, 0)), Err(Error::BadProof));
+        assert_eq!(
+            verify_consistency(&[], 9, &r, 9, &flip(&r, 0)),
+            Err(Error::BadProof)
+        );
         assert_eq!(verify_consistency(&[r], 9, &r, 9, &r), Err(Error::BadProof));
-        assert!(matches!(verify_consistency(&[], 0, &EMPTY_ROOT, 9, &r), Err(Error::Invalid(_))), "an empty old tree has no proof");
-        assert!(matches!(verify_consistency(&[], 10, &r, 9, &r), Err(Error::Invalid(_))), "a tree does not shrink");
+        assert!(
+            matches!(
+                verify_consistency(&[], 0, &EMPTY_ROOT, 9, &r),
+                Err(Error::Invalid(_))
+            ),
+            "an empty old tree has no proof"
+        );
+        assert!(
+            matches!(
+                verify_consistency(&[], 10, &r, 9, &r),
+                Err(Error::Invalid(_))
+            ),
+            "a tree does not shrink"
+        );
     }
 
     #[test]
@@ -995,14 +1191,20 @@ mod tests {
             let root = reference.root(n);
             for &i in &[0, 1, n / 3, n / 2, n - 2, n - 1] {
                 let proof = reference.inclusion(i, n);
-                assert!(verify_inclusion(&proof, n, &root, i, &leaf(i)).is_ok(), "leaf {i} of {n}");
+                assert!(
+                    verify_inclusion(&proof, n, &root, i, &leaf(i)).is_ok(),
+                    "leaf {i} of {n}"
+                );
             }
             for &m in &[1u64, 2, 255, 256, 257, 512, 998, n - 1] {
                 if m == 0 || m > n {
                     continue;
                 }
                 let proof = reference.consistency(m, n);
-                assert!(verify_consistency(&proof, m, &reference.root(m), n, &root).is_ok(), "{m} to {n}");
+                assert!(
+                    verify_consistency(&proof, m, &reference.root(m), n, &root).is_ok(),
+                    "{m} to {n}"
+                );
             }
         }
     }
@@ -1013,7 +1215,9 @@ mod tests {
         for &size in &[u64::MAX, u64::MAX - 1, 1 << 63, (1 << 63) + 1, 1 << 62] {
             for len in [0usize, 1, 5, 63, 64, 65, 70] {
                 for &index in &[0u64, 1, size / 2, size - 1] {
-                    assert!(verify_inclusion(&junk[..len], size, &leaf(0), index, &leaf(1)).is_err());
+                    assert!(
+                        verify_inclusion(&junk[..len], size, &leaf(0), index, &leaf(1)).is_err()
+                    );
                 }
                 for &old in &[1u64, 2, 3, size / 2, size - 1, size] {
                     let _ = verify_consistency(&junk[..len], old, &leaf(0), size, &leaf(1));
@@ -1029,79 +1233,111 @@ mod tests {
         // record 24955599 is in the tree of 66746981 records, and that the tree of 66746896 is a
         // prefix of it. These are the only proofs here that were not made by code of this crate or
         // by the reference implementation next to it.
-    const INCLUSION: [&str; 26] = [
-        "rfERqRVjGO5h2W9jXQnEu3TlrGcX/55kAWOF2vhEo7w=",
-        "mn7xFfMw3fADAlFyS5GrrGh2LH+68I+6bjqyIm0wrQU=",
-        "3ErWWb+C6ewAC03stU/Z26srAmR+8ACuaiwlSrfUWEQ=",
-        "IEdtFQeTsx3jMC+m0+bZyc7ZD1ElNbQqtvkDsPL4KSA=",
-        "ZWavXKBCVwQd33ECdndNt+NRieLrwkj+D2t0kEieBJM=",
-        "zgqe79yqCainFrhOzaecBBP1dWsfcVkBxfAGV1w/Xow=",
-        "fp1DrZ0hAAfm30IrXaTHZZk5SVUlRR2c/tPy7SKRFGg=",
-        "0i5Y/yMqX1p7z8GUXxb9Y6B51roqncwdaM8jdurDpyQ=",
-        "4E9tkh1fEdRzhCKytKmHKB9uBbTfwt/cZcmqtevnxAE=",
-        "DE1fZNHAqKr7NeyNknoDU8DvxdD+IwUxWuOkZuo3qt4=",
-        "WFSQHElkE+lgoL4rP+Wdf7zhDSgkZPER/6fTY4Szxak=",
-        "3V+crfQ1C4VKIW7//Ra7ngDZQTHH8zTLgWUhOFbx7Vk=",
-        "XGXEWeHCM/oqdIgErgLCfrwkRNIaOE2fZxZ6e8r4fTw=",
-        "XE4DFS1hMjxSoDE+JDL3/XOHOfoKCPrcLsqICOa+gc8=",
-        "q8k4z7LsSaDbbUecf7ajVXccI7kCpPmAyj+xNCmpT3M=",
-        "ppMpmdexmCww+NprNuWxI0SUcVON6nAFqp4ihv8CaFo=",
-        "oxoWqklYgiDqw4l5/tsnwv/DZ6YT3H9cryedM3TEVOg=",
-        "sXFzC86eYTdKzqkb2nv7WBRyfP9fBuJA3vyhUbR4WlE=",
-        "/3pp5uTMVaxeQpnUm/wbyR2b/twhecZIa9D9Y4XrYEQ=",
-        "r7ijLWQStZbBbZnbyfVRghfU9AweBxyaaKMeHWp16g0=",
-        "fdGPAOA5xLhhVP5WJlmxhWnJrgpJhL0cT+gmSl0GaVU=",
-        "TWQs0Gq7mzUaa5fGQ8mTgeXSSo1bO4RAsF45pPCCKvI=",
-        "ROjUzjXHDN0Yo/I6EeqHhpszFgIs7FCABVeQniliPTk=",
-        "NTjIv8CJqIIGrOHhNQWSP9FV6XEPL6uGA4lmMfNKGJg=",
-        "bwqUQG2wJXGxo1QLA2CFb3chH17xvlqXe6eQy43p0HY=",
-        "EQDSw1BZS5Txp/vi6UvOl96iMySXhIow1QsfYwPuDW8=",
-    ];
-    const CONSISTENCY: [&str; 17] = [
-        "c9ihnUhDNmWMqc08/Mvzft5zi0s9uNPG9GYom9AABNE=",
-        "V9AENg5wtDMLGXqLbglBhcDeQ8lIlt3o7dK9mUQ7Jm4=",
-        "l9Ou6mZhBILzdsVLk6YnQjz1iUAYUIHYJIg/SWYN47c=",
-        "VmeOTOas0UfTFVR3VD4AiPtXwuGre/BE4EllqiuFhEQ=",
-        "sQm37/0gnCCPXjEWSP8xvdFw+n4UOKNCRxVnPh5mYWA=",
-        "gotSI2HndrVmqX0IJ4ZWG3ECe5L0dwkiHk89psXGt0I=",
-        "KK18YzBGge2IBKmk9+Chqy3RMEju64kd+PNDpJ/Bh8w=",
-        "u7yfSNMAgRfPOkdrGxnUyT2oJ9x9cEQQHGh6NmOTLm4=",
-        "oXkz39T6sjh05I00ywd8WXxgw+fPg0Rn8tZrui+A64c=",
-        "T4DT2nAl/Mkp2zOKvnzdKfe8k+PzLODWsoVvB3wsP9A=",
-        "1Nftnp85/YX9SvG+/z5QQdyI1slrRbO13FuJoJ4a1kU=",
-        "uegnZKdyiyV/S/Zs4KMgBEWfcjuvcWH2cTUNYmMidc8=",
-        "N93UzP9OApexfiqGioqimDO27Kox9nIOns5dOFFTylg=",
-        "2IzbyezmwwGZZPJ276ejAQZiAnar+RcjAUU3MEMtbIA=",
-        "k3kfr9AECmkV+UA3/D6EMqaBDr67aubL5hXGsvJ+Nng=",
-        "/WnQtddEqG03mbcU1XID1iws1nlKHVkJcaREWknCOiE=",
-        "xJ20xXM4QItt5vxFOtolZ5l18p7ej1+RimNkgWmoRFM=",
-    ];
+        const INCLUSION: [&str; 26] = [
+            "rfERqRVjGO5h2W9jXQnEu3TlrGcX/55kAWOF2vhEo7w=",
+            "mn7xFfMw3fADAlFyS5GrrGh2LH+68I+6bjqyIm0wrQU=",
+            "3ErWWb+C6ewAC03stU/Z26srAmR+8ACuaiwlSrfUWEQ=",
+            "IEdtFQeTsx3jMC+m0+bZyc7ZD1ElNbQqtvkDsPL4KSA=",
+            "ZWavXKBCVwQd33ECdndNt+NRieLrwkj+D2t0kEieBJM=",
+            "zgqe79yqCainFrhOzaecBBP1dWsfcVkBxfAGV1w/Xow=",
+            "fp1DrZ0hAAfm30IrXaTHZZk5SVUlRR2c/tPy7SKRFGg=",
+            "0i5Y/yMqX1p7z8GUXxb9Y6B51roqncwdaM8jdurDpyQ=",
+            "4E9tkh1fEdRzhCKytKmHKB9uBbTfwt/cZcmqtevnxAE=",
+            "DE1fZNHAqKr7NeyNknoDU8DvxdD+IwUxWuOkZuo3qt4=",
+            "WFSQHElkE+lgoL4rP+Wdf7zhDSgkZPER/6fTY4Szxak=",
+            "3V+crfQ1C4VKIW7//Ra7ngDZQTHH8zTLgWUhOFbx7Vk=",
+            "XGXEWeHCM/oqdIgErgLCfrwkRNIaOE2fZxZ6e8r4fTw=",
+            "XE4DFS1hMjxSoDE+JDL3/XOHOfoKCPrcLsqICOa+gc8=",
+            "q8k4z7LsSaDbbUecf7ajVXccI7kCpPmAyj+xNCmpT3M=",
+            "ppMpmdexmCww+NprNuWxI0SUcVON6nAFqp4ihv8CaFo=",
+            "oxoWqklYgiDqw4l5/tsnwv/DZ6YT3H9cryedM3TEVOg=",
+            "sXFzC86eYTdKzqkb2nv7WBRyfP9fBuJA3vyhUbR4WlE=",
+            "/3pp5uTMVaxeQpnUm/wbyR2b/twhecZIa9D9Y4XrYEQ=",
+            "r7ijLWQStZbBbZnbyfVRghfU9AweBxyaaKMeHWp16g0=",
+            "fdGPAOA5xLhhVP5WJlmxhWnJrgpJhL0cT+gmSl0GaVU=",
+            "TWQs0Gq7mzUaa5fGQ8mTgeXSSo1bO4RAsF45pPCCKvI=",
+            "ROjUzjXHDN0Yo/I6EeqHhpszFgIs7FCABVeQniliPTk=",
+            "NTjIv8CJqIIGrOHhNQWSP9FV6XEPL6uGA4lmMfNKGJg=",
+            "bwqUQG2wJXGxo1QLA2CFb3chH17xvlqXe6eQy43p0HY=",
+            "EQDSw1BZS5Txp/vi6UvOl96iMySXhIow1QsfYwPuDW8=",
+        ];
+        const CONSISTENCY: [&str; 17] = [
+            "c9ihnUhDNmWMqc08/Mvzft5zi0s9uNPG9GYom9AABNE=",
+            "V9AENg5wtDMLGXqLbglBhcDeQ8lIlt3o7dK9mUQ7Jm4=",
+            "l9Ou6mZhBILzdsVLk6YnQjz1iUAYUIHYJIg/SWYN47c=",
+            "VmeOTOas0UfTFVR3VD4AiPtXwuGre/BE4EllqiuFhEQ=",
+            "sQm37/0gnCCPXjEWSP8xvdFw+n4UOKNCRxVnPh5mYWA=",
+            "gotSI2HndrVmqX0IJ4ZWG3ECe5L0dwkiHk89psXGt0I=",
+            "KK18YzBGge2IBKmk9+Chqy3RMEju64kd+PNDpJ/Bh8w=",
+            "u7yfSNMAgRfPOkdrGxnUyT2oJ9x9cEQQHGh6NmOTLm4=",
+            "oXkz39T6sjh05I00ywd8WXxgw+fPg0Rn8tZrui+A64c=",
+            "T4DT2nAl/Mkp2zOKvnzdKfe8k+PzLODWsoVvB3wsP9A=",
+            "1Nftnp85/YX9SvG+/z5QQdyI1slrRbO13FuJoJ4a1kU=",
+            "uegnZKdyiyV/S/Zs4KMgBEWfcjuvcWH2cTUNYmMidc8=",
+            "N93UzP9OApexfiqGioqimDO27Kox9nIOns5dOFFTylg=",
+            "2IzbyezmwwGZZPJ276ejAQZiAnar+RcjAUU3MEMtbIA=",
+            "k3kfr9AECmkV+UA3/D6EMqaBDr67aubL5hXGsvJ+Nng=",
+            "/WnQtddEqG03mbcU1XID1iws1nlKHVkJcaREWknCOiE=",
+            "xJ20xXM4QItt5vxFOtolZ5l18p7ej1+RimNkgWmoRFM=",
+        ];
         let b64 = |s: &str| -> Hash { crate::pem::base64_decode(s).unwrap().try_into().unwrap() };
-        let new = Tree { size: 66746981, root: b64("3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ=") };
-        let old = Tree { size: 66746896, root: b64("dZ4n3o/nb32Y8rCuyUc1VeuATkhefsubWOYVhA9QIc8=") };
+        let new = Tree {
+            size: 66746981,
+            root: b64("3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ="),
+        };
+        let old = Tree {
+            size: 66746896,
+            root: b64("dZ4n3o/nb32Y8rCuyUc1VeuATkhefsubWOYVhA9QIc8="),
+        };
         let record = "golang.org/x/mod v0.17.0 h1:zY54UmvipHiNd+pm+m0x9KhZ9hl1/7QNMyxXbc6ICqA=\ngolang.org/x/mod v0.17.0/go.mod h1:hTbmBsO62+eylJbnUtE2MGJUyE7QWk4xUqPFrRgJ+7c=\n";
         let leaf = record_hash(record.as_bytes());
-        assert_eq!(crate::pem::base64_encode(&leaf), "Rvw4UpWZ9V67Bdyxyc7qtKjg8lt2lMRVbGt8x24H6Hg=");
+        assert_eq!(
+            crate::pem::base64_encode(&leaf),
+            "Rvw4UpWZ9V67Bdyxyc7qtKjg8lt2lMRVbGt8x24H6Hg="
+        );
         let inclusion: Vec<Hash> = INCLUSION.iter().map(|s| b64(s)).collect();
         let consistency: Vec<Hash> = CONSISTENCY.iter().map(|s| b64(s)).collect();
-        assert_eq!(verify_inclusion(&inclusion, new.size, &new.root, 24955599, &leaf), Ok(()));
-        assert_eq!(verify_consistency(&consistency, old.size, &old.root, new.size, &new.root), Ok(()));
+        assert_eq!(
+            verify_inclusion(&inclusion, new.size, &new.root, 24955599, &leaf),
+            Ok(())
+        );
+        assert_eq!(
+            verify_consistency(&consistency, old.size, &old.root, new.size, &new.root),
+            Ok(())
+        );
         // and nothing else: not another record, another place, another tree, a damaged proof
         assert!(verify_inclusion(&inclusion, new.size, &new.root, 24955598, &leaf).is_err());
-        assert!(verify_inclusion(&inclusion, new.size, &new.root, 24955599, &record_hash(b"other")).is_err());
+        assert!(verify_inclusion(
+            &inclusion,
+            new.size,
+            &new.root,
+            24955599,
+            &record_hash(b"other")
+        )
+        .is_err());
         assert!(verify_inclusion(&inclusion, new.size, &old.root, 24955599, &leaf).is_err());
         assert!(verify_inclusion(&inclusion[1..], new.size, &new.root, 24955599, &leaf).is_err());
-        assert!(verify_consistency(&consistency, old.size - 1, &old.root, new.size, &new.root).is_err());
-        assert!(verify_consistency(&consistency, old.size, &new.root, new.size, &old.root).is_err());
+        assert!(
+            verify_consistency(&consistency, old.size - 1, &old.root, new.size, &new.root).is_err()
+        );
+        assert!(
+            verify_consistency(&consistency, old.size, &new.root, new.size, &old.root).is_err()
+        );
         for k in 0..consistency.len() {
             let mut p = consistency.clone();
             p[k] = flip(&p[k], 100);
-            assert!(verify_consistency(&p, old.size, &old.root, new.size, &new.root).is_err(), "hash {k}");
+            assert!(
+                verify_consistency(&p, old.size, &old.root, new.size, &new.root).is_err(),
+                "hash {k}"
+            );
         }
         for k in 0..inclusion.len() {
             let mut p = inclusion.clone();
             p[k] = flip(&p[k], 100);
-            assert!(verify_inclusion(&p, new.size, &new.root, 24955599, &leaf).is_err(), "hash {k}");
+            assert!(
+                verify_inclusion(&p, new.size, &new.root, 24955599, &leaf).is_err(),
+                "hash {k}"
+            );
         }
     }
 
@@ -1110,22 +1346,71 @@ mod tests {
     #[test]
     fn tile_paths() {
         // the examples in Go's documentation of the format
-        let t = Tile { height: 3, level: 4, index: 1234067, width: 1 };
+        let t = Tile {
+            height: 3,
+            level: 4,
+            index: 1234067,
+            width: 1,
+        };
         assert_eq!(t.path(), "tile/3/4/x001/x234/067.p/1");
         assert_eq!(Tile { width: 8, ..t }.path(), "tile/3/4/x001/x234/067");
         assert_eq!(Tile::parse_path("tile/3/4/x001/x234/067.p/1"), Ok(t));
-        assert_eq!(Tile::parse_path("tile/3/4/x001/x234/067"), Ok(Tile { width: 8, ..t }));
+        assert_eq!(
+            Tile::parse_path("tile/3/4/x001/x234/067"),
+            Ok(Tile { width: 8, ..t })
+        );
         // and the ones of the real capture
-        assert_eq!(Tile { height: 8, level: 0, index: 260730, width: 101 }.path(), "tile/8/0/x260/730.p/101");
-        assert_eq!(Tile { height: 8, level: 3, index: 0, width: 3 }.path(), "tile/8/3/000.p/3");
-        assert_eq!(Tile { height: 8, level: 1, index: 380, width: 256 }.path(), "tile/8/1/380");
-        assert_eq!(Tile { height: 8, level: 0, index: 97482, width: 256 }.path(), "tile/8/0/x097/482");
+        assert_eq!(
+            Tile {
+                height: 8,
+                level: 0,
+                index: 260730,
+                width: 101
+            }
+            .path(),
+            "tile/8/0/x260/730.p/101"
+        );
+        assert_eq!(
+            Tile {
+                height: 8,
+                level: 3,
+                index: 0,
+                width: 3
+            }
+            .path(),
+            "tile/8/3/000.p/3"
+        );
+        assert_eq!(
+            Tile {
+                height: 8,
+                level: 1,
+                index: 380,
+                width: 256
+            }
+            .path(),
+            "tile/8/1/380"
+        );
+        assert_eq!(
+            Tile {
+                height: 8,
+                level: 0,
+                index: 97482,
+                width: 256
+            }
+            .path(),
+            "tile/8/0/x097/482"
+        );
         // round trip over a spread of tiles
         for height in [1u32, 2, 8, 13, 30] {
             for level in [0u32, 1, 2] {
                 for index in [0u64, 1, 9, 999, 1000, 1001, 123456789, 99_000_000_000] {
                     for width in [1u32, 1 << (height - 1), (1u32 << height) - 1, 1 << height] {
-                        let t = Tile { height, level, index, width };
+                        let t = Tile {
+                            height,
+                            level,
+                            index,
+                            width,
+                        };
                         if t.validate().is_ok() {
                             assert_eq!(Tile::parse_path(&t.path()), Ok(t), "{}", t.path());
                         }
@@ -1176,18 +1461,54 @@ mod tests {
     #[test]
     fn tile_sets_check_lengths_and_serve_partial_tiles_from_full_ones() {
         let mut set = TileSet::new();
-        let partial = Tile { height: 2, level: 0, index: 3, width: 3 };
+        let partial = Tile {
+            height: 2,
+            level: 0,
+            index: 3,
+            width: 3,
+        };
         assert!(set.insert(partial, vec![0; 95]).is_err());
         assert!(set.insert(partial, vec![0; 97]).is_err());
-        assert!(set.insert(Tile { height: 2, level: 0, index: 3, width: 5 }, vec![0; 160]).is_err());
-        assert!(set.insert(Tile { height: 31, level: 0, index: 0, width: 1 }, vec![0; 32]).is_err());
+        assert!(set
+            .insert(
+                Tile {
+                    height: 2,
+                    level: 0,
+                    index: 3,
+                    width: 5
+                },
+                vec![0; 160]
+            )
+            .is_err());
+        assert!(set
+            .insert(
+                Tile {
+                    height: 31,
+                    level: 0,
+                    index: 0,
+                    width: 1
+                },
+                vec![0; 32]
+            )
+            .is_err());
         assert!(set.get(&partial).is_none());
         let full: Vec<u8> = (0..128u8).collect();
         set.insert(partial.full(), full.clone()).unwrap();
         assert_eq!(set.get(&partial), Some(&full[..96]));
-        assert_eq!(set.get(&Tile { width: 1, ..partial }), Some(&full[..32]));
+        assert_eq!(
+            set.get(&Tile {
+                width: 1,
+                ..partial
+            }),
+            Some(&full[..32])
+        );
         assert_eq!(set.get(&partial.full()), Some(&full[..]));
-        assert!(set.get(&Tile { index: 2, ..partial }).is_none());
+        assert!(set
+            .get(&Tile {
+                index: 2,
+                ..partial
+            })
+            .is_none());
         // an exact tile wins over a prefix of the full one
         set.insert(partial, vec![9; 96]).unwrap();
         assert_eq!(set.get(&partial), Some(&[9u8; 96][..]));
@@ -1205,7 +1526,9 @@ mod tests {
                 v.push((n, h));
             }
         }
-        for n in [255u64, 256, 257, 258, 511, 512, 513, 65535, 65536, 65537, 65792, 70000] {
+        for n in [
+            255u64, 256, 257, 258, 511, 512, 513, 65535, 65536, 65537, 65792, 70000,
+        ] {
             v.push((n, 8));
         }
         v
@@ -1229,18 +1552,29 @@ mod tests {
                     nodes.push(Node { level, index: i });
                     i += step;
                 }
-                nodes.push(Node { level, index: width - 1 });
+                nodes.push(Node {
+                    level,
+                    index: width - 1,
+                });
             }
             let tiles = tiles_for(&tree, h, &nodes).unwrap();
             let set = reference.tile_set(&tiles);
-            let got = read_nodes(&tree, h, &nodes, &set).unwrap_or_else(|e| panic!("size {n}, height {h}: {e}"));
+            let got = read_nodes(&tree, h, &nodes, &set)
+                .unwrap_or_else(|e| panic!("size {n}, height {h}: {e}"));
             for (node, hash) in nodes.iter().zip(&got) {
-                assert_eq!(*hash, reference.node(node.level, node.index), "size {n}, height {h}, node {node:?}");
+                assert_eq!(
+                    *hash,
+                    reference.node(node.level, node.index),
+                    "size {n}, height {h}, node {node:?}"
+                );
             }
             // one at a time gives the same answers and needs no tile the batch did not list
             for node in nodes.iter().step_by(7) {
                 let one = tiles_for(&tree, h, &[*node]).unwrap();
-                assert!(one.iter().all(|t| tiles.contains(t)), "size {n}, height {h}");
+                assert!(
+                    one.iter().all(|t| tiles.contains(t)),
+                    "size {n}, height {h}"
+                );
                 let got = read_nodes(&tree, h, &[*node], &reference.tile_set(&one)).unwrap();
                 assert_eq!(got[0], reference.node(node.level, node.index));
             }
@@ -1270,8 +1604,17 @@ mod tests {
                         bad[at] ^= 0x10;
                         let mut set = good.clone();
                         set.insert(*t, bad).unwrap();
-                        let err = read_nodes(&tree, h, &[node], &set).expect_err(&format!("size {n}, height {h}: byte {at} of {} changed", t.path()));
-                        assert!(matches!(err, Error::TilesDoNotMatchRoot | Error::TileDoesNotMatchParent(_)), "{err}");
+                        let err = read_nodes(&tree, h, &[node], &set).expect_err(&format!(
+                            "size {n}, height {h}: byte {at} of {} changed",
+                            t.path()
+                        ));
+                        assert!(
+                            matches!(
+                                err,
+                                Error::TilesDoNotMatchRoot | Error::TileDoesNotMatchParent(_)
+                            ),
+                            "{err}"
+                        );
                     }
                 }
             }
@@ -1285,7 +1628,12 @@ mod tests {
         let node = Node { level: 0, index: 5 };
         let tiles = tiles_for(&tree, 3, &[node]).unwrap();
         for skip in 0..tiles.len() {
-            let rest: Vec<Tile> = tiles.iter().enumerate().filter(|(i, _)| *i != skip).map(|(_, t)| *t).collect();
+            let rest: Vec<Tile> = tiles
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != skip)
+                .map(|(_, t)| *t)
+                .collect();
             let err = read_nodes(&tree, 3, &[node], &reference.tile_set(&rest)).unwrap_err();
             assert_eq!(err, Error::MissingTile(tiles[skip]));
         }
@@ -1299,13 +1647,25 @@ mod tests {
         leaves[137] = leaf(9999);
         let b = Reference::with_leaves(leaves);
         let tree = a.tree(500);
-        let node = Node { level: 0, index: 136 };
+        let node = Node {
+            level: 0,
+            index: 136,
+        };
         let tiles = tiles_for(&tree, 4, &[node]).unwrap();
         assert!(read_nodes(&tree, 4, &[node], &a.tile_set(&tiles)).is_ok());
-        assert_eq!(read_nodes(&tree, 4, &[node], &b.tile_set(&tiles)).unwrap_err(), Error::TilesDoNotMatchRoot);
+        assert_eq!(
+            read_nodes(&tree, 4, &[node], &b.tile_set(&tiles)).unwrap_err(),
+            Error::TilesDoNotMatchRoot
+        );
         // right tiles, wrong root
-        let wrong = Tree { size: 500, root: b.root(500) };
-        assert_eq!(read_nodes(&wrong, 4, &[node], &a.tile_set(&tiles)).unwrap_err(), Error::TilesDoNotMatchRoot);
+        let wrong = Tree {
+            size: 500,
+            root: b.root(500),
+        };
+        assert_eq!(
+            read_nodes(&wrong, 4, &[node], &a.tile_set(&tiles)).unwrap_err(),
+            Error::TilesDoNotMatchRoot
+        );
     }
 
     #[test]
@@ -1315,18 +1675,46 @@ mod tests {
         for index in [0u64, 1, 100, 255, 256, 299] {
             let tiles = tiles_for_record(&tree, 4, index).unwrap();
             let set = reference.tile_set(&tiles);
-            assert_eq!(check_record(&tree, 4, index, &leaf(index), &set), Ok(()), "record {index}");
-            assert_eq!(check_record(&tree, 4, index, &leaf(index + 1), &set), Err(Error::RecordMismatch), "record {index}");
+            assert_eq!(
+                check_record(&tree, 4, index, &leaf(index), &set),
+                Ok(()),
+                "record {index}"
+            );
+            assert_eq!(
+                check_record(&tree, 4, index, &leaf(index + 1), &set),
+                Err(Error::RecordMismatch),
+                "record {index}"
+            );
         }
-        assert!(matches!(check_record(&tree, 4, 300, &leaf(300), &TileSet::new()), Err(Error::Invalid(_))));
-        assert!(matches!(tiles_for_record(&tree, 4, 300), Err(Error::Invalid(_))));
+        assert!(matches!(
+            check_record(&tree, 4, 300, &leaf(300), &TileSet::new()),
+            Err(Error::Invalid(_))
+        ));
+        assert!(matches!(
+            tiles_for_record(&tree, 4, 300),
+            Err(Error::Invalid(_))
+        ));
         for older in [0u64, 1, 2, 17, 255, 256, 257, 299, 300] {
             let old = reference.tree(older);
             let tiles = tiles_for_prefix(&tree, 4, older).unwrap();
-            assert_eq!(tiles.is_empty(), older == 0 || older == 300, "tiles for a prefix of {older}");
-            assert_eq!(check_prefix(&old, &tree, 4, &reference.tile_set(&tiles)), Ok(()), "prefix {older}");
+            assert_eq!(
+                tiles.is_empty(),
+                older == 0 || older == 300,
+                "tiles for a prefix of {older}"
+            );
+            assert_eq!(
+                check_prefix(&old, &tree, 4, &reference.tile_set(&tiles)),
+                Ok(()),
+                "prefix {older}"
+            );
         }
-        assert!(matches!(check_prefix(&tree, &reference.tree(299), 4, &TileSet::new()), Err(Error::Invalid(_))), "a tree is not a prefix of a smaller one");
+        assert!(
+            matches!(
+                check_prefix(&tree, &reference.tree(299), 4, &TileSet::new()),
+                Err(Error::Invalid(_))
+            ),
+            "a tree is not a prefix of a smaller one"
+        );
     }
 
     #[test]
@@ -1340,24 +1728,64 @@ mod tests {
         let new = forked.tree(300);
         let tiles = tiles_for_prefix(&new, 4, 100).unwrap();
         match check_prefix(&old, &new, 4, &forked.tile_set(&tiles)) {
-            Err(Error::Fork { size: 100, expected, computed }) => {
+            Err(Error::Fork {
+                size: 100,
+                expected,
+                computed,
+            }) => {
                 assert_eq!(expected, old.root);
                 assert_eq!(computed, forked.root(100));
             }
             other => panic!("expected a fork, got {other:?}"),
         }
         // a record after the rewritten one does not matter: the same history is also a fork at size 41
-        assert!(matches!(check_prefix(&honest.tree(41), &new, 4, &forked.tile_set(&tiles_for_prefix(&new, 4, 41).unwrap())), Err(Error::Fork { .. })));
+        assert!(matches!(
+            check_prefix(
+                &honest.tree(41),
+                &new,
+                4,
+                &forked.tile_set(&tiles_for_prefix(&new, 4, 41).unwrap())
+            ),
+            Err(Error::Fork { .. })
+        ));
         // before the rewritten record the histories agree
-        assert_eq!(check_prefix(&honest.tree(40), &new, 4, &forked.tile_set(&tiles_for_prefix(&new, 4, 40).unwrap())), Ok(()));
+        assert_eq!(
+            check_prefix(
+                &honest.tree(40),
+                &new,
+                4,
+                &forked.tile_set(&tiles_for_prefix(&new, 4, 40).unwrap())
+            ),
+            Ok(())
+        );
         // equal sizes with different roots need no tiles to be a fork
-        let other = Tree { size: 300, root: honest.root(300) };
-        assert!(matches!(check_prefix(&other, &new, 4, &TileSet::new()), Err(Error::Fork { size: 300, .. })));
+        let other = Tree {
+            size: 300,
+            root: honest.root(300),
+        };
+        assert!(matches!(
+            check_prefix(&other, &new, 4, &TileSet::new()),
+            Err(Error::Fork { size: 300, .. })
+        ));
         assert_eq!(check_prefix(&new, &new, 4, &TileSet::new()), Ok(()));
         // the empty tree is the prefix of everything, with exactly one root
-        let empty = Tree { size: 0, root: EMPTY_ROOT };
+        let empty = Tree {
+            size: 0,
+            root: EMPTY_ROOT,
+        };
         assert_eq!(check_prefix(&empty, &new, 4, &TileSet::new()), Ok(()));
-        assert!(matches!(check_prefix(&Tree { size: 0, root: [1; 32] }, &new, 4, &TileSet::new()), Err(Error::Fork { size: 0, .. })));
+        assert!(matches!(
+            check_prefix(
+                &Tree {
+                    size: 0,
+                    root: [1; 32]
+                },
+                &new,
+                4,
+                &TileSet::new()
+            ),
+            Err(Error::Fork { size: 0, .. })
+        ));
     }
 
     #[test]
@@ -1366,22 +1794,103 @@ mod tests {
         let tree = reference.tree(10);
         let node = Node { level: 0, index: 0 };
         for h in [0u32, 31, 100] {
-            assert!(matches!(tiles_for(&tree, h, &[node]), Err(Error::Invalid(_))), "height {h}");
+            assert!(
+                matches!(tiles_for(&tree, h, &[node]), Err(Error::Invalid(_))),
+                "height {h}"
+            );
         }
-        assert!(matches!(tiles_for(&Tree { size: MAX_TREE_SIZE + 1, root: [0; 32] }, 8, &[]), Err(Error::Invalid(_))));
-        assert!(tiles_for(&Tree { size: MAX_TREE_SIZE, root: [0; 32] }, 8, &[Node { level: 0, index: MAX_TREE_SIZE - 1 }]).is_ok());
-        assert!(tiles_for(&Tree { size: MAX_TREE_SIZE, root: [0; 32] }, 8, &[Node { level: 62, index: 0 }]).is_ok());
-        for bad in [Node { level: 0, index: 10 }, Node { level: 1, index: 5 }, Node { level: 4, index: 0 }, Node { level: 63, index: 0 }, Node { level: 200, index: 0 }, Node { level: 0, index: u64::MAX }] {
-            assert!(matches!(tiles_for(&tree, 3, &[bad]), Err(Error::Invalid(_))), "{bad:?}");
+        assert!(matches!(
+            tiles_for(
+                &Tree {
+                    size: MAX_TREE_SIZE + 1,
+                    root: [0; 32]
+                },
+                8,
+                &[]
+            ),
+            Err(Error::Invalid(_))
+        ));
+        assert!(tiles_for(
+            &Tree {
+                size: MAX_TREE_SIZE,
+                root: [0; 32]
+            },
+            8,
+            &[Node {
+                level: 0,
+                index: MAX_TREE_SIZE - 1
+            }]
+        )
+        .is_ok());
+        assert!(tiles_for(
+            &Tree {
+                size: MAX_TREE_SIZE,
+                root: [0; 32]
+            },
+            8,
+            &[Node {
+                level: 62,
+                index: 0
+            }]
+        )
+        .is_ok());
+        for bad in [
+            Node {
+                level: 0,
+                index: 10,
+            },
+            Node { level: 1, index: 5 },
+            Node { level: 4, index: 0 },
+            Node {
+                level: 63,
+                index: 0,
+            },
+            Node {
+                level: 200,
+                index: 0,
+            },
+            Node {
+                level: 0,
+                index: u64::MAX,
+            },
+        ] {
+            assert!(
+                matches!(tiles_for(&tree, 3, &[bad]), Err(Error::Invalid(_))),
+                "{bad:?}"
+            );
         }
         // an empty tree has nothing to read
-        let empty = Tree { size: 0, root: EMPTY_ROOT };
+        let empty = Tree {
+            size: 0,
+            root: EMPTY_ROOT,
+        };
         assert_eq!(read_nodes(&empty, 8, &[], &TileSet::new()), Ok(Vec::new()));
-        assert!(matches!(tiles_for(&empty, 8, &[node]), Err(Error::Invalid(_))));
+        assert!(matches!(
+            tiles_for(&empty, 8, &[node]),
+            Err(Error::Invalid(_))
+        ));
         // a tree as big as the limit: the plan has one tile per level and the shapes do not overflow
-        let huge = Tree { size: MAX_TREE_SIZE - 1, root: [0; 32] };
+        let huge = Tree {
+            size: MAX_TREE_SIZE - 1,
+            root: [0; 32],
+        };
         for h in [1u32, 2, 7, 8, 30] {
-            let plan = tiles_for(&huge, h, &[Node { level: 0, index: MAX_TREE_SIZE - 2 }, Node { level: 0, index: 0 }, Node { level: 31, index: 3 }]).unwrap();
+            let plan = tiles_for(
+                &huge,
+                h,
+                &[
+                    Node {
+                        level: 0,
+                        index: MAX_TREE_SIZE - 2,
+                    },
+                    Node { level: 0, index: 0 },
+                    Node {
+                        level: 31,
+                        index: 3,
+                    },
+                ],
+            )
+            .unwrap();
             assert!(plan.iter().all(|t| t.validate().is_ok()), "height {h}");
         }
     }
@@ -1392,7 +1901,12 @@ mod tests {
         // looking at such a tile (and `validate` refuses it), not for stopping the program.
         for height in [0u32, 1, 8, 30, 31, 32, 33, 63, 64, 65, 1000, u32::MAX] {
             for width in [0u32, 1, 256, u32::MAX] {
-                let t = Tile { height, level: 0, index: 12345, width };
+                let t = Tile {
+                    height,
+                    level: 0,
+                    index: 12345,
+                    width,
+                };
                 let _ = t.is_full();
                 let _ = t.full();
                 let _ = t.path();
@@ -1408,26 +1922,64 @@ mod tests {
             }
         }
         // for a real height they still mean what they did
-        let t = Tile { height: 8, level: 0, index: 0, width: 256 };
+        let t = Tile {
+            height: 8,
+            level: 0,
+            index: 0,
+            width: 256,
+        };
         assert!(t.is_full() && t.full() == t);
         let p = Tile { width: 100, ..t };
         assert!(!p.is_full());
         assert_eq!(p.full().width, 256);
         assert_eq!(p.path(), "tile/8/0/000.p/100");
-        assert!(Tile { height: 31, level: 0, index: 0, width: 1 << 31 }.is_full());
+        assert!(Tile {
+            height: 31,
+            level: 0,
+            index: 0,
+            width: 1 << 31
+        }
+        .is_full());
     }
 
     #[test]
     fn a_tree_over_the_size_limit_is_refused_by_the_prefix_check_as_well() {
-        let big = Tree { size: u64::MAX, root: [7; 32] };
-        let over = Tree { size: MAX_TREE_SIZE + 1, root: [7; 32] };
-        let ok = Tree { size: MAX_TREE_SIZE, root: [7; 32] };
+        let big = Tree {
+            size: u64::MAX,
+            root: [7; 32],
+        };
+        let over = Tree {
+            size: MAX_TREE_SIZE + 1,
+            root: [7; 32],
+        };
+        let ok = Tree {
+            size: MAX_TREE_SIZE,
+            root: [7; 32],
+        };
         let tiles = TileSet::new();
         for t in [&big, &over] {
             // equal sizes used to be answered from the roots alone, with no limit applied
-            assert!(matches!(check_prefix(t, t, 8, &tiles), Err(Error::Invalid(_))), "{}", t.size);
-            assert!(matches!(check_prefix(&Tree { size: 0, root: EMPTY_ROOT }, t, 8, &tiles), Err(Error::Invalid(_))));
-            assert!(matches!(tiles_for_prefix(t, 8, t.size), Err(Error::Invalid(_))));
+            assert!(
+                matches!(check_prefix(t, t, 8, &tiles), Err(Error::Invalid(_))),
+                "{}",
+                t.size
+            );
+            assert!(matches!(
+                check_prefix(
+                    &Tree {
+                        size: 0,
+                        root: EMPTY_ROOT
+                    },
+                    t,
+                    8,
+                    &tiles
+                ),
+                Err(Error::Invalid(_))
+            ));
+            assert!(matches!(
+                tiles_for_prefix(t, 8, t.size),
+                Err(Error::Invalid(_))
+            ));
             assert!(matches!(tiles_for_prefix(t, 8, 0), Err(Error::Invalid(_))));
         }
         // at the limit itself, equal trees are a prefix of each other by their roots, as before
@@ -1456,14 +2008,23 @@ mod tests {
 
     /// Plans the tiles for `node` and checks every one of them against `expected_tile_width`.
     fn assert_plan_has_the_shape_of_the_tree(size: u64, height: u32, node: Node) -> usize {
-        let tree = Tree { size, root: [7; 32] };
-        let tiles = tiles_for(&tree, height, &[node]).unwrap_or_else(|e| panic!("size {size}, height {height}, {node:?}: {e}"));
+        let tree = Tree {
+            size,
+            root: [7; 32],
+        };
+        let tiles = tiles_for(&tree, height, &[node])
+            .unwrap_or_else(|e| panic!("size {size}, height {height}, {node:?}: {e}"));
         assert!(!tiles.is_empty(), "size {size}, height {height}, {node:?}");
         for t in &tiles {
             let want = expected_tile_width(size, height, t.level, t.index);
-            assert_eq!(want, Some(t.width as u64), "size {size}, height {height}, {node:?}: {t:?}");
+            assert_eq!(
+                want,
+                Some(t.width as u64),
+                "size {size}, height {height}, {node:?}: {t:?}"
+            );
             assert_eq!(t.height, height);
-            t.validate().unwrap_or_else(|e| panic!("size {size}, height {height}, {node:?}: {t:?}: {e}"));
+            t.validate()
+                .unwrap_or_else(|e| panic!("size {size}, height {height}, {node:?}: {t:?}: {e}"));
         }
         tiles.len()
     }
@@ -1475,21 +2036,34 @@ mod tests {
         let mut planned = 0;
         for size in 1..=130u64 {
             for height in 1..=6u32 {
-                let tree = Tree { size, root: [7; 32] };
+                let tree = Tree {
+                    size,
+                    root: [7; 32],
+                };
                 let mut level = 0;
                 while size >> level >= 1 {
                     let count = size >> level;
                     for index in 0..count {
-                        planned += assert_plan_has_the_shape_of_the_tree(size, height, Node { level, index });
+                        planned += assert_plan_has_the_shape_of_the_tree(
+                            size,
+                            height,
+                            Node { level, index },
+                        );
                     }
                     // the nodes just past the end of the level are not in the tree
                     for index in [count, count + 1, u64::MAX >> 8] {
-                        assert!(tiles_for(&tree, height, &[Node { level, index }]).is_err(), "size {size}, height {height}, level {level}, index {index}");
+                        assert!(
+                            tiles_for(&tree, height, &[Node { level, index }]).is_err(),
+                            "size {size}, height {height}, level {level}, index {index}"
+                        );
                     }
                     level += 1;
                 }
                 // and a level above the root
-                assert!(tiles_for(&tree, height, &[Node { level, index: 0 }]).is_err(), "size {size}, height {height}, level {level}");
+                assert!(
+                    tiles_for(&tree, height, &[Node { level, index: 0 }]).is_err(),
+                    "size {size}, height {height}, level {level}"
+                );
             }
         }
         assert!(planned > 100_000, "{planned}");
@@ -1520,15 +2094,30 @@ mod tests {
                     let count = size >> level;
                     // the first node, the last, and the one in the middle of each level
                     for index in [0, count / 2, count - 1] {
-                        planned += assert_plan_has_the_shape_of_the_tree(size, height, Node { level, index });
+                        planned += assert_plan_has_the_shape_of_the_tree(
+                            size,
+                            height,
+                            Node { level, index },
+                        );
                     }
                     level += 1;
                 }
             }
         }
         // the widest a tile can be (2^30 entries) is the widest the plan ever asks for, and it fits the u32 of `width`
-        let widest = tiles_for(&Tree { size: MAX_TREE_SIZE, root: [7; 32] }, MAX_TILE_HEIGHT, &[Node { level: 0, index: 0 }]).unwrap();
-        let bottom = widest.iter().find(|t| t.level == 0).expect("the tile of the leaves");
+        let widest = tiles_for(
+            &Tree {
+                size: MAX_TREE_SIZE,
+                root: [7; 32],
+            },
+            MAX_TILE_HEIGHT,
+            &[Node { level: 0, index: 0 }],
+        )
+        .unwrap();
+        let bottom = widest
+            .iter()
+            .find(|t| t.level == 0)
+            .expect("the tile of the leaves");
         assert_eq!(bottom.width, 1 << MAX_TILE_HEIGHT);
         assert_eq!(bottom.data_len(), 32u64 << MAX_TILE_HEIGHT);
         assert!(planned > 10_000, "{planned}");
@@ -1540,8 +2129,14 @@ mod tests {
         // the 50 nodes of tree level 2: 13 tiles, the last with 2. Tile level 2 lists the 12 nodes of tree level 4
         // (there is no 13th: it would need leaves 192 to 207): 3 full tiles. Tile level 3 lists the 3 nodes of tree
         // level 6: one tile with 3.
-        let leaf_tile = |index| Tile { height: 2, level: 0, index, width: 4 };
-        let ancestor = |index, k| tile_ancestor(leaf_tile(index), k, 200).map(|t| (t.level, t.index, t.width));
+        let leaf_tile = |index| Tile {
+            height: 2,
+            level: 0,
+            index,
+            width: 4,
+        };
+        let ancestor =
+            |index, k| tile_ancestor(leaf_tile(index), k, 200).map(|t| (t.level, t.index, t.width));
         assert_eq!(ancestor(49, 0), Some((0, 49, 4)));
         assert_eq!(ancestor(49, 1), Some((1, 12, 2)));
         assert_eq!(ancestor(49, 2), None); // the last leaves have no node of tree level 4 above them
@@ -1553,9 +2148,45 @@ mod tests {
         assert_eq!(ancestor(51, 0), None);
         assert_eq!(ancestor(52, 1), None);
         // above the top of the tree, and beyond the 62 levels there can be
-        assert_eq!(tile_ancestor(Tile { height: 2, level: 0, index: 0, width: 4 }, 6, 200), None);
-        assert_eq!(tile_ancestor(Tile { height: 30, level: 0, index: 0, width: 1 }, 3, MAX_TREE_SIZE), None);
-        assert_eq!(tile_ancestor(Tile { height: 8, level: 1, index: 0, width: 1 }, u32::MAX, 200), None);
+        assert_eq!(
+            tile_ancestor(
+                Tile {
+                    height: 2,
+                    level: 0,
+                    index: 0,
+                    width: 4
+                },
+                6,
+                200
+            ),
+            None
+        );
+        assert_eq!(
+            tile_ancestor(
+                Tile {
+                    height: 30,
+                    level: 0,
+                    index: 0,
+                    width: 1
+                },
+                3,
+                MAX_TREE_SIZE
+            ),
+            None
+        );
+        assert_eq!(
+            tile_ancestor(
+                Tile {
+                    height: 8,
+                    level: 1,
+                    index: 0,
+                    width: 1
+                },
+                u32::MAX,
+                200
+            ),
+            None
+        );
     }
 
     #[test]

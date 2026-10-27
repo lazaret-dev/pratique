@@ -11,11 +11,17 @@
 //!
 //! The limits on what a client can make the server do are in [`H2Config`].
 
-use super::super::h2::frame::{self, flag, kind, setting, ErrorCode, Frame, FrameError, Header, DEFAULT_MAX_FRAME_SIZE, DEFAULT_WINDOW, HEADER_LEN, MAX_FRAME_SIZE_LIMIT, MAX_WINDOW};
+use super::super::h2::frame::{
+    self, flag, kind, setting, ErrorCode, Frame, FrameError, Header, DEFAULT_MAX_FRAME_SIZE,
+    DEFAULT_WINDOW, HEADER_LEN, MAX_FRAME_SIZE_LIMIT, MAX_WINDOW,
+};
 use super::super::h2::hpack::{Decoder, Encoder, FieldRef};
 use super::h1::valid_authority;
 use super::runtime::{Ctl, GoAway, Pending};
-use super::{call, response_head, Body, BodySink, BodySource, BodyWriter, ConnInfo, H2Config, Handler, HttpConfig, Request, Response, ResponseBody, Upgraded, Version};
+use super::{
+    call, response_head, Body, BodySink, BodySource, BodyWriter, ConnInfo, H2Config, Handler,
+    HttpConfig, Request, Response, ResponseBody, Upgraded, Version,
+};
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError};
@@ -40,13 +46,18 @@ struct Budget {
 
 impl Budget {
     fn new(cap: u32) -> Budget {
-        Budget { left: cap as f64, cap: cap as f64, at: Instant::now() }
+        Budget {
+            left: cap as f64,
+            cap: cap as f64,
+            at: Instant::now(),
+        }
     }
 
     /// Takes one; false when there is none left.
     fn take(&mut self) -> bool {
         let now = Instant::now();
-        self.left = (self.left + now.duration_since(self.at).as_secs_f64() * self.cap / 10.0).min(self.cap);
+        self.left =
+            (self.left + now.duration_since(self.at).as_secs_f64() * self.cap / 10.0).min(self.cap);
         self.at = now;
         if self.left < 1.0 {
             return false;
@@ -232,9 +243,19 @@ impl Engine {
         let settings = [
             (setting::HEADER_TABLE_SIZE, c.header_table_size),
             (setting::MAX_CONCURRENT_STREAMS, c.max_concurrent_streams),
-            (setting::INITIAL_WINDOW_SIZE, c.stream_window.min(MAX_WINDOW)),
-            (setting::MAX_FRAME_SIZE, c.max_frame_size.clamp(DEFAULT_MAX_FRAME_SIZE, MAX_FRAME_SIZE_LIMIT)),
-            (setting::MAX_HEADER_LIST_SIZE, config.max_header_bytes as u32),
+            (
+                setting::INITIAL_WINDOW_SIZE,
+                c.stream_window.min(MAX_WINDOW),
+            ),
+            (
+                setting::MAX_FRAME_SIZE,
+                c.max_frame_size
+                    .clamp(DEFAULT_MAX_FRAME_SIZE, MAX_FRAME_SIZE_LIMIT),
+            ),
+            (
+                setting::MAX_HEADER_LIST_SIZE,
+                config.max_header_bytes as u32,
+            ),
         ];
         frame::write_settings(&mut e.out, &settings);
         if c.connection_window > DEFAULT_WINDOW {
@@ -245,14 +266,20 @@ impl Engine {
     }
 
     fn max_frame(&self) -> u32 {
-        self.cfg.max_frame_size.clamp(DEFAULT_MAX_FRAME_SIZE, MAX_FRAME_SIZE_LIMIT)
+        self.cfg
+            .max_frame_size
+            .clamp(DEFAULT_MAX_FRAME_SIZE, MAX_FRAME_SIZE_LIMIT)
     }
 
     /// The window a new stream starts with on our side: until our SETTINGS are acknowledged the client may go by the
     /// default.
     fn initial_recv_window(&self) -> i64 {
         let announced = self.cfg.stream_window.min(MAX_WINDOW) as i64;
-        if self.settings_acked { announced } else { announced.max(DEFAULT_WINDOW as i64) }
+        if self.settings_acked {
+            announced
+        } else {
+            announced.max(DEFAULT_WINDOW as i64)
+        }
     }
 
     pub(super) fn is_dead(&self) -> bool {
@@ -272,12 +299,23 @@ impl Engine {
 
     /// The earliest time a stream began to wait for a window, if one is waiting.
     pub(super) fn stalled_since(&self) -> Option<Instant> {
-        self.streams.values().filter(|s| !s.reset && !s.local_ended).filter_map(|s| s.stalled_since).min()
+        self.streams
+            .values()
+            .filter(|s| !s.reset && !s.local_ended)
+            .filter_map(|s| s.stalled_since)
+            .min()
     }
 
     /// Resets the streams that have waited for a window since before `before`; how many.
     pub(super) fn reset_stalled(&mut self, before: Instant) -> usize {
-        let stalled: Vec<u32> = self.streams.iter().filter(|(_, s)| !s.reset && !s.local_ended && s.stalled_since.is_some_and(|t| t <= before)).map(|(&id, _)| id).collect();
+        let stalled: Vec<u32> = self
+            .streams
+            .iter()
+            .filter(|(_, s)| {
+                !s.reset && !s.local_ended && s.stalled_since.is_some_and(|t| t <= before)
+            })
+            .map(|(&id, _)| id)
+            .collect();
         for &id in &stalled {
             self.reset(id, ErrorCode::CANCEL);
         }
@@ -311,7 +349,12 @@ impl Engine {
         if !self.going_away && !self.dead {
             self.going_away = true;
             frame::write_goaway(&mut self.out, self.highest, ErrorCode::NO_ERROR, b"");
-            let lingering: Vec<u32> = self.streams.iter().filter(|(_, s)| s.lingering_since.is_some()).map(|(&id, _)| id).collect();
+            let lingering: Vec<u32> = self
+                .streams
+                .iter()
+                .filter(|(_, s)| s.lingering_since.is_some())
+                .map(|(&id, _)| id)
+                .collect();
             for id in lingering {
                 self.stop_lingering(id);
             }
@@ -327,7 +370,10 @@ impl Engine {
         for s in self.streams.values_mut() {
             s.reset = true;
         }
-        Lost { code: code.0, reason }
+        Lost {
+            code: code.0,
+            reason,
+        }
     }
 
     fn remember(&mut self, id: u32, how: Closed) {
@@ -365,11 +411,17 @@ impl Engine {
     }
 
     fn remove_if_done(&mut self, id: u32) {
-        if self.streams.get(&id).is_some_and(|s| s.goaway_after && (s.local_ended || s.reset)) {
+        if self
+            .streams
+            .get(&id)
+            .is_some_and(|s| s.goaway_after && (s.local_ended || s.reset))
+        {
             // after the response's end, not before it: a client that takes GOAWAY as the end (python-h2) must have it all
             self.go_away();
         }
-        let Some(s) = self.streams.get(&id) else { return };
+        let Some(s) = self.streams.get(&id) else {
+            return;
+        };
         if !s.handler_done {
             return;
         }
@@ -397,7 +449,9 @@ impl Engine {
 
     /// Asks the client to stop sending on a stream whose response is whole (RST_STREAM with no error), and drops it.
     fn stop_lingering(&mut self, id: u32) {
-        let Some(s) = self.streams.remove(&id) else { return };
+        let Some(s) = self.streams.remove(&id) else {
+            return;
+        };
         frame::write_rst_stream(&mut self.out, id, ErrorCode::NO_ERROR);
         self.credit_connection(s.recv.len() as u32 + s.unacked);
         self.remember(id, Closed::WeReset);
@@ -436,7 +490,10 @@ impl Engine {
             }
             let header = Header::parse(buf[pos..pos + HEADER_LEN].try_into().expect("nine bytes"));
             if header.length > self.max_frame() {
-                break Err(self.lose(ErrorCode::FRAME_SIZE_ERROR, "a frame larger than the size this server announced"));
+                break Err(self.lose(
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    "a frame larger than the size this server announced",
+                ));
             }
             let end = pos + HEADER_LEN + header.length as usize;
             if buf.len() < end {
@@ -445,13 +502,18 @@ impl Engine {
             let payload = &buf[pos + HEADER_LEN..end];
             pos = end;
             if !self.got_settings && !(header.kind == kind::SETTINGS && !header.has(flag::ACK)) {
-                break Err(self.lose(ErrorCode::PROTOCOL_ERROR, "the client's first frame is not SETTINGS"));
+                break Err(self.lose(
+                    ErrorCode::PROTOCOL_ERROR,
+                    "the client's first frame is not SETTINGS",
+                ));
             }
             // a stream may not depend on itself (RFC 9113 section 5.3.1); the frame parser drops the priority fields
             if let Some(dep) = self_dependency(&header, payload) {
                 if dep == header.stream {
                     if header.kind == kind::HEADERS {
-                        break Err(self.lose(ErrorCode::PROTOCOL_ERROR, "a stream that depends on itself"));
+                        break Err(
+                            self.lose(ErrorCode::PROTOCOL_ERROR, "a stream that depends on itself")
+                        );
                     }
                     self.reset(header.stream, ErrorCode::PROTOCOL_ERROR);
                     continue;
@@ -459,8 +521,16 @@ impl Engine {
             }
             let step = match frame::parse(&header, payload) {
                 Ok(f) => self.handle(f, &mut new),
-                Err(FrameError { code, stream: None, reason }) => Err(self.lose(code, reason)),
-                Err(FrameError { code, stream: Some(id), reason }) => {
+                Err(FrameError {
+                    code,
+                    stream: None,
+                    reason,
+                }) => Err(self.lose(code, reason)),
+                Err(FrameError {
+                    code,
+                    stream: Some(id),
+                    reason,
+                }) => {
                     if id > self.highest {
                         // no RST_STREAM may be sent on a stream that is idle: the error is the connection's
                         Err(self.lose(code, reason))
@@ -485,28 +555,57 @@ impl Engine {
         if let Some(block) = &self.block {
             match &f {
                 Frame::Continuation { stream, .. } if *stream == block.stream => {}
-                _ => return Err(self.lose(ErrorCode::PROTOCOL_ERROR, "a frame in the middle of a header block")),
+                _ => {
+                    return Err(self.lose(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "a frame in the middle of a header block",
+                    ))
+                }
             }
         }
         match f {
-            Frame::Data { stream, end_stream, data, flow_len } => self.on_data(stream, end_stream, data, flow_len),
-            Frame::Headers { stream, end_stream, end_headers, fragment } => {
+            Frame::Data {
+                stream,
+                end_stream,
+                data,
+                flow_len,
+            } => self.on_data(stream, end_stream, data, flow_len),
+            Frame::Headers {
+                stream,
+                end_stream,
+                end_headers,
+                fragment,
+            } => {
                 if stream % 2 == 0 {
                     return Err(self.lose(ErrorCode::PROTOCOL_ERROR, "HEADERS on an even stream"));
                 }
                 if fragment.is_empty() && !end_headers && !self.budgets.empty.take() {
                     return Err(self.calm("empty HEADERS frames"));
                 }
-                self.block = Some(Block { stream, end_stream, bytes: Vec::new(), continuations: 0 });
+                self.block = Some(Block {
+                    stream,
+                    end_stream,
+                    bytes: Vec::new(),
+                    continuations: 0,
+                });
                 self.on_fragment(end_headers, fragment, new)
             }
-            Frame::Continuation { end_headers, fragment, .. } => {
+            Frame::Continuation {
+                end_headers,
+                fragment,
+                ..
+            } => {
                 let Some(block) = self.block.as_mut() else {
-                    return Err(self.lose(ErrorCode::PROTOCOL_ERROR, "CONTINUATION with no header block"));
+                    return Err(self.lose(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "CONTINUATION with no header block",
+                    ));
                 };
                 block.continuations += 1;
                 if block.continuations > self.cfg.max_continuations {
-                    return Err(self.calm("a header block in more CONTINUATION frames than this server takes"));
+                    return Err(self.calm(
+                        "a header block in more CONTINUATION frames than this server takes",
+                    ));
                 }
                 if fragment.is_empty() && !end_headers && !self.budgets.empty.take() {
                     return Err(self.calm("empty CONTINUATION frames"));
@@ -521,7 +620,10 @@ impl Engine {
             }
             Frame::RstStream { stream, .. } => {
                 if stream > self.highest {
-                    return Err(self.lose(ErrorCode::PROTOCOL_ERROR, "RST_STREAM on a stream that is idle"));
+                    return Err(self.lose(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "RST_STREAM on a stream that is idle",
+                    ));
                 }
                 if let Some(s) = self.streams.get_mut(&stream) {
                     let unfinished = !s.handler_done || !s.local_ended;
@@ -552,7 +654,9 @@ impl Engine {
                 }
                 self.on_settings(&values)
             }
-            Frame::PushPromise { .. } => Err(self.lose(ErrorCode::PROTOCOL_ERROR, "PUSH_PROMISE from a client")),
+            Frame::PushPromise { .. } => {
+                Err(self.lose(ErrorCode::PROTOCOL_ERROR, "PUSH_PROMISE from a client"))
+            }
             Frame::Ping { ack, data } => {
                 if !ack {
                     if !self.budgets.pings.take() {
@@ -575,10 +679,16 @@ impl Engine {
                 if stream == 0 {
                     self.send_window += increment as i64;
                     if self.send_window > MAX_WINDOW as i64 {
-                        return Err(self.lose(ErrorCode::FLOW_CONTROL_ERROR, "the connection window went over 2^31 - 1"));
+                        return Err(self.lose(
+                            ErrorCode::FLOW_CONTROL_ERROR,
+                            "the connection window went over 2^31 - 1",
+                        ));
                     }
                 } else if stream > self.highest {
-                    return Err(self.lose(ErrorCode::PROTOCOL_ERROR, "WINDOW_UPDATE on a stream that is idle"));
+                    return Err(self.lose(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "WINDOW_UPDATE on a stream that is idle",
+                    ));
                 } else if let Some(s) = self.streams.get_mut(&stream) {
                     s.send_window += increment as i64;
                     if s.send_window > MAX_WINDOW as i64 {
@@ -600,10 +710,18 @@ impl Engine {
         for &(id, value) in values {
             match id {
                 setting::HEADER_TABLE_SIZE => self.encoder.set_peer_table_size(value as usize),
-                setting::ENABLE_PUSH if value > 1 => return Err(self.lose(ErrorCode::PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH is neither 0 nor 1")),
+                setting::ENABLE_PUSH if value > 1 => {
+                    return Err(self.lose(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "SETTINGS_ENABLE_PUSH is neither 0 nor 1",
+                    ))
+                }
                 setting::INITIAL_WINDOW_SIZE => {
                     if value > MAX_WINDOW {
-                        return Err(self.lose(ErrorCode::FLOW_CONTROL_ERROR, "SETTINGS_INITIAL_WINDOW_SIZE over 2^31 - 1"));
+                        return Err(self.lose(
+                            ErrorCode::FLOW_CONTROL_ERROR,
+                            "SETTINGS_INITIAL_WINDOW_SIZE over 2^31 - 1",
+                        ));
                     }
                     let delta = value as i64 - self.peer_initial_window;
                     self.peer_initial_window = value as i64;
@@ -615,12 +733,18 @@ impl Engine {
                         }
                     }
                     if !over.is_empty() {
-                        return Err(self.lose(ErrorCode::FLOW_CONTROL_ERROR, "a stream window went over 2^31 - 1"));
+                        return Err(self.lose(
+                            ErrorCode::FLOW_CONTROL_ERROR,
+                            "a stream window went over 2^31 - 1",
+                        ));
                     }
                 }
                 setting::MAX_FRAME_SIZE => {
                     if !(DEFAULT_MAX_FRAME_SIZE..=MAX_FRAME_SIZE_LIMIT).contains(&value) {
-                        return Err(self.lose(ErrorCode::PROTOCOL_ERROR, "SETTINGS_MAX_FRAME_SIZE out of range"));
+                        return Err(self.lose(
+                            ErrorCode::PROTOCOL_ERROR,
+                            "SETTINGS_MAX_FRAME_SIZE out of range",
+                        ));
                     }
                     self.peer_max_frame = value as usize;
                 }
@@ -632,12 +756,21 @@ impl Engine {
         Ok(())
     }
 
-    fn on_data(&mut self, id: u32, end_stream: bool, data: &[u8], flow_len: u32) -> Result<(), Lost> {
+    fn on_data(
+        &mut self,
+        id: u32,
+        end_stream: bool,
+        data: &[u8],
+        flow_len: u32,
+    ) -> Result<(), Lost> {
         if id > self.highest {
             return Err(self.lose(ErrorCode::PROTOCOL_ERROR, "DATA on a stream that is idle"));
         }
         if flow_len as i64 > self.recv_window {
-            return Err(self.lose(ErrorCode::FLOW_CONTROL_ERROR, "the client sent more than the connection window allows"));
+            return Err(self.lose(
+                ErrorCode::FLOW_CONTROL_ERROR,
+                "the client sent more than the connection window allows",
+            ));
         }
         self.recv_window -= flow_len as i64;
         if data.is_empty() && !end_stream && !self.budgets.empty.take() {
@@ -685,7 +818,9 @@ impl Engine {
         }
         s.recv_window -= flow_len as i64;
         s.received += data.len() as u64;
-        if s.expected.is_some_and(|n| s.received > n || (end_stream && s.received != n)) {
+        if s.expected
+            .is_some_and(|n| s.received > n || (end_stream && s.received != n))
+        {
             self.credit_connection(flow_len);
             self.reset(id, ErrorCode::PROTOCOL_ERROR);
             return Ok(());
@@ -719,7 +854,12 @@ impl Engine {
         Ok(())
     }
 
-    fn on_fragment(&mut self, end_headers: bool, fragment: &[u8], new: &mut Vec<NewStream>) -> Result<(), Lost> {
+    fn on_fragment(
+        &mut self,
+        end_headers: bool,
+        fragment: &[u8],
+        new: &mut Vec<NewStream>,
+    ) -> Result<(), Lost> {
         let limit = self.max_header_bytes + 1024;
         let block = self.block.as_mut().expect("a block in progress");
         if block.bytes.len() + fragment.len() > limit {
@@ -729,7 +869,12 @@ impl Engine {
         if !end_headers {
             return Ok(());
         }
-        let Block { stream, end_stream, bytes, .. } = self.block.take().expect("a block in progress");
+        let Block {
+            stream,
+            end_stream,
+            bytes,
+            ..
+        } = self.block.take().expect("a block in progress");
         let mut decoded = Vec::new();
         // the block is decoded whatever becomes of the stream, so that the table stays the client's
         let within = match self.decoder.decode(&bytes, &mut decoded) {
@@ -747,7 +892,15 @@ impl Engine {
         self.on_header_block(stream, end_stream, fields, within && utf8, utf8, new)
     }
 
-    fn on_header_block(&mut self, id: u32, end_stream: bool, fields: Vec<(String, String)>, within: bool, utf8: bool, new: &mut Vec<NewStream>) -> Result<(), Lost> {
+    fn on_header_block(
+        &mut self,
+        id: u32,
+        end_stream: bool,
+        fields: Vec<(String, String)>,
+        within: bool,
+        utf8: bool,
+        new: &mut Vec<NewStream>,
+    ) -> Result<(), Lost> {
         if let Some(s) = self.streams.get_mut(&id) {
             if s.reset {
                 if s.reset_by_client {
@@ -759,12 +912,19 @@ impl Engine {
             if s.remote_ended {
                 // both ends done (only the handler's return is awaited): closed, as when it is gone
                 if s.local_ended {
-                    return Err(self.lose(ErrorCode::STREAM_CLOSED, "HEADERS on a stream that is closed"));
+                    return Err(self.lose(
+                        ErrorCode::STREAM_CLOSED,
+                        "HEADERS on a stream that is closed",
+                    ));
                 }
                 self.reset(id, ErrorCode::STREAM_CLOSED);
                 return Ok(());
             }
-            if !end_stream || !within || trailer_fault(&fields).is_some() || s.expected.is_some_and(|n| s.received != n) {
+            if !end_stream
+                || !within
+                || trailer_fault(&fields).is_some()
+                || s.expected.is_some_and(|n| s.received != n)
+            {
                 self.reset(id, ErrorCode::PROTOCOL_ERROR);
                 return Ok(());
             }
@@ -780,8 +940,14 @@ impl Engine {
                     frame::write_rst_stream(&mut self.out, id, ErrorCode::STREAM_CLOSED);
                     Ok(())
                 }
-                Some(Closed::Ended) => Err(self.lose(ErrorCode::STREAM_CLOSED, "HEADERS on a stream that is closed")),
-                None => Err(self.lose(ErrorCode::PROTOCOL_ERROR, "HEADERS on a stream id that is not new")),
+                Some(Closed::Ended) => Err(self.lose(
+                    ErrorCode::STREAM_CLOSED,
+                    "HEADERS on a stream that is closed",
+                )),
+                None => Err(self.lose(
+                    ErrorCode::PROTOCOL_ERROR,
+                    "HEADERS on a stream id that is not new",
+                )),
             };
         }
         // a new stream
@@ -817,7 +983,10 @@ impl Engine {
             }
             return Ok(());
         }
-        if checked.expected.is_some_and(|n| self.max_body.is_some_and(|max| n > max)) {
+        if checked
+            .expected
+            .is_some_and(|n| self.max_body.is_some_and(|max| n > max))
+        {
             self.answer_alone(id, end_stream, 413);
             return Ok(());
         }
@@ -855,7 +1024,15 @@ impl Engine {
             self.reset(id, ErrorCode::PROTOCOL_ERROR);
             return Ok(());
         }
-        new.push(NewStream { id, method: checked.method, scheme: checked.scheme, authority: checked.authority, path: checked.path, headers: checked.headers, end_stream });
+        new.push(NewStream {
+            id,
+            method: checked.method,
+            scheme: checked.scheme,
+            authority: checked.authority,
+            path: checked.path,
+            headers: checked.headers,
+            end_stream,
+        });
         Ok(())
     }
 
@@ -874,9 +1051,17 @@ impl Engine {
     fn encode(&mut self, status: u16, fields: &[(String, String)]) -> Vec<u8> {
         let status = status.to_string();
         let mut refs = Vec::with_capacity(fields.len() + 1);
-        refs.push(FieldRef { name: b":status", value: status.as_bytes(), sensitive: false });
+        refs.push(FieldRef {
+            name: b":status",
+            value: status.as_bytes(),
+            sensitive: false,
+        });
         for (n, v) in fields {
-            refs.push(FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: n == "set-cookie" });
+            refs.push(FieldRef {
+                name: n.as_bytes(),
+                value: v.as_bytes(),
+                sensitive: n == "set-cookie",
+            });
         }
         let mut block = Vec::new();
         self.encoder.encode(&refs, &mut block);
@@ -888,7 +1073,10 @@ impl Engine {
     /// Reads request body data for a handler: `Ok(Some(n))`, `Ok(None)` if it must wait, `Ok(Some(0))` at the end.
     pub(super) fn read_body(&mut self, id: u32, buf: &mut [u8]) -> io::Result<Option<usize>> {
         let Some(s) = self.streams.get_mut(&id) else {
-            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "the stream is over"));
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the stream is over",
+            ));
         };
         if let Some(e) = &s.body_error {
             return Err(io::Error::new(io::ErrorKind::InvalidData, e.clone()));
@@ -912,7 +1100,10 @@ impl Engine {
             return Ok(Some(0));
         }
         if s.reset || self.dead {
-            return Err(io::Error::new(io::ErrorKind::ConnectionReset, "the client reset the stream"));
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "the client reset the stream",
+            ));
         }
         if s.continue_pending && !s.head_sent {
             s.continue_pending = false;
@@ -922,17 +1113,31 @@ impl Engine {
         Ok(None)
     }
 
-    fn send_interim(&mut self, id: u32, status: u16, fields: &[(String, String)]) -> io::Result<()> {
+    fn send_interim(
+        &mut self,
+        id: u32,
+        status: u16,
+        fields: &[(String, String)],
+    ) -> io::Result<()> {
         let s = self.stream_for_writing(id)?;
         if s.head_sent {
-            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "the final response has begun"));
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the final response has begun",
+            ));
         }
         let block = self.encode(status, fields);
         frame::write_header_block(&mut self.out, id, false, &block, self.peer_max_frame);
         Ok(())
     }
 
-    pub(super) fn send_head(&mut self, id: u32, status: u16, fields: &[(String, String)], end: bool) -> io::Result<()> {
+    pub(super) fn send_head(
+        &mut self,
+        id: u32,
+        status: u16,
+        fields: &[(String, String)],
+        end: bool,
+    ) -> io::Result<()> {
         let s = self.stream_for_writing(id)?;
         s.head_sent = true;
         s.continue_pending = false;
@@ -951,7 +1156,10 @@ impl Engine {
         let dead = self.dead;
         match self.streams.get_mut(&id) {
             Some(s) if !s.reset && !dead && !s.local_ended && !s.end_pending => Ok(s),
-            _ => Err(io::Error::new(io::ErrorKind::BrokenPipe, "the client reset the stream, or the connection is over")),
+            _ => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the client reset the stream, or the connection is over",
+            )),
         }
     }
 
@@ -969,7 +1177,11 @@ impl Engine {
         Ok(n)
     }
 
-    pub(super) fn end_stream(&mut self, id: u32, trailers: Vec<(String, String)>) -> io::Result<()> {
+    pub(super) fn end_stream(
+        &mut self,
+        id: u32,
+        trailers: Vec<(String, String)>,
+    ) -> io::Result<()> {
         let s = self.stream_for_writing(id)?;
         s.end_pending = true;
         if !trailers.is_empty() {
@@ -980,7 +1192,9 @@ impl Engine {
     }
 
     pub(super) fn handler_returned(&mut self, id: u32) {
-        let Some(s) = self.streams.get_mut(&id) else { return };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return;
+        };
         s.handler_done = true;
         if !s.reset && !s.end_pending && !s.local_ended {
             // the response was never finished: the client must not take it for a whole one
@@ -998,7 +1212,14 @@ impl Engine {
         if self.dead {
             return;
         }
-        let mut ids: Vec<u32> = self.streams.iter().filter(|(_, s)| !s.local_ended && !s.reset && s.head_sent && (s.queued() > 0 || s.end_pending)).map(|(&id, _)| id).collect();
+        let mut ids: Vec<u32> = self
+            .streams
+            .iter()
+            .filter(|(_, s)| {
+                !s.local_ended && !s.reset && s.head_sent && (s.queued() > 0 || s.end_pending)
+            })
+            .map(|(&id, _)| id)
+            .collect();
         if ids.is_empty() {
             return;
         }
@@ -1026,7 +1247,9 @@ impl Engine {
     fn pump_stream(&mut self, id: u32) -> bool {
         let peer_max_frame = self.peer_max_frame;
         let conn_window = self.send_window;
-        let Some(s) = self.streams.get_mut(&id) else { return false };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return false;
+        };
         if s.local_ended || s.reset {
             return false;
         }
@@ -1054,7 +1277,12 @@ impl Engine {
         }
         s.stalled_since = None;
         let end = n == queued && s.end_pending && s.trailers_pending.is_none();
-        frame::write_data(&mut self.out, id, end, &s.pending[s.pending_pos..s.pending_pos + n]);
+        frame::write_data(
+            &mut self.out,
+            id,
+            end,
+            &s.pending[s.pending_pos..s.pending_pos + n],
+        );
         s.pending_pos += n;
         if s.pending_pos == s.pending.len() {
             s.pending.clear();
@@ -1070,8 +1298,21 @@ impl Engine {
     }
 
     fn encode_trailers(&mut self, trailers: &[(String, String)]) -> Vec<u8> {
-        let lower: Vec<(String, String)> = trailers.iter().filter(|(n, v)| !n.is_empty() && n.bytes().all(super::is_tchar) && super::is_field_value(v)).map(|(n, v)| (n.to_ascii_lowercase(), v.clone())).collect();
-        let refs: Vec<FieldRef<'_>> = lower.iter().map(|(n, v)| FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false }).collect();
+        let lower: Vec<(String, String)> = trailers
+            .iter()
+            .filter(|(n, v)| {
+                !n.is_empty() && n.bytes().all(super::is_tchar) && super::is_field_value(v)
+            })
+            .map(|(n, v)| (n.to_ascii_lowercase(), v.clone()))
+            .collect();
+        let refs: Vec<FieldRef<'_>> = lower
+            .iter()
+            .map(|(n, v)| FieldRef {
+                name: n.as_bytes(),
+                value: v.as_bytes(),
+                sensitive: false,
+            })
+            .collect();
         let mut block = Vec::new();
         self.encoder.encode(&refs, &mut block);
         block
@@ -1123,30 +1364,45 @@ fn check_request(fields: Vec<(String, String)>) -> Result<CheckedRequest, String
             return Err(format!("the value of {name:?} has a NUL, CR or LF"));
         }
         if value != value.trim_matches([' ', '\t']) {
-            return Err(format!("the value of {name:?} begins or ends with white space"));
+            return Err(format!(
+                "the value of {name:?} begins or ends with white space"
+            ));
         }
         if let Some(pseudo) = name.strip_prefix(':') {
             if regular {
                 return Err(format!("the pseudo-header {name} after a regular field"));
             }
-            let slot = match pseudo {
-                "method" => &mut method,
-                "scheme" => &mut scheme,
-                "path" => &mut path,
-                "authority" => &mut authority,
-                _ => return Err(format!("{name} is not a request pseudo-header (extended CONNECT is not offered)")),
-            };
+            let slot =
+                match pseudo {
+                    "method" => &mut method,
+                    "scheme" => &mut scheme,
+                    "path" => &mut path,
+                    "authority" => &mut authority,
+                    _ => return Err(format!(
+                        "{name} is not a request pseudo-header (extended CONNECT is not offered)"
+                    )),
+                };
             if slot.replace(value).is_some() {
                 return Err(format!("{name} twice"));
             }
             continue;
         }
         regular = true;
-        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || (super::is_tchar(b) && !b.is_ascii_uppercase())) {
-            return Err(format!("the field name {name:?} is not lower case token characters"));
+        if name.is_empty()
+            || !name.bytes().all(|b| {
+                b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || (super::is_tchar(b) && !b.is_ascii_uppercase())
+            })
+        {
+            return Err(format!(
+                "the field name {name:?} is not lower case token characters"
+            ));
         }
         match name.as_str() {
-            "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" => return Err(format!("the connection-specific field {name}")),
+            "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" => {
+                return Err(format!("the connection-specific field {name}"))
+            }
             "te" if value != "trailers" => return Err(format!("te: {value}")),
             "host" => {
                 if host.replace(value.clone()).is_some() {
@@ -1154,7 +1410,10 @@ fn check_request(fields: Vec<(String, String)>) -> Result<CheckedRequest, String
                 }
             }
             "content-length" => {
-                if value.is_empty() || value.len() > 18 || !value.bytes().all(|b| b.is_ascii_digit()) {
+                if value.is_empty()
+                    || value.len() > 18
+                    || !value.bytes().all(|b| b.is_ascii_digit())
+                {
                     return Err(format!("Content-Length {value:?}"));
                 }
                 let n: u64 = value.parse().expect("digits");
@@ -1181,29 +1440,53 @@ fn check_request(fields: Vec<(String, String)>) -> Result<CheckedRequest, String
             return Err("CONNECT with :scheme or :path".into());
         }
         let a = authority.ok_or("CONNECT without :authority")?;
-        if !valid_authority(&a) || !a.rsplit_once(':').is_some_and(|(h, p)| !h.is_empty() && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) {
+        if !valid_authority(&a)
+            || !a.rsplit_once(':').is_some_and(|(h, p)| {
+                !h.is_empty() && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())
+            })
+        {
             return Err("a CONNECT :authority that is not host:port".into());
         }
-        return Ok(CheckedRequest { method, scheme: String::new(), path: a.clone(), authority: a, headers, expected, expect_continue });
+        return Ok(CheckedRequest {
+            method,
+            scheme: String::new(),
+            path: a.clone(),
+            authority: a,
+            headers,
+            expected,
+            expect_continue,
+        });
     }
     let scheme = scheme.ok_or("no :scheme")?;
     if !scheme.eq_ignore_ascii_case("https") && !scheme.eq_ignore_ascii_case("http") {
         return Err(format!(":scheme {scheme}"));
     }
     let path = path.ok_or("no :path")?;
-    let path_ok = (path.starts_with('/') || (path == "*" && method == "OPTIONS")) && !path.contains('#') && path.bytes().all(|b| (0x21..0x7f).contains(&b));
+    let path_ok = (path.starts_with('/') || (path == "*" && method == "OPTIONS"))
+        && !path.contains('#')
+        && path.bytes().all(|b| (0x21..0x7f).contains(&b));
     if !path_ok {
         return Err(format!("the :path {path:?}"));
     }
     let authority = match (authority, host) {
-        (Some(a), Some(h)) if !a.eq_ignore_ascii_case(&h) => return Err("a Host that is not :authority".into()),
+        (Some(a), Some(h)) if !a.eq_ignore_ascii_case(&h) => {
+            return Err("a Host that is not :authority".into())
+        }
         (Some(a), _) | (None, Some(a)) => a,
         (None, None) => return Err("neither :authority nor Host".into()),
     };
     if !valid_authority(&authority) {
         return Err("an :authority that is not a host and port".into());
     }
-    Ok(CheckedRequest { method, scheme, authority, path, headers, expected, expect_continue })
+    Ok(CheckedRequest {
+        method,
+        scheme,
+        authority,
+        path,
+        headers,
+        expected,
+        expect_continue,
+    })
 }
 
 fn trailer_fault(fields: &[(String, String)]) -> Option<&'static str> {
@@ -1211,7 +1494,11 @@ fn trailer_fault(fields: &[(String, String)]) -> Option<&'static str> {
         if name.starts_with(':') {
             return Some("a pseudo-header in trailers");
         }
-        if name.is_empty() || !name.bytes().all(|b| super::is_tchar(b) && !b.is_ascii_uppercase()) {
+        if name.is_empty()
+            || !name
+                .bytes()
+                .all(|b| super::is_tchar(b) && !b.is_ascii_uppercase())
+        {
             return Some("a trailer name that is not lower case token characters");
         }
         if value.bytes().any(|b| b == 0 || b == b'\r' || b == b'\n') {
@@ -1248,11 +1535,21 @@ impl GoAway for Shared {
 
 impl Shared {
     /// Waits for a change, at most `limit`; false if the time ran out with nothing changed.
-    fn wait<'a>(&self, e: MutexGuard<'a, Engine>, limit: Option<Duration>) -> (MutexGuard<'a, Engine>, bool) {
+    fn wait<'a>(
+        &self,
+        e: MutexGuard<'a, Engine>,
+        limit: Option<Duration>,
+    ) -> (MutexGuard<'a, Engine>, bool) {
         match limit {
-            None => (self.changed.wait(e).unwrap_or_else(|p| p.into_inner()), true),
+            None => (
+                self.changed.wait(e).unwrap_or_else(|p| p.into_inner()),
+                true,
+            ),
             Some(d) => {
-                let (e, r) = self.changed.wait_timeout(e, d).unwrap_or_else(|p| p.into_inner());
+                let (e, r) = self
+                    .changed
+                    .wait_timeout(e, d)
+                    .unwrap_or_else(|p| p.into_inner());
                 (e, !r.timed_out())
             }
         }
@@ -1341,7 +1638,10 @@ impl BodySource for StreamIn {
                             e.reset(self.id, ErrorCode::CANCEL);
                             drop(e);
                             let _ = self.shared.send(true);
-                            return Err(io::Error::new(io::ErrorKind::TimedOut, "the client sent nothing more of the request body for too long"));
+                            return Err(io::Error::new(
+                                io::ErrorKind::TimedOut,
+                                "the client sent nothing more of the request body for too long",
+                            ));
                         }
                     }
                 }
@@ -1353,7 +1653,12 @@ impl BodySource for StreamIn {
     }
 
     fn trailers(&self) -> Vec<(String, String)> {
-        self.shared.engine().streams.get(&self.id).map(|s| s.trailers.clone()).unwrap_or_default()
+        self.shared
+            .engine()
+            .streams
+            .get(&self.id)
+            .map(|s| s.trailers.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -1380,7 +1685,10 @@ impl StreamOut {
                         e.reset(self.id, ErrorCode::CANCEL);
                         drop(e);
                         let _ = self.shared.send(true);
-                        return Err(io::Error::new(io::ErrorKind::TimedOut, "the client did not take the response in time"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "the client did not take the response in time",
+                        ));
                     }
                 }
             };
@@ -1426,13 +1734,25 @@ impl Drop for TunnelOut {
 }
 
 /// Serves an HTTP/2 connection whose preface has not been read yet.
-pub(super) fn serve(mut reader: Box<dyn Read + Send>, writer: Box<dyn Write + Send>, info: Arc<ConnInfo>, handler: Arc<dyn Handler>, config: &HttpConfig, ctl: Arc<Ctl>) -> io::Result<()> {
+pub(super) fn serve(
+    mut reader: Box<dyn Read + Send>,
+    writer: Box<dyn Write + Send>,
+    info: Arc<ConnInfo>,
+    handler: Arc<dyn Handler>,
+    config: &HttpConfig,
+    ctl: Arc<Ctl>,
+) -> io::Result<()> {
     let mut preface = [0u8; 24];
     reader.read_exact(&mut preface)?;
     if preface != PREFACE {
         let mut writer = writer;
         let mut out = Vec::new();
-        frame::write_goaway(&mut out, 0, ErrorCode::PROTOCOL_ERROR, b"the client did not begin with the connection preface");
+        frame::write_goaway(
+            &mut out,
+            0,
+            ErrorCode::PROTOCOL_ERROR,
+            b"the client did not begin with the connection preface",
+        );
         let _ = writer.write_all(&out);
         return Ok(());
     }
@@ -1440,7 +1760,14 @@ pub(super) fn serve(mut reader: Box<dyn Read + Send>, writer: Box<dyn Write + Se
 }
 
 /// Serves an HTTP/2 connection whose preface has been read.
-pub(super) fn serve_after_preface(mut reader: Box<dyn Read + Send>, writer: Box<dyn Write + Send>, info: Arc<ConnInfo>, handler: Arc<dyn Handler>, config: &HttpConfig, ctl: Arc<Ctl>) -> io::Result<()> {
+pub(super) fn serve_after_preface(
+    mut reader: Box<dyn Read + Send>,
+    writer: Box<dyn Write + Send>,
+    info: Arc<ConnInfo>,
+    handler: Arc<dyn Handler>,
+    config: &HttpConfig,
+    ctl: Arc<Ctl>,
+) -> io::Result<()> {
     let runtime = ctl.timer.is_some();
     let shared = Arc::new(Shared {
         engine: Mutex::new(Engine::new(config)),
@@ -1477,10 +1804,19 @@ pub(super) fn serve_after_preface(mut reader: Box<dyn Read + Send>, writer: Box<
                 Ok(0) => break Ok(()),
                 Ok(n) => n,
                 // (WouldBlock: a read with no deadline lets the loop look at the streams again)
-                Err(e) if matches!(e.kind(), io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock) => continue,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    continue
+                }
                 Err(e) if e.kind() == io::ErrorKind::TimedOut => {
                     // a stream that waited too long for a window is reset, and the connection goes on; an idle one ends
-                    let reset = shared.engine().reset_stalled(Instant::now() - ctl.limits.write_timeout);
+                    let reset = shared
+                        .engine()
+                        .reset_stalled(Instant::now() - ctl.limits.write_timeout);
                     if reset == 0 {
                         break Err(e);
                     }
@@ -1502,7 +1838,14 @@ pub(super) fn serve_after_preface(mut reader: Box<dyn Read + Send>, writer: Box<
                 Ok(new) => new,
                 Err(lost) => {
                     let _ = shared.send(true);
-                    break Err(io::Error::new(io::ErrorKind::InvalidData, format!("HTTP/2 connection closed with {}: {}", ErrorCode(lost.code), lost.reason)));
+                    break Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "HTTP/2 connection closed with {}: {}",
+                            ErrorCode(lost.code),
+                            lost.reason
+                        ),
+                    ));
                 }
             };
             for stream in new {
@@ -1516,7 +1859,11 @@ pub(super) fn serve_after_preface(mut reader: Box<dyn Read + Send>, writer: Box<
                 let ctl = ctl.clone();
                 let config = config.clone();
                 let running = running.clone();
-                let scheme = if stream.scheme.is_empty() { scheme_default.to_string() } else { stream.scheme.to_ascii_lowercase() };
+                let scheme = if stream.scheme.is_empty() {
+                    scheme_default.to_string()
+                } else {
+                    stream.scheme.to_ascii_lowercase()
+                };
                 *running.0.lock().unwrap_or_else(|e| e.into_inner()) += 1;
                 pool::run(Box::new(move || {
                     run_stream(shared, handler, info, stream, scheme, &config, &ctl);
@@ -1555,11 +1902,26 @@ pub(super) fn serve_after_preface(mut reader: Box<dyn Read + Send>, writer: Box<
 }
 
 /// Runs one request's handler and sends its response.
-fn run_stream(shared: Arc<Shared>, handler: Arc<dyn Handler>, info: Arc<ConnInfo>, s: NewStream, scheme: String, config: &HttpConfig, ctl: &Ctl) {
+fn run_stream(
+    shared: Arc<Shared>,
+    handler: Arc<dyn Handler>,
+    info: Arc<ConnInfo>,
+    s: NewStream,
+    scheme: String,
+    config: &HttpConfig,
+    ctl: &Ctl,
+) {
     let id = s.id;
     let is_head = s.method == "HEAD";
     let is_connect = s.method == "CONNECT";
-    let body = if s.end_stream { Body::new(None) } else { Body::new(Some(Box::new(StreamIn { shared: shared.clone(), id }))) };
+    let body = if s.end_stream {
+        Body::new(None)
+    } else {
+        Body::new(Some(Box::new(StreamIn {
+            shared: shared.clone(),
+            id,
+        })))
+    };
     let interim: super::Interim = {
         let shared = shared.clone();
         Arc::new(move |status: u16, fields: &[(String, String)]| {
@@ -1567,7 +1929,18 @@ fn run_stream(shared: Arc<Shared>, handler: Arc<dyn Handler>, info: Arc<ConnInfo
             shared.send(true)
         })
     };
-    let request = Request { method: s.method, target: s.path, authority: s.authority, scheme, version: Version::Http2, headers: s.headers, body, info, interim: Some(interim), ctl: None };
+    let request = Request {
+        method: s.method,
+        target: s.path,
+        authority: s.authority,
+        scheme,
+        version: Version::Http2,
+        headers: s.headers,
+        body,
+        info,
+        interim: Some(interim),
+        ctl: None,
+    };
     let pending = Pending::of(ctl, &request);
     let (response, _panicked) = call(&*handler, request);
     let status = response.status;
@@ -1595,13 +1968,34 @@ fn run_stream(shared: Arc<Shared>, handler: Arc<dyn Handler>, info: Arc<ConnInfo
 }
 
 /// Sends a response; the status and the body bytes sent.
-fn send_response(shared: &Arc<Shared>, id: u32, response: Response, is_head: bool, is_connect: bool, config: &HttpConfig) -> io::Result<(u16, u64)> {
-    let Response { status, headers, body } = response;
+fn send_response(
+    shared: &Arc<Shared>,
+    id: u32,
+    response: Response,
+    is_head: bool,
+    is_connect: bool,
+    config: &HttpConfig,
+) -> io::Result<(u16, u64)> {
+    let Response {
+        status,
+        headers,
+        body,
+    } = response;
     let upgrade = matches!(body, ResponseBody::Upgrade(_));
-    let valid = (200..=999).contains(&status) && (upgrade == (is_connect && (200..300).contains(&status)) || (is_connect && !upgrade));
+    let valid = (200..=999).contains(&status)
+        && (upgrade == (is_connect && (200..300).contains(&status)) || (is_connect && !upgrade));
     let head = match response_head(&headers, config) {
         Ok(h) if valid => h,
-        _ => return send_response(shared, id, Response::text(500, "internal server error\n"), is_head, false, config),
+        _ => {
+            return send_response(
+                shared,
+                id,
+                Response::text(500, "internal server error\n"),
+                is_head,
+                false,
+                config,
+            )
+        }
     };
     if head.close {
         // a handler's Connection: close is a GOAWAY once this response has ended: the connection ends with the others
@@ -1609,7 +2003,11 @@ fn send_response(shared: &Arc<Shared>, id: u32, response: Response, is_head: boo
             s.goaway_after = true;
         }
     }
-    let mut fields: Vec<(String, String)> = head.fields.into_iter().filter(|(n, _)| n != "upgrade" && n != "te").collect();
+    let mut fields: Vec<(String, String)> = head
+        .fields
+        .into_iter()
+        .filter(|(n, _)| n != "upgrade" && n != "te")
+        .collect();
     let no_body = matches!(status, 204 | 304) || (is_connect && (200..300).contains(&status));
     let length = match &body {
         _ if no_body && status != 304 => None,
@@ -1625,7 +2023,16 @@ fn send_response(shared: &Arc<Shared>, id: u32, response: Response, is_head: boo
         }
     }
     let send_body = !is_head && !no_body;
-    let empty = matches!(body, ResponseBody::Empty) || !send_body || matches!(&body, ResponseBody::Bytes(b) if b.is_empty()) || matches!(body, ResponseBody::Reader { length: Some(0), .. });
+    let empty = matches!(body, ResponseBody::Empty)
+        || !send_body
+        || matches!(&body, ResponseBody::Bytes(b) if b.is_empty())
+        || matches!(
+            body,
+            ResponseBody::Reader {
+                length: Some(0),
+                ..
+            }
+        );
     if let ResponseBody::Bytes(b) = &body {
         if !empty && !upgrade && b.len() <= config.h2.stream_send_buffer {
             // a whole small response: the head, the body and its end framed under one lock and sent together
@@ -1639,12 +2046,17 @@ fn send_response(shared: &Arc<Shared>, id: u32, response: Response, is_head: boo
             return Ok((status, b.len() as u64));
         }
     }
-    shared.engine().send_head(id, status, &fields, empty && !upgrade)?;
+    shared
+        .engine()
+        .send_head(id, status, &fields, empty && !upgrade)?;
     shared.send(true)?;
     if empty && !upgrade {
         return Ok((status, 0));
     }
-    let mut out = StreamOut { shared: shared.clone(), id };
+    let mut out = StreamOut {
+        shared: shared.clone(),
+        id,
+    };
     match body {
         ResponseBody::Empty => out.end(Vec::new()).map(|()| (status, 0)),
         ResponseBody::Bytes(b) => {
@@ -1656,12 +2068,19 @@ fn send_response(shared: &Arc<Shared>, id: u32, response: Response, is_head: boo
             let mut sent = 0u64;
             let mut chunk = vec![0u8; 16 * 1024];
             loop {
-                let want = left.map_or(chunk.len(), |l| chunk.len().min(usize::try_from(l).unwrap_or(usize::MAX)));
+                let want = left.map_or(chunk.len(), |l| {
+                    chunk.len().min(usize::try_from(l).unwrap_or(usize::MAX))
+                });
                 if want == 0 {
                     break;
                 }
                 let n = match reader.read(&mut chunk[..want]) {
-                    Ok(0) if left.is_some_and(|l| l > 0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the handler's reader ended before its length")),
+                    Ok(0) if left.is_some_and(|l| l > 0) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::UnexpectedEof,
+                            "the handler's reader ended before its length",
+                        ))
+                    }
                     Ok(0) => break,
                     Ok(n) => n,
                     Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -1676,15 +2095,25 @@ fn send_response(shared: &Arc<Shared>, id: u32, response: Response, is_head: boo
             out.end(Vec::new()).map(|()| (status, sent))
         }
         ResponseBody::Stream(write) => {
-            let mut writer = BodyWriter { sink: &mut out, trailers: Vec::new(), written: 0 };
+            let mut writer = BodyWriter {
+                sink: &mut out,
+                trailers: Vec::new(),
+                written: 0,
+            };
             write(&mut writer)?;
             let trailers = std::mem::take(&mut writer.trailers);
             let sent = writer.written;
             out.end(trailers).map(|()| (status, sent))
         }
         ResponseBody::Upgrade(then) => {
-            let reader = Body::new(Some(Box::new(StreamIn { shared: shared.clone(), id })));
-            then(Upgraded { reader: Box::new(reader), writer: Box::new(TunnelOut(out)) });
+            let reader = Body::new(Some(Box::new(StreamIn {
+                shared: shared.clone(),
+                id,
+            })));
+            then(Upgraded {
+                reader: Box::new(reader),
+                writer: Box::new(TunnelOut(out)),
+            });
             Ok((status, 0))
         }
     }
@@ -1713,7 +2142,13 @@ mod pool {
 
     fn pool() -> &'static Pool {
         static POOL: OnceLock<Pool> = OnceLock::new();
-        POOL.get_or_init(|| Pool { state: Mutex::new(State { jobs: VecDeque::new(), idle: 0 }), work: Condvar::new() })
+        POOL.get_or_init(|| Pool {
+            state: Mutex::new(State {
+                jobs: VecDeque::new(),
+                idle: 0,
+            }),
+            work: Condvar::new(),
+        })
     }
 
     /// Runs `job` on a thread of the pool.
@@ -1729,12 +2164,14 @@ mod pool {
         drop(st);
         let slot = std::sync::Arc::new(Mutex::new(Some(job)));
         let mine = slot.clone();
-        let spawned = std::thread::Builder::new().name("pratique-h2".into()).spawn(move || {
-            if let Some(job) = mine.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                job();
-            }
-            worker(p);
-        });
+        let spawned = std::thread::Builder::new()
+            .name("pratique-h2".into())
+            .spawn(move || {
+                if let Some(job) = mine.lock().unwrap_or_else(|e| e.into_inner()).take() {
+                    job();
+                }
+                worker(p);
+            });
         if spawned.is_err() {
             // no thread could be made (the system is out of them): the job runs here rather than not at all
             if let Some(job) = slot.lock().unwrap_or_else(|e| e.into_inner()).take() {
@@ -1753,7 +2190,10 @@ mod pool {
                         st.idle -= 1;
                         break Some(j);
                     }
-                    let (next, timeout) = p.work.wait_timeout(st, Duration::from_secs(10)).unwrap_or_else(|e| e.into_inner());
+                    let (next, timeout) = p
+                        .work
+                        .wait_timeout(st, Duration::from_secs(10))
+                        .unwrap_or_else(|e| e.into_inner());
                     st = next;
                     if timeout.timed_out() && st.jobs.is_empty() {
                         st.idle -= 1;

@@ -122,14 +122,29 @@ fn limbs<const N: usize>(bytes: &[u8]) -> Option<[u64; N]> {
 }
 
 impl<const H: usize, const F: usize> CrtKey<H, F> {
-    fn new(n: &[u8], e: u64, p: &[u8], q: &[u8], dp: &[u8], dq: &[u8], qinv: &[u8]) -> Result<Box<CrtKey<H, F>>> {
+    fn new(
+        n: &[u8],
+        e: u64,
+        p: &[u8],
+        q: &[u8],
+        dp: &[u8],
+        dq: &[u8],
+        qinv: &[u8],
+    ) -> Result<Box<CrtKey<H, F>>> {
         let bad = |what: &str| Error::Key(format!("an RSA private key whose {what}"));
         let n_l = limbs::<F>(n).ok_or_else(|| bad("modulus does not fit its size"))?;
-        let mut p_l = Zeroizing::new(limbs::<H>(p).ok_or_else(|| bad("first prime is longer than half the modulus"))?);
-        let mut q_l = Zeroizing::new(limbs::<H>(q).ok_or_else(|| bad("second prime is longer than half the modulus"))?);
-        let dp_l = Zeroizing::new(limbs::<H>(dp).ok_or_else(|| bad("first CRT exponent is too long"))?);
-        let dq_l = Zeroizing::new(limbs::<H>(dq).ok_or_else(|| bad("second CRT exponent is too long"))?);
-        let qinv_l = Zeroizing::new(limbs::<H>(qinv).ok_or_else(|| bad("CRT coefficient is too long"))?);
+        let mut p_l = Zeroizing::new(
+            limbs::<H>(p).ok_or_else(|| bad("first prime is longer than half the modulus"))?,
+        );
+        let mut q_l = Zeroizing::new(
+            limbs::<H>(q).ok_or_else(|| bad("second prime is longer than half the modulus"))?,
+        );
+        let dp_l =
+            Zeroizing::new(limbs::<H>(dp).ok_or_else(|| bad("first CRT exponent is too long"))?);
+        let dq_l =
+            Zeroizing::new(limbs::<H>(dq).ok_or_else(|| bad("second CRT exponent is too long"))?);
+        let qinv_l =
+            Zeroizing::new(limbs::<H>(qinv).ok_or_else(|| bad("CRT coefficient is too long"))?);
         // p and q odd and above 1; p q = n; the CRT values below their primes. Checked by masks and a constant-time
         // comparison, so the checks themselves say nothing about the primes.
         if (p_l[0] & q_l[0] & 1) == 0 {
@@ -149,13 +164,25 @@ impl<const H: usize, const F: usize> CrtKey<H, F> {
         let one_check = p_mod.mul(&p_mod.to_mont(&q_l), &qinv_l); // q R qinv / R
         let mut one = [0u64; H];
         one[0] = 1;
-        if !ct_eq(&ct_mod::limbs_to_be(&one_check, 8 * H), &ct_mod::limbs_to_be(&one, 8 * H)) {
+        if !ct_eq(
+            &ct_mod::limbs_to_be(&one_check, 8 * H),
+            &ct_mod::limbs_to_be(&one, 8 * H),
+        ) {
             return Err(bad("CRT coefficient is not the inverse of q modulo p"));
         }
         p_l.zeroize();
         q_l.zeroize();
         let n_mod = Modulus::new(n_l);
-        let mut key = Box::new(CrtKey { p: p_mod, q: q_mod, dp: *dp_l, dq: *dq_l, qinv: *qinv_l, n: n_mod, e, blinding: Mutex::new(([0u64; F], [0u64; F])) });
+        let mut key = Box::new(CrtKey {
+            p: p_mod,
+            q: q_mod,
+            dp: *dp_l,
+            dq: *dq_l,
+            qinv: *qinv_l,
+            n: n_mod,
+            e,
+            blinding: Mutex::new(([0u64; F], [0u64; F])),
+        });
         key.blinding = Mutex::new(key.new_blinding()?);
         Ok(key)
     }
@@ -242,18 +269,27 @@ impl<const H: usize, const F: usize> CrtKey<H, F> {
             let product = self.n.from_mont(&self.n.mul(&r_m, &r_inv_m));
             let mut one = [0u64; F];
             one[0] = 1;
-            if ct_eq(&ct_mod::limbs_to_be(&product, 8 * F), &ct_mod::limbs_to_be(&one, 8 * F)) {
+            if ct_eq(
+                &ct_mod::limbs_to_be(&product, 8 * F),
+                &ct_mod::limbs_to_be(&one, 8 * F),
+            ) {
                 return Ok((self.pow_e(&r_m), r_inv_m));
             }
         }
-        Err(Error::Key("an RSA private key whose primes and CRT values do not fit together".into()))
+        Err(Error::Key(
+            "an RSA private key whose primes and CRT values do not fit together".into(),
+        ))
     }
 
     /// The signature of the encoded message `em` (exactly the modulus's length, below n), blinded and checked.
     fn sign(&self, em: &[u8], public: &RsaPublicKey) -> Result<Vec<u8>> {
-        let m = limbs::<F>(em).ok_or_else(|| Error::Key("an RSA message representative longer than the modulus".into()))?;
+        let m = limbs::<F>(em).ok_or_else(|| {
+            Error::Key("an RSA message representative longer than the modulus".into())
+        })?;
         if self.n.below_mask(&m) == 0 {
-            return Err(Error::Key("an RSA message representative not below the modulus".into()));
+            return Err(Error::Key(
+                "an RSA message representative not below the modulus".into(),
+            ));
         }
         let (a, ai) = {
             let mut pair = self.blinding.lock().unwrap_or_else(|e| e.into_inner());
@@ -265,7 +301,9 @@ impl<const H: usize, const F: usize> CrtKey<H, F> {
         let _dit = Dit::on();
         let mut blinded = self.n.from_mont(&self.n.mul(&self.n.to_mont(&m), &a));
         let mut s_blinded = self.private_op(&blinded);
-        let s = self.n.from_mont(&self.n.mul(&self.n.to_mont(&s_blinded), &ai));
+        let s = self
+            .n
+            .from_mont(&self.n.mul(&self.n.to_mont(&s_blinded), &ai));
         blinded.zeroize();
         s_blinded.zeroize();
         let k = em.len();
@@ -294,15 +332,24 @@ impl RsaSigningKey {
     /// Parses PKCS#1's `RSAPrivateKey` (RFC 8017 appendix A.1.2), two primes (version 0) only.
     pub fn from_pkcs1_der(der: &[u8]) -> Result<RsaSigningKey> {
         use crate::asn1::{self, Der, TAG_INTEGER};
-        let bad = |e: crate::verify_error::Error| Error::Key(format!("not an RSA private key (PKCS#1 RSAPrivateKey): {e}"));
+        let bad = |e: crate::verify_error::Error| {
+            Error::Key(format!(
+                "not an RSA private key (PKCS#1 RSAPrivateKey): {e}"
+            ))
+        };
         let mut outer = Der::new(der);
         let mut seq = outer.sequence().map_err(bad)?;
         outer.finish().map_err(bad)?;
-        let version = asn1::unsigned_integer(&seq.expect(TAG_INTEGER).map_err(bad)?).map_err(bad)?;
+        let version =
+            asn1::unsigned_integer(&seq.expect(TAG_INTEGER).map_err(bad)?).map_err(bad)?;
         if version != [0] {
             return Err(Error::Key("an RSA private key with more than two primes (multi-prime, version 1) is not supported".into()));
         }
-        let mut field = || -> Result<Zeroizing<Vec<u8>>> { Ok(Zeroizing::new(asn1::unsigned_integer(&seq.expect(TAG_INTEGER).map_err(bad)?).map_err(bad)?)) };
+        let mut field = || -> Result<Zeroizing<Vec<u8>>> {
+            Ok(Zeroizing::new(
+                asn1::unsigned_integer(&seq.expect(TAG_INTEGER).map_err(bad)?).map_err(bad)?,
+            ))
+        };
         let n = field()?;
         let e = field()?;
         let _d = field()?;
@@ -317,8 +364,17 @@ impl RsaSigningKey {
 
     /// The key from its CRT parameters (big-endian): the modulus, the public exponent, the primes p and q,
     /// dp = d mod (p - 1), dq = d mod (q - 1) and qinv = q^-1 mod p.
-    pub fn from_crt(n: &[u8], e: &[u8], p: &[u8], q: &[u8], dp: &[u8], dq: &[u8], qinv: &[u8]) -> Result<RsaSigningKey> {
-        let public = RsaPublicKey::from_components(n, e).map_err(|err| Error::Key(format!("an RSA key whose public part is refused: {err}")))?;
+    pub fn from_crt(
+        n: &[u8],
+        e: &[u8],
+        p: &[u8],
+        q: &[u8],
+        dp: &[u8],
+        dq: &[u8],
+        qinv: &[u8],
+    ) -> Result<RsaSigningKey> {
+        let public = RsaPublicKey::from_components(n, e)
+            .map_err(|err| Error::Key(format!("an RSA key whose public part is refused: {err}")))?;
         let bits = public.bits();
         let k = (bits + 7) / 8;
         let e_value = e.iter().fold(0u64, |acc, &b| (acc << 8) | b as u64);
@@ -336,11 +392,20 @@ impl RsaSigningKey {
             }
         };
         let trim = |v: &[u8]| v[v.iter().position(|&b| b != 0).unwrap_or(v.len() - 1)..].to_vec();
-        let key = RsaSigningKey { crt, public, n: trim(n), e: trim(e), bits, k };
+        let key = RsaSigningKey {
+            crt,
+            public,
+            n: trim(n),
+            e: trim(e),
+            bits,
+            k,
+        };
         // one signature now, so that a key whose CRT values do not belong to its modulus is refused here and not at the
         // first handshake
         key.sign_pss(HashAlg::Sha256, b"pratique: a key's first signature")
-            .map_err(|_| Error::Key("an RSA private key whose CRT values do not match its modulus".into()))?;
+            .map_err(|_| {
+                Error::Key("an RSA private key whose CRT values do not match its modulus".into())
+            })?;
         Ok(key)
     }
 
@@ -369,7 +434,9 @@ impl RsaSigningKey {
         let em_bits = self.bits - 1;
         let em_len = (em_bits + 7) / 8;
         if em_len < 2 * h_len + 2 {
-            return Err(Error::Key("an RSA key too short for PSS with this hash".into()));
+            return Err(Error::Key(
+                "an RSA key too short for PSS with this hash".into(),
+            ));
         }
         let mut salt = Zeroizing::new(vec![0u8; h_len]);
         rand::fill(&mut salt)?;
@@ -414,7 +481,11 @@ impl RsaSigningKey {
 /// For the timing tests: the constant-time power modulo a secret modulus of `N` limbs (16: an RSA-2048 prime, by rows;
 /// 32: an RSA-4096 prime, by columns).
 #[cfg(test)]
-pub(crate) fn pow_for_timing<const N: usize>(m: &[u64; N], base: &[u64; N], exp: &[u64; N]) -> [u64; N] {
+pub(crate) fn pow_for_timing<const N: usize>(
+    m: &[u64; N],
+    base: &[u64; N],
+    exp: &[u64; N],
+) -> [u64; N] {
     let _dit = Dit::on();
     let k = Modulus::<N>::new_secret(*m);
     k.pow_secret(&k.to_mont(base), exp)
@@ -445,11 +516,19 @@ mod tests {
         for (bits, der, want) in keys.iter().filter(|k| k.0 >= 2048) {
             let key = RsaSigningKey::from_pkcs1_der(der).unwrap();
             assert_eq!(key.bits(), *bits);
-            assert_eq!(&key.sign_pkcs1(HashAlg::Sha256, b"pratique").unwrap(), want, "{bits} bits");
+            assert_eq!(
+                &key.sign_pkcs1(HashAlg::Sha256, b"pratique").unwrap(),
+                want,
+                "{bits} bits"
+            );
             for alg in [HashAlg::Sha256, HashAlg::Sha384, HashAlg::Sha512] {
                 let sig = key.sign_pkcs1(alg, b"another message").unwrap();
                 assert!(key.public_key().verify_pkcs1(alg, b"another message", &sig));
-                assert_eq!(sig, key.sign_pkcs1(alg, b"another message").unwrap(), "deterministic, whatever the blinding");
+                assert_eq!(
+                    sig,
+                    key.sign_pkcs1(alg, b"another message").unwrap(),
+                    "deterministic, whatever the blinding"
+                );
             }
         }
     }
@@ -462,7 +541,10 @@ mod tests {
                 let a = key.sign_pss(alg, b"message").unwrap();
                 let b = key.sign_pss(alg, b"message").unwrap();
                 assert_ne!(a, b, "a random salt each time");
-                assert!(key.public_key().verify_pss(alg, b"message", &a), "{bits} {alg:?}");
+                assert!(
+                    key.public_key().verify_pss(alg, b"message", &a),
+                    "{bits} {alg:?}"
+                );
                 assert!(key.public_key().verify_pss(alg, b"message", &b));
                 assert!(!key.public_key().verify_pss(alg, b"messagE", &a));
             }
@@ -472,25 +554,42 @@ mod tests {
     #[test]
     fn small_and_broken_keys_are_refused() {
         let keys = keys();
-        let small = keys.iter().find(|k| k.0 < 2048).expect("a small key in the fixtures");
-        let err = RsaSigningKey::from_pkcs1_der(&small.1).unwrap_err().to_string();
+        let small = keys
+            .iter()
+            .find(|k| k.0 < 2048)
+            .expect("a small key in the fixtures");
+        let err = RsaSigningKey::from_pkcs1_der(&small.1)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("below 2048"), "{err}");
         // a key whose q is changed: the primes no longer multiply to n
         let good = &keys.iter().find(|k| k.0 == 2048).unwrap().1;
         let parsed = parse_fields(good);
         let mut q = parsed[5].clone();
         *q.last_mut().unwrap() ^= 2;
-        let err = RsaSigningKey::from_crt(&parsed[1], &parsed[2], &parsed[4], &q, &parsed[6], &parsed[7], &parsed[8]).unwrap_err().to_string();
+        let err = RsaSigningKey::from_crt(
+            &parsed[1], &parsed[2], &parsed[4], &q, &parsed[6], &parsed[7], &parsed[8],
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("multiply"), "{err}");
         // a wrong dp: refused by the first signature's check
         let mut dp = parsed[6].clone();
         *dp.last_mut().unwrap() ^= 4;
-        let err = RsaSigningKey::from_crt(&parsed[1], &parsed[2], &parsed[4], &parsed[5], &dp, &parsed[7], &parsed[8]).unwrap_err().to_string();
+        let err = RsaSigningKey::from_crt(
+            &parsed[1], &parsed[2], &parsed[4], &parsed[5], &dp, &parsed[7], &parsed[8],
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("CRT values do not match"), "{err}");
         // a wrong qinv
         let mut qinv = parsed[8].clone();
         *qinv.last_mut().unwrap() ^= 1;
-        let err = RsaSigningKey::from_crt(&parsed[1], &parsed[2], &parsed[4], &parsed[5], &parsed[6], &parsed[7], &qinv).unwrap_err().to_string();
+        let err = RsaSigningKey::from_crt(
+            &parsed[1], &parsed[2], &parsed[4], &parsed[5], &parsed[6], &parsed[7], &qinv,
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("inverse of q"), "{err}");
         // not DER, truncated, a multi-prime version
         assert!(RsaSigningKey::from_pkcs1_der(&good[..good.len() - 1]).is_err());
@@ -498,7 +597,10 @@ mod tests {
         let mut v1 = good.clone();
         let version_at = v1.iter().position(|&b| b == 0x02).unwrap(); // the version INTEGER: 02 01 00
         v1[version_at + 2] = 1;
-        assert!(RsaSigningKey::from_pkcs1_der(&v1).unwrap_err().to_string().contains("multi-prime"));
+        assert!(RsaSigningKey::from_pkcs1_der(&v1)
+            .unwrap_err()
+            .to_string()
+            .contains("multi-prime"));
     }
 
     /// The nine INTEGERs of an RSAPrivateKey: version, n, e, d, p, q, dp, dq, qinv.
@@ -506,7 +608,9 @@ mod tests {
         use crate::asn1::{self, Der, TAG_INTEGER};
         let mut outer = Der::new(der);
         let mut seq = outer.sequence().unwrap();
-        (0..9).map(|_| asn1::unsigned_integer(&seq.expect(TAG_INTEGER).unwrap()).unwrap()).collect()
+        (0..9)
+            .map(|_| asn1::unsigned_integer(&seq.expect(TAG_INTEGER).unwrap()).unwrap())
+            .collect()
     }
 
     #[test]

@@ -18,12 +18,12 @@
 //! waits for its response): with `--idle-ms MS` below SECS, the connection lives through it only by the keep-alive PINGs. It says
 //! "kept alive through" when the quiet time is over and the connection is still open.
 
-use std::net::{ToSocketAddrs, UdpSocket};
-use std::time::{Duration, Instant};
 use pratique::quic::connection::{CloseReason, Config, Connection, Event};
 use pratique::quic::streams::{StreamError, StreamEvent};
 use pratique::tls::ClientConfig;
 use pratique::x509::TrustStore;
+use std::net::{ToSocketAddrs, UdpSocket};
+use std::time::{Duration, Instant};
 
 fn put_varint(out: &mut Vec<u8>, v: u64) {
     match v {
@@ -51,7 +51,7 @@ fn request(method_index: u8, path: &str, authority: &str) -> Vec<u8> {
     let mut block = vec![0x00, 0x00]; // required insert count 0, base 0
     block.push(0xc0 | method_index); // :method GET (static index 17) or POST (20)
     block.push(0xc0 | 23); // :scheme https (23)
-    // :path with a literal value, name from the static table (index 1)
+                           // :path with a literal value, name from the static table (index 1)
     block.push(0x50 | 1);
     put_varint_prefixed(&mut block, path.as_bytes());
     // :authority (index 0)
@@ -86,18 +86,36 @@ fn main() {
         eprintln!("usage: quic_probe HOST:PORT SERVER_NAME CA.pem [--ping N] [--get PATH]");
         std::process::exit(2);
     }
-    let option = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    let option = |name: &str| {
+        args.iter()
+            .position(|a| a == name)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
     let pings: usize = option("--ping").and_then(|n| n.parse().ok()).unwrap_or(3);
     let post: Option<usize> = option("--post").and_then(|n| n.parse().ok());
-    let get = if post.is_some() { Some("/echo".to_string()) } else { option("--get") };
-    let addr = args[0].to_socket_addrs().expect("address").next().expect("an address");
+    let get = if post.is_some() {
+        Some("/echo".to_string())
+    } else {
+        option("--get")
+    };
+    let addr = args[0]
+        .to_socket_addrs()
+        .expect("address")
+        .next()
+        .expect("an address");
     let mut store = TrustStore::empty();
     let ca = std::fs::read_to_string(&args[2]).expect("the CA file");
     assert!(store.add_pem(&ca) > 0, "no certificate in the CA file");
     let mut tls = ClientConfig::new(store);
     tls.alpn_protocols = vec![b"h3".to_vec()];
 
-    let socket = UdpSocket::bind(if addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }).expect("a socket");
+    let socket = UdpSocket::bind(if addr.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    })
+    .expect("a socket");
     socket.connect(addr).expect("connect");
     let started = Instant::now();
     let mut config = Config::default();
@@ -107,7 +125,9 @@ fn main() {
     if let Some(ms) = option("--idle-ms").and_then(|n| n.parse().ok()) {
         config.max_idle_timeout = Duration::from_millis(ms);
     }
-    let quiet_for = option("--quiet-for").and_then(|n| n.parse().ok()).map(Duration::from_secs);
+    let quiet_for = option("--quiet-for")
+        .and_then(|n| n.parse().ok())
+        .map(Duration::from_secs);
     let mut conn = Connection::connect(&config, &tls, &args[1], started).expect("a connection");
 
     let mut out = Vec::new();
@@ -138,7 +158,11 @@ fn main() {
             }
         }
         while let Some(event) = conn.poll_event() {
-            println!("{:>8.1} ms  {:?}", started.elapsed().as_secs_f64() * 1000.0, event);
+            println!(
+                "{:>8.1} ms  {:?}",
+                started.elapsed().as_secs_f64() * 1000.0,
+                event
+            );
             match event {
                 Event::Confirmed => {
                     confirmed_at = Some(Instant::now());
@@ -147,7 +171,10 @@ fn main() {
                 Event::Closed(reason) => {
                     println!("closed: {reason:?}");
                     summary(&conn, started);
-                    let ok = matches!(reason, CloseReason::Application { .. } | CloseReason::IdleTimeout) || closed_by_us;
+                    let ok = matches!(
+                        reason,
+                        CloseReason::Application { .. } | CloseReason::IdleTimeout
+                    ) || closed_by_us;
                     std::process::exit(if ok && confirmed_at.is_some() { 0 } else { 1 });
                 }
                 Event::Established => {}
@@ -189,7 +216,11 @@ fn main() {
                 } else if !quiet_over {
                     quiet_over = true;
                     let k = conn.stats().keep_alives;
-                    println!("{:>8.1} ms  kept alive through {:.1} s of quiet ({k} keep-alive PINGs)", started.elapsed().as_secs_f64() * 1000.0, q.as_secs_f64());
+                    println!(
+                        "{:>8.1} ms  kept alive through {:.1} s of quiet ({k} keep-alive PINGs)",
+                        started.elapsed().as_secs_f64() * 1000.0,
+                        q.as_secs_f64()
+                    );
                 }
                 quiet
             }
@@ -248,7 +279,9 @@ fn main() {
             } else {
                 // some pings, each one acknowledged before the next, then the end
                 let idle = match ping_marker {
-                    Some(sent_before) => conn.stats().packets_sent > sent_before && conn.bytes_in_flight() == 0,
+                    Some(sent_before) => {
+                        conn.stats().packets_sent > sent_before && conn.bytes_in_flight() == 0
+                    }
                     None => conn.bytes_in_flight() == 0,
                 };
                 if idle {
@@ -274,7 +307,9 @@ fn main() {
             summary(&conn, started);
             std::process::exit(1);
         }
-        let wait = wait.max(Duration::from_micros(100)).min(Duration::from_millis(100));
+        let wait = wait
+            .max(Duration::from_micros(100))
+            .min(Duration::from_millis(100));
         socket.set_read_timeout(Some(wait)).unwrap();
         match socket.recv(&mut buf) {
             Ok(n) => {
@@ -286,7 +321,9 @@ fn main() {
                 }
                 socket.set_nonblocking(false).unwrap();
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut => {}
             Err(e) => {
                 eprintln!("receive failed: {e}");
             }
@@ -303,7 +340,8 @@ fn report(response: &[u8], path: &str, started: Instant, post: Option<usize>) {
     let (mut headers, mut body) = (0usize, Vec::new());
     let mut other = Vec::new();
     while at < response.len() {
-        let (Some(ty), Some(len)) = (get_varint(response, &mut at), get_varint(response, &mut at)) else {
+        let (Some(ty), Some(len)) = (get_varint(response, &mut at), get_varint(response, &mut at))
+        else {
             println!("the response ends in the middle of a frame header");
             break;
         };
@@ -319,30 +357,66 @@ fn report(response: &[u8], path: &str, started: Instant, post: Option<usize>) {
         }
     }
     let took = started.elapsed();
-    println!("response: {} bytes on the stream, headers {} bytes, body {} bytes, other frames {:?}", response.len(), headers, body.len(), other);
-    if let Some(n) = path.strip_prefix("/bytes/").and_then(|n| n.parse::<usize>().ok()) {
+    println!(
+        "response: {} bytes on the stream, headers {} bytes, body {} bytes, other frames {:?}",
+        response.len(),
+        headers,
+        body.len(),
+        other
+    );
+    if let Some(n) = path
+        .strip_prefix("/bytes/")
+        .and_then(|n| n.parse::<usize>().ok())
+    {
         let right = body.len() == n && body.iter().enumerate().all(|(i, b)| *b == (i % 251) as u8);
-        println!("body {} bytes, {}", n, if right { "correct" } else { "WRONG" });
-        println!("{:.1} ms, {:.1} MB/s", took.as_secs_f64() * 1000.0, n as f64 / took.as_secs_f64() / 1e6);
+        println!(
+            "body {} bytes, {}",
+            n,
+            if right { "correct" } else { "WRONG" }
+        );
+        println!(
+            "{:.1} ms, {:.1} MB/s",
+            took.as_secs_f64() * 1000.0,
+            n as f64 / took.as_secs_f64() / 1e6
+        );
         if !right {
             std::process::exit(1);
         }
     } else if let Some(n) = post {
         let right = body.len() == n && body.iter().enumerate().all(|(i, b)| *b == (i % 251) as u8);
-        println!("echo of {} bytes: {}", n, if right { "correct" } else { "WRONG" });
-        println!("{:.1} ms, {:.1} MB/s each way", took.as_secs_f64() * 1000.0, n as f64 / took.as_secs_f64() / 1e6);
+        println!(
+            "echo of {} bytes: {}",
+            n,
+            if right { "correct" } else { "WRONG" }
+        );
+        println!(
+            "{:.1} ms, {:.1} MB/s each way",
+            took.as_secs_f64() * 1000.0,
+            n as f64 / took.as_secs_f64() / 1e6
+        );
         if !right {
             std::process::exit(1);
         }
     } else {
-        println!("body: {:?}", String::from_utf8_lossy(&body[..body.len().min(200)]));
+        println!(
+            "body: {:?}",
+            String::from_utf8_lossy(&body[..body.len().min(200)])
+        );
     }
 }
 
 fn summary(conn: &Connection, started: Instant) {
-    println!("alpn: {:?}", conn.alpn().map(|p| String::from_utf8_lossy(p).into_owned()));
+    println!(
+        "alpn: {:?}",
+        conn.alpn().map(|p| String::from_utf8_lossy(p).into_owned())
+    );
     println!("certificates: {}", conn.peer_certificates().len());
-    println!("smoothed rtt: {:?}, in flight: {}, window: {}", conn.smoothed_rtt(), conn.bytes_in_flight(), conn.congestion().window());
+    println!(
+        "smoothed rtt: {:?}, in flight: {}, window: {}",
+        conn.smoothed_rtt(),
+        conn.bytes_in_flight(),
+        conn.congestion().window()
+    );
     println!("stats: {:?}", conn.stats());
     println!("took {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
 }

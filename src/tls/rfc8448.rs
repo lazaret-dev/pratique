@@ -188,7 +188,12 @@ fn server_flight_messages() -> [Vec<u8>; 4] {
     let finished = h("14 00 00 20 9b 9b 14 1d 90 63 37 fb d2 cb dc e7
        1d f4 de da 4a b4 2c 30 95 72 cb 7f ff ee 54 54
        b7 8f 07 18");
-    [encrypted_extensions, certificate, certificate_verify, finished]
+    [
+        encrypted_extensions,
+        certificate,
+        certificate_verify,
+        finished,
+    ]
 }
 
 /// The ServerHello handshake message (the record without its 5-byte header).
@@ -201,7 +206,14 @@ fn trace_config() -> ClientConfig {
 }
 
 fn start() -> ClientConnection {
-    let mut c = ClientConnection::with_recorded_hello("server", &trace_config(), client_private(), &[], &client_hello(), &[0x001c]);
+    let mut c = ClientConnection::with_recorded_hello(
+        "server",
+        &trace_config(),
+        client_private(),
+        &[],
+        &client_hello(),
+        &[0x001c],
+    );
     let hello_out = c.output().len();
     c.consume_output(hello_out);
     c
@@ -255,10 +267,16 @@ fn the_recorded_values_are_what_the_rfc_prints() {
     assert_eq!(client_app_record().len(), 72);
     assert_eq!(server_app_record().len(), 72);
     let flight = server_flight_messages();
-    assert_eq!(flight.iter().map(|m| m.len()).collect::<Vec<_>>(), vec![40, 445, 136, 36]);
+    assert_eq!(
+        flight.iter().map(|m| m.len()).collect::<Vec<_>>(),
+        vec![40, 445, 136, 36]
+    );
     // the key share in the ClientHello is the public key of the private key
     let public = x25519::public_key(&client_private());
-    assert_eq!(hex(&public), "99381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c");
+    assert_eq!(
+        hex(&public),
+        "99381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c"
+    );
     assert!(client_hello().windows(32).any(|w| w == public));
 }
 
@@ -269,29 +287,57 @@ fn key_schedule_matches_the_rfc_trace() {
     let alg = HashAlg::Sha256;
     let zeros = [0u8; 32];
     let early = hkdf_extract(alg, &[], &zeros);
-    assert_eq!(hex(&early), "33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a");
+    assert_eq!(
+        hex(&early),
+        "33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a"
+    );
 
     // the server's key share: the 32 bytes after key_share(0x33), length 0x24, group x25519, length 0x20
     let sh = server_hello_message();
-    let at = sh.windows(8).position(|w| w == [0x00, 0x33, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20]).expect("a key_share extension") + 8;
+    let at = sh
+        .windows(8)
+        .position(|w| w == [0x00, 0x33, 0x00, 0x24, 0x00, 0x1d, 0x00, 0x20])
+        .expect("a key_share extension")
+        + 8;
     let server_share: [u8; 32] = sh[at..at + 32].try_into().unwrap();
-    assert_eq!(hex(&server_share), "c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f");
+    assert_eq!(
+        hex(&server_share),
+        "c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f"
+    );
     let shared = x25519::x25519(&client_private(), &server_share);
     let derived = derive_secret(alg, &early, "derived", &alg.digest(&[]));
     let handshake = hkdf_extract(alg, &derived, &shared);
-    assert_eq!(hex(&handshake), "1dc826e93606aa6fdc0aadc12f741b01046aa6b99f691ed221a9f0ca043fbeac");
+    assert_eq!(
+        hex(&handshake),
+        "1dc826e93606aa6fdc0aadc12f741b01046aa6b99f691ed221a9f0ca043fbeac"
+    );
 
     let mut transcript = client_hello();
     transcript.extend(server_hello_message());
     let hello_hash = alg.digest(&transcript);
     let c_hs = derive_secret(alg, &handshake, "c hs traffic", &hello_hash);
     let s_hs = derive_secret(alg, &handshake, "s hs traffic", &hello_hash);
-    assert_eq!(hex(&c_hs), "b3eddb126e067f35a780b3abf45e2d8f3b1a950738f52e9600746a0e27a55a21");
-    assert_eq!(hex(&s_hs), "b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38");
+    assert_eq!(
+        hex(&c_hs),
+        "b3eddb126e067f35a780b3abf45e2d8f3b1a950738f52e9600746a0e27a55a21"
+    );
+    assert_eq!(
+        hex(&s_hs),
+        "b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38"
+    );
     // the client's handshake write key and iv, and the server Finished key
-    assert_eq!(hex(&expand_label(alg, &c_hs, "key", &[], 16)), "dbfaa693d1762c5b666af5d950258d01");
-    assert_eq!(hex(&expand_label(alg, &c_hs, "iv", &[], 12)), "5bd3c71b836e0b76bb73265f");
-    assert_eq!(hex(&expand_label(alg, &s_hs, "finished", &[], 32)), "008d3b66f816ea559f96b537e885c31fc068bf492c652f01f288a1d8cdc19fc8");
+    assert_eq!(
+        hex(&expand_label(alg, &c_hs, "key", &[], 16)),
+        "dbfaa693d1762c5b666af5d950258d01"
+    );
+    assert_eq!(
+        hex(&expand_label(alg, &c_hs, "iv", &[], 12)),
+        "5bd3c71b836e0b76bb73265f"
+    );
+    assert_eq!(
+        hex(&expand_label(alg, &s_hs, "finished", &[], 32)),
+        "008d3b66f816ea559f96b537e885c31fc068bf492c652f01f288a1d8cdc19fc8"
+    );
 
     // application secrets: the transcript through the server's Finished
     for m in server_flight_messages() {
@@ -300,15 +346,36 @@ fn key_schedule_matches_the_rfc_trace() {
     let app_hash = alg.digest(&transcript);
     let derived2 = derive_secret(alg, &handshake, "derived", &alg.digest(&[]));
     let master = hkdf_extract(alg, &derived2, &zeros);
-    assert_eq!(hex(&master), "18df06843d13a08bf2a449844c5f8a478001bc4d4c627984d5a41da8d0402919");
+    assert_eq!(
+        hex(&master),
+        "18df06843d13a08bf2a449844c5f8a478001bc4d4c627984d5a41da8d0402919"
+    );
     let c_ap = derive_secret(alg, &master, "c ap traffic", &app_hash);
     let s_ap = derive_secret(alg, &master, "s ap traffic", &app_hash);
-    assert_eq!(hex(&c_ap), "9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5");
-    assert_eq!(hex(&s_ap), "a11af9f05531f856ad47116b45a95032 8204b4f44bfb6b3a4b4f1f3fcb631643".replace(' ', ""));
-    assert_eq!(hex(&expand_label(alg, &c_ap, "key", &[], 16)), "17422dda596ed5d9acd890e3c63f5051");
-    assert_eq!(hex(&expand_label(alg, &c_ap, "iv", &[], 12)), "5b78923dee08579033e523d9");
-    assert_eq!(hex(&expand_label(alg, &s_ap, "key", &[], 16)), "9f02283b6c9c07efc26bb9f2ac92e356");
-    assert_eq!(hex(&expand_label(alg, &s_ap, "iv", &[], 12)), "cf782b88dd83549aadf1e984");
+    assert_eq!(
+        hex(&c_ap),
+        "9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5"
+    );
+    assert_eq!(
+        hex(&s_ap),
+        "a11af9f05531f856ad47116b45a95032 8204b4f44bfb6b3a4b4f1f3fcb631643".replace(' ', "")
+    );
+    assert_eq!(
+        hex(&expand_label(alg, &c_ap, "key", &[], 16)),
+        "17422dda596ed5d9acd890e3c63f5051"
+    );
+    assert_eq!(
+        hex(&expand_label(alg, &c_ap, "iv", &[], 12)),
+        "5b78923dee08579033e523d9"
+    );
+    assert_eq!(
+        hex(&expand_label(alg, &s_ap, "key", &[], 16)),
+        "9f02283b6c9c07efc26bb9f2ac92e356"
+    );
+    assert_eq!(
+        hex(&expand_label(alg, &s_ap, "iv", &[], 12)),
+        "cf782b88dd83549aadf1e984"
+    );
 }
 
 #[test]
@@ -323,23 +390,55 @@ fn the_client_completes_the_rfc_trace_and_produces_its_bytes() {
         assert!(c.is_established(), "piece {piece}");
         assert_eq!(c.cipher_suite(), Some(Suite::Aes128GcmSha256));
         assert_eq!(c.alpn_protocol(), None);
-        let cert = crate::x509::Certificate::from_der(c.peer_certificate().expect("the server's certificate")).unwrap();
-        assert!(cert.subject_summary().contains("rsa"), "{}", cert.subject_summary());
+        let cert = crate::x509::Certificate::from_der(
+            c.peer_certificate().expect("the server's certificate"),
+        )
+        .unwrap();
+        assert!(
+            cert.subject_summary().contains("rsa"),
+            "{}",
+            cert.subject_summary()
+        );
 
         // the client's Finished is exactly the RFC's, byte for byte (no change_cipher_spec: the
         // trace's ClientHello had an empty session id)
-        assert_eq!(hex(&take_output(&mut c)), hex(&client_finished_record()), "piece {piece}");
+        assert_eq!(
+            hex(&take_output(&mut c)),
+            hex(&client_finished_record()),
+            "piece {piece}"
+        );
 
         // application data both ways under the application keys
         assert_eq!(c.write_plaintext(&app_data()).unwrap(), 50);
-        assert_eq!(hex(&take_output(&mut c)), hex(&client_app_record()), "piece {piece}");
+        assert_eq!(
+            hex(&take_output(&mut c)),
+            hex(&client_app_record()),
+            "piece {piece}"
+        );
         // The trace's server sends a NewSessionTicket under its application keys before the data, so
         // the data record is number 1 in that direction. The RFC's ticket is not copied here: any
         // ticket (which this client ignores) under the RFC's server application secret does.
-        let mut server_keys = RecordCipher::new(Suite::Aes128GcmSha256, &h("a11af9f05531f856ad47116b45a95032 8204b4f44bfb6b3a4b4f1f3fcb631643"));
-        let ticket = [&[0x04u8, 0, 0, 17][..], &[0, 0, 0x1e, 0, 1, 2, 3, 4, 0, 0, 4, 0xde, 0xad, 0xbe, 0xef, 0, 0]].concat();
-        assert_eq!(feed(&mut c, &server_keys.encrypt(RT_HANDSHAKE, &ticket), piece).unwrap(), b"", "piece {piece}");
-        assert_eq!(feed(&mut c, &server_app_record(), piece).unwrap(), app_data(), "piece {piece}");
+        let mut server_keys = RecordCipher::new(
+            Suite::Aes128GcmSha256,
+            &h("a11af9f05531f856ad47116b45a95032 8204b4f44bfb6b3a4b4f1f3fcb631643"),
+        );
+        let ticket = [
+            &[0x04u8, 0, 0, 17][..],
+            &[
+                0, 0, 0x1e, 0, 1, 2, 3, 4, 0, 0, 4, 0xde, 0xad, 0xbe, 0xef, 0, 0,
+            ],
+        ]
+        .concat();
+        assert_eq!(
+            feed(&mut c, &server_keys.encrypt(RT_HANDSHAKE, &ticket), piece).unwrap(),
+            b"",
+            "piece {piece}"
+        );
+        assert_eq!(
+            feed(&mut c, &server_app_record(), piece).unwrap(),
+            app_data(),
+            "piece {piece}"
+        );
     }
 }
 
@@ -360,12 +459,18 @@ fn any_change_to_the_recorded_server_flight_breaks_the_handshake() {
         damaged[i] ^= 0x01;
         let mut c = start();
         let result = feed(&mut c, &damaged, usize::MAX);
-        assert!(result.is_err() || !c.is_established(), "flipping byte {i} still completed the handshake");
+        assert!(
+            result.is_err() || !c.is_established(),
+            "flipping byte {i} still completed the handshake"
+        );
     }
     // and a flight that stops early never completes
     for len in 0..stream.len() {
         let mut c = start();
         let result = feed(&mut c, &stream[..len], usize::MAX);
-        assert!(result.is_ok() && !c.is_established(), "{len} bytes completed the handshake or failed oddly");
+        assert!(
+            result.is_ok() && !c.is_established(),
+            "{len} bytes completed the handshake or failed oddly"
+        );
     }
 }

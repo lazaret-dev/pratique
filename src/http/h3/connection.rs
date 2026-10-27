@@ -20,7 +20,9 @@
 
 use super::frame::{self, code, stream_type, Event, FrameError, FrameReader, Kind, PeerSettings};
 use super::qpack::{Decoded, Decoder, Encoder, EncoderConfig};
-use crate::http::h2::connection::{lower_names, parse_response, parse_trailers, request_fields, Fields, Head, Request, MAX_INTERIM};
+use crate::http::h2::connection::{
+    lower_names, parse_response, parse_trailers, request_fields, Fields, Head, Request, MAX_INTERIM,
+};
 use crate::http::h2::hpack::Field;
 use crate::quic::streams::{StreamError as TransportError, StreamEvent as TransportEvent};
 use crate::quic::wire;
@@ -66,7 +68,11 @@ impl Default for Config {
             max_header_list: 64 << 10,
             qpack_table_capacity: 4096,
             qpack_blocked_streams: 16,
-            encoder: EncoderConfig { table_capacity: 4096, blocked_streams: 0, only_safe_names: true },
+            encoder: EncoderConfig {
+                table_capacity: 4096,
+                blocked_streams: 0,
+                only_safe_names: true,
+            },
             body_buffer: 1 << 20,
             send_buffer: 256 << 10,
         }
@@ -87,7 +93,13 @@ pub(crate) struct ConnectionError {
 
 impl fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "HTTP/3 connection {}: {} (error {:#x})", if self.local { "failed" } else { "closed" }, self.reason, self.code)
+        write!(
+            f,
+            "HTTP/3 connection {}: {} (error {:#x})",
+            if self.local { "failed" } else { "closed" },
+            self.reason,
+            self.code
+        )
     }
 }
 
@@ -103,7 +115,11 @@ pub(crate) struct StreamError {
 
 impl fmt::Display for StreamError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "HTTP/3 stream failed: {} (error {:#x})", self.reason, self.code)
+        write!(
+            f,
+            "HTTP/3 stream failed: {} (error {:#x})",
+            self.reason, self.code
+        )
     }
 }
 
@@ -121,8 +137,12 @@ pub(crate) enum OpenError {
 impl fmt::Display for OpenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OpenError::Full => f.write_str("the HTTP/3 connection has as many streams as the server allows"),
-            OpenError::Unavailable => f.write_str("the HTTP/3 connection cannot take another request"),
+            OpenError::Full => {
+                f.write_str("the HTTP/3 connection has as many streams as the server allows")
+            }
+            OpenError::Unavailable => {
+                f.write_str("the HTTP/3 connection cannot take another request")
+            }
             OpenError::Invalid(why) => write!(f, "the request cannot be sent over HTTP/3: {why}"),
         }
     }
@@ -163,7 +183,10 @@ struct Outbox {
 
 impl Outbox {
     fn with(buf: Vec<u8>) -> Outbox {
-        Outbox { buf, ..Outbox::default() }
+        Outbox {
+            buf,
+            ..Outbox::default()
+        }
     }
 
     fn pending(&self) -> usize {
@@ -219,7 +242,10 @@ impl Outbox {
 #[derive(Clone, Copy, Debug)]
 enum UniKind {
     /// The type is a variable-length integer, not all here yet.
-    Type { bytes: [u8; 8], have: usize },
+    Type {
+        bytes: [u8; 8],
+        have: usize,
+    },
     Control,
     QpackEncoder,
     QpackDecoder,
@@ -349,7 +375,10 @@ pub(crate) struct Connection {
 
 impl fmt::Debug for Connection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("h3::Connection").field("streams", &self.streams.len()).field("error", &self.error).finish()
+        f.debug_struct("h3::Connection")
+            .field("streams", &self.streams.len())
+            .field("error", &self.error)
+            .finish()
     }
 }
 
@@ -361,7 +390,11 @@ impl Connection {
             max_field_section_size: cfg.max_header_list as u64,
         };
         Connection {
-            decoder: Decoder::new(cfg.qpack_table_capacity, cfg.qpack_blocked_streams, cfg.max_header_list),
+            decoder: Decoder::new(
+                cfg.qpack_table_capacity,
+                cfg.qpack_blocked_streams,
+                cfg.max_header_list,
+            ),
             encoder: Encoder::new(cfg.encoder),
             control_out: Outbox::with(frame::control_stream_start(&announce)),
             encoder_out: Outbox::with(vec![stream_type::QPACK_ENCODER as u8]),
@@ -413,7 +446,12 @@ impl Connection {
 
     /// Opens a stream for a request: the HEADERS frame is queued and, as far as the transport takes it, written. `end_stream` says there
     /// is no body.
-    pub(crate) fn open_stream<T: Transport>(&mut self, t: &mut T, request: &Request<'_>, end_stream: bool) -> Result<u64, OpenError> {
+    pub(crate) fn open_stream<T: Transport>(
+        &mut self,
+        t: &mut T,
+        request: &Request<'_>,
+        end_stream: bool,
+    ) -> Result<u64, OpenError> {
         if !self.usable() {
             return Err(OpenError::Unavailable);
         }
@@ -423,9 +461,14 @@ impl Connection {
             other => OpenError::Invalid(other.to_string()),
         })?;
         if let Some(limit) = self.peer.and_then(|p| p.max_field_section_size) {
-            let size: u64 = fields.iter().map(|f| (f.name.len() + f.value.len() + 32) as u64).sum();
+            let size: u64 = fields
+                .iter()
+                .map(|f| (f.name.len() + f.value.len() + 32) as u64)
+                .sum();
             if size > limit {
-                return Err(OpenError::Invalid(format!("the header list is {size} bytes and the server takes {limit}")));
+                return Err(OpenError::Invalid(format!(
+                    "the header list is {size} bytes and the server takes {limit}"
+                )));
             }
         }
         self.open_critical(t);
@@ -441,7 +484,8 @@ impl Connection {
         frame::put_headers(&mut out.buf, &block);
         out.fin = end_stream;
         let head_request = request.method == "HEAD";
-        self.streams.insert(id, Stream::new(self.cfg.max_header_list, out, head_request));
+        self.streams
+            .insert(id, Stream::new(self.cfg.max_header_list, out, head_request));
         self.dirty.insert(id);
         self.pump(t);
         Ok(id)
@@ -450,25 +494,41 @@ impl Connection {
     /// How much more of a body [`send_data`](Connection::send_data) takes now.
     pub(crate) fn send_capacity(&self, id: u64) -> usize {
         match self.streams.get(&id) {
-            Some(s) if s.failure.is_none() && s.send_stopped.is_none() && !s.out.fin => self.cfg.send_buffer.saturating_sub(s.out.pending()),
+            Some(s) if s.failure.is_none() && s.send_stopped.is_none() && !s.out.fin => {
+                self.cfg.send_buffer.saturating_sub(s.out.pending())
+            }
             _ => 0,
         }
     }
 
     /// Sends body: how many bytes of `data` were taken (as many as [`send_capacity`](Connection::send_capacity) allows); the end follows
     /// if `end_stream` and all were taken.
-    pub(crate) fn send_data<T: Transport>(&mut self, t: &mut T, id: u64, data: &[u8], end_stream: bool) -> Result<usize, StreamError> {
-        let Some(s) = self.streams.get_mut(&id) else { return Err(local_error("there is no such stream")) };
+    pub(crate) fn send_data<T: Transport>(
+        &mut self,
+        t: &mut T,
+        id: u64,
+        data: &[u8],
+        end_stream: bool,
+    ) -> Result<usize, StreamError> {
+        let Some(s) = self.streams.get_mut(&id) else {
+            return Err(local_error("there is no such stream"));
+        };
         if let Some(f) = &s.failure {
             return Err(f.clone());
         }
         if let Some(c) = s.send_stopped {
-            return Err(StreamError { code: c, reason: "the server asked us to stop sending the request".into(), retry_safe: c == code::H3_REQUEST_REJECTED });
+            return Err(StreamError {
+                code: c,
+                reason: "the server asked us to stop sending the request".into(),
+                retry_safe: c == code::H3_REQUEST_REJECTED,
+            });
         }
         if s.out.fin {
             return Err(local_error("the request is already complete"));
         }
-        let n = data.len().min(self.cfg.send_buffer.saturating_sub(s.out.pending()));
+        let n = data
+            .len()
+            .min(self.cfg.send_buffer.saturating_sub(s.out.pending()));
         if n > 0 {
             frame::put_frame_header(&mut s.out.buf, frame::ty::DATA, n as u64);
             s.out.buf.extend_from_slice(&data[..n]);
@@ -487,7 +547,13 @@ impl Connection {
     pub(crate) fn ready(&self, id: u64) -> bool {
         match self.streams.get(&id) {
             None => true,
-            Some(s) => s.head.is_some() || s.unread() > 0 || s.failure.is_some() || s.trailers.is_some() || s.remote_ended,
+            Some(s) => {
+                s.head.is_some()
+                    || s.unread() > 0
+                    || s.failure.is_some()
+                    || s.trailers.is_some()
+                    || s.remote_ended
+            }
         }
     }
 
@@ -496,7 +562,12 @@ impl Connection {
     pub(crate) fn writable(&self, id: u64) -> bool {
         match self.streams.get(&id) {
             None => true,
-            Some(s) => s.failure.is_some() || s.send_stopped.is_some() || s.out.fin || self.send_capacity(id) > 0,
+            Some(s) => {
+                s.failure.is_some()
+                    || s.send_stopped.is_some()
+                    || s.out.fin
+                    || self.send_capacity(id) > 0
+            }
         }
     }
 
@@ -513,7 +584,9 @@ impl Connection {
     }
 
     fn poll(&mut self, id: u64, sink: Sink<'_>) -> StreamEvent {
-        let Some(s) = self.streams.get_mut(&id) else { return StreamEvent::Failed(local_error("there is no such stream")) };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return StreamEvent::Failed(local_error("there is no such stream"));
+        };
         let wants_body = match &sink {
             Sink::Copy(buf) => !buf.is_empty(),
             Sink::Take(_) => true,
@@ -570,10 +643,15 @@ impl Connection {
     /// The application is done with the stream: what is still unread is dropped, and if the exchange was not finished the server is told
     /// to stop.
     pub(crate) fn release_stream<T: Transport>(&mut self, t: &mut T, id: u64) {
-        let Some(s) = self.streams.remove(&id) else { return };
+        let Some(s) = self.streams.remove(&id) else {
+            return;
+        };
         self.readable.remove(&id);
         self.dirty.remove(&id);
-        if s.failure.is_none() && self.error.is_none() && !(s.remote_ended && (s.out.finished || s.send_stopped.is_some())) {
+        if s.failure.is_none()
+            && self.error.is_none()
+            && !(s.remote_ended && (s.out.finished || s.send_stopped.is_some()))
+        {
             // (the end of a response that has been read is all there is to a stream that was finished; anything else is cancelled)
             if !s.remote_ended {
                 let _ = t.stop_sending(id, code::H3_REQUEST_CANCELLED);
@@ -593,14 +671,22 @@ impl Connection {
         }
         t.close(code::H3_NO_ERROR, b"");
         self.fail_streams(code::H3_NO_ERROR, "the connection was closed");
-        self.error = Some(ConnectionError { code: code::H3_NO_ERROR, reason: "closed by the application".into(), local: true });
+        self.error = Some(ConnectionError {
+            code: code::H3_NO_ERROR,
+            reason: "closed by the application".into(),
+            local: true,
+        });
     }
 
     /// The transport under the connection is gone (closed by the peer, timed out, or failed): every stream that is not complete fails
     /// with `code` and `reason`.
     pub(crate) fn transport_closed(&mut self, code: u64, reason: &str) {
         if self.error.is_none() {
-            self.error = Some(ConnectionError { code, reason: reason.to_string(), local: false });
+            self.error = Some(ConnectionError {
+                code,
+                reason: reason.to_string(),
+                local: false,
+            });
         }
         self.fail_streams(code, reason);
     }
@@ -640,7 +726,11 @@ impl Connection {
     }
 
     fn open_critical<T: Transport>(&mut self, t: &mut T) {
-        for out in [&mut self.control_out, &mut self.encoder_out, &mut self.decoder_out] {
+        for out in [
+            &mut self.control_out,
+            &mut self.encoder_out,
+            &mut self.decoder_out,
+        ] {
             if out.id.is_none() {
                 match t.open_stream(false) {
                     Ok(id) => out.id = Some(id),
@@ -665,7 +755,11 @@ impl Connection {
                     }
                 }
                 // a bidirectional stream of the server: we allow none
-                1 => self.fail(t, code::H3_STREAM_CREATION_ERROR, "the server opened a bidirectional stream"),
+                1 => self.fail(
+                    t,
+                    code::H3_STREAM_CREATION_ERROR,
+                    "the server opened a bidirectional stream",
+                ),
                 _ => {}
             },
             TransportEvent::Writable(id) => {
@@ -674,8 +768,18 @@ impl Connection {
                 }
             }
             TransportEvent::Stopped(id, c) => {
-                if [self.control_out.id, self.encoder_out.id, self.decoder_out.id].contains(&Some(id)) {
-                    self.fail(t, code::H3_CLOSED_CRITICAL_STREAM, "the server stopped a stream the connection cannot do without");
+                if [
+                    self.control_out.id,
+                    self.encoder_out.id,
+                    self.decoder_out.id,
+                ]
+                .contains(&Some(id))
+                {
+                    self.fail(
+                        t,
+                        code::H3_CLOSED_CRITICAL_STREAM,
+                        "the server stopped a stream the connection cannot do without",
+                    );
                 } else if let Some(s) = self.streams.get_mut(&id) {
                     s.send_stopped = Some(c);
                     s.out.abandon();
@@ -693,12 +797,22 @@ impl Connection {
         let e = self.encoder.take_output();
         self.encoder_out.buf.extend_from_slice(&e);
         let mut lost = false;
-        for out in [&mut self.control_out, &mut self.encoder_out, &mut self.decoder_out] {
+        for out in [
+            &mut self.control_out,
+            &mut self.encoder_out,
+            &mut self.decoder_out,
+        ] {
             // (a stream the server stopped, or that is gone: the connection cannot do without it)
-            lost |= out.flush(t).is_err_and(|e| !matches!(e, TransportError::Closed));
+            lost |= out
+                .flush(t)
+                .is_err_and(|e| !matches!(e, TransportError::Closed));
         }
         if lost {
-            self.fail(t, code::H3_CLOSED_CRITICAL_STREAM, "a stream the connection cannot do without cannot be written");
+            self.fail(
+                t,
+                code::H3_CLOSED_CRITICAL_STREAM,
+                "a stream the connection cannot do without cannot be written",
+            );
         }
         let ids: Vec<u64> = self.dirty.iter().copied().collect();
         for id in ids {
@@ -735,13 +849,21 @@ impl Connection {
         let reason = reason.into();
         t.close(code, reason.as_bytes());
         self.fail_streams(code, &reason);
-        self.error = Some(ConnectionError { code, reason, local: true });
+        self.error = Some(ConnectionError {
+            code,
+            reason,
+            local: true,
+        });
     }
 
     fn fail_streams(&mut self, code: u64, reason: &str) {
         for s in self.streams.values_mut() {
             if s.failure.is_none() && !s.remote_ended {
-                s.failure = Some(StreamError { code, reason: reason.to_string(), retry_safe: false });
+                s.failure = Some(StreamError {
+                    code,
+                    reason: reason.to_string(),
+                    retry_safe: false,
+                });
             }
             s.blocked = None;
             s.held.clear();
@@ -753,12 +875,25 @@ impl Connection {
 
     /// A stream is lost: the server is told to stop sending and we stop, and the stream's failure is what the application sees after what
     /// it has already been given.
-    fn fail_stream<T: Transport>(&mut self, t: &mut T, id: u64, code: u64, reason: &str, retry_safe: bool) {
-        let Some(s) = self.streams.get_mut(&id) else { return };
+    fn fail_stream<T: Transport>(
+        &mut self,
+        t: &mut T,
+        id: u64,
+        code: u64,
+        reason: &str,
+        retry_safe: bool,
+    ) {
+        let Some(s) = self.streams.get_mut(&id) else {
+            return;
+        };
         if s.failure.is_some() || s.remote_ended {
             return;
         }
-        s.failure = Some(StreamError { code, reason: reason.to_string(), retry_safe });
+        s.failure = Some(StreamError {
+            code,
+            reason: reason.to_string(),
+            retry_safe,
+        });
         s.blocked = None;
         s.held.clear();
         s.out.abandon();
@@ -798,10 +933,20 @@ impl Connection {
                     }
                 }
             }
-            let kind = self.uni.get(&id).copied().unwrap_or(UniKind::Type { bytes: [0; 8], have: 0 });
+            let kind = self.uni.get(&id).copied().unwrap_or(UniKind::Type {
+                bytes: [0; 8],
+                have: 0,
+            });
             match kind {
-                UniKind::Type { mut bytes, mut have } => {
-                    let want = if have == 0 { 1 } else { (1usize << (bytes[0] >> 6)) - have };
+                UniKind::Type {
+                    mut bytes,
+                    mut have,
+                } => {
+                    let want = if have == 0 {
+                        1
+                    } else {
+                        (1usize << (bytes[0] >> 6)) - have
+                    };
                     match t.read(id, &mut bytes[have..have + want]) {
                         Ok((n, fin)) => {
                             have += n;
@@ -817,14 +962,19 @@ impl Connection {
                                 }
                                 continue;
                             }
-                            let (ty, _) = wire::get_varint(&bytes[..have]).expect("a whole variable-length integer");
+                            let (ty, _) = wire::get_varint(&bytes[..have])
+                                .expect("a whole variable-length integer");
                             if !self.on_stream_type(t, id, ty) {
                                 return;
                             }
                             if fin {
                                 // (a stream that is critical ends before anything was said on it; one that is not wanted is over)
                                 if self.uni.contains_key(&id) {
-                                    self.fail(t, code::H3_CLOSED_CRITICAL_STREAM, "a stream the connection cannot do without was closed");
+                                    self.fail(
+                                        t,
+                                        code::H3_CLOSED_CRITICAL_STREAM,
+                                        "a stream the connection cannot do without was closed",
+                                    );
                                 }
                                 self.ignored.remove(&id);
                                 return;
@@ -835,27 +985,37 @@ impl Connection {
                         }
                     }
                 }
-                UniKind::Control | UniKind::QpackEncoder | UniKind::QpackDecoder => match t.read(id, buf) {
-                    Ok((n, fin)) => {
-                        self.on_uni_bytes(t, kind, &buf[..n]);
-                        if self.error.is_some() {
+                UniKind::Control | UniKind::QpackEncoder | UniKind::QpackDecoder => {
+                    match t.read(id, buf) {
+                        Ok((n, fin)) => {
+                            self.on_uni_bytes(t, kind, &buf[..n]);
+                            if self.error.is_some() {
+                                return;
+                            }
+                            if fin {
+                                self.fail(
+                                    t,
+                                    code::H3_CLOSED_CRITICAL_STREAM,
+                                    "a stream the connection cannot do without was closed",
+                                );
+                                return;
+                            }
+                            if n == 0 {
+                                return;
+                            }
+                        }
+                        Err(TransportError::Blocked) => return,
+                        Err(TransportError::Reset(_)) => {
+                            self.fail(
+                                t,
+                                code::H3_CLOSED_CRITICAL_STREAM,
+                                "a stream the connection cannot do without was reset",
+                            );
                             return;
                         }
-                        if fin {
-                            self.fail(t, code::H3_CLOSED_CRITICAL_STREAM, "a stream the connection cannot do without was closed");
-                            return;
-                        }
-                        if n == 0 {
-                            return;
-                        }
+                        Err(_) => return,
                     }
-                    Err(TransportError::Blocked) => return,
-                    Err(TransportError::Reset(_)) => {
-                        self.fail(t, code::H3_CLOSED_CRITICAL_STREAM, "a stream the connection cannot do without was reset");
-                        return;
-                    }
-                    Err(_) => return,
-                },
+                }
             }
         }
     }
@@ -864,10 +1024,18 @@ impl Connection {
     fn on_stream_type<T: Transport>(&mut self, t: &mut T, id: u64, ty: u64) -> bool {
         let (slot, kind, what) = match ty {
             stream_type::CONTROL => (&mut self.control_in, UniKind::Control, "control"),
-            stream_type::QPACK_ENCODER => (&mut self.encoder_in, UniKind::QpackEncoder, "QPACK encoder"),
-            stream_type::QPACK_DECODER => (&mut self.decoder_in, UniKind::QpackDecoder, "QPACK decoder"),
+            stream_type::QPACK_ENCODER => {
+                (&mut self.encoder_in, UniKind::QpackEncoder, "QPACK encoder")
+            }
+            stream_type::QPACK_DECODER => {
+                (&mut self.decoder_in, UniKind::QpackDecoder, "QPACK decoder")
+            }
             stream_type::PUSH => {
-                self.fail(t, code::H3_ID_ERROR, "a push stream, though push was not allowed");
+                self.fail(
+                    t,
+                    code::H3_ID_ERROR,
+                    "a push stream, though push was not allowed",
+                );
                 return false;
             }
             _ => {
@@ -902,7 +1070,11 @@ impl Connection {
                 if let Err(e) = r {
                     match e {
                         FrameError::Connection(c, why) => self.fail(t, c, why),
-                        FrameError::HeadersTooLarge => self.fail(t, code::H3_INTERNAL_ERROR, "a HEADERS frame on the control stream"),
+                        FrameError::HeadersTooLarge => self.fail(
+                            t,
+                            code::H3_INTERNAL_ERROR,
+                            "a HEADERS frame on the control stream",
+                        ),
                     }
                 }
             }
@@ -923,7 +1095,8 @@ impl Connection {
         match ev {
             Event::Settings(pairs) => match PeerSettings::from_pairs(&pairs) {
                 Ok(s) => {
-                    self.encoder.set_peer_settings(s.qpack_max_table_capacity, s.qpack_blocked_streams);
+                    self.encoder
+                        .set_peer_settings(s.qpack_max_table_capacity, s.qpack_blocked_streams);
                     self.peer = Some(s);
                 }
                 Err(FrameError::Connection(c, why)) => self.fail(t, c, why),
@@ -931,21 +1104,41 @@ impl Connection {
             },
             Event::GoAway(id) => {
                 if id % 4 != 0 {
-                    self.fail(t, code::H3_ID_ERROR, "a GOAWAY that does not name a request stream of the client");
+                    self.fail(
+                        t,
+                        code::H3_ID_ERROR,
+                        "a GOAWAY that does not name a request stream of the client",
+                    );
                     return;
                 }
                 if self.goaway.is_some_and(|before| id > before) {
-                    self.fail(t, code::H3_ID_ERROR, "a GOAWAY that is greater than the one before");
+                    self.fail(
+                        t,
+                        code::H3_ID_ERROR,
+                        "a GOAWAY that is greater than the one before",
+                    );
                     return;
                 }
                 self.goaway = Some(id);
                 let lost: Vec<u64> = self.streams.keys().copied().filter(|&s| s >= id).collect();
                 for s in lost {
-                    self.fail_stream(t, s, code::H3_REQUEST_REJECTED, "the server did not take the request (GOAWAY)", true);
+                    self.fail_stream(
+                        t,
+                        s,
+                        code::H3_REQUEST_REJECTED,
+                        "the server did not take the request (GOAWAY)",
+                        true,
+                    );
                 }
             }
-            Event::CancelPush(_) | Event::MaxPushId(_) => self.fail(t, code::H3_ID_ERROR, "a push that was never allowed"),
-            Event::Data(_) | Event::Headers(_) => self.fail(t, code::H3_FRAME_UNEXPECTED, "a frame of a request stream on the control stream"),
+            Event::CancelPush(_) | Event::MaxPushId(_) => {
+                self.fail(t, code::H3_ID_ERROR, "a push that was never allowed")
+            }
+            Event::Data(_) | Event::Headers(_) => self.fail(
+                t,
+                code::H3_FRAME_UNEXPECTED,
+                "a frame of a request stream on the control stream",
+            ),
         }
     }
 
@@ -955,7 +1148,9 @@ impl Connection {
             if self.error.is_some() {
                 return;
             }
-            let Some(s) = self.streams.get_mut(&id) else { return };
+            let Some(s) = self.streams.get_mut(&id) else {
+                return;
+            };
             if s.failure.is_some() || s.remote_ended || s.blocked.is_some() {
                 return;
             }
@@ -968,7 +1163,13 @@ impl Connection {
                 Ok(r) => r,
                 Err(TransportError::Blocked) => return,
                 Err(TransportError::Reset(c)) => {
-                    self.fail_stream(t, id, c, "the server reset the stream", c == code::H3_REQUEST_REJECTED);
+                    self.fail_stream(
+                        t,
+                        id,
+                        c,
+                        "the server reset the stream",
+                        c == code::H3_REQUEST_REJECTED,
+                    );
                     return;
                 }
                 Err(_) => return,
@@ -1019,13 +1220,22 @@ impl Connection {
     /// A field section that was waiting may be decoded now: the ones that can are, and what was held back behind them is taken in.
     fn retry_blocked<T: Transport>(&mut self, t: &mut T) {
         let have = self.decoder.insert_count();
-        let ready: Vec<u64> = self.streams.iter().filter(|(_, s)| s.blocked.as_ref().is_some_and(|(_, need)| *need <= have)).map(|(id, _)| *id).collect();
+        let ready: Vec<u64> = self
+            .streams
+            .iter()
+            .filter(|(_, s)| s.blocked.as_ref().is_some_and(|(_, need)| *need <= have))
+            .map(|(id, _)| *id)
+            .collect();
         for id in ready {
-            let Some((block, _)) = self.streams.get_mut(&id).and_then(|s| s.blocked.take()) else { continue };
+            let Some((block, _)) = self.streams.get_mut(&id).and_then(|s| s.blocked.take()) else {
+                continue;
+            };
             let mut flow = self.apply(t, id, Item::Headers(block));
             // what was held behind it, until another field section waits or the stream is over
             while flow == Flow::Continue {
-                let Some(held) = self.streams.get_mut(&id).and_then(|s| s.held.pop_front()) else { break };
+                let Some(held) = self.streams.get_mut(&id).and_then(|s| s.held.pop_front()) else {
+                    break;
+                };
                 flow = match held {
                     Held::Headers(b) => self.apply(t, id, Item::Headers(b)),
                     Held::Data(d) => self.apply(t, id, Item::Data(&d)),
@@ -1047,7 +1257,13 @@ impl Connection {
                 Flow::Stop
             }
             Item::Error(FrameError::HeadersTooLarge) => {
-                self.fail_stream(t, id, code::H3_EXCESSIVE_LOAD, "a field section larger than the limit", false);
+                self.fail_stream(
+                    t,
+                    id,
+                    code::H3_EXCESSIVE_LOAD,
+                    "a field section larger than the limit",
+                    false,
+                );
                 Flow::Stop
             }
             Item::Data(bytes) => self.on_data(t, id, bytes),
@@ -1057,14 +1273,19 @@ impl Connection {
     }
 
     fn on_data<T: Transport>(&mut self, t: &mut T, id: u64, bytes: &[u8]) -> Flow {
-        let Some(s) = self.streams.get_mut(&id) else { return Flow::Stop };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return Flow::Stop;
+        };
         let bad: Result<(), (bool, &str)> = if s.trailers_seen {
             Err((true, "DATA after the trailers"))
         } else if !s.got_head {
             Err((true, "DATA before the response headers"))
         } else if s.bodiless {
             Err((false, "DATA in a response that has no body"))
-        } else if s.expected.is_some_and(|n| s.received + bytes.len() as u64 > n) {
+        } else if s
+            .expected
+            .is_some_and(|n| s.received + bytes.len() as u64 > n)
+        {
             Err((false, "more DATA than the Content-Length says"))
         } else {
             Ok(())
@@ -1088,7 +1309,9 @@ impl Connection {
     }
 
     fn on_headers<T: Transport>(&mut self, t: &mut T, id: u64, block: Vec<u8>) -> Flow {
-        let Some(s) = self.streams.get_mut(&id) else { return Flow::Stop };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return Flow::Stop;
+        };
         if s.trailers_seen {
             self.fail(t, code::H3_FRAME_UNEXPECTED, "HEADERS after the trailers");
             return Flow::Stop;
@@ -1099,14 +1322,24 @@ impl Connection {
                 self.fail(t, e.code(), e.to_string());
                 Flow::Stop
             }
-            Ok(Decoded::Blocked { required_insert_count }) => {
+            Ok(Decoded::Blocked {
+                required_insert_count,
+            }) => {
                 if let Some(s) = self.streams.get_mut(&id) {
                     s.blocked = Some((block, required_insert_count));
                 }
                 Flow::Blocked
             }
-            Ok(Decoded::Done { within_limit: false }) => {
-                self.fail_stream(t, id, code::H3_EXCESSIVE_LOAD, "a field section larger than the limit", false);
+            Ok(Decoded::Done {
+                within_limit: false,
+            }) => {
+                self.fail_stream(
+                    t,
+                    id,
+                    code::H3_EXCESSIVE_LOAD,
+                    "a field section larger than the limit",
+                    false,
+                );
                 Flow::Stop
             }
             Ok(Decoded::Done { within_limit: true }) => self.on_fields(t, id, fields),
@@ -1115,7 +1348,9 @@ impl Connection {
 
     /// The fields of a section that is decoded: the response's head, an interim response's, or the trailers.
     fn on_fields<T: Transport>(&mut self, t: &mut T, id: u64, fields: Vec<Field>) -> Flow {
-        let Some(s) = self.streams.get_mut(&id) else { return Flow::Stop };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return Flow::Stop;
+        };
         if s.got_head {
             return match parse_trailers(&fields) {
                 Ok(trailers) => {
@@ -1141,7 +1376,13 @@ impl Connection {
             // no place in HTTP/3)
             s.interim += 1;
             if status == 101 || s.interim > MAX_INTERIM {
-                self.fail_stream(t, id, code::H3_MESSAGE_ERROR, "a 101, or too many 1xx responses", false);
+                self.fail_stream(
+                    t,
+                    id,
+                    code::H3_MESSAGE_ERROR,
+                    "a 101, or too many 1xx responses",
+                    false,
+                );
                 return Flow::Stop;
             }
             return Flow::Continue;
@@ -1154,17 +1395,31 @@ impl Connection {
     }
 
     fn on_fin<T: Transport>(&mut self, t: &mut T, id: u64) -> Flow {
-        let Some(s) = self.streams.get_mut(&id) else { return Flow::Stop };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return Flow::Stop;
+        };
         if !s.reader.at_frame_boundary() {
             self.fail(t, code::H3_FRAME_ERROR, "the stream ended inside a frame");
             return Flow::Stop;
         }
         if !s.got_head {
-            self.fail_stream(t, id, code::H3_REQUEST_INCOMPLETE, "the response ended before its headers", false);
+            self.fail_stream(
+                t,
+                id,
+                code::H3_REQUEST_INCOMPLETE,
+                "the response ended before its headers",
+                false,
+            );
             return Flow::Stop;
         }
         if s.expected.is_some_and(|n| s.received != n) {
-            self.fail_stream(t, id, code::H3_MESSAGE_ERROR, "less DATA than the Content-Length says", false);
+            self.fail_stream(
+                t,
+                id,
+                code::H3_MESSAGE_ERROR,
+                "less DATA than the Content-Length says",
+                false,
+            );
             return Flow::Stop;
         }
         s.remote_ended = true;
@@ -1174,31 +1429,70 @@ impl Connection {
     /// For the tests and the fuzzer: the books must add up. Panics if they do not.
     #[cfg(any(test, pratique_fuzzing))]
     pub(crate) fn assert_books(&self) {
-        let blocked = self.streams.values().filter(|s| s.blocked.is_some()).count();
-        assert!(blocked <= self.cfg.qpack_blocked_streams, "{blocked} streams wait for the table, {} are allowed", self.cfg.qpack_blocked_streams);
+        let blocked = self
+            .streams
+            .values()
+            .filter(|s| s.blocked.is_some())
+            .count();
+        assert!(
+            blocked <= self.cfg.qpack_blocked_streams,
+            "{blocked} streams wait for the table, {} are allowed",
+            self.cfg.qpack_blocked_streams
+        );
         if self.error.is_none() {
-            assert_eq!(self.decoder.blocked_streams(), blocked, "the decoder and the connection disagree on which streams wait");
+            assert_eq!(
+                self.decoder.blocked_streams(),
+                blocked,
+                "the decoder and the connection disagree on which streams wait"
+            );
         }
         for (id, s) in &self.streams {
-            assert_eq!(id & 3, 0, "a request stream that is not a client's bidirectional one");
-            assert!(s.unread() <= self.cfg.body_buffer + READ_CHUNK, "{} bytes of body are held unread on stream {id}", s.unread());
+            assert_eq!(
+                id & 3,
+                0,
+                "a request stream that is not a client's bidirectional one"
+            );
+            assert!(
+                s.unread() <= self.cfg.body_buffer + READ_CHUNK,
+                "{} bytes of body are held unread on stream {id}",
+                s.unread()
+            );
             assert!(s.body_pos <= s.body.len());
             if s.blocked.is_none() {
-                assert!(s.held.is_empty(), "something is held back behind no field section");
+                assert!(
+                    s.held.is_empty(),
+                    "something is held back behind no field section"
+                );
             }
             if let Some((block, _)) = &s.blocked {
-                assert!(block.len() <= self.cfg.max_header_list, "a waiting field section larger than the limit");
+                assert!(
+                    block.len() <= self.cfg.max_header_list,
+                    "a waiting field section larger than the limit"
+                );
             }
-            let held: usize = s.held.iter().map(|h| if let Held::Data(d) = h { d.len() } else { 0 }).sum();
-            assert!(held <= READ_CHUNK, "{held} bytes held back behind a field section");
+            let held: usize = s
+                .held
+                .iter()
+                .map(|h| if let Held::Data(d) = h { d.len() } else { 0 })
+                .sum();
+            assert!(
+                held <= READ_CHUNK,
+                "{held} bytes held back behind a field section"
+            );
             if s.failure.is_some() {
-                assert!(s.blocked.is_none() && s.held.is_empty(), "a failed stream holds on to what it was waiting with");
+                assert!(
+                    s.blocked.is_none() && s.held.is_empty(),
+                    "a failed stream holds on to what it was waiting with"
+                );
             }
         }
         assert!(self.ignored.len() <= 1 << 16);
         assert!(self.uni.len() <= 1 << 16);
         for id in &self.readable {
-            assert!(self.streams.contains_key(id) || id & 3 == 3, "a stream to read that is not known");
+            assert!(
+                self.streams.contains_key(id) || id & 3 == 3,
+                "a stream to read that is not known"
+            );
         }
     }
 }
@@ -1209,7 +1503,11 @@ enum Sink<'a> {
 }
 
 fn local_error(reason: &str) -> StreamError {
-    StreamError { code: code::H3_REQUEST_CANCELLED, reason: reason.to_string(), retry_safe: false }
+    StreamError {
+        code: code::H3_REQUEST_CANCELLED,
+        reason: reason.to_string(),
+        retry_safe: false,
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ the QUIC connection as a transport
@@ -1244,9 +1542,9 @@ impl Transport for QuicTransport<'_> {
     }
 }
 
-#[cfg(test)]
-#[path = "connection_tests.rs"]
-mod tests;
 #[cfg(any(test, pratique_fuzzing))]
 #[path = "connection_harness.rs"]
 pub(crate) mod harness;
+#[cfg(test)]
+#[path = "connection_tests.rs"]
+mod tests;

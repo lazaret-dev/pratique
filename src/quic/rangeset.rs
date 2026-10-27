@@ -53,7 +53,11 @@ impl RangeSet {
 
     /// The range that holds `v`, if there is one.
     fn containing(&self, v: u64) -> Option<(u64, u64)> {
-        self.ranges.range(..=v).next_back().filter(|(_, &e)| v < e).map(|(&s, &e)| (s, e))
+        self.ranges
+            .range(..=v)
+            .next_back()
+            .filter(|(_, &e)| v < e)
+            .map(|(&s, &e)| (s, e))
     }
 
     pub fn contains(&self, v: u64) -> bool {
@@ -99,7 +103,12 @@ impl RangeSet {
         }
         let (mut start, mut end) = (r.start, r.end);
         // a range that ends where this one begins, or reaches into it
-        if let Some((s, e)) = self.ranges.range(..=start).next_back().map(|(&s, &e)| (s, e)) {
+        if let Some((s, e)) = self
+            .ranges
+            .range(..=start)
+            .next_back()
+            .map(|(&s, &e)| (s, e))
+        {
             if e >= start {
                 start = s;
                 end = end.max(e);
@@ -108,7 +117,9 @@ impl RangeSet {
         }
         // the ranges that begin inside this one or where it ends
         loop {
-            let Some((s, e)) = self.ranges.range(start..=end).next().map(|(&s, &e)| (s, e)) else { break };
+            let Some((s, e)) = self.ranges.range(start..=end).next().map(|(&s, &e)| (s, e)) else {
+                break;
+            };
             end = end.max(e);
             self.ranges.remove(&s);
         }
@@ -126,8 +137,13 @@ impl RangeSet {
         if r.start >= r.end {
             return;
         }
-        let touching: Vec<(u64, u64)> =
-            self.ranges.range(..r.end).rev().take_while(|(_, &e)| e > r.start).map(|(&s, &e)| (s, e)).collect();
+        let touching: Vec<(u64, u64)> = self
+            .ranges
+            .range(..r.end)
+            .rev()
+            .take_while(|(_, &e)| e > r.start)
+            .map(|(&s, &e)| (s, e))
+            .collect();
         for (s, e) in touching {
             self.ranges.remove(&s);
             if s < r.start {
@@ -185,7 +201,10 @@ mod tests {
         assert!(s.insert_one(4));
         assert!(s.insert_one(8));
         assert_eq!(s.iter().collect::<Vec<_>>(), vec![4..9]);
-        assert_eq!((s.min(), s.max(), s.count(), s.range_count()), (Some(4), Some(8), 5, 1));
+        assert_eq!(
+            (s.min(), s.max(), s.count(), s.range_count()),
+            (Some(4), Some(8), 5, 1)
+        );
     }
 
     #[test]
@@ -228,9 +247,23 @@ mod tests {
         let mut s = RangeSet::new();
         s.insert(10..20);
         s.insert(30..40);
-        assert!(s.contains(10) && s.contains(19) && !s.contains(20) && !s.contains(9) && s.contains(30));
-        assert!(s.covers(12..18) && s.covers(10..20) && !s.covers(10..21) && !s.covers(15..35) && s.covers(25..25));
-        assert!(s.intersects(0..11) && s.intersects(19..31) && !s.intersects(20..30) && !s.intersects(0..10) && !s.intersects(40..50));
+        assert!(
+            s.contains(10) && s.contains(19) && !s.contains(20) && !s.contains(9) && s.contains(30)
+        );
+        assert!(
+            s.covers(12..18)
+                && s.covers(10..20)
+                && !s.covers(10..21)
+                && !s.covers(15..35)
+                && s.covers(25..25)
+        );
+        assert!(
+            s.intersects(0..11)
+                && s.intersects(19..31)
+                && !s.intersects(20..30)
+                && !s.intersects(0..10)
+                && !s.intersects(40..50)
+        );
         assert!(s.intersects(15..16) && s.intersects(0..100) && !s.intersects(5..5));
     }
 
@@ -310,7 +343,9 @@ mod tests {
                         let got = s.pop_first(max);
                         let first = model.iter().next().copied();
                         match (got, first) {
-                            (None, f) => assert!(max == 0 || f.is_none(), "round {round} step {step}"),
+                            (None, f) => {
+                                assert!(max == 0 || f.is_none(), "round {round} step {step}")
+                            }
                             (Some(g), Some(f)) => {
                                 assert_eq!(g.start, f);
                                 assert!(g.end - g.start <= max);
@@ -333,7 +368,10 @@ mod tests {
                 assert_eq!(from_set, from_model, "round {round} step {step}");
                 let ranges: Vec<_> = s.iter().collect();
                 for w in ranges.windows(2) {
-                    assert!(w[0].end < w[1].start, "ranges touch or are out of order: {ranges:?}");
+                    assert!(
+                        w[0].end < w[1].start,
+                        "ranges touch or are out of order: {ranges:?}"
+                    );
                 }
                 assert!(ranges.iter().all(|r| r.start < r.end));
                 assert_eq!(s.count(), model.len() as u64);
@@ -343,9 +381,15 @@ mod tests {
                 assert_eq!(s.contains(probe), model.contains(&probe));
                 let q = probe..probe + next(8);
                 assert_eq!(s.covers(q.clone()), q.clone().all(|v| model.contains(&v)));
-                assert_eq!(s.intersects(q.clone()), q.clone().any(|v| model.contains(&v)));
+                assert_eq!(
+                    s.intersects(q.clone()),
+                    q.clone().any(|v| model.contains(&v))
+                );
                 let within: Vec<u64> = s.within(q.clone()).into_iter().flatten().collect();
-                assert_eq!(within, q.clone().filter(|v| model.contains(v)).collect::<Vec<_>>());
+                assert_eq!(
+                    within,
+                    q.clone().filter(|v| model.contains(v)).collect::<Vec<_>>()
+                );
             }
         }
     }

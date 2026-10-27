@@ -49,11 +49,15 @@ const OID_MESSAGE_DIGEST: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x
 const OID_SIGNING_TIME: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x05];
 const OID_ALGORITHM_PROTECTION: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x34];
 /// id-aa-timeStampToken (RFC 3161 section 3.4 of RFC 5035): a time stamp on a signature.
-const OID_TIMESTAMP_TOKEN: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x0e];
+const OID_TIMESTAMP_TOKEN: &[u8] = &[
+    0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x02, 0x0e,
+];
 /// Microsoft's name for the same attribute (RFC 3161 time stamps on Authenticode signatures).
 const OID_MS_TIMESTAMP_TOKEN: &[u8] = &[0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x03, 0x03, 0x01];
 /// id-ct-TSTInfo (RFC 3161): the content type of a time-stamp token.
-const OID_TST_INFO: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x01, 0x04];
+const OID_TST_INFO: &[u8] = &[
+    0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x01, 0x04,
+];
 const OID_SKI: &[u8] = &[0x55, 0x1d, 0x0e];
 
 const OID_SHA1: &[u8] = &[0x2b, 0x0e, 0x03, 0x02, 0x1a];
@@ -121,14 +125,23 @@ impl std::fmt::Display for Error {
             Error::NotSignedData => write!(f, "not a CMS SignedData message"),
             Error::UnsupportedVersion(v) => write!(f, "unsupported CMS version {v}"),
             Error::NoSigner => write!(f, "no such signer"),
-            Error::SignerCertificateNotFound => write!(f, "the signer's certificate is not in the message"),
+            Error::SignerCertificateNotFound => {
+                write!(f, "the signer's certificate is not in the message")
+            }
             Error::UnsupportedDigest(o) => write!(f, "unsupported digest algorithm {o}"),
             Error::UnsupportedSignature(m) => write!(f, "unsupported signature: {m}"),
             Error::Attributes(m) => write!(f, "signed attributes: {m}"),
-            Error::DigestMismatch => write!(f, "the content does not match the digest that was signed"),
+            Error::DigestMismatch => {
+                write!(f, "the content does not match the digest that was signed")
+            }
             Error::BadSignature => write!(f, "the signature is not valid"),
-            Error::ContentMissing => write!(f, "the signature is detached and no content was supplied"),
-            Error::ContentGiven => write!(f, "the signature carries its content and content was supplied as well"),
+            Error::ContentMissing => {
+                write!(f, "the signature is detached and no content was supplied")
+            }
+            Error::ContentGiven => write!(
+                f,
+                "the signature carries its content and content was supplied as well"
+            ),
             Error::WeakDigest => write!(f, "the signature uses SHA-1"),
             Error::Chain(e) => write!(f, "signer certificate: {e}"),
             Error::TimestampMissing => write!(f, "the signature has no time stamp"),
@@ -180,7 +193,11 @@ impl AlgId {
     fn parse(n: &Node) -> Result<AlgId> {
         let mut it = n.with_tag(0x30)?.items()?;
         let oid = it.expect(0x06)?.content()?.to_vec();
-        let params = if it.is_empty() { None } else { Some(it.next()?.der()?) };
+        let params = if it.is_empty() {
+            None
+        } else {
+            Some(it.next()?.der()?)
+        };
         it.finish()?;
         Ok(AlgId { oid, params })
     }
@@ -201,7 +218,12 @@ impl Attribute {
     fn parse(n: &Node) -> Result<Attribute> {
         let mut it = n.with_tag(0x30)?.items()?;
         let oid = it.expect(0x06)?.content()?.to_vec();
-        let values = it.expect(0x31)?.children()?.iter().map(|v| Ok(v.der()?)).collect::<Result<Vec<_>>>()?;
+        let values = it
+            .expect(0x31)?
+            .children()?
+            .iter()
+            .map(|v| Ok(v.der()?))
+            .collect::<Result<Vec<_>>>()?;
         it.finish()?;
         Ok(Attribute { oid, values })
     }
@@ -245,7 +267,11 @@ impl Digest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SigKind {
     Rsa(Digest),
-    Pss { hash: HashAlg, mgf: HashAlg, salt_len: usize },
+    Pss {
+        hash: HashAlg,
+        mgf: HashAlg,
+        salt_len: usize,
+    },
     Ecdsa(Digest),
     Ed25519,
 }
@@ -262,12 +288,22 @@ fn small_int(n: &Node) -> Result<i64> {
 fn explicit<'n, 'a>(n: &'n Node<'a>) -> Result<&'n Node<'a>> {
     match n.children()? {
         [one] => Ok(one),
-        _ => Err(Error::Malformed("an explicitly tagged element must hold exactly one element")),
+        _ => Err(Error::Malformed(
+            "an explicitly tagged element must hold exactly one element",
+        )),
     }
 }
 
 fn sig_kind(alg: &AlgId, digest: Digest) -> Result<SigKind> {
-    let plain = |d: Digest| if alg.params_absent_or_null() { Ok(d) } else { Err(Error::UnsupportedSignature("parameters on a signature algorithm that takes none".into())) };
+    let plain = |d: Digest| {
+        if alg.params_absent_or_null() {
+            Ok(d)
+        } else {
+            Err(Error::UnsupportedSignature(
+                "parameters on a signature algorithm that takes none".into(),
+            ))
+        }
+    };
     Ok(match alg.oid.as_slice() {
         OID_RSA => SigKind::Rsa(plain(digest)?),
         OID_SHA1_RSA => SigKind::Rsa(plain(Digest::Sha1)?),
@@ -280,9 +316,18 @@ fn sig_kind(alg: &AlgId, digest: Digest) -> Result<SigKind> {
         OID_ECDSA_SHA384 => SigKind::Ecdsa(plain(Digest::Sha2(HashAlg::Sha384))?),
         OID_ECDSA_SHA512 => SigKind::Ecdsa(plain(Digest::Sha2(HashAlg::Sha512))?),
         OID_ED25519 if alg.params.is_none() => SigKind::Ed25519,
-        OID_ED25519 => return Err(Error::UnsupportedSignature("parameters on an Ed25519 signature".into())),
+        OID_ED25519 => {
+            return Err(Error::UnsupportedSignature(
+                "parameters on an Ed25519 signature".into(),
+            ))
+        }
         OID_RSASSA_PSS => pss_kind(alg.params.as_deref())?,
-        other => return Err(Error::UnsupportedSignature(format!("algorithm {}", asn1::oid_to_string(other)))),
+        other => {
+            return Err(Error::UnsupportedSignature(format!(
+                "algorithm {}",
+                asn1::oid_to_string(other)
+            )))
+        }
     })
 }
 
@@ -290,7 +335,9 @@ fn sig_kind(alg: &AlgId, digest: Digest) -> Result<SigKind> {
 /// parameters, or with SHA-1 in them, there is nothing to verify with.
 fn pss_kind(params: Option<&[u8]>) -> Result<SigKind> {
     let sha1_unsupported = || Error::UnsupportedSignature("RSASSA-PSS with SHA-1".into());
-    let Some(params) = params else { return Err(sha1_unsupported()) };
+    let Some(params) = params else {
+        return Err(sha1_unsupported());
+    };
     let root = ber::parse_exact(params)?;
     let mut it = root.with_tag(0x30)?.items()?;
     let sha2 = |d: Digest| match d {
@@ -305,7 +352,9 @@ fn pss_kind(params: Option<&[u8]>) -> Result<SigKind> {
         Some(n) => {
             let mut m = explicit(n)?.with_tag(0x30)?.items()?;
             if m.expect(0x06)?.content()? != OID_MGF1 {
-                return Err(Error::UnsupportedSignature("RSASSA-PSS with a mask generation function other than MGF1".into()));
+                return Err(Error::UnsupportedSignature(
+                    "RSASSA-PSS with a mask generation function other than MGF1".into(),
+                ));
             }
             let inner = AlgId::parse(m.next()?)?;
             m.finish()?;
@@ -319,11 +368,17 @@ fn pss_kind(params: Option<&[u8]>) -> Result<SigKind> {
     };
     if let Some(n) = it.optional(0xa3) {
         if small_int(explicit(n)?)? != 1 {
-            return Err(Error::UnsupportedSignature("RSASSA-PSS trailer field other than 1".into()));
+            return Err(Error::UnsupportedSignature(
+                "RSASSA-PSS trailer field other than 1".into(),
+            ));
         }
     }
     it.finish()?;
-    Ok(SigKind::Pss { hash, mgf, salt_len })
+    Ok(SigKind::Pss {
+        hash,
+        mgf,
+        salt_len,
+    })
 }
 
 fn is_sha1(k: SigKind) -> bool {
@@ -383,7 +438,14 @@ impl SignerInfo {
             None => Vec::new(),
         };
         it.finish()?;
-        Ok(SignerInfo { sid, digest_alg, signed_attrs, signature_alg, signature, unsigned_attrs })
+        Ok(SignerInfo {
+            sid,
+            digest_alg,
+            signed_attrs,
+            signature_alg,
+            signature,
+            unsigned_attrs,
+        })
     }
 
     /// How the signer's certificate is named.
@@ -421,7 +483,10 @@ impl SignerInfo {
     /// The values (DER) of an unsigned attribute, by OID (content octets). Unsigned attributes are
     /// not covered by the signature: anybody can remove them or add them.
     pub fn unsigned_attributes<'s>(&'s self, oid: &'s [u8]) -> impl Iterator<Item = &'s [u8]> + 's {
-        self.unsigned_attrs.iter().filter(move |a| a.oid == oid).flat_map(|a| a.values.iter().map(|v| v.as_slice()))
+        self.unsigned_attrs
+            .iter()
+            .filter(move |a| a.oid == oid)
+            .flat_map(|a| a.values.iter().map(|v| v.as_slice()))
     }
 
     /// The `signingTime` the signer claims, as Unix seconds. Nothing vouches for it (unless a time
@@ -447,18 +512,44 @@ impl SignerInfo {
         let (digest, kind) = self.algorithms()?;
         let signed: Cow<[u8]> = match &self.signed_attrs {
             Some((der, attrs)) => {
-                check_attributes(attrs, content_type, content, digest, &self.digest_alg, &self.signature_alg)?;
+                check_attributes(
+                    attrs,
+                    content_type,
+                    content,
+                    digest,
+                    &self.digest_alg,
+                    &self.signature_alg,
+                )?;
                 Cow::Borrowed(der)
             }
             None => Cow::Borrowed(content),
         };
         let ok = match (kind, key) {
-            (SigKind::Rsa(Digest::Sha1), PublicKey::Rsa(k)) => k.verify_pkcs1_sha1(&signed, &self.signature),
-            (SigKind::Rsa(Digest::Sha2(h)), PublicKey::Rsa(k)) => k.verify_pkcs1(h, &signed, &self.signature),
-            (SigKind::Pss { hash, mgf, salt_len }, PublicKey::Rsa(k)) => k.verify_pss_with(hash, mgf, salt_len, &signed, &self.signature),
-            (SigKind::Ecdsa(d), PublicKey::Ec { curve, point }) => ecdsa::verify_prehashed(*curve, point, &d.digest(&signed), &self.signature),
-            (SigKind::Ed25519, PublicKey::Ed25519(k)) => ed25519::verify(k, &signed, &self.signature),
-            _ => return Err(Error::UnsupportedSignature("the signature algorithm does not fit the signer's key".into())),
+            (SigKind::Rsa(Digest::Sha1), PublicKey::Rsa(k)) => {
+                k.verify_pkcs1_sha1(&signed, &self.signature)
+            }
+            (SigKind::Rsa(Digest::Sha2(h)), PublicKey::Rsa(k)) => {
+                k.verify_pkcs1(h, &signed, &self.signature)
+            }
+            (
+                SigKind::Pss {
+                    hash,
+                    mgf,
+                    salt_len,
+                },
+                PublicKey::Rsa(k),
+            ) => k.verify_pss_with(hash, mgf, salt_len, &signed, &self.signature),
+            (SigKind::Ecdsa(d), PublicKey::Ec { curve, point }) => {
+                ecdsa::verify_prehashed(*curve, point, &d.digest(&signed), &self.signature)
+            }
+            (SigKind::Ed25519, PublicKey::Ed25519(k)) => {
+                ed25519::verify(k, &signed, &self.signature)
+            }
+            _ => {
+                return Err(Error::UnsupportedSignature(
+                    "the signature algorithm does not fit the signer's key".into(),
+                ))
+            }
         };
         if !ok {
             return Err(Error::BadSignature);
@@ -474,7 +565,14 @@ impl SignerInfo {
 /// RFC 5652 section 5.3: contentType and messageDigest are required, once each with one value, and
 /// must say what the content is and what it hashes to; CMSAlgorithmProtection (RFC 6211), when
 /// there, must say what the SignerInfo says.
-fn check_attributes(attrs: &[Attribute], content_type: &[u8], content: &[u8], digest: Digest, digest_alg: &AlgId, sig_alg: &AlgId) -> Result<()> {
+fn check_attributes(
+    attrs: &[Attribute],
+    content_type: &[u8],
+    content: &[u8],
+    digest: Digest,
+    digest_alg: &AlgId,
+    sig_alg: &AlgId,
+) -> Result<()> {
     let once = |oid: &[u8], what: &'static str| -> Result<&Vec<u8>> {
         let mut found = attrs.iter().filter(|a| a.oid == oid);
         match (found.next(), found.next()) {
@@ -485,31 +583,50 @@ fn check_attributes(attrs: &[Attribute], content_type: &[u8], content: &[u8], di
             _ => Err(Error::Attributes(what)),
         }
     };
-    let ct = ber::parse_exact(once(OID_CONTENT_TYPE, "contentType must occur exactly once, with one value")?)?;
+    let ct = ber::parse_exact(once(
+        OID_CONTENT_TYPE,
+        "contentType must occur exactly once, with one value",
+    )?)?;
     if ct.with_tag(0x06)?.content()? != content_type {
-        return Err(Error::Attributes("contentType is not the type of the content"));
+        return Err(Error::Attributes(
+            "contentType is not the type of the content",
+        ));
     }
     if attrs.iter().any(|a| a.oid == OID_ALGORITHM_PROTECTION) {
-        let p = ber::parse_exact(once(OID_ALGORITHM_PROTECTION, "CMSAlgorithmProtection must occur once")?)?;
+        let p = ber::parse_exact(once(
+            OID_ALGORITHM_PROTECTION,
+            "CMSAlgorithmProtection must occur once",
+        )?)?;
         let mut it = p.with_tag(0x30)?.items()?;
         let protected_digest = AlgId::parse(it.expect(0x30)?)?;
         if protected_digest.oid != digest_alg.oid {
-            return Err(Error::Attributes("CMSAlgorithmProtection names another digest algorithm than the signer info"));
+            return Err(Error::Attributes(
+                "CMSAlgorithmProtection names another digest algorithm than the signer info",
+            ));
         }
         if let Some(sig) = it.optional(0xa1) {
             // [1] IMPLICIT AlgorithmIdentifier: the same elements under another tag
             let as_sequence = sig.der_as(0x30)?;
             let protected_sig = AlgId::parse(&ber::parse_exact(&as_sequence)?)?;
-            if protected_sig.oid != sig_alg.oid || (protected_sig.oid == OID_RSASSA_PSS && protected_sig.params != sig_alg.params) {
-                return Err(Error::Attributes("CMSAlgorithmProtection names another signature algorithm than the signer info"));
+            if protected_sig.oid != sig_alg.oid
+                || (protected_sig.oid == OID_RSASSA_PSS && protected_sig.params != sig_alg.params)
+            {
+                return Err(Error::Attributes(
+                    "CMSAlgorithmProtection names another signature algorithm than the signer info",
+                ));
             }
         }
         if it.optional(0xa2).is_some() {
-            return Err(Error::Attributes("CMSAlgorithmProtection names a MAC algorithm"));
+            return Err(Error::Attributes(
+                "CMSAlgorithmProtection names a MAC algorithm",
+            ));
         }
         it.finish()?;
     }
-    let md = ber::parse_exact(once(OID_MESSAGE_DIGEST, "messageDigest must occur exactly once, with one value")?)?;
+    let md = ber::parse_exact(once(
+        OID_MESSAGE_DIGEST,
+        "messageDigest must occur exactly once, with one value",
+    )?)?;
     if md.with_tag(0x04)?.octets()?.as_ref() != digest.digest(content).as_slice() {
         return Err(Error::DigestMismatch);
     }
@@ -569,7 +686,9 @@ impl SignedData {
             Some(c) => {
                 let inner = explicit(c)?;
                 if content_type == OID_DATA && !matches!(inner.tag(), 0x04 | 0x24) {
-                    return Err(Error::Malformed("the content of a data message is not an OCTET STRING"));
+                    return Err(Error::Malformed(
+                        "the content of a data message is not an OCTET STRING",
+                    ));
                 }
                 Some(inner.der_content()?)
             }
@@ -582,7 +701,10 @@ impl SignedData {
         if let Some(set) = it.optional(0xa0) {
             for c in set.children()? {
                 // other kinds of certificate (attribute certificates and so on) are not X.509 certificates
-                match (c.tag() == 0x30).then(|| c.der().ok().and_then(|d| Certificate::parse(&d).ok())).flatten() {
+                match (c.tag() == 0x30)
+                    .then(|| c.der().ok().and_then(|d| Certificate::parse(&d).ok()))
+                    .flatten()
+                {
                     Some(cert) => certificates.push(cert),
                     None => skipped += 1,
                 }
@@ -590,9 +712,20 @@ impl SignedData {
         }
         // revocation information, which is not used here
         it.optional(0xa1);
-        let signers = it.expect(0x31)?.children()?.iter().map(SignerInfo::parse).collect::<Result<Vec<_>>>()?;
+        let signers = it
+            .expect(0x31)?
+            .children()?
+            .iter()
+            .map(SignerInfo::parse)
+            .collect::<Result<Vec<_>>>()?;
         it.finish()?;
-        Ok(SignedData { content_type, content, certificates, skipped_certificates: skipped, signers })
+        Ok(SignedData {
+            content_type,
+            content,
+            certificates,
+            skipped_certificates: skipped,
+            signers,
+        })
     }
 
     /// The content type (dotted OID): `1.2.840.113549.1.7.1` for plain data.
@@ -636,12 +769,19 @@ impl SignedData {
         }
     }
 
-    fn find_certificate<'s>(&'s self, sid: &SignerId, extra: &'s [Certificate]) -> Option<&'s Certificate> {
+    fn find_certificate<'s>(
+        &'s self,
+        sid: &SignerId,
+        extra: &'s [Certificate],
+    ) -> Option<&'s Certificate> {
         self.certificates.iter().chain(extra).find(|c| match sid {
-            SignerId::IssuerAndSerial { issuer, serial } => c.issuer_der == *issuer && c.serial == *serial,
+            SignerId::IssuerAndSerial { issuer, serial } => {
+                c.issuer_der == *issuer && c.serial == *serial
+            }
             SignerId::SubjectKeyId(id) => c.extension(OID_SKI).is_some_and(|e| {
                 let mut d = Der::new(&e.value);
-                matches!(d.expect(asn1::TAG_OCTET_STRING), Ok(t) if t.content == id.as_slice()) && d.is_empty()
+                matches!(d.expect(asn1::TAG_OCTET_STRING), Ok(t) if t.content == id.as_slice())
+                    && d.is_empty()
             }),
         })
     }
@@ -651,26 +791,47 @@ impl SignedData {
     /// the content when the message does not carry it (and must be `None` when it does).
     /// `extra_certs` are certificates to look for the signer's in as well, for messages that came
     /// without any.
-    pub fn verify_signature(&self, signer: usize, detached: Option<&[u8]>, extra_certs: &[Certificate]) -> Result<SignatureCheck> {
+    pub fn verify_signature(
+        &self,
+        signer: usize,
+        detached: Option<&[u8]>,
+        extra_certs: &[Certificate],
+    ) -> Result<SignatureCheck> {
         let info = self.signers.get(signer).ok_or(Error::NoSigner)?;
         let content = self.content_for(detached)?;
-        let cert = self.find_certificate(&info.sid, extra_certs).ok_or(Error::SignerCertificateNotFound)?;
+        let cert = self
+            .find_certificate(&info.sid, extra_certs)
+            .ok_or(Error::SignerCertificateNotFound)?;
         let weaknesses = info.check(&self.content_type, content, &cert.public_key)?;
-        Ok(SignatureCheck { certificate_der: cert.der.clone(), weaknesses })
+        Ok(SignatureCheck {
+            certificate_der: cert.der.clone(),
+            weaknesses,
+        })
     }
 
     /// The signer's certificate first, then every other certificate of the message and of
     /// `extra_certs`: what chain building starts from.
     fn chain_input<'s>(&'s self, leaf: &'s [u8], extra: &'s [Certificate]) -> Vec<&'s [u8]> {
         let mut chain = vec![leaf];
-        chain.extend(self.certificates.iter().chain(extra).map(|c| c.der.as_slice()).filter(|d| *d != leaf));
+        chain.extend(
+            self.certificates
+                .iter()
+                .chain(extra)
+                .map(|c| c.der.as_slice())
+                .filter(|d| *d != leaf),
+        );
         chain
     }
 
     /// Verifies one signer completely: [`verify_signature`](Self::verify_signature), then the
     /// certificate chain against `options.trust` for `options.purpose`, at the time of a valid time
     /// stamp on the signature or else at `options.time`.
-    pub fn verify_signer(&self, signer: usize, detached: Option<&[u8]>, options: &Options) -> Result<VerifiedSigner> {
+    pub fn verify_signer(
+        &self,
+        signer: usize,
+        detached: Option<&[u8]>,
+        options: &Options,
+    ) -> Result<VerifiedSigner> {
         let check = self.verify_signature(signer, detached, options.extra_certs)?;
         let info = &self.signers[signer];
         let mut weaknesses = check.weaknesses;
@@ -683,7 +844,10 @@ impl SignedData {
             let trust = options.timestamp_trust.unwrap_or(options.trust);
             let mut best: Option<Timestamp> = None;
             let mut first_err = None;
-            for token in info.unsigned_attributes(OID_TIMESTAMP_TOKEN).chain(info.unsigned_attributes(OID_MS_TIMESTAMP_TOKEN)) {
+            for token in info
+                .unsigned_attributes(OID_TIMESTAMP_TOKEN)
+                .chain(info.unsigned_attributes(OID_MS_TIMESTAMP_TOKEN))
+            {
                 match verify_timestamp(token, info.signature(), trust, options.allow_sha1) {
                     Ok(t) if best.as_ref().map_or(true, |b| t.time < b.time) => best = Some(t),
                     Ok(_) => {}
@@ -695,7 +859,9 @@ impl SignedData {
             match (best, first_err) {
                 (Some(t), _) => timestamp = Some(t),
                 (None, Some(e)) => return Err(Error::Timestamp(Box::new(e))),
-                (None, None) if options.timestamps == Timestamps::Require => return Err(Error::TimestampMissing),
+                (None, None) if options.timestamps == Timestamps::Require => {
+                    return Err(Error::TimestampMissing)
+                }
                 (None, None) => {}
             }
         }
@@ -708,18 +874,33 @@ impl SignedData {
             }
         }
         let verify_options = VerifyOptions::new(options.purpose.clone(), chain_time);
-        let chain = options.trust.verify_chain(&self.chain_input(&check.certificate_der, options.extra_certs), &verify_options)?;
-        Ok(VerifiedSigner { chain, weaknesses, timestamp, claimed_signing_time: info.claimed_signing_time(), chain_time })
+        let chain = options.trust.verify_chain(
+            &self.chain_input(&check.certificate_der, options.extra_certs),
+            &verify_options,
+        )?;
+        Ok(VerifiedSigner {
+            chain,
+            weaknesses,
+            timestamp,
+            claimed_signing_time: info.claimed_signing_time(),
+            chain_time,
+        })
     }
 
     /// Verifies every signer (see [`verify_signer`](Self::verify_signer)); one that does not
     /// verify fails the whole message, as does a message without signers. A caller that accepts a
     /// message with at least one good signature calls `verify_signer` itself.
-    pub fn verify(&self, detached: Option<&[u8]>, options: &Options) -> Result<Vec<VerifiedSigner>> {
+    pub fn verify(
+        &self,
+        detached: Option<&[u8]>,
+        options: &Options,
+    ) -> Result<Vec<VerifiedSigner>> {
         if self.signers.is_empty() {
             return Err(Error::NoSigner);
         }
-        (0..self.signers.len()).map(|i| self.verify_signer(i, detached, options)).collect()
+        (0..self.signers.len())
+            .map(|i| self.verify_signer(i, detached, options))
+            .collect()
     }
 }
 
@@ -769,7 +950,15 @@ pub struct Options<'a> {
 
 impl<'a> Options<'a> {
     pub fn new(trust: &'a TrustStore, purpose: Purpose, time: i64) -> Options<'a> {
-        Options { trust, purpose, time, timestamps: Timestamps::Verify, timestamp_trust: None, allow_sha1: false, extra_certs: &[] }
+        Options {
+            trust,
+            purpose,
+            time,
+            timestamps: Timestamps::Verify,
+            timestamp_trust: None,
+            allow_sha1: false,
+            extra_certs: &[],
+        }
     }
 }
 
@@ -806,7 +995,12 @@ pub struct Timestamp {
 /// signature's time stamp, the signature value): the token's signature, the authority's chain to
 /// `trust` for [`Purpose::TimeStamping`] at the token's own time, and that the token's message
 /// imprint is the hash of `message`.
-pub fn verify_timestamp(token: &[u8], message: &[u8], trust: &TrustStore, allow_sha1: bool) -> Result<Timestamp> {
+pub fn verify_timestamp(
+    token: &[u8],
+    message: &[u8],
+    trust: &TrustStore,
+    allow_sha1: bool,
+) -> Result<Timestamp> {
     verify_timestamp_with(token, message, trust, allow_sha1, &[])
 }
 
@@ -833,13 +1027,21 @@ pub fn timestamp_token(data: &[u8]) -> Result<Vec<u8>> {
 
 /// As [`verify_timestamp`], with `extra_certs` to look for the authority's certificate and the
 /// intermediates in besides the token's own (a token made without `certReq` carries none).
-pub fn verify_timestamp_with(token: &[u8], message: &[u8], trust: &TrustStore, allow_sha1: bool, extra_certs: &[Certificate]) -> Result<Timestamp> {
+pub fn verify_timestamp_with(
+    token: &[u8],
+    message: &[u8],
+    trust: &TrustStore,
+    allow_sha1: bool,
+    extra_certs: &[Certificate],
+) -> Result<Timestamp> {
     let sd = SignedData::parse(token)?;
     if sd.content_type != OID_TST_INFO {
         return Err(Error::Malformed("the token's content is not a TSTInfo"));
     }
     if sd.signers.len() != 1 {
-        return Err(Error::Malformed("a time-stamp token has exactly one signer"));
+        return Err(Error::Malformed(
+            "a time-stamp token has exactly one signer",
+        ));
     }
     let check = sd.verify_signature(0, None, extra_certs)?;
     let tst = ber::parse_exact(sd.content().ok_or(Error::ContentMissing)?)?;
@@ -867,22 +1069,40 @@ pub fn verify_timestamp_with(token: &[u8], message: &[u8], trust: &TrustStore, a
         return Err(Error::WeakDigest);
     }
     let options = VerifyOptions::new(Purpose::TimeStamping, time);
-    let chain = trust.verify_chain(&sd.chain_input(&check.certificate_der, extra_certs), &options)?;
-    Ok(Timestamp { time, chain, policy, serial, weaknesses })
+    let chain = trust.verify_chain(
+        &sd.chain_input(&check.certificate_der, extra_certs),
+        &options,
+    )?;
+    Ok(Timestamp {
+        time,
+        chain,
+        policy,
+        serial,
+        weaknesses,
+    })
 }
 
 /// genTime may carry a fraction of a second (`20260401123456.5Z`), which [`asn1::parse_time`] does not read.
 fn gen_time(t: &Tlv) -> Result<i64> {
     let c = t.content;
     let whole: Vec<u8> = match c.iter().position(|b| *b == b'.') {
-        Some(i) if i == 14 && c.len() > 16 && c.ends_with(b"Z") && c[15..c.len() - 1].iter().all(|b| b.is_ascii_digit()) => {
+        Some(i)
+            if i == 14
+                && c.len() > 16
+                && c.ends_with(b"Z")
+                && c[15..c.len() - 1].iter().all(|b| b.is_ascii_digit()) =>
+        {
             let mut v = c[..14].to_vec();
             v.push(b'Z');
             v
         }
         _ => c.to_vec(),
     };
-    Ok(asn1::parse_time(&Tlv { tag: t.tag, content: &whole, raw: &whole })?)
+    Ok(asn1::parse_time(&Tlv {
+        tag: t.tag,
+        content: &whole,
+        raw: &whole,
+    })?)
 }
 
 #[cfg(test)]
@@ -911,8 +1131,15 @@ mod tests {
 
     impl Fx {
         fn load() -> Fx {
-            let mut f = Fx { certs: BTreeMap::new(), contents: BTreeMap::new(), blobs: BTreeMap::new() };
-            for line in FIXTURES.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+            let mut f = Fx {
+                certs: BTreeMap::new(),
+                contents: BTreeMap::new(),
+                blobs: BTreeMap::new(),
+            };
+            for line in FIXTURES
+                .lines()
+                .filter(|l| !l.starts_with('#') && !l.is_empty())
+            {
                 let p: Vec<&str> = line.split(' ').collect();
                 let map = match p[0] {
                     "cert" => &mut f.certs,
@@ -944,7 +1171,10 @@ mod tests {
 
     /// `blob` with one bit flipped in the middle of the first occurrence of `needle`.
     fn flip_in(blob: &[u8], needle: &[u8]) -> Vec<u8> {
-        let at = blob.windows(needle.len()).position(|w| w == needle).expect("needle is in the blob");
+        let at = blob
+            .windows(needle.len())
+            .position(|w| w == needle)
+            .expect("needle is in the blob");
         let mut b = blob.to_vec();
         b[at + needle.len() / 2] ^= 0x04;
         b
@@ -952,7 +1182,10 @@ mod tests {
 
     fn replace_last(blob: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
         assert_eq!(from.len(), to.len());
-        let at = blob.windows(from.len()).rposition(|w| w == from).expect("pattern is in the blob");
+        let at = blob
+            .windows(from.len())
+            .rposition(|w| w == from)
+            .expect("pattern is in the blob");
         let mut b = blob.to_vec();
         b[at..at + from.len()].copy_from_slice(to);
         b
@@ -1050,13 +1283,19 @@ mod tests {
                 o.extra_certs = &extra;
             }
             let detached = detached.map(|d| f.contents[d].as_slice());
-            let verified = sd.verify(detached, &o).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let verified = sd
+                .verify(detached, &o)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(verified.len(), 1, "{name}");
             let v = &verified[0];
             assert_eq!(v.chain.leaf.der, f.certs[*signer], "{name}");
             assert_eq!(v.chain.path.len(), 3, "{name}");
             assert_eq!(v.chain.anchor(), f.certs["root"], "{name}");
-            assert_eq!(v.weaknesses, if *sha1 { vec![Weakness::Sha1] } else { vec![] }, "{name}");
+            assert_eq!(
+                v.weaknesses,
+                if *sha1 { vec![Weakness::Sha1] } else { vec![] },
+                "{name}"
+            );
             assert!(v.timestamp.is_none() && v.chain_time == NOW, "{name}");
             // the arithmetic alone, with no chain at all, says the same
             let check = sd.verify_signature(0, detached, &extra).unwrap();
@@ -1070,33 +1309,61 @@ mod tests {
         let sd = f.parse("rsa_sha256");
         assert_eq!(sd.content(), Some(HELLO));
         assert_eq!(sd.content_type(), "1.2.840.113549.1.7.1");
-        assert_eq!((sd.certificates().len(), sd.skipped_certificates(), sd.signers().len()), (2, 0, 1));
+        assert_eq!(
+            (
+                sd.certificates().len(),
+                sd.skipped_certificates(),
+                sd.signers().len()
+            ),
+            (2, 0, 1)
+        );
         let s = &sd.signers()[0];
         assert!(matches!(s.id(), SignerId::IssuerAndSerial { .. }));
         assert_eq!(s.digest_algorithm(), "2.16.840.1.101.3.4.2.1");
         assert_eq!(s.signature_algorithm(), "1.2.840.113549.1.1.1");
         assert!(s.claimed_signing_time().unwrap() > 1_767_225_600);
         assert_eq!(s.signature().len(), 256);
-        assert!(s.signed_attribute(OID_CONTENT_TYPE).is_some() && s.signed_attribute(OID_TIMESTAMP_TOKEN).is_none());
+        assert!(
+            s.signed_attribute(OID_CONTENT_TYPE).is_some()
+                && s.signed_attribute(OID_TIMESTAMP_TOKEN).is_none()
+        );
         assert_eq!(s.unsigned_attributes(OID_TIMESTAMP_TOKEN).count(), 0);
 
         // the same message streamed: indefinite lengths and a constructed OCTET STRING
         let streamed = f.parse("rsa_stream");
-        assert!(f.blobs["rsa_stream"][1] == 0x80, "the fixture is meant to be BER");
+        assert!(
+            f.blobs["rsa_stream"][1] == 0x80,
+            "the fixture is meant to be BER"
+        );
         assert_eq!(streamed.content(), Some(HELLO));
         assert_eq!(streamed.certificates().len(), 2);
 
         let keyid = f.parse("rsa_keyid");
-        let SignerId::SubjectKeyId(id) = keyid.signers()[0].id() else { panic!("{:?}", keyid.signers()[0].id()) };
+        let SignerId::SubjectKeyId(id) = keyid.signers()[0].id() else {
+            panic!("{:?}", keyid.signers()[0].id())
+        };
         assert_eq!(id.len(), 20);
         assert_eq!(f.parse("rsa_econtent_type").content_type(), "1.2.3.4.5");
         assert_eq!(f.parse("two_signers").signers().len(), 2);
         assert!(f.parse("rsa_sha256_detached").content().is_none());
         let ts = f.parse("rsa_ts");
-        assert_eq!(ts.signers()[0].unsigned_attributes(OID_TIMESTAMP_TOKEN).count(), 1);
-        assert_eq!(f.parse("rsa_ts_ms").signers()[0].unsigned_attributes(OID_MS_TIMESTAMP_TOKEN).count(), 1);
+        assert_eq!(
+            ts.signers()[0]
+                .unsigned_attributes(OID_TIMESTAMP_TOKEN)
+                .count(),
+            1
+        );
+        assert_eq!(
+            f.parse("rsa_ts_ms").signers()[0]
+                .unsigned_attributes(OID_MS_TIMESTAMP_TOKEN)
+                .count(),
+            1
+        );
         assert_eq!(f.parse("jar_ed").signers()[0].signature().len(), 64);
-        assert_eq!(f.parse("jar_ed").signers()[0].signature_algorithm(), "1.3.101.112");
+        assert_eq!(
+            f.parse("jar_ed").signers()[0].signature_algorithm(),
+            "1.3.101.112"
+        );
     }
 
     #[test]
@@ -1108,14 +1375,27 @@ mod tests {
         padded.extend([0u8; 6]);
         assert!(SignedData::parse(&padded).is_ok());
         padded.push(1);
-        assert!(matches!(SignedData::parse(&padded), Err(Error::Malformed(_))));
+        assert!(matches!(
+            SignedData::parse(&padded),
+            Err(Error::Malformed(_))
+        ));
         // a bare SignedData, without the ContentInfo around it
         let root = ber::parse_exact(blob).unwrap();
-        let inner = explicit(&root.children().unwrap()[1]).unwrap().der().unwrap();
+        let inner = explicit(&root.children().unwrap()[1])
+            .unwrap()
+            .der()
+            .unwrap();
         assert_eq!(SignedData::parse(&inner).unwrap().content(), Some(HELLO));
         // a ContentInfo of another type
-        let other = replace_last(blob, &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02], &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01]);
-        assert!(matches!(SignedData::parse(&other), Err(Error::NotSignedData)));
+        let other = replace_last(
+            blob,
+            &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02],
+            &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01],
+        );
+        assert!(matches!(
+            SignedData::parse(&other),
+            Err(Error::NotSignedData)
+        ));
         // nothing, and every shorter piece of a message, is an error and not a panic
         assert!(SignedData::parse(&[]).is_err());
         for name in ["rsa_stream", "jar_ed", "two_signers"] {
@@ -1134,17 +1414,30 @@ mod tests {
         let sd = f.parse("two_signers");
         let verified = sd.verify(None, &o).unwrap();
         // (a SET OF is written in the order of its encodings, so which signer comes first is not up to the signer)
-        let mut leaves = vec![verified[0].chain.leaf.der.clone(), verified[1].chain.leaf.der.clone()];
+        let mut leaves = vec![
+            verified[0].chain.leaf.der.clone(),
+            verified[1].chain.leaf.der.clone(),
+        ];
         leaves.sort();
         let mut expected = vec![f.certs["rsa"].clone(), f.certs["p256"].clone()];
         expected.sort();
         assert_eq!(leaves, expected);
         // damage the second signature: the message fails, the first signer still verifies
-        let damaged = SignedData::parse(&flip_in(&f.blobs["two_signers"], sd.signers()[1].signature())).unwrap();
+        let damaged = SignedData::parse(&flip_in(
+            &f.blobs["two_signers"],
+            sd.signers()[1].signature(),
+        ))
+        .unwrap();
         assert!(matches!(damaged.verify(None, &o), Err(Error::BadSignature)));
         assert!(damaged.verify_signer(0, None, &o).is_ok());
-        assert!(matches!(damaged.verify_signer(1, None, &o), Err(Error::BadSignature)));
-        assert!(matches!(damaged.verify_signer(2, None, &o), Err(Error::NoSigner)));
+        assert!(matches!(
+            damaged.verify_signer(1, None, &o),
+            Err(Error::BadSignature)
+        ));
+        assert!(matches!(
+            damaged.verify_signer(2, None, &o),
+            Err(Error::NoSigner)
+        ));
     }
 
     #[test]
@@ -1154,15 +1447,34 @@ mod tests {
         for name in ["rsa_sha1", "p256_sha1"] {
             let sd = f.parse(name);
             // the arithmetic is right, and the result says what is wrong with it
-            assert_eq!(sd.verify_signature(0, None, &[]).unwrap().weaknesses, [Weakness::Sha1], "{name}");
+            assert_eq!(
+                sd.verify_signature(0, None, &[]).unwrap().weaknesses,
+                [Weakness::Sha1],
+                "{name}"
+            );
             // the default is to refuse
             let o = Options::new(&trust, Purpose::CodeSigning, NOW);
-            assert!(matches!(sd.verify(None, &o), Err(Error::WeakDigest)), "{name}");
+            assert!(
+                matches!(sd.verify(None, &o), Err(Error::WeakDigest)),
+                "{name}"
+            );
         }
-        assert!(f.parse("rsa_sha256").verify_signature(0, None, &[]).unwrap().weaknesses.is_empty());
+        assert!(f
+            .parse("rsa_sha256")
+            .verify_signature(0, None, &[])
+            .unwrap()
+            .weaknesses
+            .is_empty());
         // and a damaged SHA-1 signature is a bad signature, not a weak one
-        let sd = SignedData::parse(&flip_in(&f.blobs["rsa_sha1"], f.parse("rsa_sha1").signers()[0].signature())).unwrap();
-        assert!(matches!(sd.verify_signature(0, None, &[]), Err(Error::BadSignature)));
+        let sd = SignedData::parse(&flip_in(
+            &f.blobs["rsa_sha1"],
+            f.parse("rsa_sha1").signers()[0].signature(),
+        ))
+        .unwrap();
+        assert!(matches!(
+            sd.verify_signature(0, None, &[]),
+            Err(Error::BadSignature)
+        ));
     }
 
     #[test]
@@ -1173,14 +1485,29 @@ mod tests {
         let other = b"some other message".as_slice();
         // a detached signature needs its content, and the right one
         let detached = f.parse("rsa_sha256_detached");
-        assert!(matches!(detached.verify(None, &o), Err(Error::ContentMissing)));
-        assert!(matches!(detached.verify(Some(other), &o), Err(Error::DigestMismatch)));
+        assert!(matches!(
+            detached.verify(None, &o),
+            Err(Error::ContentMissing)
+        ));
+        assert!(matches!(
+            detached.verify(Some(other), &o),
+            Err(Error::DigestMismatch)
+        ));
         assert!(detached.verify(Some(HELLO), &o).is_ok());
-        assert!(matches!(f.parse("rsa_noattr_detached").verify(Some(other), &o), Err(Error::BadSignature)));
+        assert!(matches!(
+            f.parse("rsa_noattr_detached").verify(Some(other), &o),
+            Err(Error::BadSignature)
+        ));
         // a signature that carries its content is not given another one
-        assert!(matches!(f.parse("rsa_sha256").verify(Some(HELLO), &o), Err(Error::ContentGiven)));
+        assert!(matches!(
+            f.parse("rsa_sha256").verify(Some(HELLO), &o),
+            Err(Error::ContentGiven)
+        ));
         // a message with no signer certificate in it, and none supplied
-        assert!(matches!(f.parse("rsa_nocerts").verify(None, &o), Err(Error::SignerCertificateNotFound)));
+        assert!(matches!(
+            f.parse("rsa_nocerts").verify(None, &o),
+            Err(Error::SignerCertificateNotFound)
+        ));
     }
 
     #[test]
@@ -1188,11 +1515,20 @@ mod tests {
         let f = Fx::load();
         let trust = f.store(&["root"]);
         let o = Options::new(&trust, Purpose::CodeSigning, NOW);
-        let check = |blob: Vec<u8>, detached: Option<&[u8]>| SignedData::parse(&blob).and_then(|sd| sd.verify(detached, &o));
+        let check = |blob: Vec<u8>, detached: Option<&[u8]>| {
+            SignedData::parse(&blob).and_then(|sd| sd.verify(detached, &o))
+        };
 
         // the carried content: the digest in the signed attributes no longer matches, or, with no
         // attributes, the signature does not
-        for (name, digest) in [("rsa_sha256", true), ("rsa_stream", true), ("p256_sha256", true), ("rsa_noattr", false), ("p256_noattr", false), ("rsa_pss_sha256", true)] {
+        for (name, digest) in [
+            ("rsa_sha256", true),
+            ("rsa_stream", true),
+            ("p256_sha256", true),
+            ("rsa_noattr", false),
+            ("p256_noattr", false),
+            ("rsa_pss_sha256", true),
+        ] {
             let r = check(flip_in(&f.blobs[name], HELLO), None);
             match (digest, r) {
                 (true, Err(Error::DigestMismatch)) | (false, Err(Error::BadSignature)) => {}
@@ -1200,7 +1536,17 @@ mod tests {
             }
         }
         // the signature value
-        for name in ["rsa_sha256", "rsa_keyid", "rsa_pss_sha256", "rsa_pss_sha384", "p256_sha256", "p384_sha384", "rsa_noattr", "pkcs7_attached", "rsa_stream"] {
+        for name in [
+            "rsa_sha256",
+            "rsa_keyid",
+            "rsa_pss_sha256",
+            "rsa_pss_sha384",
+            "p256_sha256",
+            "p384_sha384",
+            "rsa_noattr",
+            "pkcs7_attached",
+            "rsa_stream",
+        ] {
             let sig = f.parse(name).signers()[0].signature().to_vec();
             let r = check(flip_in(&f.blobs[name], &sig), None);
             assert!(matches!(r, Err(Error::BadSignature)), "{name}: {r:?}");
@@ -1221,10 +1567,19 @@ mod tests {
         assert!(matches!(r, Err(Error::DigestMismatch)), "{r:?}");
         // the signer's certificate (not covered by the signature): its key changes, so nothing verifies
         let leaf = f.certs["rsa"].clone();
-        let r = check(flip_in(&f.blobs["rsa_sha256"], &leaf[leaf.len() / 3..leaf.len() / 3 * 2]), None);
+        let r = check(
+            flip_in(
+                &f.blobs["rsa_sha256"],
+                &leaf[leaf.len() / 3..leaf.len() / 3 * 2],
+            ),
+            None,
+        );
         assert!(r.is_err());
         // the signed attributes taken off: the attribute signature is not a signature of the content
-        assert!(matches!(check(f.blobs["rsa_attrs_stripped"].clone(), None), Err(Error::BadSignature)));
+        assert!(matches!(
+            check(f.blobs["rsa_attrs_stripped"].clone(), None),
+            Err(Error::BadSignature)
+        ));
     }
 
     #[test]
@@ -1236,25 +1591,36 @@ mod tests {
         let r = f.parse("rsa_econtent_type_swapped").verify(None, &o);
         assert!(matches!(r, Err(Error::Attributes(_))), "{r:?}");
         // the signer info says SHA-384, the signed algorithm protection says SHA-256
-        let r = f.parse("jar_rsa_alg_swapped").verify(Some(&f.contents["jar_rsa"]), &o);
-        assert!(matches!(r, Err(Error::Attributes(m)) if m.contains("digest algorithm")), "{r:?}");
+        let r = f
+            .parse("jar_rsa_alg_swapped")
+            .verify(Some(&f.contents["jar_rsa"]), &o);
+        assert!(
+            matches!(r, Err(Error::Attributes(m)) if m.contains("digest algorithm")),
+            "{r:?}"
+        );
         // a digest algorithm this code does not have (SHA-224)
         let sha256 = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
         let sha224 = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04];
         let sd = SignedData::parse(&replace_all(&f.blobs["rsa_sha256"], &sha256, &sha224)).unwrap();
-        assert!(matches!(sd.verify(None, &o), Err(Error::UnsupportedDigest(d)) if d == "2.16.840.1.101.3.4.2.4"));
+        assert!(
+            matches!(sd.verify(None, &o), Err(Error::UnsupportedDigest(d)) if d == "2.16.840.1.101.3.4.2.4")
+        );
         // a signature algorithm it does not have: the last rsaEncryption is the signer's
         let rsa = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
         let unknown = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0f];
         let sd = SignedData::parse(&replace_last(&f.blobs["rsa_sha256"], &rsa, &unknown)).unwrap();
-        assert!(matches!(sd.verify(None, &o), Err(Error::UnsupportedSignature(m)) if m.contains("1.2.840.113549.1.1.15")));
+        assert!(
+            matches!(sd.verify(None, &o), Err(Error::UnsupportedSignature(m)) if m.contains("1.2.840.113549.1.1.15"))
+        );
         // sha256WithRSA over a SHA-384 digest algorithm is two hashes, and each is checked on its own
         let sha256_rsa = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b];
-        let sd = SignedData::parse(&replace_last(&f.blobs["rsa_sha256"], &rsa, &sha256_rsa)).unwrap();
+        let sd =
+            SignedData::parse(&replace_last(&f.blobs["rsa_sha256"], &rsa, &sha256_rsa)).unwrap();
         // the signature was made with rsaEncryption + SHA-256, which is what sha256WithRSA means
         assert!(sd.verify(None, &o).is_ok());
         let sha384_rsa = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0c];
-        let sd = SignedData::parse(&replace_last(&f.blobs["rsa_sha256"], &rsa, &sha384_rsa)).unwrap();
+        let sd =
+            SignedData::parse(&replace_last(&f.blobs["rsa_sha256"], &rsa, &sha384_rsa)).unwrap();
         assert!(matches!(sd.verify(None, &o), Err(Error::BadSignature)));
     }
 
@@ -1268,21 +1634,43 @@ mod tests {
         let signed = |name: &str| f.parse(name);
         let root = f.store(&["root"]);
         // a signer under a root nobody trusts, and the same one once the root is trusted
-        assert!(matches!(signed("rogue_signed").verify(None, &opts(&root, NOW)), Err(Error::Chain(_))));
-        assert!(signed("rogue_signed").verify(None, &opts(&f.store(&["rogue_root"]), NOW)).is_ok());
-        assert!(matches!(signed("rsa_sha256").verify(None, &opts(&TrustStore::empty(), NOW)), Err(Error::Chain(_))));
+        assert!(matches!(
+            signed("rogue_signed").verify(None, &opts(&root, NOW)),
+            Err(Error::Chain(_))
+        ));
+        assert!(signed("rogue_signed")
+            .verify(None, &opts(&f.store(&["rogue_root"]), NOW))
+            .is_ok());
+        assert!(matches!(
+            signed("rsa_sha256").verify(None, &opts(&TrustStore::empty(), NOW)),
+            Err(Error::Chain(_))
+        ));
         // a leaf that may sign for TLS but not for code
-        assert!(matches!(signed("tls_signed").verify(None, &opts(&root, NOW)), Err(Error::Chain(_))));
+        assert!(matches!(
+            signed("tls_signed").verify(None, &opts(&root, NOW)),
+            Err(Error::Chain(_))
+        ));
         let any = Options::new(&root, Purpose::Any, NOW);
         assert!(signed("tls_signed").verify(None, &any).is_ok());
         // the certificate's validity period
         let sd = signed("rsa_sha256");
-        assert!(matches!(sd.verify(None, &opts(&root, BEFORE_ALL)), Err(Error::Chain(_))));
-        assert!(matches!(sd.verify(None, &opts(&root, AFTER_LEAVES)), Err(Error::Chain(_))));
+        assert!(matches!(
+            sd.verify(None, &opts(&root, BEFORE_ALL)),
+            Err(Error::Chain(_))
+        ));
+        assert!(matches!(
+            sd.verify(None, &opts(&root, AFTER_LEAVES)),
+            Err(Error::Chain(_))
+        ));
         assert!(sd.verify(None, &opts(&root, NOW)).is_ok());
         // a leaf that expired in June 2026 does not verify in October
-        assert!(matches!(signed("short_signed").verify(None, &opts(&root, NOW)), Err(Error::Chain(_))));
-        assert!(signed("short_signed").verify(None, &opts(&root, APRIL_1_2026_9H)).is_ok());
+        assert!(matches!(
+            signed("short_signed").verify(None, &opts(&root, NOW)),
+            Err(Error::Chain(_))
+        ));
+        assert!(signed("short_signed")
+            .verify(None, &opts(&root, APRIL_1_2026_9H))
+            .is_ok());
     }
 
     #[test]
@@ -1295,14 +1683,24 @@ mod tests {
         for name in ["rsa_ts", "rsa_ts_ms"] {
             let v = &f.parse(name).verify(None, &o).unwrap()[0];
             let t = v.timestamp.as_ref().expect(name);
-            assert_eq!((v.chain_time, t.policy.as_str(), t.serial.len(), t.serial[0]), (t.time, "1.2.3.4.1", 2, 0x0a), "{name}");
-            assert!(t.time > 1_767_225_600 && t.time <= NOW + 10 * 365 * 86_400, "{name}");
+            assert_eq!(
+                (v.chain_time, t.policy.as_str(), t.serial.len(), t.serial[0]),
+                (t.time, "1.2.3.4.1", 2, 0x0a),
+                "{name}"
+            );
+            assert!(
+                t.time > 1_767_225_600 && t.time <= NOW + 10 * 365 * 86_400,
+                "{name}"
+            );
             assert_eq!(t.chain.path.len(), 3);
             assert_eq!(t.chain.leaf.der, f.certs["tsa"]);
         }
         // the short-lived key signed in April and was stamped then: it verifies in October
         let v = &f.parse("short_ts").verify(None, &o).unwrap()[0];
-        assert_eq!((v.chain_time, v.timestamp.as_ref().unwrap().time), (APRIL_1_2026_9H, APRIL_1_2026_9H));
+        assert_eq!(
+            (v.chain_time, v.timestamp.as_ref().unwrap().time),
+            (APRIL_1_2026_9H, APRIL_1_2026_9H)
+        );
         // ... unless the stamp is dated after the certificate expired, or before it began
         for name in ["short_ts_late", "short_ts_early"] {
             let r = f.parse(name).verify(None, &o);
@@ -1311,18 +1709,30 @@ mod tests {
         // and ignoring time stamps puts it back to the caller's time
         let mut ignore = Options::new(&root, Purpose::CodeSigning, NOW);
         ignore.timestamps = Timestamps::Ignore;
-        assert!(matches!(f.parse("short_ts").verify(None, &ignore), Err(Error::Chain(_))));
-        assert!(f.parse("rsa_ts").verify(None, &ignore).unwrap()[0].timestamp.is_none());
+        assert!(matches!(
+            f.parse("short_ts").verify(None, &ignore),
+            Err(Error::Chain(_))
+        ));
+        assert!(f.parse("rsa_ts").verify(None, &ignore).unwrap()[0]
+            .timestamp
+            .is_none());
 
         // requiring one
         let mut require = Options::new(&root, Purpose::CodeSigning, NOW);
         require.timestamps = Timestamps::Require;
-        assert!(matches!(f.parse("rsa_sha256").verify(None, &require), Err(Error::TimestampMissing)));
+        assert!(matches!(
+            f.parse("rsa_sha256").verify(None, &require),
+            Err(Error::TimestampMissing)
+        ));
         assert!(f.parse("rsa_ts").verify(None, &require).is_ok());
         assert!(f.parse("rsa_sha256").verify(None, &o).is_ok());
 
         // a token for some other message, and one from an authority that is not trusted
-        for name in ["rsa_ts_wrong_imprint", "rsa_ts_rogue_tsa", "rsa_ts_wrong_eku"] {
+        for name in [
+            "rsa_ts_wrong_imprint",
+            "rsa_ts_rogue_tsa",
+            "rsa_ts_wrong_eku",
+        ] {
             let r = f.parse(name).verify(None, &o);
             assert!(matches!(r, Err(Error::Timestamp(_))), "{name}: {r:?}");
         }
@@ -1331,7 +1741,10 @@ mod tests {
         let mut split = Options::new(&root, Purpose::CodeSigning, NOW);
         split.timestamp_trust = Some(&rogue);
         assert!(f.parse("rsa_ts_rogue_tsa").verify(None, &split).is_ok());
-        assert!(matches!(f.parse("rsa_ts").verify(None, &split), Err(Error::Timestamp(_))));
+        assert!(matches!(
+            f.parse("rsa_ts").verify(None, &split),
+            Err(Error::Timestamp(_))
+        ));
     }
 
     #[test]
@@ -1340,38 +1753,90 @@ mod tests {
         let root = f.store(&["root"]);
         let message = &f.contents["stamped"];
         for name in ["token_sha256", "token_sha384", "token_sha512"] {
-            let t = verify_timestamp(&f.blobs[name], message, &root, false).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let t = verify_timestamp(&f.blobs[name], message, &root, false)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(t.weaknesses.is_empty() && t.chain.path.len() == 3, "{name}");
         }
         // SHA-1 imprints are weak
-        assert!(matches!(verify_timestamp(&f.blobs["token_sha1"], message, &root, false), Err(Error::WeakDigest)));
-        assert_eq!(verify_timestamp(&f.blobs["token_sha1"], message, &root, true).unwrap().weaknesses, [Weakness::Sha1]);
+        assert!(matches!(
+            verify_timestamp(&f.blobs["token_sha1"], message, &root, false),
+            Err(Error::WeakDigest)
+        ));
+        assert_eq!(
+            verify_timestamp(&f.blobs["token_sha1"], message, &root, true)
+                .unwrap()
+                .weaknesses,
+            [Weakness::Sha1]
+        );
         // a token made for a chosen time
         let t = verify_timestamp(&f.blobs["token_custom"], message, &root, false).unwrap();
         assert_eq!(t.time, APRIL_1_2026_12H34M56S);
         // some other message, a damaged token, an authority nobody trusts, no trust at all
-        assert!(verify_timestamp(&f.blobs["token_sha256"], b"another message", &root, false).is_err());
+        assert!(
+            verify_timestamp(&f.blobs["token_sha256"], b"another message", &root, false).is_err()
+        );
         let sd = SignedData::parse(&f.blobs["token_sha256"]).unwrap();
         let damaged = flip_in(&f.blobs["token_sha256"], sd.signers()[0].signature());
-        assert!(matches!(verify_timestamp(&damaged, message, &root, false), Err(Error::BadSignature)));
-        assert!(matches!(verify_timestamp(&f.blobs["token_rogue_tsa"], message, &root, false), Err(Error::Chain(_))));
-        assert!(verify_timestamp(&f.blobs["token_rogue_tsa"], message, &f.store(&["rogue_root"]), false).is_ok());
-        assert!(matches!(verify_timestamp(&f.blobs["token_sha256"], message, &TrustStore::empty(), false), Err(Error::Chain(_))));
+        assert!(matches!(
+            verify_timestamp(&damaged, message, &root, false),
+            Err(Error::BadSignature)
+        ));
+        assert!(matches!(
+            verify_timestamp(&f.blobs["token_rogue_tsa"], message, &root, false),
+            Err(Error::Chain(_))
+        ));
+        assert!(verify_timestamp(
+            &f.blobs["token_rogue_tsa"],
+            message,
+            &f.store(&["rogue_root"]),
+            false
+        )
+        .is_ok());
+        assert!(matches!(
+            verify_timestamp(
+                &f.blobs["token_sha256"],
+                message,
+                &TrustStore::empty(),
+                false
+            ),
+            Err(Error::Chain(_))
+        ));
         // a token signed by a certificate for code signing is not a time stamp
-        assert!(matches!(verify_timestamp(&f.blobs["token_wrong_eku"], message, &root, false), Err(Error::Chain(_))));
+        assert!(matches!(
+            verify_timestamp(&f.blobs["token_wrong_eku"], message, &root, false),
+            Err(Error::Chain(_))
+        ));
         // a signature is not a time-stamp token
-        assert!(matches!(verify_timestamp(&f.blobs["rsa_sha256"], message, &root, false), Err(Error::Malformed(_))));
+        assert!(matches!(
+            verify_timestamp(&f.blobs["rsa_sha256"], message, &root, false),
+            Err(Error::Malformed(_))
+        ));
     }
 
     #[test]
     fn generalized_time_may_have_a_fraction() {
-        let tlv = |s: &'static [u8]| Tlv { tag: asn1::TAG_GENERALIZED_TIME, content: s, raw: s };
+        let tlv = |s: &'static [u8]| Tlv {
+            tag: asn1::TAG_GENERALIZED_TIME,
+            content: s,
+            raw: s,
+        };
         let whole = gen_time(&tlv(b"20260401123456Z")).unwrap();
         assert_eq!(whole, APRIL_1_2026_12H34M56S);
         assert_eq!(gen_time(&tlv(b"20260401123456.5Z")).unwrap(), whole);
         assert_eq!(gen_time(&tlv(b"20260401123456.123456Z")).unwrap(), whole);
-        for bad in [&b"20260401123456.Z"[..], b"20260401123456.5", b"20260401123456.5x", b"2026040112345.65Z", b"20260401123456,5Z", b"20260401123456+0100"] {
-            assert!(gen_time(&tlv(bad)).is_err(), "{:?}", String::from_utf8_lossy(bad));
+        for bad in [
+            &b"20260401123456.Z"[..],
+            b"20260401123456.5",
+            b"20260401123456.5x",
+            b"2026040112345.65Z",
+            b"20260401123456,5Z",
+            b"20260401123456+0100",
+        ] {
+            assert!(
+                gen_time(&tlv(bad)).is_err(),
+                "{:?}",
+                String::from_utf8_lossy(bad)
+            );
         }
     }
 }

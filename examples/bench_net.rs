@@ -11,16 +11,16 @@
 //! `--quick` takes a tenth of the samples. Latencies are medians (with the 90th percentile shown); rates and throughputs
 //! are the best of three runs. See `examples/bench.rs` for `--tsv` and `--label`.
 
-use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::Arc;
-use std::thread;
-use std::time::Instant;
 use pratique::http::h2_server;
 use pratique::tls::pki::TestPki;
 use pratique::tls::server::{ServerConfig, ServerStream};
 use pratique::tls::{ClientConfig, Resumption, Suite, TlsStream};
 use pratique::Client;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::sync::Arc;
+use std::thread;
+use std::time::Instant;
 
 #[path = "common/report.rs"]
 mod report;
@@ -55,7 +55,9 @@ fn serve(config: ServerConfig, service: Service) -> SocketAddr {
             socket.set_nodelay(true).ok();
             let config = config.clone();
             thread::spawn(move || {
-                let Ok(mut stream) = ServerStream::accept(socket, &config) else { return };
+                let Ok(mut stream) = ServerStream::accept(socket, &config) else {
+                    return;
+                };
                 match service {
                     Service::Handshake => {
                         if stream.write_all(b"k").and_then(|_| stream.flush()).is_ok() {
@@ -66,7 +68,13 @@ fn serve(config: ServerConfig, service: Service) -> SocketAddr {
                     Service::Http2 => {
                         let mut conn = h2_server::ServerConn::new(h2_server::Settings::default());
                         let body = vec![b'x'; SMALL_BODY];
-                        let mut handler = |_: &h2_server::Request| h2_server::response(200, &[("content-length", &SMALL_BODY.to_string())], &body);
+                        let mut handler = |_: &h2_server::Request| {
+                            h2_server::response(
+                                200,
+                                &[("content-length", &SMALL_BODY.to_string())],
+                                &body,
+                            )
+                        };
                         let _ = h2_server::serve_with(&mut stream, &mut conn, &mut handler);
                     }
                     Service::Sink => {
@@ -121,9 +129,14 @@ fn http1(mut stream: ServerStream<TcpStream>) {
                 Ok(k) => buf.extend_from_slice(&chunk[..k]),
             }
         };
-        let close = String::from_utf8_lossy(&buf[..end]).to_ascii_lowercase().contains("\r\nconnection: close");
+        let close = String::from_utf8_lossy(&buf[..end])
+            .to_ascii_lowercase()
+            .contains("\r\nconnection: close");
         buf.drain(..end);
-        let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {SMALL_BODY}\r\n{}\r\n", if close { "Connection: close\r\n" } else { "" });
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {SMALL_BODY}\r\n{}\r\n",
+            if close { "Connection: close\r\n" } else { "" }
+        );
         let mut out = head.into_bytes();
         out.extend_from_slice(&body);
         if stream.write_all(&out).and_then(|_| stream.flush()).is_err() || close {
@@ -142,7 +155,10 @@ fn median_p90(mut samples: Vec<f64>) -> (f64, f64) {
 /// The best of three runs of `run`, which returns how many things it did and in how many seconds: things per second.
 fn best_rate(mut run: impl FnMut() -> (usize, f64)) -> f64 {
     let _ = run(); // warm up
-    (0..3).map(|_| run()).map(|(n, secs)| n as f64 / secs).fold(0.0, f64::max)
+    (0..3)
+        .map(|_| run())
+        .map(|(n, secs)| n as f64 / secs)
+        .fold(0.0, f64::max)
 }
 
 fn main() {
@@ -162,7 +178,11 @@ fn main() {
             tcp.set_nodelay(true).ok();
             let mut tls = TlsStream::connect(tcp, "localhost", config).expect("handshake");
             let secs = t.elapsed().as_secs_f64();
-            assert_eq!(tls.is_resumed(), expect_resumed && i > 0, "resumed or not, as expected");
+            assert_eq!(
+                tls.is_resumed(),
+                expect_resumed && i > 0,
+                "resumed or not, as expected"
+            );
             // the byte the server writes comes after its tickets: reading it keeps them for the next connection
             let mut k = [0u8; 1];
             tls.read_exact(&mut k).expect("the server's byte");
@@ -173,14 +193,22 @@ fn main() {
         samples
     };
     let full = trust().with_resumption(Resumption::off());
-    for (name, group) in [("X25519", None), ("P-256, by HelloRetryRequest", Some(0x0017u16)), ("P-384, by HelloRetryRequest", Some(0x0018u16))] {
+    for (name, group) in [
+        ("X25519", None),
+        ("P-256, by HelloRetryRequest", Some(0x0017u16)),
+        ("P-384, by HelloRetryRequest", Some(0x0018u16)),
+    ] {
         let mut config = ServerConfig::from_pki(&pki);
         if let Some(g) = group {
             config = config.with_groups(&[g]);
         }
         let addr = serve(config, Service::Handshake);
         let (median, p90) = median_p90(latency(addr, &full, false));
-        r.row(&format!("TLS 1.3 handshake, full, {name} (median)"), median, "ms");
+        r.row(
+            &format!("TLS 1.3 handshake, full, {name} (median)"),
+            median,
+            "ms",
+        );
         println!("{:<58} {p90:9.2} ms", "    (90th percentile)");
     }
     let addr = serve(ServerConfig::from_pki(&pki), Service::Handshake);
@@ -204,12 +232,28 @@ fn main() {
         })
     };
     let keep = Client::with_tls_config(trust());
-    r.row("HTTP/1.1 requests, keep-alive", rate(&keep, requests), "per s");
+    r.row(
+        "HTTP/1.1 requests, keep-alive",
+        rate(&keep, requests),
+        "per s",
+    );
     let fresh = Client::with_tls_config(trust()).keep_alive(false);
-    r.row("HTTP/1.1 requests, a connection each, resumed", rate(&fresh, requests / 4), "per s");
-    let fresh_full = Client::with_tls_config(trust().with_resumption(Resumption::off())).keep_alive(false);
-    r.row("HTTP/1.1 requests, a connection each, full handshake", rate(&fresh_full, requests / 4), "per s");
-    let addr2 = serve(ServerConfig::from_pki(&pki).with_alpn(&["h2"]), Service::Http2);
+    r.row(
+        "HTTP/1.1 requests, a connection each, resumed",
+        rate(&fresh, requests / 4),
+        "per s",
+    );
+    let fresh_full =
+        Client::with_tls_config(trust().with_resumption(Resumption::off())).keep_alive(false);
+    r.row(
+        "HTTP/1.1 requests, a connection each, full handshake",
+        rate(&fresh_full, requests / 4),
+        "per s",
+    );
+    let addr2 = serve(
+        ServerConfig::from_pki(&pki).with_alpn(&["h2"]),
+        Service::Http2,
+    );
     let url2 = format!("https://localhost:{}/", addr2.port());
     let h2 = Client::with_tls_config(trust()).http2(true);
     let rate2 = best_rate(|| {
@@ -239,7 +283,11 @@ fn main() {
         }
         (requests / 8 * 8, t.elapsed().as_secs_f64())
     });
-    r.row("HTTP/2 requests, 8 threads on one connection", rate2p, "per s");
+    r.row(
+        "HTTP/2 requests, 8 threads on one connection",
+        rate2p,
+        "per s",
+    );
 
     // ---- small messages: one record each, client to server
     let addr = serve(ServerConfig::from_pki(&pki), Service::Sink);
@@ -250,7 +298,8 @@ fn main() {
             let tcp = TcpStream::connect(addr).expect("connect");
             tcp.set_nodelay(true).ok();
             let mut tls = TlsStream::connect(tcp, "localhost", &trust()).expect("handshake");
-            tls.write_all(&((count * size) as u64).to_be_bytes()).unwrap();
+            tls.write_all(&((count * size) as u64).to_be_bytes())
+                .unwrap();
             let t = Instant::now();
             for _ in 0..count {
                 tls.write_all(&msg).unwrap();
@@ -260,14 +309,29 @@ fn main() {
             tls.read_exact(&mut k).expect("the server's byte");
             (count, t.elapsed().as_secs_f64())
         });
-        r.row(&format!("small messages, {size} B a write (one record each)"), per_s, "per s");
-        r.row(&format!("small messages, {size} B a write: throughput"), per_s * size as f64 / 1e6, "MB/s");
+        r.row(
+            &format!("small messages, {size} B a write (one record each)"),
+            per_s,
+            "per s",
+        );
+        r.row(
+            &format!("small messages, {size} B a write: throughput"),
+            per_s * size as f64 / 1e6,
+            "MB/s",
+        );
     }
 
     // ---- bulk, server to client, each suite
     let bytes = (256usize << 20) / scale;
-    for (name, suite) in [("AES-128-GCM", Suite::Aes128GcmSha256), ("AES-256-GCM", Suite::Aes256GcmSha384), ("ChaCha20-Poly1305", Suite::Chacha20Poly1305Sha256)] {
-        let addr = serve(ServerConfig::from_pki(&pki).with_suites(&[suite]), Service::Source);
+    for (name, suite) in [
+        ("AES-128-GCM", Suite::Aes128GcmSha256),
+        ("AES-256-GCM", Suite::Aes256GcmSha384),
+        ("ChaCha20-Poly1305", Suite::Chacha20Poly1305Sha256),
+    ] {
+        let addr = serve(
+            ServerConfig::from_pki(&pki).with_suites(&[suite]),
+            Service::Source,
+        );
         let mbps = best_rate(|| {
             let tcp = TcpStream::connect(addr).expect("connect");
             let mut tls = TlsStream::connect(tcp, "localhost", &trust()).expect("handshake");

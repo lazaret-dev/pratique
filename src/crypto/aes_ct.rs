@@ -60,7 +60,9 @@ fn pack(input: &[u8; 64]) -> Planes {
     }
     let mut p = [0u64; 8];
     for g in 0..8 {
-        let w = transpose8(u64::from_le_bytes(bytes[8 * g..8 * g + 8].try_into().unwrap()));
+        let w = transpose8(u64::from_le_bytes(
+            bytes[8 * g..8 * g + 8].try_into().unwrap(),
+        ));
         for (i, plane) in p.iter_mut().enumerate() {
             *plane |= ((w >> (8 * i)) & 0xff) << (8 * g);
         }
@@ -280,8 +282,18 @@ const fn row_mask(r: usize, low: bool) -> u64 {
 }
 
 const ROW0: u64 = 0xffff;
-const LOW: [u64; 4] = [row_mask(0, true), row_mask(1, true), row_mask(2, true), row_mask(3, true)];
-const HIGH: [u64; 4] = [row_mask(0, false), row_mask(1, false), row_mask(2, false), row_mask(3, false)];
+const LOW: [u64; 4] = [
+    row_mask(0, true),
+    row_mask(1, true),
+    row_mask(2, true),
+    row_mask(3, true),
+];
+const HIGH: [u64; 4] = [
+    row_mask(0, false),
+    row_mask(1, false),
+    row_mask(2, false),
+    row_mask(3, false),
+];
 
 /// New state byte (column c, row r) is old byte (column (c + r) % 4, row r): in row r's field, each
 /// block's four lanes (one per column) turn by r places.
@@ -418,7 +430,10 @@ fn sub_word(w: [u8; 4]) -> [u8; 4] {
 /// (16 per round key, in state order) and the number of rounds. Constant time: the only
 /// secret-dependent step, SubWord, uses the bitsliced S-box.
 pub(super) fn expand_key(key: &[u8]) -> ([[u8; 16]; MAX_ROUND_KEYS], usize) {
-    assert!(key.len() == 16 || key.len() == 32, "unsupported AES key length");
+    assert!(
+        key.len() == 16 || key.len() == 32,
+        "unsupported AES key length"
+    );
     let nk = key.len() / 4;
     let nr = nk + 6;
     let total_words = 4 * (nr + 1);
@@ -458,7 +473,10 @@ mod tests {
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0 >> 24
         }
         fn fill(&mut self, buf: &mut [u8]) {
@@ -549,7 +567,11 @@ mod tests {
             for blk in 0..4 {
                 for c in 0..4 {
                     for r in 0..4 {
-                        assert_eq!(got[16 * blk + 4 * c + r], b[16 * blk + 4 * ((c + r) % 4) + r], "shift_rows");
+                        assert_eq!(
+                            got[16 * blk + 4 * c + r],
+                            b[16 * blk + 4 * ((c + r) % 4) + r],
+                            "shift_rows"
+                        );
                     }
                 }
             }
@@ -562,7 +584,8 @@ mod tests {
                 for c in 0..4 {
                     let a: [u8; 4] = core::array::from_fn(|r| b[16 * blk + 4 * c + r]);
                     for r in 0..4 {
-                        let want = mul2(a[r]) ^ mul3(a[(r + 1) % 4]) ^ a[(r + 2) % 4] ^ a[(r + 3) % 4];
+                        let want =
+                            mul2(a[r]) ^ mul3(a[(r + 1) % 4]) ^ a[(r + 2) % 4] ^ a[(r + 3) % 4];
                         assert_eq!(got[16 * blk + 4 * c + r], want, "mix_columns");
                     }
                 }

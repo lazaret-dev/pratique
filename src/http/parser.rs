@@ -26,7 +26,10 @@ fn http_err<T>(msg: impl Into<String>) -> Result<T> {
 }
 
 fn eof(msg: &str) -> Error {
-    Error::Io(io::Error::new(io::ErrorKind::UnexpectedEof, msg.to_string()))
+    Error::Io(io::Error::new(
+        io::ErrorKind::UnexpectedEof,
+        msg.to_string(),
+    ))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -144,7 +147,9 @@ impl ResponseParser {
     /// The most bytes worth reading from the transport next: a sized body never asks for more
     /// than is left of it, so nothing past the end of the message is consumed.
     pub(crate) fn max_read(&self) -> usize {
-        let left = |n: u64| (n.saturating_sub((self.buf.len() - self.pos) as u64)).min(usize::MAX as u64) as usize;
+        let left = |n: u64| {
+            (n.saturating_sub((self.buf.len() - self.pos) as u64)).min(usize::MAX as u64) as usize
+        };
         match self.state {
             State::Sized(n) | State::ChunkData(n) => left(n).max(1),
             State::Done => 0,
@@ -173,7 +178,9 @@ impl ResponseParser {
     pub(crate) fn consume_direct(&mut self, n: usize) -> Result<()> {
         let n = n as u64;
         match self.state {
-            State::Sized(left) | State::ChunkData(left) if n <= left && self.buf.len() == self.pos => {
+            State::Sized(left) | State::ChunkData(left)
+                if n <= left && self.buf.len() == self.pos =>
+            {
                 let sized = matches!(self.state, State::Sized(_));
                 self.body_bytes += n;
                 let left = left - n;
@@ -186,7 +193,9 @@ impl ResponseParser {
                 Ok(())
             }
             State::UntilClose if self.buf.len() == self.pos => self.count_until_close(n),
-            _ => http_err("body bytes were read directly while the parser was not expecting body data"),
+            _ => http_err(
+                "body bytes were read directly while the parser was not expecting body data",
+            ),
         }
     }
 
@@ -216,7 +225,11 @@ impl ResponseParser {
                     }
                     return Ok(());
                 }
-                State::StatusLine | State::Headers | State::ChunkSize | State::ChunkEnd | State::Trailers(_) => {
+                State::StatusLine
+                | State::Headers
+                | State::ChunkSize
+                | State::ChunkEnd
+                | State::Trailers(_) => {
                     // line states need contiguous bytes: everything goes through `buf`
                     self.buf.extend_from_slice(data);
                     data = &[];
@@ -237,7 +250,11 @@ impl ResponseParser {
                     left -= from_data as u64;
                     self.body_bytes += n - left;
                     if left > 0 {
-                        self.state = if sized { State::Sized(left) } else { State::ChunkData(left) };
+                        self.state = if sized {
+                            State::Sized(left)
+                        } else {
+                            State::ChunkData(left)
+                        };
                         return Ok(());
                     }
                     if sized {
@@ -266,7 +283,13 @@ impl ResponseParser {
     /// message; an error anywhere else.
     pub(crate) fn finish_eof(&mut self, out: &mut Vec<u8>) -> Result<()> {
         let partial = self.buf.len() > self.pos;
-        let in_line = |closed: &str| if partial { eof("connection closed in the middle of a line") } else { eof(closed) };
+        let in_line = |closed: &str| {
+            if partial {
+                eof("connection closed in the middle of a line")
+            } else {
+                eof(closed)
+            }
+        };
         match self.state {
             State::Done => Ok(()),
             State::UntilClose => {
@@ -289,7 +312,9 @@ impl ResponseParser {
                     http_err("missing CRLF after chunk data")
                 }
             }
-            State::Sized(_) | State::ChunkData(_) => Err(eof("connection closed before the full body arrived")),
+            State::Sized(_) | State::ChunkData(_) => {
+                Err(eof("connection closed before the full body arrived"))
+            }
         }
     }
 
@@ -317,7 +342,11 @@ impl ResponseParser {
                 // a trailing CR is not part of the line (it is dropped once the LF arrives), so a
                 // line of exactly `max` bytes must not be refused just because it is being read in
                 // pieces and only its CR is here so far
-                let content = if rest.last() == Some(&b'\r') { rest.len() - 1 } else { rest.len() };
+                let content = if rest.last() == Some(&b'\r') {
+                    rest.len() - 1
+                } else {
+                    rest.len()
+                };
                 if content > max {
                     return http_err("header line too long");
                 }
@@ -338,7 +367,9 @@ impl ResponseParser {
         loop {
             match self.state {
                 State::StatusLine => {
-                    let Some(line) = self.take_line(limits.max_header_bytes)? else { return Ok(false) };
+                    let Some(line) = self.take_line(limits.max_header_bytes)? else {
+                        return Ok(false);
+                    };
                     if line.is_empty() {
                         // tolerate a few leading blank lines
                         self.blank_lines += 1;
@@ -351,9 +382,15 @@ impl ResponseParser {
                     let text = String::from_utf8_lossy(&line).into_owned();
                     let mut parts = text.splitn(3, ' ');
                     let version = parts.next().unwrap_or("");
-                    if !version.starts_with("HTTP/1.") || version.len() != 8 || !version.as_bytes()[7].is_ascii_digit() {
+                    if !version.starts_with("HTTP/1.")
+                        || version.len() != 8
+                        || !version.as_bytes()[7].is_ascii_digit()
+                    {
                         // `take(60)` counts characters, so the cut can never fall inside a multi-byte sequence.
-                        return http_err(format!("malformed status line: {:?}", text.chars().take(60).collect::<String>()));
+                        return http_err(format!(
+                            "malformed status line: {:?}",
+                            text.chars().take(60).collect::<String>()
+                        ));
                     }
                     self.minor = version.as_bytes()[7] - b'0';
                     let code = parts.next().unwrap_or("");
@@ -366,7 +403,9 @@ impl ResponseParser {
                     self.state = State::Headers;
                 }
                 State::Headers => {
-                    let Some(line) = self.take_line(limits.max_header_bytes)? else { return Ok(false) };
+                    let Some(line) = self.take_line(limits.max_header_bytes)? else {
+                        return Ok(false);
+                    };
                     if line.is_empty() {
                         if (100..200).contains(&self.status) {
                             if self.status == 101 {
@@ -391,30 +430,45 @@ impl ResponseParser {
                     let Some(colon) = line.iter().position(|&c| c == b':') else {
                         return http_err("malformed header line");
                     };
-                    let name = std::str::from_utf8(&line[..colon]).map_err(|_| Error::Http("non-ASCII header name".into()))?;
+                    let name = std::str::from_utf8(&line[..colon])
+                        .map_err(|_| Error::Http("non-ASCII header name".into()))?;
                     if !is_valid_header_name(name) {
                         return http_err("invalid header name");
                     }
                     if line[colon + 1..].contains(&0) {
                         return http_err("NUL byte in header value");
                     }
-                    let value = String::from_utf8_lossy(&line[colon + 1..]).trim_matches(|c| c == ' ' || c == '\t').to_string();
+                    let value = String::from_utf8_lossy(&line[colon + 1..])
+                        .trim_matches(|c| c == ' ' || c == '\t')
+                        .to_string();
                     self.headers.push((name.to_string(), value));
                 }
                 State::ChunkSize => {
-                    let Some(line) = self.take_line(4096)? else { return Ok(false) };
+                    let Some(line) = self.take_line(4096)? else {
+                        return Ok(false);
+                    };
                     let size_part = line.split(|&c| c == b';').next().unwrap_or(&[]);
-                    let size_str = std::str::from_utf8(size_part).map_err(|_| Error::Http("bad chunk size".into()))?.trim();
-                    if size_str.is_empty() || size_str.len() > 16 || !size_str.bytes().all(|c| c.is_ascii_hexdigit()) {
+                    let size_str = std::str::from_utf8(size_part)
+                        .map_err(|_| Error::Http("bad chunk size".into()))?
+                        .trim();
+                    if size_str.is_empty()
+                        || size_str.len() > 16
+                        || !size_str.bytes().all(|c| c.is_ascii_hexdigit())
+                    {
                         return http_err("bad chunk size");
                     }
-                    let size = u64::from_str_radix(size_str, 16).map_err(|_| Error::Http("bad chunk size".into()))?;
+                    let size = u64::from_str_radix(size_str, 16)
+                        .map_err(|_| Error::Http("bad chunk size".into()))?;
                     if size == 0 {
                         self.state = State::Trailers(0);
                     } else {
                         // checked: a size near u64::MAX must not wrap around to "fits" and let the
                         // body grow past the limit (chunk data is not checked again as it arrives)
-                        if self.body_bytes.checked_add(size).map_or(true, |total| total > limits.max_body_bytes) {
+                        if self
+                            .body_bytes
+                            .checked_add(size)
+                            .map_or(true, |total| total > limits.max_body_bytes)
+                        {
                             return http_err("response body exceeds the configured size limit");
                         }
                         self.state = State::ChunkData(size);
@@ -422,7 +476,9 @@ impl ResponseParser {
                     }
                 }
                 State::Trailers(seen) => {
-                    let Some(t) = self.take_line(limits.max_header_bytes)? else { return Ok(false) };
+                    let Some(t) = self.take_line(limits.max_header_bytes)? else {
+                        return Ok(false);
+                    };
                     if t.is_empty() {
                         self.state = State::Done;
                         return Ok(true);
@@ -434,7 +490,9 @@ impl ResponseParser {
                     self.state = State::Trailers(seen);
                 }
                 State::ChunkEnd => {
-                    let Some(l) = self.take_line(8)? else { return Ok(false) };
+                    let Some(l) = self.take_line(8)? else {
+                        return Ok(false);
+                    };
                     if !l.is_empty() {
                         return http_err("missing CRLF after chunk data");
                     }
@@ -448,8 +506,10 @@ impl ResponseParser {
     /// The headers are complete: decide how the body is framed and whether the connection can be
     /// used again, and make the head available.
     fn begin_body(&mut self) -> Result<()> {
-        let connection: Vec<String> =
-            header_values(&self.headers, "connection").flat_map(|v| v.split(',')).map(|t| t.trim().to_ascii_lowercase()).collect();
+        let connection: Vec<String> = header_values(&self.headers, "connection")
+            .flat_map(|v| v.split(','))
+            .map(|t| t.trim().to_ascii_lowercase())
+            .collect();
         let close = connection.iter().any(|t| t == "close");
         let keep_alive = connection.iter().any(|t| t == "keep-alive");
         self.persistent = !close && (self.minor >= 1 || keep_alive);
@@ -462,14 +522,21 @@ impl ResponseParser {
             content_length = parse_content_length(&self.headers).ok().flatten();
             self.state = State::Done;
         } else if !te.is_empty() {
-            let encodings: Vec<String> =
-                te.iter().flat_map(|v| v.split(',')).map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty()).collect();
-            if encodings.last().map(String::as_str) != Some("chunked") || encodings.iter().any(|e| e != "chunked" && e != "identity") {
+            let encodings: Vec<String> = te
+                .iter()
+                .flat_map(|v| v.split(','))
+                .map(|s| s.trim().to_ascii_lowercase())
+                .collect();
+
+            if encodings.len() != 1 || encodings[0] != "chunked" {
                 return http_err(format!("unsupported Transfer-Encoding: {}", te.join(", ")));
             }
             // a message with both framings is what request smuggling is made of: it is read, but
             // the connection is not trusted with another request
-            if header_values(&self.headers, "content-length").next().is_some() {
+            if header_values(&self.headers, "content-length")
+                .next()
+                .is_some()
+            {
                 self.persistent = false;
             }
             self.state = State::ChunkSize;
@@ -478,7 +545,11 @@ impl ResponseParser {
                 return http_err("response body exceeds the configured size limit");
             }
             content_length = Some(len);
-            self.state = if len == 0 { State::Done } else { State::Sized(len) };
+            self.state = if len == 0 {
+                State::Done
+            } else {
+                State::Sized(len)
+            };
         } else {
             let buffered = (self.buf.len() - self.pos) as u64;
             if buffered > self.limits.max_body_bytes {
@@ -498,8 +569,14 @@ impl ResponseParser {
     }
 }
 
-fn header_values<'a>(headers: &'a [(String, String)], name: &'a str) -> impl Iterator<Item = &'a str> {
-    headers.iter().filter(move |(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+fn header_values<'a>(
+    headers: &'a [(String, String)],
+    name: &'a str,
+) -> impl Iterator<Item = &'a str> {
+    headers
+        .iter()
+        .filter(move |(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.as_str())
 }
 
 fn parse_content_length(headers: &[(String, String)]) -> Result<Option<u64>> {
@@ -510,7 +587,9 @@ fn parse_content_length(headers: &[(String, String)]) -> Result<Option<u64>> {
             if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
                 return http_err("invalid Content-Length");
             }
-            let n: u64 = part.parse().map_err(|_| Error::Http("invalid Content-Length".into()))?;
+            let n: u64 = part
+                .parse()
+                .map_err(|_| Error::Http("invalid Content-Length".into()))?;
             match found {
                 Some(prev) if prev != n => return http_err("conflicting Content-Length values"),
                 _ => found = Some(n),
@@ -525,7 +604,12 @@ fn parse_content_length(headers: &[(String, String)]) -> Result<Option<u64>> {
 pub(crate) fn keep_alive_timeout(headers: &[(String, String)]) -> Option<Duration> {
     header_values(headers, "keep-alive")
         .flat_map(|v| v.split(','))
-        .filter_map(|p| p.trim().strip_prefix("timeout=").map(str::trim).and_then(|n| n.parse::<u64>().ok()))
+        .filter_map(|p| {
+            p.trim()
+                .strip_prefix("timeout=")
+                .map(str::trim)
+                .and_then(|n| n.parse::<u64>().ok())
+        })
         .min()
         .map(Duration::from_secs)
 }
@@ -542,7 +626,11 @@ pub(crate) struct Buffered {
 #[cfg(any(test, pratique_fuzzing))]
 impl Buffered {
     pub(crate) fn new(request_method: &str, limits: Limits) -> Buffered {
-        Buffered { parser: ResponseParser::new(request_method, limits), body: Vec::new(), head: None }
+        Buffered {
+            parser: ResponseParser::new(request_method, limits),
+            body: Vec::new(),
+            head: None,
+        }
     }
 
     fn collect_head(&mut self) {
@@ -574,8 +662,15 @@ impl Buffered {
     /// The finished response. Panics if the headers were never completed.
     pub(crate) fn into_response(mut self) -> super::wire::RawResponse {
         self.collect_head();
-        let head = self.head.expect("a response whose headers were never completed");
-        super::wire::RawResponse { status: head.status, reason: head.reason, headers: head.headers, body: self.body }
+        let head = self
+            .head
+            .expect("a response whose headers were never completed");
+        super::wire::RawResponse {
+            status: head.status,
+            reason: head.reason,
+            headers: head.headers,
+            body: self.body,
+        }
     }
 }
 
@@ -601,10 +696,38 @@ mod tests {
         let chunked = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nX-A: b\r\n\r\n5;ext=1\r\nhello\r\n0\r\nTrailer: x\r\n\r\n";
         let sized = b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nhello world";
         let closed = b"HTTP/1.0 200 OK\r\n\r\nuntil the end";
-        for (raw, body) in [(&chunked[..], &b"hello"[..]), (&sized[..], b"hello world"), (&closed[..], b"until the end")] {
+        for (raw, body) in [
+            (&chunked[..], &b"hello"[..]),
+            (&sized[..], b"hello world"),
+            (&closed[..], b"until the end"),
+        ] {
             for piece in [1, 2, 3, 5, 7, 64, 10_000] {
                 let r = parse_in_pieces(raw, "GET", piece).unwrap();
-                assert_eq!((r.status, r.body.as_slice()), (200, body), "piece size {piece}");
+                assert_eq!(
+                    (r.status, r.body.as_slice()),
+                    (200, body),
+                    "piece size {piece}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn only_one_chunked_transfer_coding_frames_a_response() {
+        for encoding in [
+            "chunked, chunked",
+            "identity, chunked",
+            ",chunked",
+            "chunked,",
+            "gzip, chunked",
+            "",
+        ] {
+            let raw = format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: {encoding}\r\n\r\n0\r\n\r\n");
+            for piece in [1, 1000] {
+                assert!(
+                    parse_in_pieces(raw.as_bytes(), "GET", piece).is_err(),
+                    "{encoding:?} accepted with piece size {piece}"
+                );
             }
         }
     }
@@ -613,7 +736,10 @@ mod tests {
     fn a_line_of_exactly_the_limit_is_accepted_however_it_is_read() {
         // found by the fuzzer: the CR of a line of exactly `max` bytes counted against it while
         // the line was incomplete, so reading byte by byte refused what reading at once accepted
-        let limits = Limits { max_header_bytes: 64, max_body_bytes: 100 };
+        let limits = Limits {
+            max_header_bytes: 64,
+            max_body_bytes: 100,
+        };
         let status = format!("HTTP/1.1 204 {}", "x".repeat(64 - 13));
         assert_eq!(status.len(), 64);
         let raw = format!("{status}\r\n\r\n");
@@ -621,10 +747,17 @@ mod tests {
         for piece in [1, 2, 3, 63, 64, 65, 66, 1000] {
             let run = |text: &str| {
                 let mut p = Buffered::new("GET", limits);
-                text.as_bytes().chunks(piece).try_for_each(|c| p.feed(c)).and_then(|_| p.finish_eof()).map(|_| p.into_response().status)
+                text.as_bytes()
+                    .chunks(piece)
+                    .try_for_each(|c| p.feed(c))
+                    .and_then(|_| p.finish_eof())
+                    .map(|_| p.into_response().status)
             };
             assert_eq!(run(&raw).unwrap(), 204, "piece size {piece}");
-            assert!(run(&too_long).is_err(), "a 65-byte line was accepted with piece size {piece}");
+            assert!(
+                run(&too_long).is_err(),
+                "a 65-byte line was accepted with piece size {piece}"
+            );
         }
     }
 
@@ -632,15 +765,32 @@ mod tests {
     fn a_huge_chunk_size_cannot_wrap_around_the_body_limit() {
         // found by the fuzzer: `body.len() + size` overflowed, which panics in a debug build and
         // wraps to a small number (so the limit was skipped) in a release build
-        let limits = Limits { max_header_bytes: 1024, max_body_bytes: 100 };
-        for size in ["ffffffffffffffff", "fffffffffffffffe", "8000000000000000", "ffffffffffffff9b", "65"] {
-            let raw = format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nA\r\n{size}\r\n");
+        let limits = Limits {
+            max_header_bytes: 1024,
+            max_body_bytes: 100,
+        };
+        for size in [
+            "ffffffffffffffff",
+            "fffffffffffffffe",
+            "8000000000000000",
+            "ffffffffffffff9b",
+            "65",
+        ] {
+            let raw = format!(
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nA\r\n{size}\r\n"
+            );
             let mut p = Buffered::new("GET", limits);
             let r = raw.as_bytes().chunks(7).try_for_each(|c| p.feed(c));
-            assert!(r.is_err(), "a second chunk of {size} bytes after 1 byte was accepted under a limit of 100");
+            assert!(
+                r.is_err(),
+                "a second chunk of {size} bytes after 1 byte was accepted under a limit of 100"
+            );
         }
         // the limit itself is still reachable
-        let ok = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nA\r\n63\r\n".to_string() + &"b".repeat(99) + "\r\n0\r\n\r\n";
+        let ok = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nA\r\n63\r\n"
+            .to_string()
+            + &"b".repeat(99)
+            + "\r\n0\r\n\r\n";
         let mut p = Buffered::new("GET", limits);
         p.feed(ok.as_bytes()).unwrap();
         assert!(p.is_done());
@@ -655,13 +805,19 @@ mod tests {
         assert!(parse_in_pieces(chunked, "GET", 4).is_err());
         assert!(parse_in_pieces(b"HTTP/1.1 200 OK\r\nX: y\r\n", "GET", 4).is_err());
         assert!(parse_in_pieces(b"", "GET", 4).is_err());
-        assert_eq!(parse_in_pieces(b"HTTP/1.0 200 OK\r\n\r\npartial", "GET", 4).unwrap().body, b"partial");
+        assert_eq!(
+            parse_in_pieces(b"HTTP/1.0 200 OK\r\n\r\npartial", "GET", 4)
+                .unwrap()
+                .body,
+            b"partial"
+        );
     }
 
     #[test]
     fn a_sized_body_never_asks_for_bytes_past_its_end() {
         let mut p = Buffered::new("GET", Limits::default());
-        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc").unwrap();
+        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc")
+            .unwrap();
         assert_eq!(p.max_read(), 7);
         p.feed(b"defghijEXTRA").unwrap();
         assert!(p.is_done() && p.max_read() == 0);
@@ -720,7 +876,8 @@ mod tests {
     #[test]
     fn a_message_is_not_reusable_before_it_is_complete() {
         let mut p = Buffered::new("GET", Limits::default());
-        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nab").unwrap();
+        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nab")
+            .unwrap();
         assert!(!p.parser.reusable() && p.parser.head_complete());
         p.feed(b"cd").unwrap();
         assert!(p.parser.reusable());
@@ -731,10 +888,17 @@ mod tests {
         let mut p = ResponseParser::new("GET", Limits::default());
         let mut body = Vec::new();
         assert!(!p.started() && !p.head_complete());
-        p.feed(b"HTTP/1.1 200 OK\r\nX-A: b\r\nContent-Length: 6\r\n\r\nab", &mut body).unwrap();
+        p.feed(
+            b"HTTP/1.1 200 OK\r\nX-A: b\r\nContent-Length: 6\r\n\r\nab",
+            &mut body,
+        )
+        .unwrap();
         assert!(p.started() && p.head_complete() && !p.is_done());
         let head = p.take_head().unwrap();
-        assert_eq!((head.status, head.reason.as_str(), head.content_length), (200, "OK", Some(6)));
+        assert_eq!(
+            (head.status, head.reason.as_str(), head.content_length),
+            (200, "OK", Some(6))
+        );
         assert_eq!(head.headers[0], ("X-A".to_string(), "b".to_string()));
         assert_eq!(body, b"ab");
         assert!(p.take_head().is_none());
@@ -743,12 +907,19 @@ mod tests {
     #[test]
     fn the_declared_length_of_a_head_response_is_reported_but_frames_nothing() {
         let mut p = ResponseParser::new("HEAD", Limits::default());
-        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 1234\r\n\r\n", &mut Vec::new()).unwrap();
+        p.feed(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 1234\r\n\r\n",
+            &mut Vec::new(),
+        )
+        .unwrap();
         assert!(p.is_done());
         let head = p.take_head().unwrap();
         assert_eq!(head.content_length, Some(1234));
         // a chunked response declares no length, and neither does one with nothing declared
-        for raw in ["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", "HTTP/1.1 200 OK\r\n\r\n"] {
+        for raw in [
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            "HTTP/1.1 200 OK\r\n\r\n",
+        ] {
             let mut p = ResponseParser::new("GET", Limits::default());
             p.feed(raw.as_bytes(), &mut Vec::new()).unwrap();
             assert_eq!(p.take_head().unwrap().content_length, None);
@@ -761,17 +932,25 @@ mod tests {
         let mut p = ResponseParser::new("GET", Limits::default());
         let mut body = Vec::new();
         assert_eq!(p.direct_window(), 0);
-        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc", &mut body).unwrap();
+        p.feed(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nabc",
+            &mut body,
+        )
+        .unwrap();
         assert_eq!(p.direct_window(), 7);
         p.consume_direct(4).unwrap();
         assert_eq!(p.direct_window(), 3);
         p.consume_direct(3).unwrap();
         assert!(p.is_done() && p.reusable());
         assert_eq!(p.direct_window(), 0);
-        assert_eq!(body, b"abc", "directly read bytes are the caller's, not the parser's");
+        assert_eq!(
+            body, b"abc",
+            "directly read bytes are the caller's, not the parser's"
+        );
         // more than is left is a misuse, never a panic or a wrong state
         let mut p = ResponseParser::new("GET", Limits::default());
-        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n", &mut body).unwrap();
+        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n", &mut body)
+            .unwrap();
         assert!(p.consume_direct(3).is_err());
         assert!(p.consume_direct(2).is_ok() && p.is_done());
         assert!(p.consume_direct(1).is_err());
@@ -781,7 +960,11 @@ mod tests {
     fn a_chunked_body_can_be_read_directly_inside_a_chunk_only() {
         let mut p = ResponseParser::new("GET", Limits::default());
         let mut body = Vec::new();
-        p.feed(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n", &mut body).unwrap();
+        p.feed(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+            &mut body,
+        )
+        .unwrap();
         assert_eq!(p.direct_window(), 0, "a chunk size line comes next");
         p.feed(b"6\r\nabc", &mut body).unwrap();
         assert_eq!(p.direct_window(), 3);
@@ -794,7 +977,10 @@ mod tests {
 
     #[test]
     fn a_body_that_runs_to_the_close_is_limited_when_read_directly() {
-        let limits = Limits { max_header_bytes: 1024, max_body_bytes: 10 };
+        let limits = Limits {
+            max_header_bytes: 1024,
+            max_body_bytes: 10,
+        };
         let mut p = ResponseParser::new("GET", limits);
         let mut body = Vec::new();
         p.feed(b"HTTP/1.0 200 OK\r\n\r\n", &mut body).unwrap();
@@ -811,33 +997,52 @@ mod tests {
         let mut p = ResponseParser::new("GET", Limits::default());
         let mut body = Vec::new();
         // the headers end the buffer's content exactly: nothing is held
-        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n", &mut body).unwrap();
+        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n", &mut body)
+            .unwrap();
         assert_eq!(p.direct_window(), 4);
         // a parser given more than it can use in one go keeps no body bytes either
         let mut p = ResponseParser::new("GET", Limits::default());
-        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nab", &mut body).unwrap();
+        p.feed(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nab", &mut body)
+            .unwrap();
         assert_eq!(p.direct_window(), 2);
     }
 
     #[test]
     fn the_keep_alive_header_says_how_long_the_server_waits() {
         let h = |v: &str| vec![("Keep-Alive".to_string(), v.to_string())];
-        assert_eq!(keep_alive_timeout(&h("timeout=5, max=1000")), Some(Duration::from_secs(5)));
-        assert_eq!(keep_alive_timeout(&h("max=1000,timeout=60")), Some(Duration::from_secs(60)));
+        assert_eq!(
+            keep_alive_timeout(&h("timeout=5, max=1000")),
+            Some(Duration::from_secs(5))
+        );
+        assert_eq!(
+            keep_alive_timeout(&h("max=1000,timeout=60")),
+            Some(Duration::from_secs(60))
+        );
         assert_eq!(keep_alive_timeout(&h("max=1000")), None);
         assert_eq!(keep_alive_timeout(&h("timeout=abc")), None);
         assert_eq!(keep_alive_timeout(&h("timeout=-1")), None);
         assert_eq!(keep_alive_timeout(&[]), None);
         // the smallest announcement wins when there are several
-        let two = vec![("Keep-Alive".to_string(), "timeout=30".to_string()), ("keep-alive".to_string(), "timeout=7".to_string())];
+        let two = vec![
+            ("Keep-Alive".to_string(), "timeout=30".to_string()),
+            ("keep-alive".to_string(), "timeout=7".to_string()),
+        ];
         assert_eq!(keep_alive_timeout(&two), Some(Duration::from_secs(7)));
     }
 
     #[test]
     fn the_http_version_must_be_a_digit() {
-        for line in ["HTTP/1.x 200 OK", "HTTP/1.  200 OK", "HTTP/1.10 200 OK", "HTTP/2.0 200 OK"] {
+        for line in [
+            "HTTP/1.x 200 OK",
+            "HTTP/1.  200 OK",
+            "HTTP/1.10 200 OK",
+            "HTTP/2.0 200 OK",
+        ] {
             let raw = format!("{line}\r\nContent-Length: 0\r\n\r\n");
-            assert!(parse_in_pieces(raw.as_bytes(), "GET", 100).is_err(), "{line}");
+            assert!(
+                parse_in_pieces(raw.as_bytes(), "GET", 100).is_err(),
+                "{line}"
+            );
         }
     }
 }

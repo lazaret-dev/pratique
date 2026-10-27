@@ -18,7 +18,10 @@
 //! handler's [`Step`]s (a head, data, trailers, a reset, a GOAWAY, raw bytes, and so on, each some time after the
 //! last), sending response data as the client's windows allow. [`ServerConn`] is the protocol with no I/O.
 
-use super::h2::frame::{self, flag, kind, setting, ErrorCode, Frame, FrameError, Header, DEFAULT_MAX_FRAME_SIZE, DEFAULT_WINDOW, HEADER_LEN, MAX_FRAME_SIZE_LIMIT, MAX_WINDOW, PREFACE};
+use super::h2::frame::{
+    self, flag, kind, setting, ErrorCode, Frame, FrameError, Header, DEFAULT_MAX_FRAME_SIZE,
+    DEFAULT_WINDOW, HEADER_LEN, MAX_FRAME_SIZE_LIMIT, MAX_WINDOW, PREFACE,
+};
 use super::h2::hpack::{Decoder, Encoder, FieldRef};
 use crate::tls::server::ServerStream;
 use std::collections::HashMap;
@@ -50,7 +53,16 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Settings {
-        Settings { max_concurrent_streams: 100, initial_window: 1 << 20, connection_window: 16 << 20, max_frame_size: DEFAULT_MAX_FRAME_SIZE, max_header_list: 64 << 10, header_table_size: 4096, max_body: 64 << 20, auto_credit: true }
+        Settings {
+            max_concurrent_streams: 100,
+            initial_window: 1 << 20,
+            connection_window: 16 << 20,
+            max_frame_size: DEFAULT_MAX_FRAME_SIZE,
+            max_header_list: 64 << 10,
+            header_table_size: 4096,
+            max_body: 64 << 20,
+            auto_credit: true,
+        }
     }
 }
 
@@ -71,7 +83,10 @@ pub struct Request {
 impl Request {
     /// The first header with this (lower case) name.
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -79,9 +94,16 @@ impl Request {
 #[derive(Clone, Debug)]
 pub enum Action {
     /// A 1xx response.
-    Interim { status: u16, headers: Vec<(String, String)> },
+    Interim {
+        status: u16,
+        headers: Vec<(String, String)>,
+    },
     /// The head of the response; with `end` there is no body and the stream is closed.
-    Head { status: u16, headers: Vec<(String, String)>, end: bool },
+    Head {
+        status: u16,
+        headers: Vec<(String, String)>,
+        end: bool,
+    },
     /// Body, sent as the windows allow.
     Data(Vec<u8>),
     /// Trailers, after the body that is queued; they end the stream.
@@ -92,14 +114,20 @@ pub enum Action {
     Reset(u32),
     /// GOAWAY with this error code (after the data that the windows let through); the last stream is the highest
     /// the client has opened unless given.
-    GoAway { code: u32, last_stream: Option<u32> },
+    GoAway {
+        code: u32,
+        last_stream: Option<u32>,
+    },
     Ping,
     /// A SETTINGS frame with these (identifier, value) pairs.
     Settings(Vec<(u16, u32)>),
     /// A WINDOW_UPDATE of this many bytes for the stream (for the connection if the step is on stream 0).
     WindowUpdate(u32),
     /// PUSH_PROMISE on the stream, promising this (even) stream, with a request's header fields.
-    PushPromise { promised: u32, headers: Vec<(String, String)> },
+    PushPromise {
+        promised: u32,
+        headers: Vec<(String, String)>,
+    },
     /// These bytes on the connection, as they are.
     Raw(Vec<u8>),
     /// Stop serving: a close_notify, and the connection is closed.
@@ -117,7 +145,10 @@ pub struct Step {
 
 impl Step {
     pub fn now(action: Action) -> Step {
-        Step { after: Duration::ZERO, action }
+        Step {
+            after: Duration::ZERO,
+            action,
+        }
     }
 
     pub fn later(after: Duration, action: Action) -> Step {
@@ -127,11 +158,26 @@ impl Step {
 
 /// A complete response as steps: the head, the body, the end.
 pub fn response(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Vec<Step> {
-    let headers: Vec<(String, String)> = headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect();
+    let headers: Vec<(String, String)> = headers
+        .iter()
+        .map(|(n, v)| (n.to_string(), v.to_string()))
+        .collect();
     if body.is_empty() {
-        vec![Step::now(Action::Head { status, headers, end: true })]
+        vec![Step::now(Action::Head {
+            status,
+            headers,
+            end: true,
+        })]
     } else {
-        vec![Step::now(Action::Head { status, headers, end: false }), Step::now(Action::Data(body.to_vec())), Step::now(Action::End)]
+        vec![
+            Step::now(Action::Head {
+                status,
+                headers,
+                end: false,
+            }),
+            Step::now(Action::Data(body.to_vec())),
+            Step::now(Action::End),
+        ]
     }
 }
 
@@ -141,10 +187,23 @@ pub fn response(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Vec<Step>
 #[derive(Debug)]
 pub enum Event {
     /// A request head or, on a stream that already has one, its trailers.
-    Headers { stream: u32, fields: Vec<(String, String)>, end_stream: bool },
-    Data { stream: u32, data: Vec<u8>, end_stream: bool },
-    Reset { stream: u32, code: u32 },
-    GoAway { code: u32 },
+    Headers {
+        stream: u32,
+        fields: Vec<(String, String)>,
+        end_stream: bool,
+    },
+    Data {
+        stream: u32,
+        data: Vec<u8>,
+        end_stream: bool,
+    },
+    Reset {
+        stream: u32,
+        code: u32,
+    },
+    GoAway {
+        code: u32,
+    },
 }
 
 /// The connection is lost (and a GOAWAY says why).
@@ -216,7 +275,10 @@ impl ServerConn {
     /// A server whose SETTINGS are waiting in the output.
     pub fn new(settings: Settings) -> ServerConn {
         let mut c = ServerConn {
-            decoder: Decoder::new(settings.header_table_size as usize, settings.max_header_list as usize),
+            decoder: Decoder::new(
+                settings.header_table_size as usize,
+                settings.max_header_list as usize,
+            ),
             encoder: Encoder::new(),
             inbound: Vec::new(),
             out: Vec::new(),
@@ -290,7 +352,10 @@ impl ServerConn {
         self.complaints.push(reason.clone());
         frame::write_goaway(&mut self.out, self.highest_stream, code, reason.as_bytes());
         self.failed = true;
-        ConnError { code: code.0, reason }
+        ConnError {
+            code: code.0,
+            reason,
+        }
     }
 
     fn stream_lost(&mut self, id: u32, code: ErrorCode, reason: &str) {
@@ -307,14 +372,20 @@ impl ServerConn {
     pub fn process(&mut self) -> Result<Vec<Event>, ConnError> {
         let mut events = Vec::new();
         if self.failed {
-            return Err(ConnError { code: ErrorCode::PROTOCOL_ERROR.0, reason: "the connection is lost".into() });
+            return Err(ConnError {
+                code: ErrorCode::PROTOCOL_ERROR.0,
+                reason: "the connection is lost".into(),
+            });
         }
         let buf = std::mem::take(&mut self.inbound);
         let mut pos = 0;
         if !self.got_preface {
             let n = buf.len().min(PREFACE.len());
             if buf[..n] != PREFACE[..n] {
-                return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "the client did not begin with the connection preface"));
+                return Err(self.lost(
+                    ErrorCode::PROTOCOL_ERROR,
+                    "the client did not begin with the connection preface",
+                ));
             }
             if buf.len() < PREFACE.len() {
                 self.inbound = buf;
@@ -329,19 +400,35 @@ impl ServerConn {
             }
             let header = Header::parse(buf[pos..pos + HEADER_LEN].try_into().expect("nine bytes"));
             if header.length > self.settings.max_frame_size {
-                return Err(self.lost(ErrorCode::FRAME_SIZE_ERROR, "a frame larger than the size this server announced"));
+                return Err(self.lost(
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    "a frame larger than the size this server announced",
+                ));
             }
             let end = pos + HEADER_LEN + header.length as usize;
             if buf.len() < end {
                 break;
             }
-            if !self.got_settings && !(header.kind == kind::SETTINGS && header.flags & flag::ACK == 0) {
-                return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "the client's first frame is not SETTINGS"));
+            if !self.got_settings
+                && !(header.kind == kind::SETTINGS && header.flags & flag::ACK == 0)
+            {
+                return Err(self.lost(
+                    ErrorCode::PROTOCOL_ERROR,
+                    "the client's first frame is not SETTINGS",
+                ));
             }
             match frame::parse(&header, &buf[pos + HEADER_LEN..end]) {
                 Ok(f) => self.handle(f, &mut events)?,
-                Err(FrameError { code, stream: None, reason }) => return Err(self.lost(code, reason)),
-                Err(FrameError { code, stream: Some(id), reason }) => self.stream_lost(id, code, reason),
+                Err(FrameError {
+                    code,
+                    stream: None,
+                    reason,
+                }) => return Err(self.lost(code, reason)),
+                Err(FrameError {
+                    code,
+                    stream: Some(id),
+                    reason,
+                }) => self.stream_lost(id, code, reason),
             }
             pos = end;
         }
@@ -353,38 +440,75 @@ impl ServerConn {
         if let Some(block) = &self.block {
             match &f {
                 Frame::Continuation { stream, .. } if *stream == block.stream => {}
-                _ => return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "a frame in the middle of a header block")),
+                _ => {
+                    return Err(self.lost(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "a frame in the middle of a header block",
+                    ))
+                }
             }
         }
         match f {
-            Frame::Data { stream, end_stream, data, flow_len } => self.on_data(stream, end_stream, data, flow_len, events),
-            Frame::Headers { stream, end_stream, end_headers, fragment } => {
+            Frame::Data {
+                stream,
+                end_stream,
+                data,
+                flow_len,
+            } => self.on_data(stream, end_stream, data, flow_len, events),
+            Frame::Headers {
+                stream,
+                end_stream,
+                end_headers,
+                fragment,
+            } => {
                 if stream % 2 == 0 {
                     return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "HEADERS on an even stream"));
                 }
                 if stream <= self.highest_stream && !self.streams.contains_key(&stream) {
-                    return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "HEADERS on a stream id that is not new"));
+                    return Err(self.lost(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "HEADERS on a stream id that is not new",
+                    ));
                 }
-                self.block = Some(Block { stream, end_stream, bytes: Vec::new() });
+                self.block = Some(Block {
+                    stream,
+                    end_stream,
+                    bytes: Vec::new(),
+                });
                 self.on_fragment(end_headers, fragment, events)
             }
-            Frame::Continuation { end_headers, fragment, .. } => {
+            Frame::Continuation {
+                end_headers,
+                fragment,
+                ..
+            } => {
                 if self.block.is_none() {
-                    return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "CONTINUATION with no header block"));
+                    return Err(self.lost(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "CONTINUATION with no header block",
+                    ));
                 }
                 self.on_fragment(end_headers, fragment, events)
             }
             Frame::Priority { .. } | Frame::Unknown { .. } => Ok(()),
             Frame::RstStream { stream, code } => {
                 if stream > self.highest_stream {
-                    return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "RST_STREAM on a stream that was never opened"));
+                    return Err(self.lost(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "RST_STREAM on a stream that was never opened",
+                    ));
                 }
                 self.streams.remove(&stream);
-                events.push(Event::Reset { stream, code: code.0 });
+                events.push(Event::Reset {
+                    stream,
+                    code: code.0,
+                });
                 Ok(())
             }
             Frame::Settings { ack, values } => self.on_settings(ack, &values),
-            Frame::PushPromise { .. } => Err(self.lost(ErrorCode::PROTOCOL_ERROR, "PUSH_PROMISE from a client")),
+            Frame::PushPromise { .. } => {
+                Err(self.lost(ErrorCode::PROTOCOL_ERROR, "PUSH_PROMISE from a client"))
+            }
             Frame::Ping { ack, data } => {
                 if !ack {
                     frame::write_ping(&mut self.out, true, data);
@@ -399,14 +523,24 @@ impl ServerConn {
                 if stream == 0 {
                     self.send_window += increment as i64;
                     if self.send_window > MAX_WINDOW as i64 {
-                        return Err(self.lost(ErrorCode::FLOW_CONTROL_ERROR, "the connection window went over 2^31 - 1"));
+                        return Err(self.lost(
+                            ErrorCode::FLOW_CONTROL_ERROR,
+                            "the connection window went over 2^31 - 1",
+                        ));
                     }
                 } else if stream > self.highest_stream {
-                    return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "WINDOW_UPDATE on a stream that was never opened"));
+                    return Err(self.lost(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "WINDOW_UPDATE on a stream that was never opened",
+                    ));
                 } else if let Some(s) = self.streams.get_mut(&stream) {
                     s.send_window += increment as i64;
                     if s.send_window > MAX_WINDOW as i64 {
-                        self.stream_lost(stream, ErrorCode::FLOW_CONTROL_ERROR, "the stream window went over 2^31 - 1");
+                        self.stream_lost(
+                            stream,
+                            ErrorCode::FLOW_CONTROL_ERROR,
+                            "the stream window went over 2^31 - 1",
+                        );
                     }
                 }
                 Ok(())
@@ -422,10 +556,18 @@ impl ServerConn {
         for &(id, value) in values {
             match id {
                 setting::HEADER_TABLE_SIZE => self.encoder.set_peer_table_size(value as usize),
-                setting::ENABLE_PUSH if value > 1 => return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH is neither 0 nor 1")),
+                setting::ENABLE_PUSH if value > 1 => {
+                    return Err(self.lost(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "SETTINGS_ENABLE_PUSH is neither 0 nor 1",
+                    ))
+                }
                 setting::INITIAL_WINDOW_SIZE => {
                     if value > MAX_WINDOW {
-                        return Err(self.lost(ErrorCode::FLOW_CONTROL_ERROR, "SETTINGS_INITIAL_WINDOW_SIZE over 2^31 - 1"));
+                        return Err(self.lost(
+                            ErrorCode::FLOW_CONTROL_ERROR,
+                            "SETTINGS_INITIAL_WINDOW_SIZE over 2^31 - 1",
+                        ));
                     }
                     let delta = value as i64 - self.peer_initial_window;
                     self.peer_initial_window = value as i64;
@@ -435,7 +577,10 @@ impl ServerConn {
                 }
                 setting::MAX_FRAME_SIZE => {
                     if !(DEFAULT_MAX_FRAME_SIZE..=MAX_FRAME_SIZE_LIMIT).contains(&value) {
-                        return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "SETTINGS_MAX_FRAME_SIZE out of range"));
+                        return Err(self.lost(
+                            ErrorCode::PROTOCOL_ERROR,
+                            "SETTINGS_MAX_FRAME_SIZE out of range",
+                        ));
                     }
                     self.peer_max_frame = value as usize;
                 }
@@ -446,29 +591,54 @@ impl ServerConn {
         Ok(())
     }
 
-    fn on_data(&mut self, id: u32, end_stream: bool, data: &[u8], flow_len: u32, events: &mut Vec<Event>) -> Result<(), ConnError> {
+    fn on_data(
+        &mut self,
+        id: u32,
+        end_stream: bool,
+        data: &[u8],
+        flow_len: u32,
+        events: &mut Vec<Event>,
+    ) -> Result<(), ConnError> {
         if id % 2 == 0 || id > self.highest_stream {
-            return Err(self.lost(ErrorCode::PROTOCOL_ERROR, "DATA on a stream that was never opened"));
+            return Err(self.lost(
+                ErrorCode::PROTOCOL_ERROR,
+                "DATA on a stream that was never opened",
+            ));
         }
         if flow_len as i64 > self.recv_window {
-            return Err(self.lost(ErrorCode::FLOW_CONTROL_ERROR, "the client sent more than the connection window allows"));
+            return Err(self.lost(
+                ErrorCode::FLOW_CONTROL_ERROR,
+                "the client sent more than the connection window allows",
+            ));
         }
         self.recv_window -= flow_len as i64;
         self.credit_connection(flow_len);
-        let Some(s) = self.streams.get_mut(&id) else { return Ok(()) };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return Ok(());
+        };
         if s.remote_ended {
-            self.stream_lost(id, ErrorCode::STREAM_CLOSED, "DATA after the end of the request");
+            self.stream_lost(
+                id,
+                ErrorCode::STREAM_CLOSED,
+                "DATA after the end of the request",
+            );
             return Ok(());
         }
         if flow_len as i64 > s.recv_window {
-            self.stream_lost(id, ErrorCode::FLOW_CONTROL_ERROR, "the client sent more than the stream window allows");
+            self.stream_lost(
+                id,
+                ErrorCode::FLOW_CONTROL_ERROR,
+                "the client sent more than the stream window allows",
+            );
             return Ok(());
         }
         s.recv_window -= flow_len as i64;
         s.unannounced += flow_len;
         s.received += data.len() as u64;
         let mut problem = None;
-        if s.expected.is_some_and(|n| s.received > n) || (end_stream && s.expected.is_some_and(|n| s.received != n)) {
+        if s.expected.is_some_and(|n| s.received > n)
+            || (end_stream && s.expected.is_some_and(|n| s.received != n))
+        {
             problem = Some("the DATA does not match the Content-Length");
         }
         if s.received as usize > self.settings.max_body {
@@ -480,13 +650,21 @@ impl ServerConn {
         }
         if end_stream {
             s.remote_ended = true;
-        } else if self.settings.auto_credit && s.unannounced as i64 >= super::h2::connection::refresh_threshold(self.settings.initial_window) && s.unannounced > 0 {
+        } else if self.settings.auto_credit
+            && s.unannounced as i64
+                >= super::h2::connection::refresh_threshold(self.settings.initial_window)
+            && s.unannounced > 0
+        {
             let credit = std::mem::take(&mut s.unannounced);
             s.recv_window += credit as i64;
             frame::write_window_update(&mut self.out, id, credit);
         }
         let closed = s.remote_ended && s.local_ended;
-        events.push(Event::Data { stream: id, data: data.to_vec(), end_stream });
+        events.push(Event::Data {
+            stream: id,
+            data: data.to_vec(),
+            end_stream,
+        });
         if closed {
             self.streams.remove(&id);
         }
@@ -498,24 +676,40 @@ impl ServerConn {
             return;
         }
         self.unannounced += n;
-        if self.unannounced as i64 >= super::h2::connection::refresh_threshold(self.settings.connection_window.max(DEFAULT_WINDOW)) {
+        if self.unannounced as i64
+            >= super::h2::connection::refresh_threshold(
+                self.settings.connection_window.max(DEFAULT_WINDOW),
+            )
+        {
             let credit = std::mem::take(&mut self.unannounced);
             self.recv_window += credit as i64;
             frame::write_window_update(&mut self.out, 0, credit);
         }
     }
 
-    fn on_fragment(&mut self, end_headers: bool, fragment: &[u8], events: &mut Vec<Event>) -> Result<(), ConnError> {
+    fn on_fragment(
+        &mut self,
+        end_headers: bool,
+        fragment: &[u8],
+        events: &mut Vec<Event>,
+    ) -> Result<(), ConnError> {
         let limit = self.settings.max_header_list as usize + 1024;
         let block = self.block.as_mut().expect("a block in progress");
         if block.bytes.len() + fragment.len() > limit {
-            return Err(self.lost(ErrorCode::ENHANCE_YOUR_CALM, "a header block that goes on too long"));
+            return Err(self.lost(
+                ErrorCode::ENHANCE_YOUR_CALM,
+                "a header block that goes on too long",
+            ));
         }
         block.bytes.extend_from_slice(fragment);
         if !end_headers {
             return Ok(());
         }
-        let Block { stream, end_stream, bytes } = self.block.take().expect("a block in progress");
+        let Block {
+            stream,
+            end_stream,
+            bytes,
+        } = self.block.take().expect("a block in progress");
         let mut decoded = Vec::new();
         let within = match self.decoder.decode(&bytes, &mut decoded) {
             Ok(w) => w,
@@ -524,22 +718,48 @@ impl ServerConn {
         if !within {
             // the stream is lost, but a stream that would have been new is still opened as far as ids go
             self.highest_stream = self.highest_stream.max(stream);
-            self.stream_lost(stream, ErrorCode::PROTOCOL_ERROR, "a header list larger than this server takes");
+            self.stream_lost(
+                stream,
+                ErrorCode::PROTOCOL_ERROR,
+                "a header list larger than this server takes",
+            );
             return Ok(());
         }
-        let fields: Vec<(String, String)> = decoded.into_iter().map(|f| (String::from_utf8_lossy(&f.name).into_owned(), String::from_utf8_lossy(&f.value).into_owned())).collect();
+        let fields: Vec<(String, String)> = decoded
+            .into_iter()
+            .map(|f| {
+                (
+                    String::from_utf8_lossy(&f.name).into_owned(),
+                    String::from_utf8_lossy(&f.value).into_owned(),
+                )
+            })
+            .collect();
         self.on_headers(stream, end_stream, fields, events)
     }
 
-    fn on_headers(&mut self, id: u32, end_stream: bool, fields: Vec<(String, String)>, events: &mut Vec<Event>) -> Result<(), ConnError> {
+    fn on_headers(
+        &mut self,
+        id: u32,
+        end_stream: bool,
+        fields: Vec<(String, String)>,
+        events: &mut Vec<Event>,
+    ) -> Result<(), ConnError> {
         if let Some(s) = self.streams.get_mut(&id) {
             // trailers
             if s.remote_ended {
-                self.stream_lost(id, ErrorCode::STREAM_CLOSED, "HEADERS after the end of the request");
+                self.stream_lost(
+                    id,
+                    ErrorCode::STREAM_CLOSED,
+                    "HEADERS after the end of the request",
+                );
                 return Ok(());
             }
             if !end_stream {
-                self.stream_lost(id, ErrorCode::PROTOCOL_ERROR, "trailers that do not end the stream");
+                self.stream_lost(
+                    id,
+                    ErrorCode::PROTOCOL_ERROR,
+                    "trailers that do not end the stream",
+                );
                 return Ok(());
             }
             if let Some(why) = trailer_fault(&fields) {
@@ -547,12 +767,20 @@ impl ServerConn {
                 return Ok(());
             }
             if s.expected.is_some_and(|n| s.received != n) {
-                self.stream_lost(id, ErrorCode::PROTOCOL_ERROR, "the DATA does not match the Content-Length");
+                self.stream_lost(
+                    id,
+                    ErrorCode::PROTOCOL_ERROR,
+                    "the DATA does not match the Content-Length",
+                );
                 return Ok(());
             }
             s.remote_ended = true;
             let closed = s.local_ended;
-            events.push(Event::Headers { stream: id, fields, end_stream });
+            events.push(Event::Headers {
+                stream: id,
+                fields,
+                end_stream,
+            });
             if closed {
                 self.streams.remove(&id);
             }
@@ -567,7 +795,11 @@ impl ServerConn {
             }
             Ok(v) => v,
         };
-        let active = self.streams.values().filter(|s| !(s.remote_ended && s.local_ended)).count();
+        let active = self
+            .streams
+            .values()
+            .filter(|s| !(s.remote_ended && s.local_ended))
+            .count();
         if active as u64 >= self.settings.max_concurrent_streams as u64 {
             // refused, so that the client may send it again elsewhere (RFC 9113 section 5.1.2); not the client's fault
             frame::write_rst_stream(&mut self.out, id, ErrorCode::REFUSED_STREAM);
@@ -590,7 +822,11 @@ impl ServerConn {
                 trailers: None,
             },
         );
-        events.push(Event::Headers { stream: id, fields, end_stream });
+        events.push(Event::Headers {
+            stream: id,
+            fields,
+            end_stream,
+        });
         Ok(())
     }
 
@@ -599,10 +835,18 @@ impl ServerConn {
     fn block_of(&mut self, fields: &[(String, String)], first: Option<(&str, &str)>) -> Vec<u8> {
         let mut refs: Vec<FieldRef<'_>> = Vec::new();
         if let Some((n, v)) = first {
-            refs.push(FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false });
+            refs.push(FieldRef {
+                name: n.as_bytes(),
+                value: v.as_bytes(),
+                sensitive: false,
+            });
         }
         for (n, v) in fields {
-            refs.push(FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false });
+            refs.push(FieldRef {
+                name: n.as_bytes(),
+                value: v.as_bytes(),
+                sensitive: false,
+            });
         }
         let mut block = Vec::new();
         self.encoder.encode(&refs, &mut block);
@@ -615,13 +859,29 @@ impl ServerConn {
             Action::Interim { status, headers } => {
                 if self.streams.contains_key(&stream) {
                     let block = self.block_of(&headers, Some((":status", &status.to_string())));
-                    frame::write_header_block(&mut self.out, stream, false, &block, self.peer_max_frame);
+                    frame::write_header_block(
+                        &mut self.out,
+                        stream,
+                        false,
+                        &block,
+                        self.peer_max_frame,
+                    );
                 }
             }
-            Action::Head { status, headers, end } => {
+            Action::Head {
+                status,
+                headers,
+                end,
+            } => {
                 if self.streams.contains_key(&stream) {
                     let block = self.block_of(&headers, Some((":status", &status.to_string())));
-                    frame::write_header_block(&mut self.out, stream, end, &block, self.peer_max_frame);
+                    frame::write_header_block(
+                        &mut self.out,
+                        stream,
+                        end,
+                        &block,
+                        self.peer_max_frame,
+                    );
                     if end {
                         self.finish_local(stream);
                     }
@@ -652,11 +912,20 @@ impl ServerConn {
                 // the response that came before it is written first (as far as the windows allow): a client that
                 // takes GOAWAY as the end of the connection (python-h2 does) must not see data after it
                 self.pump_data();
-                frame::write_goaway(&mut self.out, last_stream.unwrap_or(self.highest_stream), ErrorCode(code), b"");
+                frame::write_goaway(
+                    &mut self.out,
+                    last_stream.unwrap_or(self.highest_stream),
+                    ErrorCode(code),
+                    b"",
+                );
             }
             Action::Ping => {
                 self.pings = self.pings.wrapping_add(1);
-                frame::write_ping(&mut self.out, false, [b'p', b'i', b'n', b'g', 0, 0, 0, self.pings]);
+                frame::write_ping(
+                    &mut self.out,
+                    false,
+                    [b'p', b'i', b'n', b'g', 0, 0, 0, self.pings],
+                );
             }
             Action::Settings(values) => {
                 for &(id, value) in &values {
@@ -683,7 +952,13 @@ impl ServerConn {
                 let block = self.block_of(&headers, None);
                 let mut payload = promised.to_be_bytes().to_vec();
                 payload.extend_from_slice(&block);
-                Header { length: payload.len() as u32, kind: kind::PUSH_PROMISE, flags: flag::END_HEADERS, stream }.write(&mut self.out);
+                Header {
+                    length: payload.len() as u32,
+                    kind: kind::PUSH_PROMISE,
+                    flags: flag::END_HEADERS,
+                    stream,
+                }
+                .write(&mut self.out);
                 self.out.extend_from_slice(&payload);
             }
             Action::Raw(bytes) => self.out.extend_from_slice(&bytes),
@@ -694,7 +969,9 @@ impl ServerConn {
     }
 
     fn finish_local(&mut self, id: u32) {
-        let Some(s) = self.streams.get_mut(&id) else { return };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return;
+        };
         s.local_ended = true;
         if s.remote_ended {
             self.streams.remove(&id);
@@ -706,7 +983,12 @@ impl ServerConn {
         if self.failed {
             return;
         }
-        let mut ids: Vec<u32> = self.streams.iter().filter(|(_, s)| s.has_output()).map(|(&id, _)| id).collect();
+        let mut ids: Vec<u32> = self
+            .streams
+            .iter()
+            .filter(|(_, s)| s.has_output())
+            .map(|(&id, _)| id)
+            .collect();
         ids.sort_unstable();
         loop {
             let mut wrote = false;
@@ -723,7 +1005,9 @@ impl ServerConn {
     }
 
     fn pump_stream(&mut self, id: u32) -> bool {
-        let Some(s) = self.streams.get_mut(&id) else { return false };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return false;
+        };
         if s.local_ended {
             return false;
         }
@@ -750,7 +1034,12 @@ impl ServerConn {
         }
         let last = n == queued && s.trailers.is_none();
         let end = last && s.end_pending;
-        frame::write_data(&mut self.out, id, end, &s.pending[s.pending_pos..s.pending_pos + n]);
+        frame::write_data(
+            &mut self.out,
+            id,
+            end,
+            &s.pending[s.pending_pos..s.pending_pos + n],
+        );
         s.pending_pos += n;
         if s.pending_pos == s.pending.len() {
             s.pending.clear();
@@ -785,11 +1074,15 @@ fn request_fault(fields: &[(String, String)]) -> Result<(bool, Option<u64>), Str
             return Err(format!("the value of {name:?} has a NUL, CR or LF"));
         }
         if value != value.trim_matches(|c| c == ' ' || c == '\t') {
-            return Err(format!("the value of {name:?} begins or ends with whitespace"));
+            return Err(format!(
+                "the value of {name:?} begins or ends with whitespace"
+            ));
         }
         if let Some(pseudo) = name.strip_prefix(':') {
             if regular {
-                return Err(format!("the pseudo-header {name} comes after a regular field"));
+                return Err(format!(
+                    "the pseudo-header {name} comes after a regular field"
+                ));
             }
             let slot_taken = match pseudo {
                 "method" => method.replace(value.as_str()).is_some(),
@@ -804,15 +1097,25 @@ fn request_fault(fields: &[(String, String)]) -> Result<(bool, Option<u64>), Str
             continue;
         }
         regular = true;
-        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"!#$%&'*+-.^_`|~".contains(&b)) {
-            return Err(format!("the field name {name:?} is not lower case token characters"));
+        if name.is_empty()
+            || !name.bytes().all(|b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || b"!#$%&'*+-.^_`|~".contains(&b)
+            })
+        {
+            return Err(format!(
+                "the field name {name:?} is not lower case token characters"
+            ));
         }
         match name.as_str() {
-            "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" => return Err(format!("the connection-specific field {name}")),
+            "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade" => {
+                return Err(format!("the connection-specific field {name}"))
+            }
             "te" if value != "trailers" => return Err(format!("te: {value}")),
             "host" => host = true,
             "content-length" => {
-                let n: u64 = value.parse().map_err(|_| format!("Content-Length {value:?}"))?;
+                let n: u64 = value
+                    .parse()
+                    .map_err(|_| format!("Content-Length {value:?}"))?;
                 if length.is_some_and(|l| l != n) {
                     return Err("two different Content-Lengths".into());
                 }
@@ -842,7 +1145,11 @@ fn trailer_fault(fields: &[(String, String)]) -> Option<&'static str> {
         if name.starts_with(':') {
             return Some("a pseudo-header in trailers");
         }
-        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"!#$%&'*+-.^_`|~".contains(&b)) {
+        if name.is_empty()
+            || !name.bytes().all(|b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || b"!#$%&'*+-.^_`|~".contains(&b)
+            })
+        {
             return Some("a trailer name that is not lower case token characters");
         }
         if value.bytes().any(|b| b == 0 || b == b'\r' || b == b'\n') {
@@ -903,7 +1210,10 @@ fn send_output<T: Transport>(io: &mut T, conn: &mut ServerConn) -> io::Result<()
 }
 
 fn request_of(stream: u32, fields: Vec<(String, String)>) -> Request {
-    let mut r = Request { stream, ..Request::default() };
+    let mut r = Request {
+        stream,
+        ..Request::default()
+    };
     for (name, value) in fields {
         match name.as_str() {
             ":method" => r.method = value,
@@ -921,13 +1231,21 @@ fn request_of(stream: u32, fields: Vec<(String, String)>) -> Request {
 
 /// Serves one connection until it ends: reads requests, calls `handler` with each complete one, and plays out the
 /// steps it returns.
-pub fn serve<T: Transport>(io: &mut T, settings: &Settings, handler: &mut dyn FnMut(&Request) -> Vec<Step>) -> io::Result<Ended> {
+pub fn serve<T: Transport>(
+    io: &mut T,
+    settings: &Settings,
+    handler: &mut dyn FnMut(&Request) -> Vec<Step>,
+) -> io::Result<Ended> {
     let mut conn = ServerConn::new(settings.clone());
     serve_with(io, &mut conn, handler)
 }
 
 /// [`serve`] with a connection the caller made (and keeps looking at afterwards: its complaints, for one).
-pub fn serve_with<T: Transport>(io: &mut T, conn: &mut ServerConn, handler: &mut dyn FnMut(&Request) -> Vec<Step>) -> io::Result<Ended> {
+pub fn serve_with<T: Transport>(
+    io: &mut T,
+    conn: &mut ServerConn,
+    handler: &mut dyn FnMut(&Request) -> Vec<Step>,
+) -> io::Result<Ended> {
     const IDLE: Duration = Duration::from_millis(50);
     let mut timers: Vec<Due> = Vec::new();
     let mut requests: HashMap<u32, Request> = HashMap::new();
@@ -952,12 +1270,26 @@ pub fn serve_with<T: Transport>(io: &mut T, conn: &mut ServerConn, handler: &mut
         if asked_to_go && !conn.streams.values().any(|s| !s.local_ended) {
             return Ok(Ended::Closed);
         }
-        let wait = timers.first().map_or(IDLE, |d| d.at.saturating_duration_since(Instant::now()).min(IDLE)).max(Duration::from_millis(1));
+        let wait = timers
+            .first()
+            .map_or(IDLE, |d| {
+                d.at.saturating_duration_since(Instant::now()).min(IDLE)
+            })
+            .max(Duration::from_millis(1));
         io.set_read_timeout(Some(wait))?;
         match io.read(&mut buf) {
             Ok(0) => return Ok(Ended::PeerClosed),
             Ok(n) => conn.receive(&buf[..n]),
-            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => continue,
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Interrupted
+                ) =>
+            {
+                continue
+            }
             Err(e) => return Err(e),
         }
         let events = match conn.process() {
@@ -969,7 +1301,11 @@ pub fn serve_with<T: Transport>(io: &mut T, conn: &mut ServerConn, handler: &mut
         };
         for event in events {
             let finished = match event {
-                Event::Headers { stream, fields, end_stream } => {
+                Event::Headers {
+                    stream,
+                    fields,
+                    end_stream,
+                } => {
                     match requests.get_mut(&stream) {
                         Some(r) => r.trailers = fields,
                         None => {
@@ -978,7 +1314,11 @@ pub fn serve_with<T: Transport>(io: &mut T, conn: &mut ServerConn, handler: &mut
                     }
                     end_stream.then_some(stream)
                 }
-                Event::Data { stream, data, end_stream } => {
+                Event::Data {
+                    stream,
+                    data,
+                    end_stream,
+                } => {
                     if let Some(r) = requests.get_mut(&stream) {
                         r.body.extend_from_slice(&data);
                     }
@@ -1000,7 +1340,12 @@ pub fn serve_with<T: Transport>(io: &mut T, conn: &mut ServerConn, handler: &mut
                     for step in handler(&request) {
                         at += step.after;
                         seq += 1;
-                        timers.push(Due { at, seq, stream, action: step.action });
+                        timers.push(Due {
+                            at,
+                            seq,
+                            stream,
+                            action: step.action,
+                        });
                     }
                 }
             }

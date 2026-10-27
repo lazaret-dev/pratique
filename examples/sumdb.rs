@@ -22,7 +22,9 @@ use pratique::tls::ClientConfig;
 use pratique::Client;
 
 fn usage() -> ! {
-    eprintln!("usage: sumdb [--base URL] [--state FILE] [--cacert FILE] [--key VKEY] MODULE VERSION");
+    eprintln!(
+        "usage: sumdb [--base URL] [--state FILE] [--cacert FILE] [--key VKEY] MODULE VERSION"
+    );
     std::process::exit(2);
 }
 
@@ -48,7 +50,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             _ => names.push(a),
         }
     }
-    let [module, version] = names.as_slice() else { usage() };
+    let [module, version] = names.as_slice() else {
+        usage()
+    };
     let base = base.trim_end_matches('/');
 
     let trust = match &cacert {
@@ -56,7 +60,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         None => pratique::sys::system_trust_store()?,
     };
     // what the database says is signed and every tile is authenticated, so even a plain-http mirror is safe to ask
-    let client = Client::with_tls_config(ClientConfig::new(trust)).proxy_from_env().allow_insecure_http(base.starts_with("http://"));
+    let client = Client::with_tls_config(ClientConfig::new(trust))
+        .proxy_from_env()
+        .allow_insecure_http(base.starts_with("http://"));
     // Ok(None): the server answered, but not with the file (a partial tile that is gone is a 404)
     let get = |path: &str| -> Result<Option<Vec<u8>>, Box<dyn Error>> {
         let r = client.get(&format!("{base}/{path}"))?;
@@ -76,7 +82,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 
     let path = sumdb::lookup_path(module, version)?;
-    let response = get(&path)?.ok_or_else(|| format!("{base}/{path}: not found (is it a module version the database knows?)"))?;
+    let response = get(&path)?.ok_or_else(|| {
+        format!("{base}/{path}: not found (is it a module version the database knows?)")
+    })?;
     check.add_lookup(module, version, &response)?;
 
     // the tiles the check needs; a partial tile that is gone is served as the full tile
@@ -85,7 +93,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     for tile in &needed {
         let (tile, data): (Tile, Vec<u8>) = match get(&tile.path())? {
             Some(d) if d.len() as u64 == tile.data_len() => (*tile, d),
-            _ => (tile.full(), get(&tile.full().path())?.ok_or_else(|| format!("tile {} is not available", tile.path()))?),
+            _ => (
+                tile.full(),
+                get(&tile.full().path())?
+                    .ok_or_else(|| format!("tile {} is not available", tile.path()))?,
+            ),
         };
         tiles.insert(tile, data)?;
     }
@@ -95,7 +107,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     for line in &outcome.records[0].lines {
         println!("{line}");
     }
-    eprintln!("record {} verified against tree of {} records", outcome.records[0].id, outcome.latest.size);
+    eprintln!(
+        "record {} verified against tree of {} records",
+        outcome.records[0].id, outcome.latest.size
+    );
     if let Some(path) = &state {
         std::fs::write(path, &outcome.latest_note)?;
     }

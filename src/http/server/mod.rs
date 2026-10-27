@@ -44,27 +44,30 @@
 //!   copied).
 
 pub mod acme;
+#[cfg(test)]
+mod acme_tests;
 mod date;
 #[cfg(pratique_fuzzing)]
 #[doc(hidden)]
 pub mod fuzz;
 mod h1;
-mod h2;
-mod helpers;
-pub mod runtime;
-#[cfg(test)]
-mod acme_tests;
 #[cfg(test)]
 mod h1_tests;
+mod h2;
 #[cfg(test)]
 mod h2_tests;
+mod helpers;
+pub mod runtime;
 #[cfg(test)]
 mod runtime_tests;
 #[cfg(test)]
 mod test_util;
 
 pub use helpers::{redirect_to_https, AcmeHttp01};
-pub use runtime::{refresh_ocsp_staples, reload_certificates, AccessEntry, AccessLog, ErrorLog, Limits, Reloader, Server, ServerBuilder, ServerHandle, Stats};
+pub use runtime::{
+    refresh_ocsp_staples, reload_certificates, AccessEntry, AccessLog, ErrorLog, Limits, Reloader,
+    Server, ServerBuilder, ServerHandle, Stats,
+};
 
 use crate::tls::server::ServerStream;
 use crate::tls::Duplex;
@@ -182,7 +185,11 @@ pub struct ConnInfo {
 impl ConnInfo {
     /// The addresses of a TCP connection.
     pub fn of(stream: &TcpStream) -> ConnInfo {
-        ConnInfo { peer: stream.peer_addr().ok(), local: stream.local_addr().ok(), tls: None }
+        ConnInfo {
+            peer: stream.peer_addr().ok(),
+            local: stream.local_addr().ok(),
+            tls: None,
+        }
     }
 }
 
@@ -205,7 +212,9 @@ impl TlsInfo {
     fn of<S: Read + Write>(stream: &ServerStream<S>) -> TlsInfo {
         TlsInfo {
             server_name: stream.server_name().map(str::to_string),
-            alpn: stream.alpn_protocol().map(|p| String::from_utf8_lossy(p).into_owned()),
+            alpn: stream
+                .alpn_protocol()
+                .map(|p| String::from_utf8_lossy(p).into_owned()),
             cipher_suite: stream.cipher_suite().map(|s| s.name()),
             resumed: stream.is_resumed(),
             client_certificates: stream.peer_certificates().to_vec(),
@@ -306,11 +315,22 @@ impl<S: Socket> Transport for Tls<S> {
 
 /// Serves one TLS connection until it ends: HTTP/2 if ALPN chose `h2`, HTTP/1.1 otherwise; closed at once if it chose
 /// `acme-tls/1` (an ACME validator, see [`acme::AcmeTlsAlpn01`]). `info.tls` is filled in from the stream.
-pub fn serve_tls<S: Socket>(stream: ServerStream<S>, info: ConnInfo, handler: Arc<dyn Handler>, config: &HttpConfig) -> io::Result<()> {
+pub fn serve_tls<S: Socket>(
+    stream: ServerStream<S>,
+    info: ConnInfo,
+    handler: Arc<dyn Handler>,
+    config: &HttpConfig,
+) -> io::Result<()> {
     serve_tls_ctl(stream, info, handler, config, runtime::Ctl::detached())
 }
 
-pub(crate) fn serve_tls_ctl<S: Socket>(stream: ServerStream<S>, mut info: ConnInfo, handler: Arc<dyn Handler>, config: &HttpConfig, ctl: Arc<runtime::Ctl>) -> io::Result<()> {
+pub(crate) fn serve_tls_ctl<S: Socket>(
+    stream: ServerStream<S>,
+    mut info: ConnInfo,
+    handler: Arc<dyn Handler>,
+    config: &HttpConfig,
+    ctl: Arc<runtime::Ctl>,
+) -> io::Result<()> {
     let tls = TlsInfo::of(&stream);
     if stream.alpn_protocol() == Some(crate::tls::server::ACME_TLS_1) {
         // an ACME validator, which has what it came for (the TLS-ALPN-01 challenge certificate) and sends nothing more
@@ -321,7 +341,14 @@ pub(crate) fn serve_tls_ctl<S: Socket>(stream: ServerStream<S>, mut info: ConnIn
     info.tls = Some(tls);
     if h2 {
         let (r, w) = stream.split()?;
-        h2::serve(Box::new(r), Box::new(w), Arc::new(info), handler, config, ctl)
+        h2::serve(
+            Box::new(r),
+            Box::new(w),
+            Arc::new(info),
+            handler,
+            config,
+            ctl,
+        )
     } else {
         h1::serve(Box::new(Tls(stream)), Arc::new(info), handler, config, ctl)
     }
@@ -329,11 +356,22 @@ pub(crate) fn serve_tls_ctl<S: Socket>(stream: ServerStream<S>, mut info: ConnIn
 
 /// Serves one plain connection until it ends: HTTP/1.1, or HTTP/2 if the client begins with the HTTP/2 connection preface
 /// ("prior knowledge", RFC 9113 section 3.3).
-pub fn serve_plain<S: Socket>(socket: S, info: ConnInfo, handler: Arc<dyn Handler>, config: &HttpConfig) -> io::Result<()> {
+pub fn serve_plain<S: Socket>(
+    socket: S,
+    info: ConnInfo,
+    handler: Arc<dyn Handler>,
+    config: &HttpConfig,
+) -> io::Result<()> {
     serve_plain_ctl(socket, info, handler, config, runtime::Ctl::detached())
 }
 
-pub(crate) fn serve_plain_ctl<S: Socket>(socket: S, info: ConnInfo, handler: Arc<dyn Handler>, config: &HttpConfig, ctl: Arc<runtime::Ctl>) -> io::Result<()> {
+pub(crate) fn serve_plain_ctl<S: Socket>(
+    socket: S,
+    info: ConnInfo,
+    handler: Arc<dyn Handler>,
+    config: &HttpConfig,
+    ctl: Arc<runtime::Ctl>,
+) -> io::Result<()> {
     let mut socket = socket;
     if let Some(timer) = &ctl.timer {
         timer.until(std::time::Instant::now() + ctl.limits.idle_timeout);
@@ -351,16 +389,35 @@ pub(crate) fn serve_plain_ctl<S: Socket>(socket: S, info: ConnInfo, handler: Arc
     let info = Arc::new(info);
     if first == h2::PREFACE {
         let writer = socket.duplicate()?;
-        return h2::serve_after_preface(Box::new(socket), Box::new(writer), info, handler, config, ctl);
+        return h2::serve_after_preface(
+            Box::new(socket),
+            Box::new(writer),
+            info,
+            handler,
+            config,
+            ctl,
+        );
     }
     h1::serve_with(Box::new(socket), first, info, handler, config, ctl)
 }
 
 /// Serves one plain connection that must be HTTP/2 with prior knowledge (a listener for HTTP/2 alone, behind a proxy
 /// that speaks it, say): a client that does not begin with the connection preface gets a GOAWAY.
-pub fn serve_h2c<S: Socket>(socket: S, info: ConnInfo, handler: Arc<dyn Handler>, config: &HttpConfig) -> io::Result<()> {
+pub fn serve_h2c<S: Socket>(
+    socket: S,
+    info: ConnInfo,
+    handler: Arc<dyn Handler>,
+    config: &HttpConfig,
+) -> io::Result<()> {
     let writer = socket.duplicate()?;
-    h2::serve(Box::new(socket), Box::new(writer), Arc::new(info), handler, config, runtime::Ctl::detached())
+    h2::serve(
+        Box::new(socket),
+        Box::new(writer),
+        Arc::new(info),
+        handler,
+        config,
+        runtime::Ctl::detached(),
+    )
 }
 
 // ------------------------------------------------------------------------------------------------ handlers
@@ -442,7 +499,13 @@ impl Request {
         let t = if t.starts_with('/') {
             t
         } else if let Some(rest) = t.find("://").map(|i| &t[i + 3..]) {
-            rest.find(['/', '?']).map_or("/", |i| if rest[i..].starts_with('/') { &rest[i..] } else { "/" })
+            rest.find(['/', '?']).map_or("/", |i| {
+                if rest[i..].starts_with('/') {
+                    &rest[i..]
+                } else {
+                    "/"
+                }
+            })
         } else {
             return "";
         };
@@ -451,7 +514,9 @@ impl Request {
 
     /// The query of the target (after `?`), if there is one.
     pub fn query(&self) -> Option<&str> {
-        self.target.split_once('?').map(|(_, q)| q.split('#').next().unwrap_or(""))
+        self.target
+            .split_once('?')
+            .map(|(_, q)| q.split('#').next().unwrap_or(""))
     }
 
     /// The host (and port) the request is for: `:authority` in HTTP/2, the authority of a whole-URL target, or `Host`.
@@ -475,12 +540,18 @@ impl Request {
 
     /// The first field with this name (any case).
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     /// Every field with this name (any case), in order.
     pub fn header_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
-        self.headers.iter().filter(move |(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .filter(move |(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     /// The length of the body, if the client said (`Content-Length`).
@@ -501,9 +572,14 @@ impl Request {
     /// Reads the whole body, refusing one longer than `limit` bytes.
     pub fn read_body(&mut self, limit: usize) -> io::Result<Vec<u8>> {
         let mut out = Vec::new();
-        (&mut self.body).take(limit as u64 + 1).read_to_end(&mut out)?;
+        (&mut self.body)
+            .take(limit as u64 + 1)
+            .read_to_end(&mut out)?;
         if out.len() > limit {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "the request body is longer than the handler takes"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the request body is longer than the handler takes",
+            ));
         }
         Ok(out)
     }
@@ -519,11 +595,23 @@ impl Request {
     /// sent); an error once the final response has begun.
     pub fn send_interim(&self, status: u16, headers: &[(&str, &str)]) -> io::Result<()> {
         if !(102..=199).contains(&status) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "an interim response is 102 to 199"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "an interim response is 102 to 199",
+            ));
         }
-        let fields: Vec<(String, String)> = headers.iter().map(|(n, v)| (n.to_ascii_lowercase(), v.to_string())).collect();
-        if fields.iter().any(|(n, v)| n.is_empty() || !n.bytes().all(is_tchar) || !is_field_value(v)) {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "an interim response's fields are not well formed"));
+        let fields: Vec<(String, String)> = headers
+            .iter()
+            .map(|(n, v)| (n.to_ascii_lowercase(), v.to_string()))
+            .collect();
+        if fields
+            .iter()
+            .any(|(n, v)| n.is_empty() || !n.bytes().all(is_tchar) || !is_field_value(v))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "an interim response's fields are not well formed",
+            ));
         }
         match &self.interim {
             Some(send) => send(status, &fields),
@@ -534,7 +622,12 @@ impl Request {
 
 impl fmt::Debug for Request {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Request").field("method", &self.method).field("target", &self.target).field("authority", &self.authority).field("version", &self.version).finish_non_exhaustive()
+        f.debug_struct("Request")
+            .field("method", &self.method)
+            .field("target", &self.target)
+            .field("authority", &self.authority)
+            .field("version", &self.version)
+            .finish_non_exhaustive()
     }
 }
 
@@ -555,7 +648,11 @@ pub struct Body {
 
 impl Body {
     pub(crate) fn new(source: Option<Box<dyn BodySource>>) -> Body {
-        Body { ended: source.is_none(), source, trailers: Vec::new() }
+        Body {
+            ended: source.is_none(),
+            source,
+            trailers: Vec::new(),
+        }
     }
 
     /// A body that is these bytes (for testing handlers).
@@ -588,7 +685,9 @@ impl Read for Body {
         if self.ended || buf.is_empty() {
             return Ok(0);
         }
-        let Some(source) = self.source.as_mut() else { return Ok(0) };
+        let Some(source) = self.source.as_mut() else {
+            return Ok(0);
+        };
         let n = source.read(buf)?;
         if n == 0 {
             self.ended = true;
@@ -600,7 +699,9 @@ impl Read for Body {
 
 impl fmt::Debug for Body {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Body").field("ended", &self.ended).finish_non_exhaustive()
+        f.debug_struct("Body")
+            .field("ended", &self.ended)
+            .finish_non_exhaustive()
     }
 }
 
@@ -611,7 +712,10 @@ pub enum ResponseBody {
     Empty,
     Bytes(Vec<u8>),
     /// Read to its end, or to `length` bytes if that is given (and then sent with that `Content-Length`).
-    Reader { reader: Box<dyn Read + Send>, length: Option<u64> },
+    Reader {
+        reader: Box<dyn Read + Send>,
+        length: Option<u64>,
+    },
     /// Called with a writer once the head is sent; what it writes is the body.
     Stream(Box<dyn FnOnce(&mut BodyWriter<'_>) -> io::Result<()> + Send>),
     /// For a 2xx answer to CONNECT or a 101: called with the connection itself once the head is sent.
@@ -643,32 +747,66 @@ pub struct Response {
 impl Response {
     /// A response with no body.
     pub fn new(status: u16) -> Response {
-        Response { status, headers: Vec::new(), body: ResponseBody::Empty }
+        Response {
+            status,
+            headers: Vec::new(),
+            body: ResponseBody::Empty,
+        }
     }
 
     /// A text response (`text/plain; charset=utf-8`).
     pub fn text(status: u16, text: impl Into<String>) -> Response {
-        Response::bytes(status, "text/plain; charset=utf-8", text.into().into_bytes())
+        Response::bytes(
+            status,
+            "text/plain; charset=utf-8",
+            text.into().into_bytes(),
+        )
     }
 
     /// A response with these bytes and this `Content-Type`.
     pub fn bytes(status: u16, content_type: &str, body: Vec<u8>) -> Response {
-        Response { status, headers: vec![("content-type".into(), content_type.into())], body: ResponseBody::Bytes(body) }
+        Response {
+            status,
+            headers: vec![("content-type".into(), content_type.into())],
+            body: ResponseBody::Bytes(body),
+        }
     }
 
     /// A response whose body is read from `reader` as it is sent, `length` bytes if given.
-    pub fn reader(status: u16, reader: impl Read + Send + 'static, length: Option<u64>) -> Response {
-        Response { status, headers: Vec::new(), body: ResponseBody::Reader { reader: Box::new(reader), length } }
+    pub fn reader(
+        status: u16,
+        reader: impl Read + Send + 'static,
+        length: Option<u64>,
+    ) -> Response {
+        Response {
+            status,
+            headers: Vec::new(),
+            body: ResponseBody::Reader {
+                reader: Box::new(reader),
+                length,
+            },
+        }
     }
 
     /// A response whose body `write` writes once the head is sent (and may end with trailers).
-    pub fn stream(status: u16, write: impl FnOnce(&mut BodyWriter<'_>) -> io::Result<()> + Send + 'static) -> Response {
-        Response { status, headers: Vec::new(), body: ResponseBody::Stream(Box::new(write)) }
+    pub fn stream(
+        status: u16,
+        write: impl FnOnce(&mut BodyWriter<'_>) -> io::Result<()> + Send + 'static,
+    ) -> Response {
+        Response {
+            status,
+            headers: Vec::new(),
+            body: ResponseBody::Stream(Box::new(write)),
+        }
     }
 
     /// A 2xx answer to CONNECT, or a 101 (with its `Upgrade` field): once the head is sent, `then` gets the connection.
     pub fn upgrade(status: u16, then: impl FnOnce(Upgraded) + Send + 'static) -> Response {
-        Response { status, headers: Vec::new(), body: ResponseBody::Upgrade(Box::new(then)) }
+        Response {
+            status,
+            headers: Vec::new(),
+            body: ResponseBody::Upgrade(Box::new(then)),
+        }
     }
 
     /// A redirect to `location`.
@@ -696,7 +834,10 @@ impl Response {
 
     /// The first field with this name (any case).
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -829,7 +970,10 @@ pub(crate) struct Head {
     pub(crate) content_length: Option<u64>,
 }
 
-pub(crate) fn response_head(headers: &[(String, String)], config: &HttpConfig) -> Result<Head, String> {
+pub(crate) fn response_head(
+    headers: &[(String, String)],
+    config: &HttpConfig,
+) -> Result<Head, String> {
     let mut fields = Vec::with_capacity(headers.len() + 2);
     let mut close = false;
     let mut content_length = None;
@@ -838,13 +982,22 @@ pub(crate) fn response_head(headers: &[(String, String)], config: &HttpConfig) -
         if name.is_empty() || !name.bytes().all(is_tchar) {
             return Err(format!("the handler's field name {name:?} is not a token"));
         }
-        if !value.bytes().all(|b| b == b'\t' || (b >= 0x20 && b != 0x7f)) {
-            return Err(format!("the handler's value of {name} has a control character"));
+        if !value
+            .bytes()
+            .all(|b| b == b'\t' || (b >= 0x20 && b != 0x7f))
+        {
+            return Err(format!(
+                "the handler's value of {name} has a control character"
+            ));
         }
         let lower = name.to_ascii_lowercase();
         match lower.as_str() {
             "content-length" => content_length = value.trim().parse().ok(),
-            "connection" => close |= value.split(',').any(|t| t.trim().eq_ignore_ascii_case("close")),
+            "connection" => {
+                close |= value
+                    .split(',')
+                    .any(|t| t.trim().eq_ignore_ascii_case("close"))
+            }
             "transfer-encoding" | "keep-alive" | "proxy-connection" => {}
             _ => {
                 date |= lower == "date";
@@ -860,5 +1013,9 @@ pub(crate) fn response_head(headers: &[(String, String)], config: &HttpConfig) -
             fields.push(("server".into(), server.clone()));
         }
     }
-    Ok(Head { fields, close, content_length })
+    Ok(Head {
+        fields,
+        close,
+        content_length,
+    })
 }

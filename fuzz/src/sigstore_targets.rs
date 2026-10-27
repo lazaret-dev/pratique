@@ -388,10 +388,53 @@ fn world() -> &'static World {
                 }
             }
         }
+        for doc in relabelled_documents() {
+            for v in verify_all(&w, Form::Bundle, &doc).into_iter().flatten() {
+                good[0].learn(facts(&v));
+            }
+        }
         assert!(good.iter().all(|g| !g.cores.is_empty()) && good[0].cores.len() >= 10, "the seeds do not verify");
         w.good = good;
         w
     })
+}
+
+/// The refusals that are about the shape one version demands and another does not.
+const VERSION_RULES: [&str; 4] = ["needs a signed entry timestamp", "needs an inclusion proof", "signer's material", "bundle media type"];
+const MEDIA_TYPES: [&str; 3] = [
+    "application/vnd.dev.sigstore.bundle+json;version=0.1",
+    "application/vnd.dev.sigstore.bundle+json;version=0.2",
+    "application/vnd.dev.sigstore.bundle.v0.3+json",
+];
+
+/// The seed bundles refused for a rule of their version alone, labelled as each other version. A bundle's media type is
+/// not signed, so one that meets another version's rules verifies under that label, on evidence the synthetic Sigstore
+/// really signed (found by fuzzing on the Mac, B-92 part 5: `v02 entry without a proof` labelled 0.1 stands on its
+/// signed entry timestamp, as tests/sigstore_synthetic.rs pins). What such a document verifies to is learnt as good; a
+/// bundle refused for any other reason is never relabelled.
+fn relabelled_documents() -> Vec<Vec<u8>> {
+    let doc = json::parse(SYNTHETIC).unwrap();
+    let mut out = Vec::new();
+    for case in doc.get("cases").and_then(Value::as_array).unwrap() {
+        let on_base = case.get("root").and_then(Value::as_str) == Some("base");
+        let sha256 = matches!(case.get("algorithm").and_then(Value::as_str), None | Some("sha256"));
+        let default_trust = case.get("sct_threshold").is_none();
+        let refused = case.get("expect").and_then(Value::as_str) != Some("ok");
+        let version_rule = case.get("reason").and_then(Value::as_str).is_some_and(|r| VERSION_RULES.contains(&r));
+        if !(on_base && sha256 && default_trust && refused && version_rule) {
+            continue;
+        }
+        let bundle = case.get("bundle").unwrap();
+        let text = String::from_utf8(json::canonical(bundle).unwrap()).unwrap();
+        let own = format!("\"mediaType\":\"{}\"", bundle.get("mediaType").and_then(Value::as_str).unwrap_or(""));
+        for m in MEDIA_TYPES {
+            let other = format!("\"mediaType\":\"{m}\"");
+            if other != own && text.contains(&own) {
+                out.push(text.replacen(&own, &other, 1).into_bytes());
+            }
+        }
+    }
+    out
 }
 
 pub fn seeds_sigstore() -> Vec<Vec<u8>> {
@@ -719,8 +762,45 @@ fn tuf_world() -> &'static (i64, Vec<TufCase>) {
         for c in &cases {
             assert_eq!(tuf_run(now, &c.bootstrap, &c.files, &c.target).as_deref(), Ok(c.content.as_slice()));
         }
+        // and the cases made to be refused are, so a check taken out of the client stops the target at once (a signature
+        // threshold, say, which no input of the cases that verify can show is missing)
+        for c in doc.get("cases").and_then(Value::as_array).unwrap() {
+            let refused = c.get("expect").and_then(Value::as_str) != Some("ok");
+            if !refused || c.get("local").and_then(Value::as_object).is_some_and(|l| !l.is_empty()) {
+                continue;
+            }
+            let files: Vec<(String, Vec<u8>)> = c.get("files").and_then(Value::as_object).unwrap().iter().map(|(p, h)| (p.to_string(), blob(h))).collect();
+            let target = c.get("target").and_then(Value::as_str).unwrap_or("x");
+            let name = c.get("name").and_then(Value::as_str).unwrap_or("?");
+            assert!(tuf_run(now, &blob(c.get("bootstrap").unwrap()), &files, target).is_err(), "the case {name:?} is not refused");
+        }
         assert!(cases.len() >= 15);
         (now, cases)
+    })
+}
+
+/// The key ids that signed a metadata file (what its `signatures` name; the generator signs with every key it names).
+fn tuf_key_ids(v: &Value) -> Vec<String> {
+    let sigs = v.get("signatures").and_then(Value::as_array).unwrap_or(&[]);
+    sigs.iter().filter_map(|s| s.get("keyid").and_then(Value::as_str).map(str::to_string)).collect()
+}
+
+/// Every (canonical `signed` part, key id) of the metadata files of tests/data/tuf/synthetic.json, of every case: what a
+/// key of the synthetic repositories really signed.
+fn tuf_signed_parts() -> &'static HashSet<(Vec<u8>, String)> {
+    static S: OnceLock<HashSet<(Vec<u8>, String)>> = OnceLock::new();
+    S.get_or_init(|| {
+        let doc = json::parse(TUF_SYNTHETIC).unwrap();
+        let blobs = doc.get("blobs").and_then(Value::as_object).unwrap();
+        let mut out = HashSet::new();
+        for v in blobs.iter().filter_map(|(_, b)| pratique::pem::base64_decode_strict(b.as_str()?)).filter_map(|bytes| json::parse(&bytes).ok()) {
+            if let Some(signed) = v.get("signed").and_then(|s| pratique::tuf::canonical_json(s).ok()) {
+                for k in tuf_key_ids(&v) {
+                    out.insert((signed.clone(), k));
+                }
+            }
+        }
+        out
     })
 }
 
@@ -770,7 +850,20 @@ pub fn tuf(data: &[u8]) {
     let k = *fi as usize % files.len();
     files[k].1 = rest.to_vec();
     if let Ok(got) = tuf_run(*now, &c.bootstrap, &files, &c.target) {
-        assert_eq!(got, c.content, "a damaged repository gave other bytes for {} (file {})", c.target, files[k].0);
+        if got != c.content {
+            // TUF signs no role name, and where the snapshot pins a version without a hash, any metadata the role's keys
+            // signed with that version is the role's metadata to every client (python-tuf takes it too). The synthetic
+            // repositories share delegation keys between cases, so one case's genuine file in another's place can stand
+            // (found by fuzzing on the Mac, B-92 part 5: `registry.npmjs.org`'s targets as `first`'s, which then does not
+            // have x/f, so the next role's x/f is the answer). Other bytes are a failure unless that is what happened.
+            // genuine: what the replacement says is something a key that signed the file it replaced really signed
+            let replayed = json::parse(rest).ok().and_then(|v| v.get("signed").and_then(|s| pratique::tuf::canonical_json(s).ok()));
+            let signers = json::parse(&c.files[k].1).map(|v| tuf_key_ids(&v)).unwrap_or_default();
+            let genuine = files[k].0.starts_with("metadata/")
+                && replayed.is_some_and(|r| signers.iter().any(|kid| tuf_signed_parts().contains(&(r.clone(), kid.clone()))));
+            let a_target = c.files.iter().any(|(p, d)| p.starts_with("targets/") && *d == got);
+            assert!(genuine && a_target, "a damaged repository gave other bytes for {} (file {}): {got:?}", c.target, files[k].0);
+        }
     }
     // the canonical form TUF signs: what parses is written the same way however it was spelled. OLPC's canonical JSON
     // writes control characters in strings as they are (a PEM key's line feeds, say), which strict JSON does not read back;

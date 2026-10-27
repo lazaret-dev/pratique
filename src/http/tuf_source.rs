@@ -13,7 +13,11 @@ pub struct TufSource {
 }
 
 fn slash(url: &str) -> String {
-    if url.ends_with('/') { url.to_string() } else { format!("{url}/") }
+    if url.ends_with('/') {
+        url.to_string()
+    } else {
+        format!("{url}/")
+    }
 }
 
 impl TufSource {
@@ -21,12 +25,20 @@ impl TufSource {
     /// is laid out.
     pub fn new(client: Client, repository_url: &str) -> TufSource {
         let base = slash(repository_url);
-        TufSource { client, targets_url: format!("{base}targets/"), metadata_url: base }
+        TufSource {
+            client,
+            targets_url: format!("{base}targets/"),
+            metadata_url: base,
+        }
     }
 
     /// A repository with its metadata and its targets at URLs of their own.
     pub fn with_urls(client: Client, metadata_url: &str, targets_url: &str) -> TufSource {
-        TufSource { client, metadata_url: slash(metadata_url), targets_url: slash(targets_url) }
+        TufSource {
+            client,
+            metadata_url: slash(metadata_url),
+            targets_url: slash(targets_url),
+        }
     }
 
     /// Sigstore's public repository, [`tuf::SIGSTORE_REPOSITORY`].
@@ -38,7 +50,12 @@ impl TufSource {
     /// for a 404 or 403 (which is how a repository says there is no newer root), or an error.
     fn get(&self, base: &str, r: &Request) -> Result<Fetched, String> {
         let url = format!("{base}{}", r.path);
-        let resp = self.client.request("GET", &url).max_body_bytes(r.max_length.saturating_add(1)).send().map_err(|e| e.to_string())?;
+        let resp = self
+            .client
+            .request("GET", &url)
+            .max_body_bytes(r.max_length.saturating_add(1))
+            .send()
+            .map_err(|e| e.to_string())?;
         match resp.status {
             200 => Ok(Fetched::Data(resp.body)),
             403 | 404 => Ok(Fetched::NotFound),
@@ -52,9 +69,15 @@ impl TufSource {
     }
 
     /// Finds and fetches a target, after [`refresh`](Self::refresh) ([`tuf::fetch_target`]).
-    pub fn fetch_target(&self, updater: &mut Updater, path: &str) -> Result<(TargetFile, Vec<u8>), tuf::Error> {
+    pub fn fetch_target(
+        &self,
+        updater: &mut Updater,
+        path: &str,
+    ) -> Result<(TargetFile, Vec<u8>), tuf::Error> {
         let (m, t) = (&self.metadata_url, &self.targets_url);
-        tuf::fetch_target(updater, path, &mut |r| self.get(m, r), &mut |r| self.get(t, r))
+        tuf::fetch_target(updater, path, &mut |r| self.get(m, r), &mut |r| {
+            self.get(t, r)
+        })
     }
 }
 
@@ -76,14 +99,28 @@ pub struct SigstoreTrust {
 /// Sigstore's trusted root and npm's keys from Sigstore's TUF repository, verified, at `now` (Unix seconds): starting from
 /// `tuf_root` ([`tuf::SIGSTORE_ROOT`] the first time, then the [`SigstoreTrust::tuf_root`] of the last refresh) and the
 /// timestamp and snapshot kept from then, if any.
-pub fn sigstore_trust(client: &Client, tuf_root: &[u8], local: Local, now: i64) -> Result<SigstoreTrust, tuf::Error> {
+pub fn sigstore_trust(
+    client: &Client,
+    tuf_root: &[u8],
+    local: Local,
+    now: i64,
+) -> Result<SigstoreTrust, tuf::Error> {
     let source = TufSource::sigstore(client.clone());
     let mut u = Updater::new(tuf_root, now)?;
     source.refresh(&mut u, local)?;
     let (_, trusted_root) = source.fetch_target(&mut u, tuf::SIGSTORE_TRUSTED_ROOT_TARGET)?;
     let (_, npm_keys) = source.fetch_target(&mut u, tuf::NPM_KEYS_TARGET)?;
-    let (timestamp, snapshot) = (u.timestamp().map(|t| t.1.to_vec()).unwrap_or_default(), u.snapshot().map(|s| s.1.to_vec()).unwrap_or_default());
-    Ok(SigstoreTrust { trusted_root, npm_keys, tuf_root: u.root_bytes().to_vec(), timestamp, snapshot })
+    let (timestamp, snapshot) = (
+        u.timestamp().map(|t| t.1.to_vec()).unwrap_or_default(),
+        u.snapshot().map(|s| s.1.to_vec()).unwrap_or_default(),
+    );
+    Ok(SigstoreTrust {
+        trusted_root,
+        npm_keys,
+        tuf_root: u.root_bytes().to_vec(),
+        timestamp,
+        snapshot,
+    })
 }
 
 /// npm's registry keys straight from the registry (`https://registry.npmjs.org/-/npm/v1/keys`), read with
@@ -91,7 +128,11 @@ pub fn sigstore_trust(client: &Client, tuf_root: &[u8], local: Local, now: i64) 
 /// Sigstore's TUF repository ([`sigstore_trust`]) are signed by Sigstore's keys as well, and carry the period each key may
 /// be used for attestations.
 pub fn npm_registry_keys(client: &Client) -> Result<KeyRing, String> {
-    let resp = client.request("GET", "https://registry.npmjs.org/-/npm/v1/keys").max_body_bytes(1 << 20).send().map_err(|e| e.to_string())?;
+    let resp = client
+        .request("GET", "https://registry.npmjs.org/-/npm/v1/keys")
+        .max_body_bytes(1 << 20)
+        .send()
+        .map_err(|e| e.to_string())?;
     if resp.status != 200 {
         return Err(format!("HTTP {}", resp.status));
     }
@@ -112,10 +153,36 @@ mod tests {
     fn synthetic(name: &str) -> (i64, Vec<u8>, BTreeMap<String, Vec<u8>>, String, Vec<u8>) {
         let doc = json::parse(include_bytes!("../../tests/data/tuf/synthetic.json")).unwrap();
         let blobs = doc.get("blobs").and_then(Value::as_object).unwrap();
-        let blob = |h: &Value| base64_decode_strict(blobs.get(h.as_str().unwrap()).and_then(Value::as_str).unwrap()).unwrap();
-        let c = doc.get("cases").and_then(Value::as_array).unwrap().iter().find(|c| c.get("name").and_then(Value::as_str) == Some(name)).unwrap();
-        let files = c.get("files").and_then(Value::as_object).unwrap().iter().map(|(p, h)| (p.to_string(), blob(h))).collect();
-        (doc.get("now").and_then(Value::as_int64).unwrap(), blob(c.get("bootstrap").unwrap()), files, c.get("target").and_then(Value::as_str).unwrap().into(), blob(c.get("content").unwrap()))
+        let blob = |h: &Value| {
+            base64_decode_strict(
+                blobs
+                    .get(h.as_str().unwrap())
+                    .and_then(Value::as_str)
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let c = doc
+            .get("cases")
+            .and_then(Value::as_array)
+            .unwrap()
+            .iter()
+            .find(|c| c.get("name").and_then(Value::as_str) == Some(name))
+            .unwrap();
+        let files = c
+            .get("files")
+            .and_then(Value::as_object)
+            .unwrap()
+            .iter()
+            .map(|(p, h)| (p.to_string(), blob(h)))
+            .collect();
+        (
+            doc.get("now").and_then(Value::as_int64).unwrap(),
+            blob(c.get("bootstrap").unwrap()),
+            files,
+            c.get("target").and_then(Value::as_str).unwrap().into(),
+            blob(c.get("content").unwrap()),
+        )
     }
 
     fn serve(files: BTreeMap<String, Vec<u8>>) -> TestServer {
@@ -131,20 +198,44 @@ mod tests {
 
     #[test]
     fn a_repository_over_https_gives_its_targets() {
-        for (name, rotations) in [("two root rotations", 3), ("npm's keys through the delegated role", 1)] {
+        for (name, rotations) in [
+            ("two root rotations", 3),
+            ("npm's keys through the delegated role", 1),
+        ] {
             let (now, bootstrap, files, target, content) = synthetic(name);
             let server = serve(files);
-            let source = TufSource::with_urls(server.client(), &server.url("/repo/metadata"), &server.url("/repo/targets/"));
+            let source = TufSource::with_urls(
+                server.client(),
+                &server.url("/repo/metadata"),
+                &server.url("/repo/targets/"),
+            );
             let mut u = Updater::new(&bootstrap, now).unwrap();
             source.refresh(&mut u, Local::default()).unwrap();
             assert_eq!(u.root().common.version, rotations);
             let (info, data) = source.fetch_target(&mut u, &target).unwrap();
-            assert_eq!((info.path.as_str(), data.as_slice()), (target.as_str(), content.as_slice()));
+            assert_eq!(
+                (info.path.as_str(), data.as_slice()),
+                (target.as_str(), content.as_slice())
+            );
             // what was asked for, in order: roots until one is missing, timestamp, snapshot, targets, (role,) target
-            let asked: Vec<String> = server.requests().iter().map(|s| s.path().to_string()).collect();
-            assert_eq!(asked.iter().filter(|p| p.ends_with(".root.json")).count() as u64, rotations);
-            assert!(asked.iter().position(|p| p.ends_with("timestamp.json")) < asked.iter().position(|p| p.contains("snapshot.json")), "{asked:?}");
-            assert!(asked.last().unwrap().starts_with("/repo/targets/"), "{asked:?}");
+            let asked: Vec<String> = server
+                .requests()
+                .iter()
+                .map(|s| s.path().to_string())
+                .collect();
+            assert_eq!(
+                asked.iter().filter(|p| p.ends_with(".root.json")).count() as u64,
+                rotations
+            );
+            assert!(
+                asked.iter().position(|p| p.ends_with("timestamp.json"))
+                    < asked.iter().position(|p| p.contains("snapshot.json")),
+                "{asked:?}"
+            );
+            assert!(
+                asked.last().unwrap().starts_with("/repo/targets/"),
+                "{asked:?}"
+            );
         }
     }
 
@@ -156,13 +247,19 @@ mod tests {
         let source = TufSource::new(server.client(), &server.url("/repo/metadata"));
         let mut u = Updater::new(&bootstrap, now).unwrap();
         let e = source.refresh(&mut u, Local::default()).unwrap_err();
-        assert!(matches!(e, tuf::Error::Fetch(ref m) if m.contains("timestamp.json is not in the repository")), "{e}");
+        assert!(
+            matches!(e, tuf::Error::Fetch(ref m) if m.contains("timestamp.json is not in the repository")),
+            "{e}"
+        );
         // a server error is not "not found"
         let server = TestServer::start_tls(|_| Reply::Send(response(500, &[], b"")));
         let source = TufSource::new(server.client(), &server.url("/repo/metadata"));
         let mut u = Updater::new(&bootstrap, now).unwrap();
         let e = source.refresh(&mut u, Local::default()).unwrap_err();
-        assert!(matches!(e, tuf::Error::Fetch(ref m) if m.contains("HTTP 500")), "{e}");
+        assert!(
+            matches!(e, tuf::Error::Fetch(ref m) if m.contains("HTTP 500")),
+            "{e}"
+        );
         let _ = target;
     }
 
@@ -175,14 +272,30 @@ mod tests {
         let source = TufSource::new(server.client(), &server.url("/repo/metadata"));
         let mut u = Updater::new(&bootstrap, now).unwrap();
         let e = source.refresh(&mut u, Local::default()).unwrap_err();
-        assert!(matches!(e, tuf::Error::Fetch(_) | tuf::Error::LengthOrHash(_)), "{e}");
+        assert!(
+            matches!(e, tuf::Error::Fetch(_) | tuf::Error::LengthOrHash(_)),
+            "{e}"
+        );
     }
 
     #[test]
     fn the_sigstore_source_is_the_public_repository() {
         let s = TufSource::sigstore(Client::new().unwrap());
-        assert_eq!((s.metadata_url.as_str(), s.targets_url.as_str()), ("https://tuf-repo-cdn.sigstore.dev/", "https://tuf-repo-cdn.sigstore.dev/targets/"));
-        let s = TufSource::with_urls(Client::new().unwrap(), "https://m.example/a", "https://t.example/b/");
-        assert_eq!((s.metadata_url.as_str(), s.targets_url.as_str()), ("https://m.example/a/", "https://t.example/b/"));
+        assert_eq!(
+            (s.metadata_url.as_str(), s.targets_url.as_str()),
+            (
+                "https://tuf-repo-cdn.sigstore.dev/",
+                "https://tuf-repo-cdn.sigstore.dev/targets/"
+            )
+        );
+        let s = TufSource::with_urls(
+            Client::new().unwrap(),
+            "https://m.example/a",
+            "https://t.example/b/",
+        );
+        assert_eq!(
+            (s.metadata_url.as_str(), s.targets_url.as_str()),
+            ("https://m.example/a/", "https://t.example/b/")
+        );
     }
 }

@@ -73,9 +73,23 @@ impl Suite12 {
     pub fn preference_order() -> [Suite12; 6] {
         use Suite12::*;
         if crate::crypto::aes::hardware_accelerated() {
-            [EcdheEcdsaAes128Gcm, EcdheRsaAes128Gcm, EcdheEcdsaAes256Gcm, EcdheRsaAes256Gcm, EcdheEcdsaChacha20Poly1305, EcdheRsaChacha20Poly1305]
+            [
+                EcdheEcdsaAes128Gcm,
+                EcdheRsaAes128Gcm,
+                EcdheEcdsaAes256Gcm,
+                EcdheRsaAes256Gcm,
+                EcdheEcdsaChacha20Poly1305,
+                EcdheRsaChacha20Poly1305,
+            ]
         } else {
-            [EcdheEcdsaChacha20Poly1305, EcdheRsaChacha20Poly1305, EcdheEcdsaAes128Gcm, EcdheRsaAes128Gcm, EcdheEcdsaAes256Gcm, EcdheRsaAes256Gcm]
+            [
+                EcdheEcdsaChacha20Poly1305,
+                EcdheRsaChacha20Poly1305,
+                EcdheEcdsaAes128Gcm,
+                EcdheRsaAes128Gcm,
+                EcdheEcdsaAes256Gcm,
+                EcdheRsaAes256Gcm,
+            ]
         }
     }
 
@@ -99,7 +113,9 @@ impl Suite12 {
         match self {
             Suite12::EcdheEcdsaAes128Gcm | Suite12::EcdheRsaAes128Gcm => Suite::Aes128GcmSha256,
             Suite12::EcdheEcdsaAes256Gcm | Suite12::EcdheRsaAes256Gcm => Suite::Aes256GcmSha384,
-            Suite12::EcdheEcdsaChacha20Poly1305 | Suite12::EcdheRsaChacha20Poly1305 => Suite::Chacha20Poly1305Sha256,
+            Suite12::EcdheEcdsaChacha20Poly1305 | Suite12::EcdheRsaChacha20Poly1305 => {
+                Suite::Chacha20Poly1305Sha256
+            }
         }
     }
 
@@ -109,12 +125,20 @@ impl Suite12 {
     }
 
     fn is_chacha(self) -> bool {
-        matches!(self, Suite12::EcdheEcdsaChacha20Poly1305 | Suite12::EcdheRsaChacha20Poly1305)
+        matches!(
+            self,
+            Suite12::EcdheEcdsaChacha20Poly1305 | Suite12::EcdheRsaChacha20Poly1305
+        )
     }
 
     /// Whether the server's key is to be an RSA key (the `ECDHE_RSA` suites) rather than an ECDSA or EdDSA one.
     pub fn signs_with_rsa(self) -> bool {
-        matches!(self, Suite12::EcdheRsaAes128Gcm | Suite12::EcdheRsaAes256Gcm | Suite12::EcdheRsaChacha20Poly1305)
+        matches!(
+            self,
+            Suite12::EcdheRsaAes128Gcm
+                | Suite12::EcdheRsaAes256Gcm
+                | Suite12::EcdheRsaChacha20Poly1305
+        )
     }
 
     /// The implicit part of the nonce from the key block: 4 bytes for AES-GCM (the salt), 12 for ChaCha20-Poly1305.
@@ -154,7 +178,13 @@ impl Suite12 {
 }
 
 /// The PRF of TLS 1.2 (RFC 5246 section 5): `P_hash(secret, label || seed)`, `len` bytes.
-pub fn prf(alg: HashAlg, secret: &[u8], label: &[u8], seed: &[u8], len: usize) -> Zeroizing<Vec<u8>> {
+pub fn prf(
+    alg: HashAlg,
+    secret: &[u8],
+    label: &[u8],
+    seed: &[u8],
+    len: usize,
+) -> Zeroizing<Vec<u8>> {
     let mut label_seed = Vec::with_capacity(label.len() + seed.len());
     label_seed.extend_from_slice(label);
     label_seed.extend_from_slice(seed);
@@ -194,7 +224,12 @@ impl RecordCipher12 {
     pub fn new(suite: Suite12, key: &[u8], fixed_iv: &[u8]) -> RecordCipher12 {
         let mut iv = [0u8; 12];
         iv[..fixed_iv.len()].copy_from_slice(fixed_iv);
-        RecordCipher12 { suite, aead: Aead::new(suite.aead_suite(), key), iv, seq: 0 }
+        RecordCipher12 {
+            suite,
+            aead: Aead::new(suite.aead_suite(), key),
+            iv,
+            seq: 0,
+        }
     }
 
     pub fn suite(&self) -> Suite12 {
@@ -235,7 +270,13 @@ impl RecordCipher12 {
         let body_len = explicit_len + content.len() + AEAD_TAG_LEN;
         let start = out.len();
         out.reserve(5 + body_len);
-        out.extend_from_slice(&[record_type, 0x03, 0x03, (body_len >> 8) as u8, body_len as u8]);
+        out.extend_from_slice(&[
+            record_type,
+            0x03,
+            0x03,
+            (body_len >> 8) as u8,
+            body_len as u8,
+        ]);
         // the sequence number is the explicit nonce: unique for as long as the key lives
         let explicit = self.seq.to_be_bytes();
         out.extend_from_slice(&explicit[..explicit_len]);
@@ -243,16 +284,23 @@ impl RecordCipher12 {
         out.resize(start + 5 + body_len, 0);
         let nonce = self.nonce(&explicit);
         let aad = self.aad(record_type, content.len());
-        self.aead.seal_in_place(&nonce, &aad, &mut out[start + 5 + explicit_len..]);
+        self.aead
+            .seal_in_place(&nonce, &aad, &mut out[start + 5 + explicit_len..]);
         self.seq += 1;
     }
 
     /// Opens a record in place: `payload` is its body as received. Returns (record type, where the content starts in `payload`,
     /// its length). On failure nothing is changed and the sequence number does not advance.
-    pub fn decrypt_in_place(&mut self, header: &[u8; 5], payload: &mut [u8]) -> Result<(u8, usize, usize)> {
+    pub fn decrypt_in_place(
+        &mut self,
+        header: &[u8; 5],
+        payload: &mut [u8],
+    ) -> Result<(u8, usize, usize)> {
         let explicit_len = self.suite.explicit_nonce_len();
         if payload.len() < explicit_len + AEAD_TAG_LEN {
-            return Err(Error::Tls("bad_record_mac: record too short to be protected".into()));
+            return Err(Error::Tls(
+                "bad_record_mac: record too short to be protected".into(),
+            ));
         }
         let mut explicit = [0u8; 8];
         if explicit_len == 8 {
@@ -343,19 +391,31 @@ fn bad(msg: &str) -> Error {
 impl Handshake12 {
     /// Takes over after a ServerHello that chose TLS 1.2 (`msg` is the whole message, `sh` what it says). Checks what it says that
     /// only matters for TLS 1.2, and returns the handshake that goes on.
-    pub(crate) fn start(start: Start12, msg: &[u8], sh: &ServerHello) -> Result<(Handshake12, Vec<Step12>)> {
+    pub(crate) fn start(
+        start: Start12,
+        msg: &[u8],
+        sh: &ServerHello,
+    ) -> Result<(Handshake12, Vec<Step12>)> {
         // (the caller checked the version, the downgrade sentinel and that a TLS 1.2 ServerHello was allowed)
         if sh.compression != 0 {
-            return Err(Error::Tls("illegal_parameter: the server chose compression".into()));
+            return Err(Error::Tls(
+                "illegal_parameter: the server chose compression".into(),
+            ));
         }
         if sh.key_share.is_some() || sh.cookie.is_some() {
-            return Err(Error::Tls("illegal_parameter: TLS 1.3 extensions in a TLS 1.2 ServerHello".into()));
+            return Err(Error::Tls(
+                "illegal_parameter: TLS 1.3 extensions in a TLS 1.2 ServerHello".into(),
+            ));
         }
         // there is no session to resume: a server that claims to resume one (by echoing our random session id) is lying
         if !sh.session_id.is_empty() && sh.session_id == start.session_id {
-            return Err(Error::Tls("illegal_parameter: the server resumed a session that was never offered".into()));
+            return Err(Error::Tls(
+                "illegal_parameter: the server resumed a session that was never offered".into(),
+            ));
         }
-        let suite = Suite12::from_id(sh.cipher_suite).ok_or_else(|| Error::Tls("illegal_parameter: server chose a cipher suite we did not offer".into()))?;
+        let suite = Suite12::from_id(sh.cipher_suite).ok_or_else(|| {
+            Error::Tls("illegal_parameter: server chose a cipher suite we did not offer".into())
+        })?;
         let mut ems = false;
         let mut status_acked = false;
         let mut alpn: Option<Vec<u8>> = None;
@@ -365,14 +425,18 @@ impl Handshake12 {
                 EXT_RENEGOTIATION_INFO => {
                     // an empty renegotiated_connection: this is the first handshake, and the server knows about RFC 5746
                     if d.as_slice() != [0] {
-                        return Err(Error::Tls("handshake_failure: renegotiation_info is not empty".into()));
+                        return Err(Error::Tls(
+                            "handshake_failure: renegotiation_info is not empty".into(),
+                        ));
                     }
                 }
                 EXT_EC_POINT_FORMATS => {
                     let mut r = Reader::new(d);
                     let formats = r.vec8().ok_or_else(|| bad("ec_point_formats"))?;
                     if !r.is_empty() || !formats.contains(&0) {
-                        return Err(Error::Tls("illegal_parameter: the server cannot take uncompressed points".into()));
+                        return Err(Error::Tls(
+                            "illegal_parameter: the server cannot take uncompressed points".into(),
+                        ));
                     }
                 }
                 EXT_SERVER_NAME if d.is_empty() && start.sent_sni => {}
@@ -385,12 +449,24 @@ impl Handshake12 {
                     if !r.is_empty() || !lr.is_empty() || p.is_empty() {
                         return Err(bad("ALPN must name exactly one protocol"));
                     }
-                    if !start.config.alpn_protocols.iter().any(|o| o.as_slice() == p) {
-                        return Err(Error::Tls("illegal_parameter: server selected an ALPN protocol we did not offer".into()));
+                    if !start
+                        .config
+                        .alpn_protocols
+                        .iter()
+                        .any(|o| o.as_slice() == p)
+                    {
+                        return Err(Error::Tls(
+                            "illegal_parameter: server selected an ALPN protocol we did not offer"
+                                .into(),
+                        ));
                     }
                     alpn = Some(p.to_vec());
                 }
-                t => return Err(Error::Tls(format!("unsupported_extension: unexpected extension {t} in a TLS 1.2 ServerHello"))),
+                t => {
+                    return Err(Error::Tls(format!(
+                        "unsupported_extension: unexpected extension {t} in a TLS 1.2 ServerHello"
+                    )))
+                }
             }
         }
         if !ems {
@@ -462,27 +538,44 @@ impl Handshake12 {
                     return Err(bad("ServerHelloDone with a body"));
                 }
                 if trailing {
-                    return Err(Error::Tls("unexpected_message: handshake data after ServerHelloDone".into()));
+                    return Err(Error::Tls(
+                        "unexpected_message: handshake data after ServerHelloDone".into(),
+                    ));
                 }
                 self.start.transcript.extend_from_slice(msg);
                 self.client_flight(&mut steps)?;
                 self.stage = Stage::ChangeCipherSpec;
             }
             (Stage::Finished, HS_FINISHED) => {
-                let master = self.master_secret.as_ref().ok_or_else(|| Error::Tls("internal: no master secret".into()))?;
+                let master = self
+                    .master_secret
+                    .as_ref()
+                    .ok_or_else(|| Error::Tls("internal: no master secret".into()))?;
                 let alg = self.suite.hash();
-                let expected = prf(alg, master, b"server finished", &alg.digest(&self.start.transcript), 12);
+                let expected = prf(
+                    alg,
+                    master,
+                    b"server finished",
+                    &alg.digest(&self.start.transcript),
+                    12,
+                );
                 if !ct_eq(&expected, body) {
                     return Err(Error::Tls("decrypt_error: server Finished is wrong".into()));
                 }
                 if trailing {
-                    return Err(Error::Tls("unexpected_message: handshake data after the server's Finished".into()));
+                    return Err(Error::Tls(
+                        "unexpected_message: handshake data after the server's Finished".into(),
+                    ));
                 }
                 self.start.transcript.extend_from_slice(msg);
                 self.stage = Stage::Over;
                 steps.push(Step12::Established);
             }
-            _ => return Err(Error::Tls("unexpected_message: handshake message out of order".into())),
+            _ => {
+                return Err(Error::Tls(
+                    "unexpected_message: handshake message out of order".into(),
+                ))
+            }
         }
         Ok(steps)
     }
@@ -490,10 +583,14 @@ impl Handshake12 {
     /// The server's change_cipher_spec: the cipher to read the rest with. Only after our own flight, and never twice.
     pub(crate) fn on_change_cipher_spec(&mut self) -> Result<RecordCipher12> {
         if self.stage != Stage::ChangeCipherSpec {
-            return Err(Error::Tls("unexpected_message: change_cipher_spec out of order".into()));
+            return Err(Error::Tls(
+                "unexpected_message: change_cipher_spec out of order".into(),
+            ));
         }
         self.stage = Stage::Finished;
-        self.pending_read.take().ok_or_else(|| Error::Tls("internal: no read keys".into()))
+        self.pending_read
+            .take()
+            .ok_or_else(|| Error::Tls("internal: no read keys".into()))
     }
 
     /// The chain the server sent, verified for the host and checked for revocation, as for TLS 1.3.
@@ -501,13 +598,23 @@ impl Handshake12 {
         let config = &self.start.config;
         let leaf = if config.verify_server_certificate {
             let now = config.time_override.unwrap_or_else(sys::now_unix);
-            let (leaf, path) = config.trust_store.verify_server_path(&self.chain, &self.start.server_name, now)?;
+            let (leaf, path) =
+                config
+                    .trust_store
+                    .verify_server_path(&self.chain, &self.start.server_name, now)?;
             let mut staples: Vec<Option<Vec<u8>>> = vec![None; self.chain.len()];
             staples[0] = self.staple.clone();
-            let evidence = revocation::ChainEvidence { sent: &self.chain, staples: &staples };
+            let evidence = revocation::ChainEvidence {
+                sent: &self.chain,
+                staples: &staples,
+            };
             revocation::check_path(&config.revocation, &path, &evidence, now)?;
             if config.revocation.is_deferred() {
-                steps.push(Step12::Unchecked(Box::new(revocation::Unchecked { path, sent: self.chain.clone(), staples })));
+                steps.push(Step12::Unchecked(Box::new(revocation::Unchecked {
+                    path,
+                    sent: self.chain.clone(),
+                    staples,
+                })));
             }
             leaf
         } else {
@@ -533,24 +640,35 @@ impl Handshake12 {
         let mut r = Reader::new(body);
         let curve_type = r.u8().ok_or_else(|| bad("ServerKeyExchange"))?;
         if curve_type != 3 {
-            return Err(Error::Tls("illegal_parameter: ServerKeyExchange is not for a named curve".into()));
+            return Err(Error::Tls(
+                "illegal_parameter: ServerKeyExchange is not for a named curve".into(),
+            ));
         }
         let group = r.u16().ok_or_else(|| bad("ServerKeyExchange curve"))?;
         let public = r.vec8().ok_or_else(|| bad("ServerKeyExchange key"))?;
         let params_len = 1 + 2 + 1 + public.len();
-        let scheme = r.u16().ok_or_else(|| bad("ServerKeyExchange signature algorithm"))?;
-        let signature = r.vec16().ok_or_else(|| bad("ServerKeyExchange signature"))?;
+        let scheme = r
+            .u16()
+            .ok_or_else(|| bad("ServerKeyExchange signature algorithm"))?;
+        let signature = r
+            .vec16()
+            .ok_or_else(|| bad("ServerKeyExchange signature"))?;
         if !r.is_empty() {
             return Err(bad("trailing data in ServerKeyExchange"));
         }
         if !SUPPORTED_GROUPS.contains(&group) {
-            return Err(Error::Tls("illegal_parameter: the server chose a curve we did not offer".into()));
+            return Err(Error::Tls(
+                "illegal_parameter: the server chose a curve we did not offer".into(),
+            ));
         }
         let mut signed = Vec::with_capacity(64 + params_len);
         signed.extend_from_slice(&self.start.client_random);
         signed.extend_from_slice(&self.server_random);
         signed.extend_from_slice(&body[..params_len]);
-        let leaf = self.leaf.as_ref().ok_or_else(|| Error::Tls("internal: no certificate".into()))?;
+        let leaf = self
+            .leaf
+            .as_ref()
+            .ok_or_else(|| Error::Tls("internal: no certificate".into()))?;
         verify_tls12_signature(leaf, self.suite, scheme, &signed, signature)?;
         self.server_share = Some((group, public.to_vec()));
         Ok(())
@@ -559,7 +677,10 @@ impl Handshake12 {
     /// Our flight after ServerHelloDone: an empty Certificate if one was asked for, ClientKeyExchange, change_cipher_spec and
     /// Finished; and the keys.
     fn client_flight(&mut self, steps: &mut Vec<Step12>) -> Result<()> {
-        let (group, server_public) = self.server_share.take().ok_or_else(|| Error::Tls("unexpected_message: no ServerKeyExchange".into()))?;
+        let (group, server_public) = self
+            .server_share
+            .take()
+            .ok_or_else(|| Error::Tls("unexpected_message: no ServerKeyExchange".into()))?;
         if self.certificate_requested {
             // no client certificate: an empty list
             let m = handshake_message(HS_CERTIFICATE, &[0, 0, 0]);
@@ -571,17 +692,30 @@ impl Handshake12 {
                 Some(p) => p,
                 None => Zeroizing::new(crate::crypto::rand::bytes()?),
             };
-            let peer: [u8; 32] = <[u8; 32]>::try_from(server_public.as_slice()).map_err(|_| Error::Tls("illegal_parameter: bad X25519 key".into()))?;
+            let peer: [u8; 32] = <[u8; 32]>::try_from(server_public.as_slice())
+                .map_err(|_| Error::Tls("illegal_parameter: bad X25519 key".into()))?;
             let shared = Zeroizing::new(x25519::x25519(&private, &peer));
             if shared.iter().fold(0u8, |acc, &b| acc | b) == 0 {
-                return Err(Error::Tls("illegal_parameter: X25519 produced an all-zero shared secret".into()));
+                return Err(Error::Tls(
+                    "illegal_parameter: X25519 produced an all-zero shared secret".into(),
+                ));
             }
-            (Zeroizing::new(shared.to_vec()), x25519::public_key(&private).to_vec())
+            (
+                Zeroizing::new(shared.to_vec()),
+                x25519::public_key(&private).to_vec(),
+            )
         } else {
-            let curve = if group == GROUP_SECP256R1 { Curve::P256 } else { Curve::P384 };
+            let curve = if group == GROUP_SECP256R1 {
+                Curve::P256
+            } else {
+                Curve::P384
+            };
             let (secret, public) = ecdh::generate(curve)?;
-            let shared = ecdh::shared_secret(curve, &secret, &server_public)
-                .ok_or_else(|| Error::Tls("illegal_parameter: the server's key is not a valid point on the curve".into()))?;
+            let shared = ecdh::shared_secret(curve, &secret, &server_public).ok_or_else(|| {
+                Error::Tls(
+                    "illegal_parameter: the server's key is not a valid point on the curve".into(),
+                )
+            })?;
             (shared, public)
         };
         let mut cke = vec![our_public.len() as u8];
@@ -593,20 +727,38 @@ impl Handshake12 {
         // the extended master secret (RFC 7627 section 4): over the hash of the handshake so far, ClientKeyExchange included
         let alg = self.suite.hash();
         let session_hash = alg.digest(&self.start.transcript);
-        let master = prf(alg, &premaster, b"extended master secret", &session_hash, 48);
+        let master = prf(
+            alg,
+            &premaster,
+            b"extended master secret",
+            &session_hash,
+            48,
+        );
         // the key block (RFC 5246 section 6.3): no MAC keys for an AEAD
         let (key_len, iv_len) = (self.suite.aead_suite().key_len(), self.suite.fixed_iv_len());
         let mut seed = Vec::with_capacity(64);
         seed.extend_from_slice(&self.server_random);
         seed.extend_from_slice(&self.start.client_random);
-        let block = prf(alg, &master, b"key expansion", &seed, 2 * key_len + 2 * iv_len);
+        let block = prf(
+            alg,
+            &master,
+            b"key expansion",
+            &seed,
+            2 * key_len + 2 * iv_len,
+        );
         let (client_key, rest) = block.split_at(key_len);
         let (server_key, rest) = rest.split_at(key_len);
         let (client_iv, server_iv) = rest.split_at(iv_len);
         let write = RecordCipher12::new(self.suite, client_key, client_iv);
         self.pending_read = Some(RecordCipher12::new(self.suite, server_key, server_iv));
         steps.push(Step12::ChangeCipherSpec(write));
-        let verify_data = prf(alg, &master, b"client finished", &alg.digest(&self.start.transcript), 12);
+        let verify_data = prf(
+            alg,
+            &master,
+            b"client finished",
+            &alg.digest(&self.start.transcript),
+            12,
+        );
         let finished = handshake_message(HS_FINISHED, &verify_data);
         self.start.transcript.extend_from_slice(&finished);
         steps.push(Step12::SendProtected(finished));
@@ -631,11 +783,15 @@ fn parse_certificate12(body: &[u8]) -> Result<Vec<Vec<u8>>> {
         }
         certs.push(der.to_vec());
         if certs.len() > 16 {
-            return Err(Error::Tls("illegal_parameter: certificate chain too long".into()));
+            return Err(Error::Tls(
+                "illegal_parameter: certificate chain too long".into(),
+            ));
         }
     }
     if certs.is_empty() {
-        return Err(Error::Tls("decode_error: server sent an empty certificate list".into()));
+        return Err(Error::Tls(
+            "decode_error: server sent an empty certificate list".into(),
+        ));
     }
     Ok(certs)
 }
@@ -644,8 +800,12 @@ fn parse_certificate12(body: &[u8]) -> Result<Vec<Vec<u8>>> {
 fn parse_certificate_request12(body: &[u8]) -> Result<()> {
     let mut r = Reader::new(body);
     let types = r.vec8().ok_or_else(|| bad("CertificateRequest types"))?;
-    let algs = r.vec16().ok_or_else(|| bad("CertificateRequest algorithms"))?;
-    let _authorities = r.vec16().ok_or_else(|| bad("CertificateRequest authorities"))?;
+    let algs = r
+        .vec16()
+        .ok_or_else(|| bad("CertificateRequest algorithms"))?;
+    let _authorities = r
+        .vec16()
+        .ok_or_else(|| bad("CertificateRequest authorities"))?;
     if types.is_empty() || algs.is_empty() || algs.len() % 2 != 0 || !r.is_empty() {
         return Err(bad("CertificateRequest"));
     }
@@ -655,9 +815,17 @@ fn parse_certificate_request12(body: &[u8]) -> Result<()> {
 /// Verifies the signature of a TLS 1.2 ServerKeyExchange: only the schemes we offered (none with SHA-1), and only ones that go with
 /// the key and with the suite (an `ECDHE_RSA` suite is signed with RSA, an `ECDHE_ECDSA` one with ECDSA or EdDSA). Unlike TLS 1.3,
 /// RSA may sign with PKCS#1 v1.5 here, and an ECDSA key of either curve may use either hash.
-pub fn verify_tls12_signature(cert: &Certificate, suite: Suite12, scheme: u16, signed: &[u8], signature: &[u8]) -> Result<()> {
+pub fn verify_tls12_signature(
+    cert: &Certificate,
+    suite: Suite12,
+    scheme: u16,
+    signed: &[u8],
+    signature: &[u8],
+) -> Result<()> {
     if !SIGNATURE_SCHEMES.contains(&scheme) {
-        return Err(Error::Tls(format!("illegal_parameter: the server signed with a scheme we did not offer ({scheme:#06x})")));
+        return Err(Error::Tls(format!(
+            "illegal_parameter: the server signed with a scheme we did not offer ({scheme:#06x})"
+        )));
     }
     let ok = match (scheme, &cert.public_key, suite.signs_with_rsa()) {
         (0x0403, PublicKey::Ec { curve, point }, false) => ecdsa::verify(*curve, point, HashAlg::Sha256, signed, signature),
@@ -675,7 +843,9 @@ pub fn verify_tls12_signature(cert: &Certificate, suite: Suite12, scheme: u16, s
     if ok {
         Ok(())
     } else {
-        Err(Error::Tls("decrypt_error: the ServerKeyExchange signature is invalid".into()))
+        Err(Error::Tls(
+            "decrypt_error: the ServerKeyExchange signature is invalid".into(),
+        ))
     }
 }
 
@@ -690,7 +860,10 @@ mod tests {
     #[test]
     fn the_prf_gives_the_published_vector_and_a_second_implementations_output() {
         // SHA-256: the vector that was circulated on the TLS working group's list (and Python's hmac agrees); SHA-384 from Python
-        let (secret, seed) = (unhex("9bbe436ba940f017b17652849a71db35"), unhex("a0ba9f936cda311827a6f796ffd5198c"));
+        let (secret, seed) = (
+            unhex("9bbe436ba940f017b17652849a71db35"),
+            unhex("a0ba9f936cda311827a6f796ffd5198c"),
+        );
         assert_eq!(
             hex(&prf(HashAlg::Sha256, &secret, b"test label", &seed, 100)),
             "e3f229ba727be17b8d122620557cd453c2aab21d07c3d495329b52d4e61edb5a6b301791e90d35c9c9a46b4e14baf9af0fa022f7077def17abfd3797c0564bab4fbc91666e9def9b97fce34f796789baa48082d122ee42c5a72e5a5110fff70187347b66"
@@ -700,7 +873,10 @@ mod tests {
             "dd88775cd827187b67a3f7652b5c13f715791cc46e0274a6d3fb16651103defc544cd8afb68369a219bb918b8b21ddb1764af0a70339e6dec085e574f655851ba692513203536bdfc3675e53768210f0a2389dd324311a440c7c30ef44b391d914c3b0c7c80f1cb5e134cf4253d859fa8a46e978360d095dd2fba0c18a1f4d7b4cf9f24667b5cb0adc5ab65df3a0dc627c9b73cc"
         );
         // a shorter output is a prefix of a longer one
-        assert_eq!(&prf(HashAlg::Sha256, &secret, b"test label", &seed, 13)[..], &prf(HashAlg::Sha256, &secret, b"test label", &seed, 100)[..13]);
+        assert_eq!(
+            &prf(HashAlg::Sha256, &secret, b"test label", &seed, 13)[..],
+            &prf(HashAlg::Sha256, &secret, b"test label", &seed, 100)[..13]
+        );
     }
 
     /// Records sealed by Python's `cryptography` with the nonces and additional data of RFC 5288 and RFC 7905 (sequence number 5,
@@ -744,7 +920,12 @@ mod tests {
         }
     }
 
-    fn server_hello(random: [u8; 32], session_id: &[u8], suite: u16, exts: &[(u16, Vec<u8>)]) -> Vec<u8> {
+    fn server_hello(
+        random: [u8; 32],
+        session_id: &[u8],
+        suite: u16,
+        exts: &[(u16, Vec<u8>)],
+    ) -> Vec<u8> {
         let mut b = vec![3, 3];
         b.extend_from_slice(&random);
         b.push(session_id.len() as u8);
@@ -763,13 +944,24 @@ mod tests {
     }
 
     fn good_extensions() -> Vec<(u16, Vec<u8>)> {
-        vec![(EXT_EXTENDED_MASTER_SECRET, vec![]), (EXT_RENEGOTIATION_INFO, vec![0]), (EXT_EC_POINT_FORMATS, vec![1, 0])]
+        vec![
+            (EXT_EXTENDED_MASTER_SECRET, vec![]),
+            (EXT_RENEGOTIATION_INFO, vec![0]),
+            (EXT_EC_POINT_FORMATS, vec![1, 0]),
+        ]
     }
 
     /// What the TLS 1.3 handshake makes of a TLS 1.2 ServerHello: `Ok(true)` if it goes on as TLS 1.2, or the error.
     fn answer(min: TlsVersion, hello: &[u8]) -> std::result::Result<bool, String> {
         let config = ClientConfig::new(TrustStore::empty()).with_min_version(min);
-        let (mut hs, _) = Handshake::start("example.com", &config, None, Zeroizing::new([7; 32]), &[1; 32], &[2; 32]);
+        let (mut hs, _) = Handshake::start(
+            "example.com",
+            &config,
+            None,
+            Zeroizing::new([7; 32]),
+            &[1; 32],
+            &[2; 32],
+        );
         match hs.on_message(hello, false) {
             Ok(events) => Ok(events.iter().any(|e| matches!(e, Event::Tls12(..)))),
             Err(e) => Err(e.to_string()),
@@ -780,96 +972,221 @@ mod tests {
     fn a_tls12_server_hello_is_taken_only_as_the_rules_say() {
         let suite = Suite12::EcdheRsaAes128Gcm.id();
         let random = [9u8; 32];
-        assert_eq!(answer(TlsVersion::Tls12, &server_hello(random, &[5; 32], suite, &good_extensions())), Ok(true));
-        assert_eq!(answer(TlsVersion::Tls12, &server_hello(random, &[], suite, &good_extensions())), Ok(true));
+        assert_eq!(
+            answer(
+                TlsVersion::Tls12,
+                &server_hello(random, &[5; 32], suite, &good_extensions())
+            ),
+            Ok(true)
+        );
+        assert_eq!(
+            answer(
+                TlsVersion::Tls12,
+                &server_hello(random, &[], suite, &good_extensions())
+            ),
+            Ok(true)
+        );
         // the extensions a server may answer with, when they were asked for
         let mut more = good_extensions();
         more.push((EXT_SERVER_NAME, vec![]));
         more.push((EXT_STATUS_REQUEST, vec![]));
-        more.push((EXT_ALPN, vec![0, 9, 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1']));
-        assert_eq!(answer(TlsVersion::Tls12, &server_hello(random, &[], suite, &more)), Ok(true));
+        more.push((
+            EXT_ALPN,
+            vec![0, 9, 8, b'h', b't', b't', b'p', b'/', b'1', b'.', b'1'],
+        ));
+        assert_eq!(
+            answer(TlsVersion::Tls12, &server_hello(random, &[], suite, &more)),
+            Ok(true)
+        );
         let refused = |min, hello: Vec<u8>, why: &str| {
             let r = answer(min, &hello);
-            assert!(matches!(&r, Err(e) if e.contains(why)), "wanted {why:?}, got {r:?}");
+            assert!(
+                matches!(&r, Err(e) if e.contains(why)),
+                "wanted {why:?}, got {r:?}"
+            );
         };
         // a client that requires TLS 1.3
-        refused(TlsVersion::Tls13, server_hello(random, &[], suite, &good_extensions()), "requires TLS 1.3");
+        refused(
+            TlsVersion::Tls13,
+            server_hello(random, &[], suite, &good_extensions()),
+            "requires TLS 1.3",
+        );
         // the downgrade sentinel, for 1.2 and for 1.1 and below
         for last in [1u8, 0] {
             let mut r = random;
             r[24..31].copy_from_slice(b"DOWNGRD");
             r[31] = last;
-            refused(TlsVersion::Tls12, server_hello(r, &[], suite, &good_extensions()), "downgrade");
+            refused(
+                TlsVersion::Tls12,
+                server_hello(r, &[], suite, &good_extensions()),
+                "downgrade",
+            );
         }
         // no extended master secret, or one with a body
-        refused(TlsVersion::Tls12, server_hello(random, &[], suite, &good_extensions()[1..]), "extended master secret");
+        refused(
+            TlsVersion::Tls12,
+            server_hello(random, &[], suite, &good_extensions()[1..]),
+            "extended master secret",
+        );
         let mut ems_body = good_extensions();
         ems_body[0].1 = vec![0];
-        refused(TlsVersion::Tls12, server_hello(random, &[], suite, &ems_body), "unsupported_extension");
+        refused(
+            TlsVersion::Tls12,
+            server_hello(random, &[], suite, &ems_body),
+            "unsupported_extension",
+        );
         // renegotiation_info that is not the empty one of a first handshake
         let mut reneg = good_extensions();
         reneg[1].1 = vec![1, 0];
-        refused(TlsVersion::Tls12, server_hello(random, &[], suite, &reneg), "renegotiation_info");
+        refused(
+            TlsVersion::Tls12,
+            server_hello(random, &[], suite, &reneg),
+            "renegotiation_info",
+        );
         // no uncompressed points
         let mut points = good_extensions();
         points[2].1 = vec![1, 1];
-        refused(TlsVersion::Tls12, server_hello(random, &[], suite, &points), "uncompressed");
+        refused(
+            TlsVersion::Tls12,
+            server_hello(random, &[], suite, &points),
+            "uncompressed",
+        );
         // a session we never had, a suite we never offered (CBC, RSA key exchange, a TLS 1.3 suite), compression
-        refused(TlsVersion::Tls12, server_hello(random, &[2; 32], suite, &good_extensions()), "resumed");
+        refused(
+            TlsVersion::Tls12,
+            server_hello(random, &[2; 32], suite, &good_extensions()),
+            "resumed",
+        );
         for bad in [0xc013u16, 0x009c, 0x1301, 0x002f] {
-            refused(TlsVersion::Tls12, server_hello(random, &[], bad, &good_extensions()), "did not offer");
+            refused(
+                TlsVersion::Tls12,
+                server_hello(random, &[], bad, &good_extensions()),
+                "did not offer",
+            );
         }
         let mut compressed = server_hello(random, &[], suite, &good_extensions());
         compressed[4 + 2 + 32 + 1 + 2] = 1;
         refused(TlsVersion::Tls12, compressed, "compression");
         // TLS 1.3's extensions, a session ticket we never asked for, and anything unknown
-        for (t, d) in [(EXT_KEY_SHARE, vec![0, 0x1d, 0, 1, 9]), (EXT_SESSION_TICKET, vec![]), (0x1234, vec![])] {
+        for (t, d) in [
+            (EXT_KEY_SHARE, vec![0, 0x1d, 0, 1, 9]),
+            (EXT_SESSION_TICKET, vec![]),
+            (0x1234, vec![]),
+        ] {
             let mut e = good_extensions();
             e.push((t, d));
-            assert!(answer(TlsVersion::Tls12, &server_hello(random, &[], suite, &e)).is_err(), "{t:#x}");
+            assert!(
+                answer(TlsVersion::Tls12, &server_hello(random, &[], suite, &e)).is_err(),
+                "{t:#x}"
+            );
         }
         // an ALPN protocol that was not offered
         let mut alpn = good_extensions();
         alpn.push((EXT_ALPN, vec![0, 3, 2, b'h', b'2']));
-        refused(TlsVersion::Tls12, server_hello(random, &[], suite, &alpn), "did not offer");
+        refused(
+            TlsVersion::Tls12,
+            server_hello(random, &[], suite, &alpn),
+            "did not offer",
+        );
         // supported_versions that names 1.2 is not how a server chooses 1.2
         let mut sv = good_extensions();
         sv.push((EXT_SUPPORTED_VERSIONS, vec![3, 3]));
-        refused(TlsVersion::Tls12, server_hello(random, &[], suite, &sv), "not offered");
+        refused(
+            TlsVersion::Tls12,
+            server_hello(random, &[], suite, &sv),
+            "not offered",
+        );
     }
 
     #[test]
     fn the_server_key_exchange_signature_must_be_one_we_offered_and_fit_the_key_and_suite() {
-        let rsa = Certificate::from_der(&crate::pem::parse(include_str!("../../tests/data/leaf_rsa.pem")).remove(0).data).unwrap();
-        let ed = Certificate::from_der(&crate::pem::parse(include_str!("../../tests/data/ed_leaf.pem")).remove(0).data).unwrap();
+        let rsa = Certificate::from_der(
+            &crate::pem::parse(include_str!("../../tests/data/leaf_rsa.pem"))
+                .remove(0)
+                .data,
+        )
+        .unwrap();
+        let ed = Certificate::from_der(
+            &crate::pem::parse(include_str!("../../tests/data/ed_leaf.pem"))
+                .remove(0)
+                .data,
+        )
+        .unwrap();
         let sig = [0u8; 256];
         // SHA-1 (RSA and ECDSA), DSA, unknown: never offered
         for scheme in [0x0201u16, 0x0203, 0x0202, 0x0101, 0x0700] {
-            let e = verify_tls12_signature(&rsa, Suite12::EcdheRsaAes128Gcm, scheme, b"x", &sig).unwrap_err();
+            let e = verify_tls12_signature(&rsa, Suite12::EcdheRsaAes128Gcm, scheme, b"x", &sig)
+                .unwrap_err();
             assert!(e.to_string().contains("did not offer"), "{scheme:#x}: {e}");
         }
         // an RSA key under an ECDSA suite, an ECDSA scheme for an RSA key, an Ed25519 key under an RSA suite
-        assert!(verify_tls12_signature(&rsa, Suite12::EcdheEcdsaAes128Gcm, 0x0401, b"x", &sig).unwrap_err().to_string().contains("does not fit"));
-        assert!(verify_tls12_signature(&rsa, Suite12::EcdheRsaAes128Gcm, 0x0403, b"x", &sig).unwrap_err().to_string().contains("does not fit"));
-        assert!(verify_tls12_signature(&ed, Suite12::EcdheRsaAes128Gcm, 0x0807, b"x", &sig[..64]).unwrap_err().to_string().contains("does not fit"));
+        assert!(
+            verify_tls12_signature(&rsa, Suite12::EcdheEcdsaAes128Gcm, 0x0401, b"x", &sig)
+                .unwrap_err()
+                .to_string()
+                .contains("does not fit")
+        );
+        assert!(
+            verify_tls12_signature(&rsa, Suite12::EcdheRsaAes128Gcm, 0x0403, b"x", &sig)
+                .unwrap_err()
+                .to_string()
+                .contains("does not fit")
+        );
+        assert!(
+            verify_tls12_signature(&ed, Suite12::EcdheRsaAes128Gcm, 0x0807, b"x", &sig[..64])
+                .unwrap_err()
+                .to_string()
+                .contains("does not fit")
+        );
         // a scheme that fits but a signature that does not verify
-        assert!(verify_tls12_signature(&rsa, Suite12::EcdheRsaAes128Gcm, 0x0401, b"x", &sig).unwrap_err().to_string().contains("invalid"));
+        assert!(
+            verify_tls12_signature(&rsa, Suite12::EcdheRsaAes128Gcm, 0x0401, b"x", &sig)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid")
+        );
     }
 
     #[test]
     fn the_client_hello_offers_tls12_only_when_it_may() {
         for (min, offered) in [(TlsVersion::Tls12, true), (TlsVersion::Tls13, false)] {
             let config = ClientConfig::new(TrustStore::empty()).with_min_version(min);
-            let (_, hello) = Handshake::start("example.com", &config, None, Zeroizing::new([7; 32]), &[1; 32], &[2; 32]);
+            let (_, hello) = Handshake::start(
+                "example.com",
+                &config,
+                None,
+                Zeroizing::new([7; 32]),
+                &[1; 32],
+                &[2; 32],
+            );
             let has = |needle: &[u8]| hello.windows(needle.len()).any(|w| w == needle);
-            assert_eq!(has(&[0x00, 0x17, 0x00, 0x00]), offered, "extended_master_secret, {min:?}");
-            assert_eq!(has(&[0xff, 0x01, 0x00, 0x01, 0x00]), offered, "renegotiation_info, {min:?}");
-            assert_eq!(has(&[0x00, 0x2b, 0x00, 0x05, 0x04, 0x03, 0x04, 0x03, 0x03]), offered, "supported_versions with 1.2, {min:?}");
-            assert_eq!(has(&[0x00, 0x2b, 0x00, 0x03, 0x02, 0x03, 0x04]), !offered, "supported_versions with 1.3 alone, {min:?}");
+            assert_eq!(
+                has(&[0x00, 0x17, 0x00, 0x00]),
+                offered,
+                "extended_master_secret, {min:?}"
+            );
+            assert_eq!(
+                has(&[0xff, 0x01, 0x00, 0x01, 0x00]),
+                offered,
+                "renegotiation_info, {min:?}"
+            );
+            assert_eq!(
+                has(&[0x00, 0x2b, 0x00, 0x05, 0x04, 0x03, 0x04, 0x03, 0x03]),
+                offered,
+                "supported_versions with 1.2, {min:?}"
+            );
+            assert_eq!(
+                has(&[0x00, 0x2b, 0x00, 0x03, 0x02, 0x03, 0x04]),
+                !offered,
+                "supported_versions with 1.3 alone, {min:?}"
+            );
             // the cipher suites: TLS 1.3's, then (if 1.2 is offered) the six ECDHE AEAD ones, and nothing else
             let mut r = Reader::new(&hello[4..]);
             let (_, _, _, suites) = (r.u16(), r.take(32), r.vec8(), r.vec16().unwrap());
-            let suites: Vec<u16> = suites.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+            let suites: Vec<u16> = suites
+                .chunks(2)
+                .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                .collect();
             let mut want: Vec<u16> = Suite::ALL.iter().map(|s| s.id()).collect();
             if offered {
                 want.extend(Suite12::ALL.iter().map(|s| s.id()));
@@ -880,10 +1197,22 @@ mod tests {
             assert_eq!(got_sorted, want_sorted, "{min:?}");
         }
         // and no signature scheme with SHA-1, whatever is offered
-        assert!(!SIGNATURE_SCHEMES.iter().any(|s| s >> 8 == 2), "{SIGNATURE_SCHEMES:04x?}");
+        assert!(
+            !SIGNATURE_SCHEMES.iter().any(|s| s >> 8 == 2),
+            "{SIGNATURE_SCHEMES:04x?}"
+        );
         // and QUIC offers 1.3 alone, whatever the configuration says
         let config = ClientConfig::new(TrustStore::empty());
-        let (_, hello) = Handshake::start("example.com", &config, Some(&[1, 2, 3]), Zeroizing::new([7; 32]), &[1; 32], &[]);
-        assert!(!hello.windows(2).any(|w| w == Suite12::EcdheRsaAes128Gcm.id().to_be_bytes()));
+        let (_, hello) = Handshake::start(
+            "example.com",
+            &config,
+            Some(&[1, 2, 3]),
+            Zeroizing::new([7; 32]),
+            &[1; 32],
+            &[],
+        );
+        assert!(!hello
+            .windows(2)
+            .any(|w| w == Suite12::EcdheRsaAes128Gcm.id().to_be_bytes()));
     }
 }

@@ -89,7 +89,11 @@ mod x86 {
             for i in 0..sig.len() {
                 let mut bad = sig.clone();
                 bad[i] ^= 1 << (i % 8);
-                assert_eq!(ecdsa::p256_verify_with::<Bmi2>(&public, &digest, &bad), ecdsa::p256_verify(&public, &digest, &bad), "byte {i}");
+                assert_eq!(
+                    ecdsa::p256_verify_with::<Bmi2>(&public, &digest, &bad),
+                    ecdsa::p256_verify(&public, &digest, &bad),
+                    "byte {i}"
+                );
             }
         }
     }

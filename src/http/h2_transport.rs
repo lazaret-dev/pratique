@@ -64,7 +64,10 @@
 //! connection was lost under it before any answer (so that a request that may be repeated can be, once, if the
 //! connection was an old one).
 
-use super::h2::connection::{Collected, Config, Connection, ConnectionError, Direct, Head, News, OpenError, Request, StreamError, StreamEvent, BODY_TOO_BIG};
+use super::h2::connection::{
+    Collected, Config, Connection, ConnectionError, Direct, Head, News, OpenError, Request,
+    StreamError, StreamEvent, BODY_TOO_BIG,
+};
 use super::idle::Key;
 use crate::asyncio::net::deadline_error;
 use crate::asyncio::slots::Permit;
@@ -73,9 +76,9 @@ use crate::tls::{ClientConnection, RecvBuf};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -119,7 +122,9 @@ impl Waits {
     /// The moment a wait that starts now has to be over.
     pub(super) fn until(&self) -> Instant {
         let now = Instant::now();
-        let op = now.checked_add(self.timeout).unwrap_or_else(|| now + Duration::from_secs(365 * 24 * 3600));
+        let op = now
+            .checked_add(self.timeout)
+            .unwrap_or_else(|| now + Duration::from_secs(365 * 24 * 3600));
         match self.deadline {
             Some(d) => op.min(d),
             None => op,
@@ -135,7 +140,10 @@ impl Waits {
     pub(super) fn expired_in(&self, protocol: &str) -> Error {
         match self.deadline {
             Some(d) if Instant::now() >= d => Error::Io(deadline_error()),
-            _ => Error::Io(io::Error::new(io::ErrorKind::TimedOut, format!("timed out waiting for the server ({protocol})"))),
+            _ => Error::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("timed out waiting for the server ({protocol})"),
+            )),
         }
     }
 }
@@ -183,7 +191,11 @@ struct Slot {
 
 impl Slot {
     fn new() -> Arc<Slot> {
-        Arc::new(Slot { cv: Condvar::new(), waiting: AtomicBool::new(false), can_lead: AtomicBool::new(false) })
+        Arc::new(Slot {
+            cv: Condvar::new(),
+            waiting: AtomicBool::new(false),
+            can_lead: AtomicBool::new(false),
+        })
     }
 }
 
@@ -246,7 +258,10 @@ enum Baton {
     /// bytes it asked for and will ask for more). The right is kept for such a caller so that it can go on without
     /// another thread's help, but anyone who needs the socket read may take it away (see [`State::claim_baton`] and
     /// [`Shared::wait_on`]), and the reader thread does when it has not been used for [`STALL`].
-    Caller { stream: u32, paused_since: Option<Instant> },
+    Caller {
+        stream: u32,
+        paused_since: Option<Instant>,
+    },
 }
 
 /// Why the reader thread is not reading the socket.
@@ -285,7 +300,11 @@ impl State {
 
     /// If the request on `stream` was cancelled: the failure that ends its caller's wait.
     fn cancelled(&self, stream: u32) -> Option<Failure> {
-        self.cancelled.contains(&stream).then(|| Failure { error: Error::Cancelled, retry_safe: false, peer_closed: false })
+        self.cancelled.contains(&stream).then(|| Failure {
+            error: Error::Cancelled,
+            retry_safe: false,
+            peer_closed: false,
+        })
     }
 
     /// The caller of `stream` takes the right to read the socket if it can: nobody has it, or it is the caller's own, or
@@ -295,11 +314,21 @@ impl State {
             return false;
         }
         match self.baton {
-            Baton::Nobody | Baton::Caller { paused_since: Some(_), .. } => {}
-            Baton::Caller { stream: owner, paused_since: None } if owner == stream => {}
+            Baton::Nobody
+            | Baton::Caller {
+                paused_since: Some(_),
+                ..
+            } => {}
+            Baton::Caller {
+                stream: owner,
+                paused_since: None,
+            } if owner == stream => {}
             Baton::Caller { .. } | Baton::Reader => return false,
         }
-        self.baton = Baton::Caller { stream, paused_since: None };
+        self.baton = Baton::Caller {
+            stream,
+            paused_since: None,
+        };
         true
     }
 
@@ -316,15 +345,25 @@ impl State {
             return Handoff::Nobody;
         }
         if keep && self.h2.active_streams() <= 1 {
-            self.baton = Baton::Caller { stream, paused_since: Some(Instant::now()) };
+            self.baton = Baton::Caller {
+                stream,
+                paused_since: Some(Instant::now()),
+            };
             return Handoff::Nobody;
         }
         if !self.closing {
-            let next = self.slots.iter().find(|(&id, slot)| id != stream && slot.waiting.load(Ordering::Relaxed) && slot.can_lead.load(Ordering::Relaxed));
+            let next = self.slots.iter().find(|(&id, slot)| {
+                id != stream
+                    && slot.waiting.load(Ordering::Relaxed)
+                    && slot.can_lead.load(Ordering::Relaxed)
+            });
             if let Some((&id, slot)) = next {
                 // (claimed for this wake-up, as `claim_wakeups` does)
                 slot.waiting.store(false, Ordering::Relaxed);
-                self.baton = Baton::Caller { stream: id, paused_since: None };
+                self.baton = Baton::Caller {
+                    stream: id,
+                    paused_since: None,
+                };
                 return Handoff::Caller(slot.clone());
             }
         }
@@ -361,7 +400,9 @@ impl State {
             1 => self.handover?,
             _ => return None,
         };
-        PARK_WINDOW.checked_sub(since.elapsed()).filter(|d| !d.is_zero())
+        PARK_WINDOW
+            .checked_sub(since.elapsed())
+            .filter(|d| !d.is_zero())
     }
 
     /// Notes whether streams are in flight, and closes a connection that has nothing left to do.
@@ -546,7 +587,13 @@ enum Step {
 }
 
 /// Starts the connection's two threads over a socket whose TLS handshake is done and whose server chose `h2`.
-pub(super) fn spawn(tcp: TcpStream, permit: Option<Permit>, mut tls: ClientConnection, idle_timeout: Duration, io_timeout: Duration) -> io::Result<Arc<Shared>> {
+pub(super) fn spawn(
+    tcp: TcpStream,
+    permit: Option<Permit>,
+    mut tls: ClientConnection,
+    idle_timeout: Duration,
+    io_timeout: Duration,
+) -> io::Result<Arc<Shared>> {
     tls.grow_recv_buf(RECV_BUF);
     let _ = tcp.set_read_timeout(None);
     let _ = tcp.set_write_timeout(Some(io_timeout));
@@ -560,11 +607,23 @@ pub(super) fn spawn(tcp: TcpStream, permit: Option<Permit>, mut tls: ClientConne
         write_wanted: AtomicBool::new(false),
         tls: Mutex::new(tls),
         to_writer: Condvar::new(),
-        outbox: Mutex::new(Outbox { plain: Vec::with_capacity(WRITE_CHUNK), plain_pos: 0, chunk: Vec::with_capacity(WRITE_CHUNK) }),
+        outbox: Mutex::new(Outbox {
+            plain: Vec::with_capacity(WRITE_CHUNK),
+            plain_pos: 0,
+            chunk: Vec::with_capacity(WRITE_CHUNK),
+        }),
         tcp,
         permit: Mutex::new(permit),
         idle_timeout,
-        read: Mutex::new(ReadSide { tcp: reader_tcp, rb: None, armed: None, undigested: false, send_after: false, news: News::default(), wakeups: Vec::new() }),
+        read: Mutex::new(ReadSide {
+            tcp: reader_tcp,
+            rb: None,
+            armed: None,
+            undigested: false,
+            send_after: false,
+            news: News::default(),
+            wakeups: Vec::new(),
+        }),
         park: Condvar::new(),
         #[cfg(test)]
         reads: [AtomicUsize::new(0), AtomicUsize::new(0)],
@@ -586,10 +645,19 @@ pub(super) fn spawn(tcp: TcpStream, permit: Option<Permit>, mut tls: ClientConne
         shared.ingest(&mut guard, None, 0, None, false);
     }
     let r = shared.clone();
-    thread::Builder::new().name("pratique h2 reader".into()).spawn(move || r.read_loop())?;
+    thread::Builder::new()
+        .name("pratique h2 reader".into())
+        .spawn(move || r.read_loop())?;
     let w = shared.clone();
-    if let Err(e) = thread::Builder::new().name("pratique h2 writer".into()).spawn(move || w.write_loop()) {
-        shared.end(Lost { peer_closed: false, kind: io::ErrorKind::Other, message: "could not start a thread".into() });
+    if let Err(e) = thread::Builder::new()
+        .name("pratique h2 writer".into())
+        .spawn(move || w.write_loop())
+    {
+        shared.end(Lost {
+            peer_closed: false,
+            kind: io::ErrorKind::Other,
+            message: "could not start a thread".into(),
+        });
         return Err(e);
     }
     Ok(shared)
@@ -604,12 +672,20 @@ struct Leaving<'a> {
 
 impl Drop for Leaving<'_> {
     fn drop(&mut self) {
-        self.shared.end(Lost { peer_closed: false, kind: io::ErrorKind::Other, message: format!("the HTTP/2 {} thread ended", self.what) });
+        self.shared.end(Lost {
+            peer_closed: false,
+            kind: io::ErrorKind::Other,
+            message: format!("the HTTP/2 {} thread ended", self.what),
+        });
     }
 }
 
 fn tls_lost(e: &Error) -> Lost {
-    Lost { peer_closed: false, kind: io::ErrorKind::InvalidData, message: e.to_string() }
+    Lost {
+        peer_closed: false,
+        kind: io::ErrorKind::InvalidData,
+        message: e.to_string(),
+    }
 }
 
 impl Shared {
@@ -665,9 +741,13 @@ impl Shared {
     /// connection with streams in flight has no such date, and sleeps as long as one that has just become idle would
     /// (the callers have their own deadlines), so that the timeout need not be set again when the streams are done.
     fn read_timeout(&self, g: &State) -> Duration {
-        let longest = self.idle_timeout.clamp(Duration::from_millis(5), Duration::from_secs(3600));
+        let longest = self
+            .idle_timeout
+            .clamp(Duration::from_millis(5), Duration::from_secs(3600));
         match g.idle_since {
-            Some(since) => (since + self.idle_timeout).saturating_duration_since(Instant::now()).clamp(Duration::from_millis(5), longest),
+            Some(since) => (since + self.idle_timeout)
+                .saturating_duration_since(Instant::now())
+                .clamp(Duration::from_millis(5), longest),
             None => longest,
         }
     }
@@ -675,7 +755,10 @@ impl Shared {
     /// The reader thread: reads the socket whenever nobody else does, and when the connection has been left alone for
     /// longer than [`PARK_WINDOW`]; see [`Reading`].
     fn read_loop(&self) {
-        let _leaving = Leaving { shared: self, what: "reader" };
+        let _leaving = Leaving {
+            shared: self,
+            what: "reader",
+        };
         loop {
             let mut g = self.lock();
             if g.closing {
@@ -686,12 +769,19 @@ impl Shared {
             // of the caller by it.
             if let Some(d) = g.park_for() {
                 g.parked = Parked::Idle;
-                let (mut g, _) = self.park.wait_timeout(g, d).unwrap_or_else(|e| e.into_inner());
+                let (mut g, _) = self
+                    .park
+                    .wait_timeout(g, d)
+                    .unwrap_or_else(|e| e.into_inner());
                 g.parked = Parked::No;
                 continue;
             }
             // (a caller who has not read for a while is not going to: its right is taken)
-            if let Baton::Caller { paused_since: Some(t), .. } = g.baton {
+            if let Baton::Caller {
+                paused_since: Some(t),
+                ..
+            } = g.baton
+            {
                 if t.elapsed() >= STALL {
                     g.baton = Baton::Nobody;
                 }
@@ -700,11 +790,19 @@ impl Shared {
                 // A caller reads for now, and tells this thread when it is done (the time limit is for the case that it
                 // could not).
                 let wait = match g.baton {
-                    Baton::Caller { paused_since: Some(t), .. } => STALL.saturating_sub(t.elapsed()).max(Duration::from_millis(1)),
+                    Baton::Caller {
+                        paused_since: Some(t),
+                        ..
+                    } => STALL
+                        .saturating_sub(t.elapsed())
+                        .max(Duration::from_millis(1)),
                     _ => PARK_SAFETY,
                 };
                 g.parked = Parked::Leader;
-                let (mut g, _) = self.park.wait_timeout(g, wait).unwrap_or_else(|e| e.into_inner());
+                let (mut g, _) = self
+                    .park
+                    .wait_timeout(g, wait)
+                    .unwrap_or_else(|e| e.into_inner());
                 g.parked = Parked::No;
                 continue;
             }
@@ -720,7 +818,6 @@ impl Shared {
             }
         }
     }
-
 
     /// The caller who has the right to read the socket reads once, but not past `until`; the body of its stream goes
     /// straight into `direct`'s buffer as far as it can (see [`Connection::feed_direct`]). `false` if the time was up before
@@ -744,7 +841,12 @@ impl Shared {
     /// One read of the socket, and what follows from it: the plaintext goes to HTTP/2 and the callers whose streams have
     /// news are woken. By the reader thread (`bound` is `None`: it may wait as long as the connection may sit idle), or by
     /// a caller who leads (`bound` is the moment that caller must be heard from again).
-    fn read_step(&self, side: &mut ReadSide, bound: Option<Instant>, direct: Option<&mut Direct<'_>>) -> Step {
+    fn read_step(
+        &self,
+        side: &mut ReadSide,
+        bound: Option<Instant>,
+        direct: Option<&mut Direct<'_>>,
+    ) -> Step {
         let mut wait = {
             let g = self.lock();
             if g.closing {
@@ -755,14 +857,20 @@ impl Shared {
         if side.undigested {
             // what the last read left is taken in first (and the socket is not read: what is left may be all the server sends
             // until it hears from us)
-            let Some(rb) = side.rb.take() else { return Step::Over };
+            let Some(rb) = side.rb.take() else {
+                return Step::Over;
+            };
             // (counted as a read too: what was left is what a read brought, and a caller who takes it in reads for itself)
             #[cfg(test)]
             {
                 self.leftovers[bound.is_none() as usize].fetch_add(1, Ordering::Relaxed);
                 self.reads[bound.is_none() as usize].fetch_add(1, Ordering::Relaxed);
             }
-            return if self.ingest(side, Some(rb), 0, direct, bound.is_some()) { Step::Again } else { Step::Over };
+            return if self.ingest(side, Some(rb), 0, direct, bound.is_some()) {
+                Step::Again
+            } else {
+                Step::Over
+            };
         }
         // (setting the timeout is a system call: it is set again only when what is wanted is noticeably different. For the
         // reader thread that lets a connection that is idle be kept as much as a sixteenth longer than its idle timeout; a
@@ -770,7 +878,10 @@ impl Shared {
         // call at all)
         let slack = match bound {
             Some(b) => {
-                wait = wait.min(b.saturating_duration_since(Instant::now()).max(Duration::from_millis(1)));
+                wait = wait.min(
+                    b.saturating_duration_since(Instant::now())
+                        .max(Duration::from_millis(1)),
+                );
                 Duration::from_millis(10)
             }
             None => (wait / 16).max(Duration::from_millis(10)),
@@ -780,11 +891,19 @@ impl Shared {
             side.armed = Some(wait);
         }
         let Some(mut rb) = side.rb.take() else {
-            self.end(Lost { peer_closed: false, kind: io::ErrorKind::InvalidData, message: "internal: no receive buffer".into() });
+            self.end(Lost {
+                peer_closed: false,
+                kind: io::ErrorKind::InvalidData,
+                message: "internal: no receive buffer".into(),
+            });
             return Step::Over;
         };
         if rb.space().is_empty() {
-            self.end(Lost { peer_closed: false, kind: io::ErrorKind::InvalidData, message: "internal: no room to receive".into() });
+            self.end(Lost {
+                peer_closed: false,
+                kind: io::ErrorKind::InvalidData,
+                message: "internal: no room to receive".into(),
+            });
             return Step::Over;
         }
         match (&side.tcp).read(rb.space()) {
@@ -801,11 +920,19 @@ impl Shared {
                     Step::Over
                 }
             }
-            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
                 side.rb = Some(rb);
                 // nothing came: if nothing is in flight either and it has been so for the idle timeout, leave
                 let mut g = self.lock();
-                if g.h2.active_streams() == 0 && g.idle_since.is_some_and(|t| t.elapsed() >= self.idle_timeout) {
+                if g.h2.active_streams() == 0
+                    && g.idle_since
+                        .is_some_and(|t| t.elapsed() >= self.idle_timeout)
+                {
                     g.begin_close(true);
                     drop(g);
                     self.notify_writer();
@@ -818,8 +945,19 @@ impl Shared {
                 Step::Again
             }
             Err(e) => {
-                let peer_closed = matches!(e.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted | io::ErrorKind::BrokenPipe | io::ErrorKind::NotConnected | io::ErrorKind::UnexpectedEof);
-                self.end(Lost { peer_closed, kind: e.kind(), message: e.to_string() });
+                let peer_closed = matches!(
+                    e.kind(),
+                    io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::BrokenPipe
+                        | io::ErrorKind::NotConnected
+                        | io::ErrorKind::UnexpectedEof
+                );
+                self.end(Lost {
+                    peer_closed,
+                    kind: e.kind(),
+                    message: e.to_string(),
+                });
                 Step::Over
             }
         }
@@ -832,11 +970,23 @@ impl Shared {
             let g = self.lock();
             if g.closing {
                 // we were closing it ourselves
-                Lost { peer_closed: false, kind: io::ErrorKind::UnexpectedEof, message: "closed".into() }
+                Lost {
+                    peer_closed: false,
+                    kind: io::ErrorKind::UnexpectedEof,
+                    message: "closed".into(),
+                }
             } else if closed_properly {
-                Lost { peer_closed: true, kind: io::ErrorKind::UnexpectedEof, message: "the server closed the connection".into() }
+                Lost {
+                    peer_closed: true,
+                    kind: io::ErrorKind::UnexpectedEof,
+                    message: "the server closed the connection".into(),
+                }
             } else {
-                Lost { peer_closed: true, kind: io::ErrorKind::UnexpectedEof, message: "the connection was closed without a TLS close_notify".into() }
+                Lost {
+                    peer_closed: true,
+                    kind: io::ErrorKind::UnexpectedEof,
+                    message: "the connection was closed without a TLS close_notify".into(),
+                }
             }
         };
         self.end(lost);
@@ -853,7 +1003,14 @@ impl Shared {
     /// the buffer of a caller who reads its own stream is full, the records that are left are not decrypted now (they would
     /// only be kept in the stream's buffer, and copied out of it later): they stay in the receive buffer, `side.undigested`
     /// says so, and the next read, the caller's next one as a rule, takes them in first, into its buffer.
-    fn ingest(&self, side: &mut ReadSide, rb: Option<RecvBuf>, n: usize, mut direct: Option<&mut Direct<'_>>, caller: bool) -> bool {
+    fn ingest(
+        &self,
+        side: &mut ReadSide,
+        rb: Option<RecvBuf>,
+        n: usize,
+        mut direct: Option<&mut Direct<'_>>,
+        caller: bool,
+    ) -> bool {
         let (news, wakeups) = (&mut side.news, &mut side.wakeups);
         side.undigested = false;
         let mut t = self.tls_lock();
@@ -889,9 +1046,15 @@ impl Shared {
             break;
         }
         // all there was is digested (or left for the next read): the buffer goes out again
-        let next = if over.is_none() { t.take_recv_buf() } else { None };
+        let next = if over.is_none() {
+            t.take_recv_buf()
+        } else {
+            None
+        };
         if over.is_none() && next.is_none() {
-            over = Some(tls_lost(&Error::Tls("internal: the TLS receive buffer cannot be taken".into())));
+            over = Some(tls_lost(&Error::Tls(
+                "internal: the TLS receive buffer cannot be taken".into(),
+            )));
         }
         let tls_failed = t.is_failed();
         let tls_output = t.wants_write();
@@ -939,13 +1102,17 @@ impl Shared {
     }
 
     fn write_loop(&self) {
-        let _leaving = Leaving { shared: self, what: "writer" };
+        let _leaving = Leaving {
+            shared: self,
+            what: "writer",
+        };
         let mut wakeups: Vec<Arc<Slot>> = Vec::new();
         loop {
             // sleep until there is something to do
             {
                 let mut g = self.lock();
-                while !(g.closing || g.h2.wants_write() || self.tls_pending.load(Ordering::Acquire)) {
+                while !(g.closing || g.h2.wants_write() || self.tls_pending.load(Ordering::Acquire))
+                {
                     self.writer_asleep.store(true, Ordering::SeqCst);
                     g = self.to_writer.wait(g).unwrap_or_else(|e| e.into_inner());
                     self.writer_asleep.store(false, Ordering::SeqCst);
@@ -985,7 +1152,9 @@ impl Shared {
         std::sync::atomic::fence(Ordering::SeqCst);
         let mut wakeups: Vec<Arc<Slot>> = Vec::new();
         loop {
-            let Ok(mut outbox) = self.outbox.try_lock() else { return };
+            let Ok(mut outbox) = self.outbox.try_lock() else {
+                return;
+            };
             self.write_wanted.store(false, Ordering::SeqCst);
             let mut idle = false;
             for _ in 0..4 {
@@ -1050,7 +1219,10 @@ impl Shared {
                     }
                 }
             }
-            if !(ob.plain_pos < ob.plain.len() || self.tls_pending.load(Ordering::Acquire) || g.closing) {
+            if !(ob.plain_pos < ob.plain.len()
+                || self.tls_pending.load(Ordering::Acquire)
+                || g.closing)
+            {
                 return Round::Idle;
             }
             (g.closing, g.say_goodbye, g.h2.wants_write())
@@ -1096,8 +1268,17 @@ impl Shared {
         // 3. the socket, with nothing held
         if !ob.chunk.is_empty() {
             if let Err(e) = (&self.tcp).write_all(&ob.chunk) {
-                let peer_closed = matches!(e.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionAborted | io::ErrorKind::BrokenPipe);
-                self.writer_lost(Lost { peer_closed, kind: e.kind(), message: e.to_string() });
+                let peer_closed = matches!(
+                    e.kind(),
+                    io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::BrokenPipe
+                );
+                self.writer_lost(Lost {
+                    peer_closed,
+                    kind: e.kind(),
+                    message: e.to_string(),
+                });
                 return Round::Over;
             }
         }
@@ -1130,7 +1311,10 @@ impl Shared {
     #[cfg(test)]
     pub(super) fn reading_caller(&self) -> Option<(u32, bool)> {
         match self.lock().baton {
-            Baton::Caller { stream, paused_since } => Some((stream, paused_since.is_some())),
+            Baton::Caller {
+                stream,
+                paused_since,
+            } => Some((stream, paused_since.is_some())),
             Baton::Nobody | Baton::Reader => None,
         }
     }
@@ -1188,7 +1372,10 @@ impl Shared {
     /// How many times callers, and the reader thread, took in what a read had left (tests of the transport).
     #[cfg(test)]
     pub(super) fn leftovers(&self) -> (usize, usize) {
-        (self.leftovers[0].load(Ordering::Relaxed), self.leftovers[1].load(Ordering::Relaxed))
+        (
+            self.leftovers[0].load(Ordering::Relaxed),
+            self.leftovers[1].load(Ordering::Relaxed),
+        )
     }
 
     /// True if no stream is in flight (so that a client that is closing its idle connections may close this one).
@@ -1232,7 +1419,13 @@ impl Shared {
     /// Waits for news about the stream whose slot this is, but not past `until`. `Err(())` if the time is up. (Spurious
     /// returns happen: the caller looks again.) The news comes from whoever reads the socket: the reader thread, which
     /// this wakes if it is out of the way, or a caller who leads (see [`Reading`]).
-    fn wait_on<'a>(&'a self, mut g: MutexGuard<'a, State>, slot: &Slot, until: Instant, can_lead: bool) -> Result<MutexGuard<'a, State>, ()> {
+    fn wait_on<'a>(
+        &'a self,
+        mut g: MutexGuard<'a, State>,
+        slot: &Slot,
+        until: Instant,
+        can_lead: bool,
+    ) -> Result<MutexGuard<'a, State>, ()> {
         let now = Instant::now();
         if now >= until {
             return Err(());
@@ -1240,7 +1433,11 @@ impl Shared {
         // whoever sleeps here needs the socket read: by the reader thread, which is woken if it is out of the way because the
         // connection was idle, or is given the right of a caller who has stopped reading
         let mut taken = false;
-        if let Baton::Caller { paused_since: Some(_), .. } = g.baton {
+        if let Baton::Caller {
+            paused_since: Some(_),
+            ..
+        } = g.baton
+        {
             g.baton = Baton::Nobody;
             taken = true;
         }
@@ -1251,7 +1448,10 @@ impl Shared {
         }
         slot.waiting.store(true, Ordering::Relaxed);
         slot.can_lead.store(can_lead, Ordering::Relaxed);
-        let (g, _) = slot.cv.wait_timeout(g, until - now).unwrap_or_else(|e| e.into_inner());
+        let (g, _) = slot
+            .cv
+            .wait_timeout(g, until - now)
+            .unwrap_or_else(|e| e.into_inner());
         slot.waiting.store(false, Ordering::Relaxed);
         Ok(g)
     }
@@ -1262,7 +1462,9 @@ impl Shared {
     pub(super) fn cancel_stream(&self, id: u32) {
         let slot = {
             let mut g = self.lock();
-            let Some(slot) = g.slots.get(&id).cloned() else { return };
+            let Some(slot) = g.slots.get(&id).cloned() else {
+                return;
+            };
             if !g.cancelled.contains(&id) {
                 g.cancelled.push(id);
             }
@@ -1279,14 +1481,22 @@ impl Shared {
     fn failure(g: &State, e: StreamError, got_head: bool) -> Failure {
         match &g.lost {
             Some(l) => {
-                let what = if got_head { "while the response was coming" } else { "before the response came" };
+                let what = if got_head {
+                    "while the response was coming"
+                } else {
+                    "before the response came"
+                };
                 Failure {
                     error: Error::Io(io::Error::new(l.kind, format!("{} ({what})", l.message))),
                     retry_safe: e.retry_safe && !got_head,
                     peer_closed: l.peer_closed && !got_head,
                 }
             }
-            None => Failure { error: Error::Http(e.to_string()), retry_safe: e.retry_safe && !got_head, peer_closed: false },
+            None => Failure {
+                error: Error::Http(e.to_string()),
+                retry_safe: e.retry_safe && !got_head,
+                peer_closed: false,
+            },
         }
     }
 
@@ -1296,7 +1506,12 @@ impl Shared {
     /// If nobody is reading the socket (or the one who does is not using the right to), the caller reads it itself while it
     /// waits for the answer (see [`Reading`]), and takes the right to at once, here, with the lock that opened the stream
     /// held, so that the reader thread cannot take it between the request and the wait.
-    pub(super) fn start(self: &Arc<Self>, request: &Request<'_>, body: &[u8], waits: Waits) -> Result<H2Stream, StartError> {
+    pub(super) fn start(
+        self: &Arc<Self>,
+        request: &Request<'_>,
+        body: &[u8],
+        waits: Waits,
+    ) -> Result<H2Stream, StartError> {
         let mut g = self.lock();
         if !g.alive() {
             return Err(StartError::Unavailable);
@@ -1306,13 +1521,25 @@ impl Shared {
             Err(OpenError::Full) => return Err(StartError::Full),
             Err(OpenError::Unavailable) => return Err(StartError::Unavailable),
             Err(OpenError::Invalid(why)) => {
-                return Err(StartError::Failed(Failure { error: Error::Http(format!("the request cannot be sent over HTTP/2: {why}")), retry_safe: false, peer_closed: false }))
+                return Err(StartError::Failed(Failure {
+                    error: Error::Http(format!("the request cannot be sent over HTTP/2: {why}")),
+                    retry_safe: false,
+                    peer_closed: false,
+                }))
             }
         };
         g.idle_since = None;
         let slot = Slot::new();
         g.slots.insert(id, slot.clone());
-        let stream = H2Stream { shared: self.clone(), id, slot, ended: false, got_head: false, carry: Vec::new(), carry_pos: 0 };
+        let stream = H2Stream {
+            shared: self.clone(),
+            id,
+            slot,
+            ended: false,
+            got_head: false,
+            carry: Vec::new(),
+            carry_pos: 0,
+        };
         // the body, as the windows and the output allow; a stream that fails meanwhile is found out when the head is waited for
         let mut sent = 0;
         while !body.is_empty() && sent < body.len() {
@@ -1342,7 +1569,11 @@ impl Shared {
                 Err(()) => {
                     // the stream is dropped (and cancelled) as the error goes out
                     self.lock().senders -= 1;
-                    return Err(StartError::Failed(Failure { error: waits.expired(), retry_safe: false, peer_closed: false }));
+                    return Err(StartError::Failed(Failure {
+                        error: waits.expired(),
+                        retry_safe: false,
+                        peer_closed: false,
+                    }));
                 }
             };
         }
@@ -1383,7 +1614,11 @@ impl Drop for Reading<'_> {
 /// How an HTTP/2 connection error looks to the callers that were on the connection.
 fn h2_lost(e: &ConnectionError) -> Lost {
     // the server's own GOAWAY with an error, or our complaint about the server: a protocol matter, not a closed socket
-    Lost { peer_closed: false, kind: io::ErrorKind::Other, message: e.to_string() }
+    Lost {
+        peer_closed: false,
+        kind: io::ErrorKind::Other,
+        message: e.to_string(),
+    }
 }
 
 /// One request on a shared connection: its stream. Dropping it gives the stream up.
@@ -1422,11 +1657,20 @@ impl H2Stream {
     pub(super) fn head(&mut self, waits: Waits) -> Result<Head, Failure> {
         let shared = self.shared.clone();
         // (declared before the lock is taken, so that the right to read is let go of, and the reader thread is told, after it)
-        let mut reading = Reading { shared: &shared, stream: self.id, keep: false };
+        let mut reading = Reading {
+            shared: &shared,
+            stream: self.id,
+            keep: false,
+        };
         self.head_reading(&shared, &mut reading, waits)
     }
 
-    fn head_reading(&mut self, shared: &Shared, reading: &mut Reading<'_>, waits: Waits) -> Result<Head, Failure> {
+    fn head_reading(
+        &mut self,
+        shared: &Shared,
+        reading: &mut Reading<'_>,
+        waits: Waits,
+    ) -> Result<Head, Failure> {
         let until = waits.until();
         let mut g = shared.lock();
         loop {
@@ -1444,19 +1688,33 @@ impl H2Stream {
                 StreamEvent::Pending => {}
                 // the HTTP/2 layer gives the head first
                 other => {
-                    return Err(Failure { error: Error::Http(format!("internal: {other:?} before the response head")), retry_safe: false, peer_closed: false });
+                    return Err(Failure {
+                        error: Error::Http(format!("internal: {other:?} before the response head")),
+                        retry_safe: false,
+                        peer_closed: false,
+                    });
                 }
             }
             if g.claim_baton(self.id) {
                 drop(g);
                 if !shared.lead_step(until, None) {
-                    return Err(Failure { error: waits.expired(), retry_safe: false, peer_closed: false });
+                    return Err(Failure {
+                        error: waits.expired(),
+                        retry_safe: false,
+                        peer_closed: false,
+                    });
                 }
                 g = shared.lock();
             } else {
                 g = match shared.wait_on(g, &self.slot, until, true) {
                     Ok(g) => g,
-                    Err(()) => return Err(Failure { error: waits.expired(), retry_safe: false, peer_closed: false }),
+                    Err(()) => {
+                        return Err(Failure {
+                            error: waits.expired(),
+                            retry_safe: false,
+                            peer_closed: false,
+                        })
+                    }
                 };
             }
         }
@@ -1472,11 +1730,21 @@ impl H2Stream {
             return Ok(self.hand_out(out));
         }
         let shared = self.shared.clone();
-        let mut reading = Reading { shared: &shared, stream: self.id, keep: false };
+        let mut reading = Reading {
+            shared: &shared,
+            stream: self.id,
+            keep: false,
+        };
         self.read_reading(&shared, &mut reading, out, waits)
     }
 
-    fn read_reading(&mut self, shared: &Shared, reading: &mut Reading<'_>, out: &mut [u8], waits: Waits) -> Result<usize, Failure> {
+    fn read_reading(
+        &mut self,
+        shared: &Shared,
+        reading: &mut Reading<'_>,
+        out: &mut [u8],
+        waits: Waits,
+    ) -> Result<usize, Failure> {
         let mut until: Option<Instant> = None;
         let mut g = shared.lock();
         loop {
@@ -1515,7 +1783,11 @@ impl H2Stream {
                 // copy out of it in between (BACKLOG B-87). What does not fit is kept as usual, for the next read.
                 let mut direct = Direct::new(self.id, out);
                 if !shared.lead_step(until, Some(&mut direct)) {
-                    return Err(Failure { error: waits.expired(), retry_safe: false, peer_closed: false });
+                    return Err(Failure {
+                        error: waits.expired(),
+                        retry_safe: false,
+                        peer_closed: false,
+                    });
                 }
                 let n = direct.written();
                 #[cfg(test)]
@@ -1532,7 +1804,13 @@ impl H2Stream {
             } else {
                 g = match shared.wait_on(g, &self.slot, until, true) {
                     Ok(g) => g,
-                    Err(()) => return Err(Failure { error: waits.expired(), retry_safe: false, peer_closed: false }),
+                    Err(()) => {
+                        return Err(Failure {
+                            error: waits.expired(),
+                            retry_safe: false,
+                            peer_closed: false,
+                        })
+                    }
                 };
             }
         }
@@ -1545,7 +1823,11 @@ impl H2Stream {
     /// a byte of the body, not the time the whole of it takes.
     pub(super) fn collect(&mut self, limit: u64, waits: Waits) -> Result<Vec<u8>, Failure> {
         // what was taken before and not yet handed out comes first
-        let front: Vec<u8> = if self.carry_pos < self.carry.len() { self.carry[self.carry_pos..].to_vec() } else { Vec::new() };
+        let front: Vec<u8> = if self.carry_pos < self.carry.len() {
+            self.carry[self.carry_pos..].to_vec()
+        } else {
+            Vec::new()
+        };
         self.carry = Vec::new();
         self.carry_pos = 0;
         if self.ended {
@@ -1561,27 +1843,48 @@ impl H2Stream {
     /// The head and the body of the response, both, with one wait: the thread is not woken for the head (the server
     /// usually sends the head and the body in different segments) and again for the body, only once for the whole. As
     /// [`H2Stream::collect`] otherwise.
-    pub(super) fn response(&mut self, limit: u64, waits: Waits) -> Result<(Head, Vec<u8>), Failure> {
+    pub(super) fn response(
+        &mut self,
+        limit: u64,
+        waits: Waits,
+    ) -> Result<(Head, Vec<u8>), Failure> {
         let (head, body) = self.wait_collected(limit, waits)?;
         match head {
             Some(head) => {
                 self.got_head = true;
                 Ok((head, body))
             }
-            None => Err(Failure { error: Error::Http("internal: a response without a head".into()), retry_safe: false, peer_closed: false }),
+            None => Err(Failure {
+                error: Error::Http("internal: a response without a head".into()),
+                retry_safe: false,
+                peer_closed: false,
+            }),
         }
     }
 
     /// Sets the stream collecting and waits until it is done: its head if it was not taken and the body.
-    fn wait_collected(&mut self, limit: u64, waits: Waits) -> Result<(Option<Head>, Vec<u8>), Failure> {
+    fn wait_collected(
+        &mut self,
+        limit: u64,
+        waits: Waits,
+    ) -> Result<(Option<Head>, Vec<u8>), Failure> {
         let shared = self.shared.clone();
         // (outside the function that holds the state lock, so that the right to read goes back, and the reader thread is told,
         // with the lock let go)
-        let _reading = Reading { shared: &shared, stream: self.id, keep: false };
+        let _reading = Reading {
+            shared: &shared,
+            stream: self.id,
+            keep: false,
+        };
         self.wait_collected_reading(&shared, limit, waits)
     }
 
-    fn wait_collected_reading(&mut self, shared: &Shared, limit: u64, waits: Waits) -> Result<(Option<Head>, Vec<u8>), Failure> {
+    fn wait_collected_reading(
+        &mut self,
+        shared: &Shared,
+        limit: u64,
+        waits: Waits,
+    ) -> Result<(Option<Head>, Vec<u8>), Failure> {
         let mut body = Vec::new();
         let mut g = shared.lock();
         g.h2.collect_stream(self.id, limit);
@@ -1599,14 +1902,23 @@ impl H2Stream {
                 }
                 Collected::Failed { error, got_head } => {
                     if error.reason == BODY_TOO_BIG {
-                        return Err(Failure { error: Error::Http(BODY_TOO_BIG.into()), retry_safe: false, peer_closed: false });
+                        return Err(Failure {
+                            error: Error::Http(BODY_TOO_BIG.into()),
+                            retry_safe: false,
+                            peer_closed: false,
+                        });
                     }
                     return Err(Shared::failure(&g, error, got_head));
                 }
                 Collected::Pending(progress) => {
                     let moved = seen != Some(progress);
-                    if waits.deadline.is_some_and(|d| Instant::now() >= d) || (timed_out && !moved) {
-                        return Err(Failure { error: waits.expired(), retry_safe: false, peer_closed: false });
+                    if waits.deadline.is_some_and(|d| Instant::now() >= d) || (timed_out && !moved)
+                    {
+                        return Err(Failure {
+                            error: waits.expired(),
+                            retry_safe: false,
+                            peer_closed: false,
+                        });
                     }
                     if moved {
                         seen = Some(progress);
@@ -1694,7 +2006,10 @@ pub(super) struct Registry {
 
 impl Registry {
     pub(super) fn new() -> Registry {
-        Registry { origins: Mutex::new(HashMap::new()), changed: Condvar::new() }
+        Registry {
+            origins: Mutex::new(HashMap::new()),
+            changed: Condvar::new(),
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<Key, Origin>> {
@@ -1703,10 +2018,17 @@ impl Registry {
 
     /// A connection to `key` that can take a request, or the duty to dial one, or the news that the origin speaks
     /// HTTP/1.1. Waits (up to `wait`, or the request's deadline) while another request is dialing.
-    pub(super) fn acquire(self: &Arc<Self>, key: &Key, waits: Waits, wait: Duration) -> Result<Acquired, Error> {
+    pub(super) fn acquire(
+        self: &Arc<Self>,
+        key: &Key,
+        waits: Waits,
+        wait: Duration,
+    ) -> Result<Acquired, Error> {
         let give_up = {
             let now = Instant::now();
-            let by_wait = now.checked_add(wait).unwrap_or_else(|| now + Duration::from_secs(3600));
+            let by_wait = now
+                .checked_add(wait)
+                .unwrap_or_else(|| now + Duration::from_secs(3600));
             waits.deadline.map_or(by_wait, |d| by_wait.min(d))
         };
         let mut map = self.lock();
@@ -1739,19 +2061,31 @@ impl Registry {
             }
             if !origin.dialing {
                 origin.dialing = true;
-                return Ok(Acquired::Dial(Ticket { registry: self.clone(), key: key.clone(), settled: false }));
+                return Ok(Acquired::Dial(Ticket {
+                    registry: self.clone(),
+                    key: key.clone(),
+                    settled: false,
+                }));
             }
             let now = Instant::now();
             if now >= give_up {
                 return Err(waits.expired());
             }
-            map = self.changed.wait_timeout(map, give_up - now).unwrap_or_else(|e| e.into_inner()).0;
+            map = self
+                .changed
+                .wait_timeout(map, give_up - now)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
         }
     }
 
     /// Closes the connections that have no stream in flight.
     pub(super) fn close_idle(&self) {
-        let conns: Vec<Arc<Shared>> = self.lock().values().flat_map(|o| o.conns.iter().cloned()).collect();
+        let conns: Vec<Arc<Shared>> = self
+            .lock()
+            .values()
+            .flat_map(|o| o.conns.iter().cloned())
+            .collect();
         for c in conns {
             c.close_if_idle();
         }
@@ -1760,27 +2094,52 @@ impl Registry {
     /// The first of the connections, if there is one (tests of the transport).
     #[cfg(test)]
     pub(super) fn any_connection(&self) -> Option<Arc<Shared>> {
-        self.lock().values().flat_map(|o| o.conns.iter().cloned()).next()
+        self.lock()
+            .values()
+            .flat_map(|o| o.conns.iter().cloned())
+            .next()
     }
 
     /// How many reads of the sockets callers made, and how many the reader threads did, on all the connections.
     #[cfg(test)]
     pub(super) fn reads(&self) -> (usize, usize) {
-        let conns: Vec<Arc<Shared>> = self.lock().values().flat_map(|o| o.conns.iter().cloned()).collect();
-        conns.iter().fold((0, 0), |(a, b), c| (a + c.reads[0].load(Ordering::Relaxed), b + c.reads[1].load(Ordering::Relaxed)))
+        let conns: Vec<Arc<Shared>> = self
+            .lock()
+            .values()
+            .flat_map(|o| o.conns.iter().cloned())
+            .collect();
+        conns.iter().fold((0, 0), |(a, b), c| {
+            (
+                a + c.reads[0].load(Ordering::Relaxed),
+                b + c.reads[1].load(Ordering::Relaxed),
+            )
+        })
     }
 
     /// How many bytes of bodies read in pieces went straight into the callers' buffers, and how many through the streams'
     /// buffers, on all the connections.
     #[cfg(test)]
     pub(super) fn body_bytes(&self) -> (usize, usize) {
-        let conns: Vec<Arc<Shared>> = self.lock().values().flat_map(|o| o.conns.iter().cloned()).collect();
-        conns.iter().fold((0, 0), |(a, b), c| (a + c.body_bytes[0].load(Ordering::Relaxed), b + c.body_bytes[1].load(Ordering::Relaxed)))
+        let conns: Vec<Arc<Shared>> = self
+            .lock()
+            .values()
+            .flat_map(|o| o.conns.iter().cloned())
+            .collect();
+        conns.iter().fold((0, 0), |(a, b), c| {
+            (
+                a + c.body_bytes[0].load(Ordering::Relaxed),
+                b + c.body_bytes[1].load(Ordering::Relaxed),
+            )
+        })
     }
 
     /// How many connections have no stream in flight.
     pub(super) fn idle(&self) -> usize {
-        let conns: Vec<Arc<Shared>> = self.lock().values().flat_map(|o| o.conns.iter().cloned()).collect();
+        let conns: Vec<Arc<Shared>> = self
+            .lock()
+            .values()
+            .flat_map(|o| o.conns.iter().cloned())
+            .collect();
         conns.iter().filter(|c| c.is_idle()).count()
     }
 }
@@ -1856,8 +2215,17 @@ mod tests {
     }
 
     fn open(s: &mut State) -> u32 {
-        let request = Request { method: "GET", scheme: "https", authority: "x", path: "/", headers: &[], secret: &[] };
-        s.h2.open_stream(&request, true).ok().expect("a stream is opened")
+        let request = Request {
+            method: "GET",
+            scheme: "https",
+            authority: "x",
+            path: "/",
+            headers: &[],
+            secret: &[],
+        };
+        s.h2.open_stream(&request, true)
+            .ok()
+            .expect("a stream is opened")
     }
 
     fn paused() -> Option<Instant> {
@@ -1868,11 +2236,23 @@ mod tests {
     fn the_right_to_read_goes_to_whoever_asks_if_nobody_uses_it() {
         let mut s = state();
         assert!(s.claim_baton(1));
-        assert_eq!(s.baton, Baton::Caller { stream: 1, paused_since: None });
+        assert_eq!(
+            s.baton,
+            Baton::Caller {
+                stream: 1,
+                paused_since: None
+            }
+        );
         // the owner may ask again; nobody else takes it from a caller who is reading
         assert!(s.claim_baton(1));
         assert!(!s.claim_baton(3));
-        assert_eq!(s.baton, Baton::Caller { stream: 1, paused_since: None });
+        assert_eq!(
+            s.baton,
+            Baton::Caller {
+                stream: 1,
+                paused_since: None
+            }
+        );
         // the reader thread's read is not interrupted
         s.baton = Baton::Reader;
         assert!(!s.claim_baton(1));
@@ -1882,9 +2262,18 @@ mod tests {
     #[test]
     fn the_right_to_read_is_taken_from_a_caller_who_has_stopped_reading() {
         let mut s = state();
-        s.baton = Baton::Caller { stream: 1, paused_since: paused() };
+        s.baton = Baton::Caller {
+            stream: 1,
+            paused_since: paused(),
+        };
         assert!(s.claim_baton(3));
-        assert_eq!(s.baton, Baton::Caller { stream: 3, paused_since: None });
+        assert_eq!(
+            s.baton,
+            Baton::Caller {
+                stream: 3,
+                paused_since: None
+            }
+        );
     }
 
     #[test]
@@ -1894,7 +2283,10 @@ mod tests {
         assert!(!s.claim_baton(1));
         assert_eq!(s.baton, Baton::Nobody);
         let mut s = state();
-        s.baton = Baton::Caller { stream: 1, paused_since: paused() };
+        s.baton = Baton::Caller {
+            stream: 1,
+            paused_since: paused(),
+        };
         s.begin_close(false);
         assert!(!s.claim_baton(3));
     }
@@ -1902,11 +2294,26 @@ mod tests {
     #[test]
     fn only_the_owner_lets_go_of_the_right_to_read() {
         let mut s = state();
-        s.baton = Baton::Caller { stream: 1, paused_since: None };
+        s.baton = Baton::Caller {
+            stream: 1,
+            paused_since: None,
+        };
         assert!(matches!(s.rest_baton(3, false), Handoff::Nobody));
-        assert_eq!(s.baton, Baton::Caller { stream: 1, paused_since: None });
+        assert_eq!(
+            s.baton,
+            Baton::Caller {
+                stream: 1,
+                paused_since: None
+            }
+        );
         assert!(matches!(s.rest_baton(3, true), Handoff::Nobody));
-        assert_eq!(s.baton, Baton::Caller { stream: 1, paused_since: None });
+        assert_eq!(
+            s.baton,
+            Baton::Caller {
+                stream: 1,
+                paused_since: None
+            }
+        );
         s.baton = Baton::Reader;
         assert!(matches!(s.rest_baton(1, false), Handoff::Nobody));
         assert_eq!(s.baton, Baton::Reader);
@@ -1916,22 +2323,34 @@ mod tests {
     fn a_caller_keeps_the_right_between_reads_only_while_it_is_alone() {
         let mut s = state();
         let a = open(&mut s);
-        s.baton = Baton::Caller { stream: a, paused_since: None };
+        s.baton = Baton::Caller {
+            stream: a,
+            paused_since: None,
+        };
         assert!(matches!(s.rest_baton(a, true), Handoff::Nobody));
         assert!(matches!(s.baton, Baton::Caller { stream, paused_since: Some(_) } if stream == a));
         // not when it is not asked to
-        s.baton = Baton::Caller { stream: a, paused_since: None };
+        s.baton = Baton::Caller {
+            stream: a,
+            paused_since: None,
+        };
         assert!(matches!(s.rest_baton(a, false), Handoff::Nobody));
         assert_eq!(s.baton, Baton::Nobody);
         // and not when another request is in flight: it is given back, and the reader thread, if it waits, is told
         let _b = open(&mut s);
-        s.baton = Baton::Caller { stream: a, paused_since: None };
+        s.baton = Baton::Caller {
+            stream: a,
+            paused_since: None,
+        };
         s.parked = Parked::Leader;
         assert!(matches!(s.rest_baton(a, true), Handoff::Reader));
         assert_eq!(s.baton, Baton::Nobody);
         assert_eq!(s.parked, Parked::No);
         // (nobody is told if it does not wait)
-        s.baton = Baton::Caller { stream: a, paused_since: None };
+        s.baton = Baton::Caller {
+            stream: a,
+            paused_since: None,
+        };
         s.parked = Parked::No;
         assert!(matches!(s.rest_baton(a, true), Handoff::Nobody));
         assert_eq!(s.baton, Baton::Nobody);
@@ -1952,16 +2371,33 @@ mod tests {
         // b waits to send its body (it could not read the socket), c is not asleep: neither is given the right
         slot(&mut s, b, true, false);
         let c_slot = slot(&mut s, c, false, true);
-        s.baton = Baton::Caller { stream: a, paused_since: None };
+        s.baton = Baton::Caller {
+            stream: a,
+            paused_since: None,
+        };
         s.parked = Parked::Leader;
-        assert!(matches!(s.rest_baton(a, false), Handoff::Reader), "the caller's own slot, or one that cannot read, was chosen");
+        assert!(
+            matches!(s.rest_baton(a, false), Handoff::Reader),
+            "the caller's own slot, or one that cannot read, was chosen"
+        );
         assert_eq!(s.baton, Baton::Nobody);
         // c waits now: it is given the right, and its wake-up is claimed; the reader thread is left alone
         c_slot.waiting.store(true, Ordering::Relaxed);
-        s.baton = Baton::Caller { stream: a, paused_since: None };
+        s.baton = Baton::Caller {
+            stream: a,
+            paused_since: None,
+        };
         s.parked = Parked::Leader;
-        assert!(matches!(s.rest_baton(a, true), Handoff::Caller(ref slot) if Arc::ptr_eq(slot, &c_slot)));
-        assert_eq!(s.baton, Baton::Caller { stream: c, paused_since: None });
+        assert!(
+            matches!(s.rest_baton(a, true), Handoff::Caller(ref slot) if Arc::ptr_eq(slot, &c_slot))
+        );
+        assert_eq!(
+            s.baton,
+            Baton::Caller {
+                stream: c,
+                paused_since: None
+            }
+        );
         assert!(!c_slot.waiting.load(Ordering::Relaxed));
         assert_eq!(s.parked, Parked::Leader);
         // and it can use it, and nobody else can take it from it
@@ -1970,7 +2406,10 @@ mod tests {
         // a transport that is going away gives it to nobody
         c_slot.waiting.store(true, Ordering::Relaxed);
         s.begin_close(false);
-        assert!(matches!(s.rest_baton(c, false), Handoff::Nobody | Handoff::Reader));
+        assert!(matches!(
+            s.rest_baton(c, false),
+            Handoff::Nobody | Handoff::Reader
+        ));
         assert_eq!(s.baton, Baton::Nobody);
     }
 

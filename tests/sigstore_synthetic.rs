@@ -9,7 +9,10 @@
 //! last tests damage the cases that verify, every string one at a time.
 
 use pratique::json::{self, Value};
-use pratique::sigstore::{ArtifactDigest, Bundle, DigestAlgorithm, Error, Signer, TimeSource, Trust, Verified};
+use pratique::sigstore::{
+    ArtifactDigest, Bundle, BundleFormat, DigestAlgorithm, Error, Signer, TimeSource, Trust,
+    Verified,
+};
 use pratique::trust_root::TrustedRoot;
 
 #[path = "common/json_edit.rs"]
@@ -25,7 +28,9 @@ struct Fixtures {
 
 fn fixtures() -> Fixtures {
     let doc = json::parse(DATA).unwrap();
-    let artifact = pratique::pem::base64_decode_strict(doc.get("artifact").and_then(Value::as_str).unwrap()).unwrap();
+    let artifact =
+        pratique::pem::base64_decode_strict(doc.get("artifact").and_then(Value::as_str).unwrap())
+            .unwrap();
     Fixtures { doc, artifact }
 }
 
@@ -35,12 +40,20 @@ impl Fixtures {
     }
 
     fn case(&self, name: &str) -> &Value {
-        self.cases().iter().find(|c| c.get("name").and_then(Value::as_str) == Some(name)).unwrap_or_else(|| panic!("no case {name:?}"))
+        self.cases()
+            .iter()
+            .find(|c| c.get("name").and_then(Value::as_str) == Some(name))
+            .unwrap_or_else(|| panic!("no case {name:?}"))
     }
 
     fn root(&self, name: &str) -> TrustedRoot {
-        let v = self.doc.get("roots").and_then(|r| r.get(name)).unwrap_or_else(|| panic!("no root {name:?}"));
-        TrustedRoot::parse(&json::canonical(v).unwrap()).unwrap_or_else(|e| panic!("root {name:?}: {e}"))
+        let v = self
+            .doc
+            .get("roots")
+            .and_then(|r| r.get(name))
+            .unwrap_or_else(|| panic!("no root {name:?}"));
+        TrustedRoot::parse(&json::canonical(v).unwrap())
+            .unwrap_or_else(|e| panic!("root {name:?}: {e}"))
     }
 
     fn digest(&self, case: &Value) -> ArtifactDigest {
@@ -66,11 +79,17 @@ impl Fixtures {
 
 /// The variant of an error, by name.
 fn kind(e: &Error) -> String {
-    format!("{e:?}").chars().take_while(|c| c.is_ascii_alphanumeric()).collect()
+    format!("{e:?}")
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect()
 }
 
 fn text(v: &Value, name: &str) -> String {
-    v.get(name).and_then(Value::as_str).unwrap_or_else(|| panic!("no {name}")).to_string()
+    v.get(name)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("no {name}"))
+        .to_string()
 }
 
 // ------------------------------------------------------------------------------------ the verdicts
@@ -90,26 +109,103 @@ fn every_case_is_judged_as_the_generator_expected() {
                     wrong.push(format!("{name}: {m}"));
                 }
             }
-            (Ok(v), _) => wrong.push(format!("{name}: verified (at {}) but was expected to be refused with {expect}", v.verified_time)),
-            (Err(e), "ok") => wrong.push(format!("{name}: refused, but was expected to verify: {e}")),
+            (Ok(v), _) => wrong.push(format!(
+                "{name}: verified (at {}) but was expected to be refused with {expect}",
+                v.verified_time
+            )),
+            (Err(e), "ok") => {
+                wrong.push(format!("{name}: refused, but was expected to verify: {e}"))
+            }
             (Err(e), _) => {
                 refused += 1;
                 if kind(&e) != expect {
-                    wrong.push(format!("{name}: refused with {}, expected {expect}: {e}", kind(&e)));
+                    wrong.push(format!(
+                        "{name}: refused with {}, expected {expect}: {e}",
+                        kind(&e)
+                    ));
                 } else if let Some(reason) = case.get("reason").and_then(Value::as_str) {
                     if !e.to_string().contains(reason) {
-                        wrong.push(format!("{name}: refused, but not for the reason {reason:?}: {e}"));
+                        wrong.push(format!(
+                            "{name}: refused, but not for the reason {reason:?}: {e}"
+                        ));
                     }
                 }
             }
         }
     }
-    assert!(wrong.is_empty(), "{} of {} cases:\n{}", wrong.len(), fx.cases().len(), wrong.join("\n"));
-    assert!(ok >= 20 && refused >= 55, "{ok} verified, {refused} refused");
+    assert!(
+        wrong.is_empty(),
+        "{} of {} cases:\n{}",
+        wrong.len(),
+        fx.cases().len(),
+        wrong.join("\n")
+    );
+    assert!(
+        ok >= 20 && refused >= 55,
+        "{ok} verified, {refused} refused"
+    );
+}
+
+/// A bundle's media type is not signed, so a bundle refused for a rule of its version alone verifies when it is labelled
+/// as a version whose rules it meets: version 0.2's entry without its inclusion proof, labelled 0.1, stands on its signed
+/// entry timestamp, as a 0.1 bundle does in Sigstore's own clients. Nothing is forged (the log signed the promise); what
+/// is lost is the proof, and a caller that wants one sees it missing in `VerifiedEntry::inclusion`. Found by fuzzing on
+/// the Mac (B-92 part 5).
+#[test]
+fn the_media_type_is_not_signed_so_a_bundle_meets_the_rules_of_the_version_it_is_labelled() {
+    let fx = fixtures();
+    let case = fx.case("v02 entry without a proof");
+    let err = fx
+        .run(case)
+        .expect_err("version 0.2 needs the proof")
+        .to_string();
+    assert!(err.contains("needs an inclusion proof"), "{err}");
+    let trust_root = fx.root("base");
+    let text = String::from_utf8(json::canonical(case.get("bundle").unwrap()).unwrap()).unwrap();
+    let v02 = "\"mediaType\":\"application/vnd.dev.sigstore.bundle+json;version=0.2\"";
+    assert_eq!(text.matches(v02).count(), 1);
+    let as_v01 = text.replacen(
+        v02,
+        "\"mediaType\":\"application/vnd.dev.sigstore.bundle+json;version=0.1\"",
+        1,
+    );
+    let v = Bundle::parse(as_v01.as_bytes())
+        .unwrap()
+        .verify(&Trust::new(&trust_root), &fx.digest(case))
+        .expect("version 0.1's rules are met");
+    assert_eq!(v.format, BundleFormat::V0_1);
+    assert_eq!(v.entries.len(), 1);
+    assert!(
+        v.entries[0].signed_entry_timestamp && v.entries[0].inclusion.is_none(),
+        "{:?}",
+        v.entries[0]
+    );
+    assert!(
+        matches!(
+            v.times[..],
+            [pratique::sigstore::VerifiedTime {
+                source: TimeSource::LogEntry { .. },
+                ..
+            }]
+        ),
+        "{:?}",
+        v.times
+    );
+    // labelled 0.3, whose rules it does not meet (one certificate, and a proof), it is refused
+    let as_v03 = text.replacen(
+        v02,
+        "\"mediaType\":\"application/vnd.dev.sigstore.bundle.v0.3+json\"",
+        1,
+    );
+    assert!(Bundle::parse(as_v03.as_bytes())
+        .and_then(|b| b.verify(&Trust::new(&trust_root), &fx.digest(case)))
+        .is_err());
 }
 
 fn check_facts(case: &Value, v: &Verified) -> Result<(), String> {
-    let Some(f) = case.get("facts") else { return Ok(()) };
+    let Some(f) = case.get("facts") else {
+        return Ok(());
+    };
     let int = |name: &str| f.get(name).and_then(Value::as_int64);
     let mut problems = Vec::new();
     let mut want = |what: &str, ok: bool, got: String| {
@@ -118,38 +214,91 @@ fn check_facts(case: &Value, v: &Verified) -> Result<(), String> {
         }
     };
     if let Some(t) = int("verified_time") {
-        want("verified_time", v.verified_time == t, format!("{} is not {t}", v.verified_time));
+        want(
+            "verified_time",
+            v.verified_time == t,
+            format!("{} is not {t}", v.verified_time),
+        );
     }
     if let Some(list) = f.get("sources").and_then(Value::as_array) {
-        let got: Vec<&str> = v.times.iter().map(|t| match t.source {
-            TimeSource::LogEntry { .. } => "entry",
-            TimeSource::TimeStamp { .. } => "tsa",
-        }).collect();
+        let got: Vec<&str> = v
+            .times
+            .iter()
+            .map(|t| match t.source {
+                TimeSource::LogEntry { .. } => "entry",
+                TimeSource::TimeStamp { .. } => "tsa",
+            })
+            .collect();
         let wanted: Vec<&str> = list.iter().map(|s| s.as_str().unwrap()).collect();
-        want("time sources", got == wanted, format!("{got:?} is not {wanted:?}"));
-        want("times ascending", v.times.windows(2).all(|w| w[0].time <= w[1].time), format!("{:?}", v.times));
+        want(
+            "time sources",
+            got == wanted,
+            format!("{got:?} is not {wanted:?}"),
+        );
+        want(
+            "times ascending",
+            v.times.windows(2).all(|w| w[0].time <= w[1].time),
+            format!("{:?}", v.times),
+        );
     }
     if let Some(list) = f.get("entries").and_then(Value::as_array) {
-        want("entry count", list.len() == v.entries.len(), format!("{} entries", v.entries.len()));
+        want(
+            "entry count",
+            list.len() == v.entries.len(),
+            format!("{} entries", v.entries.len()),
+        );
         for (want_e, got) in list.iter().zip(&v.entries) {
             let set = want_e.get("set").and_then(Value::as_bool).unwrap();
-            want("signed entry timestamp", got.signed_entry_timestamp == set, format!("{} is not {set}", got.signed_entry_timestamp));
-            let inclusion = want_e.get("inclusion").and_then(Value::as_int64).map(|n| n as u64);
-            want("inclusion", got.inclusion.as_ref().map(|i| i.tree_size) == inclusion, format!("{:?} is not {inclusion:?}", got.inclusion));
+            want(
+                "signed entry timestamp",
+                got.signed_entry_timestamp == set,
+                format!("{} is not {set}", got.signed_entry_timestamp),
+            );
+            let inclusion = want_e
+                .get("inclusion")
+                .and_then(Value::as_int64)
+                .map(|n| n as u64);
+            want(
+                "inclusion",
+                got.inclusion.as_ref().map(|i| i.tree_size) == inclusion,
+                format!("{:?} is not {inclusion:?}", got.inclusion),
+            );
             let it = want_e.get("integrated_time").and_then(Value::as_int64);
-            want("integrated time", got.integrated_time == it, format!("{:?} is not {it:?}", got.integrated_time));
+            want(
+                "integrated time",
+                got.integrated_time == it,
+                format!("{:?} is not {it:?}", got.integrated_time),
+            );
         }
     }
     if let Some(list) = f.get("scts").and_then(Value::as_array) {
-        let wanted: Vec<(String, u64)> = list.iter().map(|p| {
-            let p = p.as_array().unwrap();
-            (p[0].as_str().unwrap().to_string(), p[1].as_int64().unwrap() as u64)
-        }).collect();
-        let got: Vec<(String, u64)> = v.scts.iter().map(|s| (s.log_url.clone(), s.timestamp_ms)).collect();
-        want("signed certificate timestamps", got == wanted, format!("{got:?} is not {wanted:?}"));
+        let wanted: Vec<(String, u64)> = list
+            .iter()
+            .map(|p| {
+                let p = p.as_array().unwrap();
+                (
+                    p[0].as_str().unwrap().to_string(),
+                    p[1].as_int64().unwrap() as u64,
+                )
+            })
+            .collect();
+        let got: Vec<(String, u64)> = v
+            .scts
+            .iter()
+            .map(|s| (s.log_url.clone(), s.timestamp_ms))
+            .collect();
+        want(
+            "signed certificate timestamps",
+            got == wanted,
+            format!("{got:?} is not {wanted:?}"),
+        );
     }
     if let Some(m) = int("matched_subject") {
-        want("matched subject", v.matched_subject as i64 == m, format!("{}", v.matched_subject));
+        want(
+            "matched subject",
+            v.matched_subject as i64 == m,
+            format!("{}", v.matched_subject),
+        );
     }
     let id = match &v.signer {
         Signer::Certificate(id) => Some(id),
@@ -157,7 +306,11 @@ fn check_facts(case: &Value, v: &Verified) -> Result<(), String> {
     };
     let mut string_fact = |name: &str, got: Option<String>| {
         if let Some(w) = f.get(name).and_then(Value::as_str) {
-            want(name, got.as_deref() == Some(w), format!("{got:?} is not {w:?}"));
+            want(
+                name,
+                got.as_deref() == Some(w),
+                format!("{got:?} is not {w:?}"),
+            );
         }
     };
     string_fact("uri", id.and_then(|i| i.uris.first().cloned()));
@@ -178,7 +331,8 @@ fn check_facts(case: &Value, v: &Verified) -> Result<(), String> {
 /// Parts of a bundle that nothing authenticates when the entry has no signed entry timestamp: what a log
 /// reports about the entry as a whole. Only the inclusion proof, the body and the checkpoint are covered then.
 fn unauthenticated_in_proof_only(path: &str) -> bool {
-    path.ends_with("].integratedTime") || (path.ends_with("].logIndex") && !path.contains("inclusionProof"))
+    path.ends_with("].integratedTime")
+        || (path.ends_with("].logIndex") && !path.contains("inclusionProof"))
 }
 
 /// A hint or an id the bundle repeats where the key is found by other means.
@@ -201,15 +355,31 @@ fn empty_list_removed(path: &str, original: &Value, new: Option<&Value>) -> bool
     path.ends_with(".hashes") && new.is_none() && original.as_array().is_some_and(|a| a.is_empty())
 }
 
-fn run_damage(case_name: &str, allowed: &dyn Fn(&str, &Value, Option<&Value>) -> bool, floor: usize) {
+fn run_damage(
+    case_name: &str,
+    allowed: &dyn Fn(&str, &Value, Option<&Value>) -> bool,
+    floor: usize,
+) {
     let fx = fixtures();
     let case = fx.case(case_name);
     let root = fx.root(case.get("root").and_then(Value::as_str).unwrap());
     let digest = fx.digest(case);
     let bundle = case.get("bundle").unwrap();
     let doc = json::canonical(bundle).unwrap();
-    assert!(Bundle::parse(&doc).unwrap().verify(&Trust::new(&root), &digest).is_ok(), "{case_name} does not verify to begin with");
-    let verify_one = |bytes: &[u8], _: usize| -> Option<Result<Verified, Error>> { Some(Bundle::parse(bytes).ok()?.verify(&Trust::new(&root), &digest)) };
+    assert!(
+        Bundle::parse(&doc)
+            .unwrap()
+            .verify(&Trust::new(&root), &digest)
+            .is_ok(),
+        "{case_name} does not verify to begin with"
+    );
+    let verify_one = |bytes: &[u8], _: usize| -> Option<Result<Verified, Error>> {
+        Some(
+            Bundle::parse(bytes)
+                .ok()?
+                .verify(&Trust::new(&root), &digest),
+        )
+    };
     let tried = damage_every_part(&doc, &|_: &[Step]| 0, &verify_one, &allowed);
     println!("{case_name}: {tried} changes tried");
     assert!(tried >= floor, "{case_name}: only {tried} changes tried");
@@ -240,7 +410,9 @@ fn nothing_a_v0_2_bundle_authenticates_can_change() {
 fn nothing_a_v0_3_bundle_with_a_time_stamp_and_a_proof_authenticates_can_change() {
     run_damage(
         "v03 proof only, time stamp",
-        &|p, o, n| unauthenticated_in_proof_only(p) || envelope_keyid(p) || empty_list_removed(p, o, n),
+        &|p, o, n| {
+            unauthenticated_in_proof_only(p) || envelope_keyid(p) || empty_list_removed(p, o, n)
+        },
         150,
     );
 }
@@ -249,7 +421,9 @@ fn nothing_a_v0_3_bundle_with_a_time_stamp_and_a_proof_authenticates_can_change(
 fn nothing_a_bundle_with_an_ed25519_log_authenticates_can_change() {
     run_damage(
         "ed25519 log, proof only, time stamp",
-        &|p, o, n| unauthenticated_in_proof_only(p) || envelope_keyid(p) || empty_list_removed(p, o, n),
+        &|p, o, n| {
+            unauthenticated_in_proof_only(p) || envelope_keyid(p) || empty_list_removed(p, o, n)
+        },
         120,
     );
 }

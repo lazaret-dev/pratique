@@ -32,7 +32,11 @@ impl Exchange {
     /// The request's URL.
     pub fn url(&self) -> String {
         let default = if self.scheme == "https" { 443 } else { 80 };
-        let host = if self.host.contains(':') { format!("[{}]", self.host) } else { self.host.clone() };
+        let host = if self.host.contains(':') {
+            format!("[{}]", self.host)
+        } else {
+            self.host.clone()
+        };
         if self.port == default {
             format!("{}://{host}{}", self.scheme, self.target)
         } else {
@@ -42,7 +46,10 @@ impl Exchange {
 
     /// The first header field of this name (case-insensitive).
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     /// The package the request is for, if it is one a registry serves (see [`registry`](super::registry)).
@@ -64,7 +71,10 @@ pub struct Upstream {
 impl Upstream {
     /// The first header field of this name (case-insensitive).
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -151,7 +161,20 @@ pub struct Inspected {
 
 impl fmt::Debug for Inspected {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Inspected({} bytes{}{})", self.len, if self.file.is_some() { ", in a file" } else { "" }, self.encoding.as_deref().map(|e| format!(", {e}")).unwrap_or_default())
+        write!(
+            f,
+            "Inspected({} bytes{}{})",
+            self.len,
+            if self.file.is_some() {
+                ", in a file"
+            } else {
+                ""
+            },
+            self.encoding
+                .as_deref()
+                .map(|e| format!(", {e}"))
+                .unwrap_or_default()
+        )
     }
 }
 
@@ -189,18 +212,36 @@ impl Inspected {
     pub fn decoded(&self, max: u64) -> io::Result<Vec<u8>> {
         let mut raw = Vec::new();
         self.open()?.read_to_end(&mut raw)?;
-        let format = match self.encoding.as_deref().map(str::to_ascii_lowercase).as_deref() {
+        let format = match self
+            .encoding
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
             None => {
                 if raw.len() as u64 > max {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "the body is larger than the limit"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "the body is larger than the limit",
+                    ));
                 }
                 return Ok(raw);
             }
             Some("gzip") | Some("x-gzip") => Format::Gzip,
             Some("deflate") => Format::ZlibOrDeflate,
-            Some(other) => return Err(io::Error::new(io::ErrorKind::InvalidData, format!("a body encoded with {other:?}, which cannot be undone here"))),
+            Some(other) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("a body encoded with {other:?}, which cannot be undone here"),
+                ))
+            }
         };
-        inflate::decode_all(format, &raw, inflate::Limits::new(max)).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("the body does not decode: {e:?}")))
+        inflate::decode_all(format, &raw, inflate::Limits::new(max)).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("the body does not decode: {e:?}"),
+            )
+        })
     }
 }
 
@@ -231,7 +272,17 @@ impl Drop for Spooled {
 }
 
 /// The header fields that belong to one connection (RFC 9110 section 7.6.1), and those the proxy writes itself.
-const HOP_BY_HOP: [&str; 9] = ["connection", "keep-alive", "proxy-connection", "proxy-authorization", "proxy-authenticate", "te", "trailer", "transfer-encoding", "upgrade"];
+const HOP_BY_HOP: [&str; 9] = [
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "proxy-authorization",
+    "proxy-authenticate",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
 
 /// `headers` without the fields of the connection they came on: the hop-by-hop ones, those `Connection` names, and
 /// `extra`.
@@ -260,15 +311,25 @@ pub(super) fn decodable(accept: &str) -> String {
         .split(',')
         .map(str::trim)
         .filter(|t| {
-            let coding = t.split(';').next().unwrap_or("").trim().to_ascii_lowercase();
+            let coding = t
+                .split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
             matches!(coding.as_str(), "gzip" | "x-gzip" | "deflate" | "identity")
         })
         .collect();
-    if kept.is_empty() { "identity".into() } else { kept.join(", ") }
+    if kept.is_empty() {
+        "identity".into()
+    } else {
+        kept.join(", ")
+    }
 }
 
 fn blocked(reason: &str) -> Response {
-    Response::text(403, format!("blocked by the scanning proxy: {reason}\n")).with_header("cache-control", "no-store")
+    Response::text(403, format!("blocked by the scanning proxy: {reason}\n"))
+        .with_header("cache-control", "no-store")
 }
 
 /// The handler inside a tunnel the proxy opened to `host`.
@@ -286,23 +347,51 @@ impl Handler for Tunnel {
             None => (normal_host(req.authority()), 443),
         };
         if host != self.host || port != self.port {
-            return self.proxy.refuse(&req, 421, &format!("this tunnel is to {}:{}, not {}", self.host, self.port, req.authority()));
+            return self.proxy.refuse(
+                &req,
+                421,
+                &format!(
+                    "this tunnel is to {}:{}, not {}",
+                    self.host,
+                    self.port,
+                    req.authority()
+                ),
+            );
         }
         let target = if req.target().starts_with('/') {
             req.target().to_string()
         } else {
             match crate::http::Url::parse(req.target()) {
-                Ok(u) if u.is_https() && normal_host(&u.host) == self.host && u.port == self.port => u.path_and_query.clone(),
-                _ => return self.proxy.refuse(&req, 400, "a request target that is not a path on the tunnel's host"),
+                Ok(u)
+                    if u.is_https() && normal_host(&u.host) == self.host && u.port == self.port =>
+                {
+                    u.path_and_query.clone()
+                }
+                _ => {
+                    return self.proxy.refuse(
+                        &req,
+                        400,
+                        "a request target that is not a path on the tunnel's host",
+                    )
+                }
             }
         };
-        self.proxy.relay(req, "https", &self.host, self.port, target, true)
+        self.proxy
+            .relay(req, "https", &self.host, self.port, target, true)
     }
 }
 
 impl Proxy {
     /// Sends `req` on to scheme://host:port/target and the answer back, past the scanner when `scan`.
-    pub(super) fn relay(&self, mut req: Request, scheme: &str, host: &str, port: u16, target: String, scan: bool) -> Response {
+    pub(super) fn relay(
+        &self,
+        mut req: Request,
+        scheme: &str,
+        host: &str,
+        port: u16,
+        target: String,
+        scan: bool,
+    ) -> Response {
         let inner = &self.0;
         let client = req.connection().peer;
         let method = req.method().to_string();
@@ -314,7 +403,15 @@ impl Proxy {
                 }
             }
         }
-        let exchange = Exchange { client, scheme: scheme.into(), host: host.into(), port, method: method.clone(), target, headers };
+        let exchange = Exchange {
+            client,
+            scheme: scheme.into(),
+            host: host.into(),
+            port,
+            method: method.clone(),
+            target,
+            headers,
+        };
         let url = exchange.url();
         if scan {
             match inner.scanner.request(&exchange) {
@@ -324,7 +421,15 @@ impl Proxy {
                     return blocked(&why);
                 }
                 Decision::Respond(r) => {
-                    self.event(client, Action::Replace, &method, &url, r.status(), None, "the scanner answered the request");
+                    self.event(
+                        client,
+                        Action::Replace,
+                        &method,
+                        &url,
+                        r.status(),
+                        None,
+                        "the scanner answered the request",
+                    );
                     return r;
                 }
             }
@@ -332,7 +437,11 @@ impl Proxy {
         let body = match req.read_body(inner.max_request_body) {
             Ok(b) => b,
             Err(e) => {
-                let status = if e.kind() == io::ErrorKind::InvalidData { 413 } else { 400 };
+                let status = if e.kind() == io::ErrorKind::InvalidData {
+                    413
+                } else {
+                    400
+                };
                 return self.refuse(&req, status, &format!("the request body: {e}"));
             }
         };
@@ -348,62 +457,161 @@ impl Proxy {
             Err(e) => {
                 let why = format!("the proxy could not get {url}: {e}");
                 self.event(client, Action::Fail, &method, &url, 502, None, &why);
-                return Response::text(502, format!("{why}\n")).with_header("cache-control", "no-store");
+                return Response::text(502, format!("{why}\n"))
+                    .with_header("cache-control", "no-store");
             }
         };
         let no_body = method == "HEAD" || matches!(resp.status, 100..=199 | 204 | 304);
-        let upstream = Upstream { status: resp.status, headers: end_to_end(&resp.headers, &[]), content_length: if no_body { None } else { resp.content_length } };
-        let action = if scan { inner.scanner.response(&exchange, &upstream) } else { BodyAction::Pass };
+        let upstream = Upstream {
+            status: resp.status,
+            headers: end_to_end(&resp.headers, &[]),
+            content_length: if no_body { None } else { resp.content_length },
+        };
+        let action = if scan {
+            inner.scanner.response(&exchange, &upstream)
+        } else {
+            BodyAction::Pass
+        };
         match action {
             BodyAction::Block(why) => {
-                self.event(client, Action::Block, &method, &url, 403, upstream.content_length, &why);
+                self.event(
+                    client,
+                    Action::Block,
+                    &method,
+                    &url,
+                    403,
+                    upstream.content_length,
+                    &why,
+                );
                 blocked(&why)
             }
             BodyAction::Respond(r) => {
-                self.event(client, Action::Replace, &method, &url, r.status(), None, "the scanner answered in the host's place");
+                self.event(
+                    client,
+                    Action::Replace,
+                    &method,
+                    &url,
+                    r.status(),
+                    None,
+                    "the scanner answered in the host's place",
+                );
                 r
             }
             BodyAction::Pass => {
-                self.event(client, Action::Pass, &method, &url, upstream.status, upstream.content_length, "");
-                let body = if no_body { ResponseBody::Empty } else { ResponseBody::Reader { reader: Box::new(resp), length: upstream.content_length } };
-                Response { status: upstream.status, headers: upstream.headers, body }
+                self.event(
+                    client,
+                    Action::Pass,
+                    &method,
+                    &url,
+                    upstream.status,
+                    upstream.content_length,
+                    "",
+                );
+                let body = if no_body {
+                    ResponseBody::Empty
+                } else {
+                    ResponseBody::Reader {
+                        reader: Box::new(resp),
+                        length: upstream.content_length,
+                    }
+                };
+                Response {
+                    status: upstream.status,
+                    headers: upstream.headers,
+                    body,
+                }
             }
             BodyAction::Inspect => {
-                let collected = if no_body { Ok(Inspected { memory: Vec::new(), file: None, len: 0, encoding: None }) } else { self.collect(resp, upstream.content_length) };
+                let collected = if no_body {
+                    Ok(Inspected {
+                        memory: Vec::new(),
+                        file: None,
+                        len: 0,
+                        encoding: None,
+                    })
+                } else {
+                    self.collect(resp, upstream.content_length)
+                };
                 let mut inspected = match collected {
                     Ok(i) => i,
                     Err(e) => {
                         let why = format!("the body could not be inspected: {e}");
-                        self.event(client, Action::Fail, &method, &url, 502, upstream.content_length, &why);
-                        return Response::text(502, format!("{why}\n")).with_header("cache-control", "no-store");
+                        self.event(
+                            client,
+                            Action::Fail,
+                            &method,
+                            &url,
+                            502,
+                            upstream.content_length,
+                            &why,
+                        );
+                        return Response::text(502, format!("{why}\n"))
+                            .with_header("cache-control", "no-store");
                     }
                 };
-                inspected.encoding = upstream.header("content-encoding").map(str::trim).filter(|e| !e.is_empty() && !e.eq_ignore_ascii_case("identity")).map(str::to_string);
+                inspected.encoding = upstream
+                    .header("content-encoding")
+                    .map(str::trim)
+                    .filter(|e| !e.is_empty() && !e.eq_ignore_ascii_case("identity"))
+                    .map(str::to_string);
                 match inner.scanner.inspect(&exchange, &upstream, &inspected) {
                     Decision::Allow => {
-                        self.event(client, Action::Inspect, &method, &url, upstream.status, Some(inspected.len), "");
+                        self.event(
+                            client,
+                            Action::Inspect,
+                            &method,
+                            &url,
+                            upstream.status,
+                            Some(inspected.len),
+                            "",
+                        );
                         let body = if no_body {
                             ResponseBody::Empty
                         } else {
                             match inspected.file.take() {
                                 None => ResponseBody::Bytes(std::mem::take(&mut inspected.memory)),
-                                Some(path) => match File::open(&path) {
-                                    Ok(file) => ResponseBody::Reader { reader: Box::new(Spooled { file, path }), length: Some(inspected.len) },
-                                    Err(e) => {
-                                        let _ = std::fs::remove_file(&path);
-                                        return Response::text(502, format!("the inspected body could not be read back: {e}\n"));
+                                Some(path) => {
+                                    match File::open(&path) {
+                                        Ok(file) => ResponseBody::Reader {
+                                            reader: Box::new(Spooled { file, path }),
+                                            length: Some(inspected.len),
+                                        },
+                                        Err(e) => {
+                                            let _ = std::fs::remove_file(&path);
+                                            return Response::text(502, format!("the inspected body could not be read back: {e}\n"));
+                                        }
                                     }
-                                },
+                                }
                             }
                         };
-                        Response { status: upstream.status, headers: upstream.headers, body }
+                        Response {
+                            status: upstream.status,
+                            headers: upstream.headers,
+                            body,
+                        }
                     }
                     Decision::Block(why) => {
-                        self.event(client, Action::Block, &method, &url, 403, Some(inspected.len), &why);
+                        self.event(
+                            client,
+                            Action::Block,
+                            &method,
+                            &url,
+                            403,
+                            Some(inspected.len),
+                            &why,
+                        );
                         blocked(&why)
                     }
                     Decision::Respond(r) => {
-                        self.event(client, Action::Replace, &method, &url, r.status(), Some(inspected.len), "the scanner answered in the host's place");
+                        self.event(
+                            client,
+                            Action::Replace,
+                            &method,
+                            &url,
+                            r.status(),
+                            Some(inspected.len),
+                            "the scanner answered in the host's place",
+                        );
                         r
                     }
                 }
@@ -416,23 +624,50 @@ impl Proxy {
     fn collect(&self, mut body: impl Read, declared: Option<u64>) -> io::Result<Inspected> {
         let inner = &self.0;
         if declared.is_some_and(|n| n > inner.max_inspect) {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("it is larger than the {} bytes the proxy inspects", inner.max_inspect)));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "it is larger than the {} bytes the proxy inspects",
+                    inner.max_inspect
+                ),
+            ));
         }
         let mut memory = Vec::new();
-        (&mut body).take(inner.inspect_in_memory as u64 + 1).read_to_end(&mut memory)?;
+        (&mut body)
+            .take(inner.inspect_in_memory as u64 + 1)
+            .read_to_end(&mut memory)?;
         if memory.len() <= inner.inspect_in_memory {
             let len = memory.len() as u64;
-            return Ok(Inspected { memory, file: None, len, encoding: None });
+            return Ok(Inspected {
+                memory,
+                file: None,
+                len,
+                encoding: None,
+            });
         }
         let path = self.spool_file()?;
         // (from here the file is the Inspected's, removed when it is dropped)
-        let mut inspected = Inspected { memory: Vec::new(), file: Some(path.clone()), len: 0, encoding: None };
+        let mut inspected = Inspected {
+            memory: Vec::new(),
+            file: Some(path.clone()),
+            len: 0,
+            encoding: None,
+        };
         let mut file = std::fs::OpenOptions::new().write(true).open(&path)?;
         file.write_all(&memory)?;
-        let rest = io::copy(&mut (&mut body).take(inner.max_inspect.saturating_sub(memory.len() as u64) + 1), &mut file)?;
+        let rest = io::copy(
+            &mut (&mut body).take(inner.max_inspect.saturating_sub(memory.len() as u64) + 1),
+            &mut file,
+        )?;
         let len = memory.len() as u64 + rest;
         if len > inner.max_inspect {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("it is larger than the {} bytes the proxy inspects", inner.max_inspect)));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "it is larger than the {} bytes the proxy inspects",
+                    inner.max_inspect
+                ),
+            ));
         }
         file.sync_all()?;
         inspected.len = len;

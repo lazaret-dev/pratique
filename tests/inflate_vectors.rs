@@ -15,7 +15,9 @@ const VECTORS: &str = include_str!("data/inflate_vectors.txt");
 fn unhex(s: &str) -> Vec<u8> {
     let s = if s == "-" { "" } else { s };
     assert!(s.len() % 2 == 0, "odd hex");
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+        .collect()
 }
 
 fn hex(b: &[u8]) -> String {
@@ -39,16 +41,27 @@ fn verdict(text: &str) -> Verdict {
         return None;
     }
     let mut p = text.strip_prefix("ok:").expect("ok: or err").splitn(2, ':');
-    Some((p.next().unwrap().parse().unwrap(), p.next().unwrap().to_string()))
+    Some((
+        p.next().unwrap().parse().unwrap(),
+        p.next().unwrap().to_string(),
+    ))
 }
 
 fn ours(r: &Result<Vec<u8>, Error>) -> Verdict {
-    r.as_ref().ok().map(|out| (out.len(), hex(&Sha256::digest(out))))
+    r.as_ref()
+        .ok()
+        .map(|out| (out.len(), hex(&Sha256::digest(out))))
 }
 
 /// Decompresses `data` the way a caller with small buffers would: the input in pieces of `inp` bytes, the output in a slice of
 /// `out` bytes, and the same answer as `decode_all` is expected whatever the sizes.
-fn run(format: Format, data: &[u8], inp: usize, out: usize, limits: Limits) -> Result<Vec<u8>, Error> {
+fn run(
+    format: Format,
+    data: &[u8],
+    inp: usize,
+    out: usize,
+    limits: Limits,
+) -> Result<Vec<u8>, Error> {
     let mut inf = Inflater::new(format, limits);
     let mut result = Vec::new();
     let mut buf = vec![0u8; out];
@@ -60,7 +73,13 @@ fn run(format: Format, data: &[u8], inp: usize, out: usize, limits: Limits) -> R
         result.extend_from_slice(&buf[..p.produced]);
         match p.status {
             Status::Done => {
-                return if pos == data.len() && inf.take_unused().is_empty() { Ok(result) } else { Err(Error::Corrupt("data follows the end of the compressed stream")) };
+                return if pos == data.len() && inf.take_unused().is_empty() {
+                    Ok(result)
+                } else {
+                    Err(Error::Corrupt(
+                        "data follows the end of the compressed stream",
+                    ))
+                };
             }
             Status::NeedOutput => {}
             Status::NeedInput => {
@@ -105,40 +124,76 @@ fn streams_made_by_other_programs_decompress_to_what_they_were_made_from() {
     let mut by_maker = std::collections::BTreeMap::<String, u32>::new();
     for line in VECTORS.lines().filter(|l| l.starts_with("ok ")) {
         let f: Vec<&str> = line.split(' ').collect();
-        let (name, format, len, sha) = (f[1], format_of(f[2]), f[3].parse::<usize>().unwrap(), f[4]);
+        let (name, format, len, sha) =
+            (f[1], format_of(f[2]), f[3].parse::<usize>().unwrap(), f[4]);
         let stream = unhex(f[5]);
         let big = len > 100_000;
         // whole, a byte at a time, and odd sizes of both; a tiny output slice only where the output is short
-        let mut cuts = vec![(usize::MAX, 65536), (1, 65536), (7, 3), (3, 4096), (usize::MAX, 1 << 20)];
+        let mut cuts = vec![
+            (usize::MAX, 65536),
+            (1, 65536),
+            (7, 3),
+            (3, 4096),
+            (usize::MAX, 1 << 20),
+        ];
         if !big {
             cuts.extend([(509, 1), (1, 1)]);
         }
         for (inp, out) in cuts {
             let r = run(format, &stream, inp, out, Limits::unlimited());
-            let got = r.unwrap_or_else(|e| panic!("{name}: input in {inp}s, output in {out}s: {e}"));
-            assert_eq!(got.len(), len, "{name}: length (input in {inp}s, output in {out}s)");
-            assert_eq!(hex(&Sha256::digest(&got)), sha, "{name}: content (input in {inp}s, output in {out}s)");
+            let got =
+                r.unwrap_or_else(|e| panic!("{name}: input in {inp}s, output in {out}s: {e}"));
+            assert_eq!(
+                got.len(),
+                len,
+                "{name}: length (input in {inp}s, output in {out}s)"
+            );
+            assert_eq!(
+                hex(&Sha256::digest(&got)),
+                sha,
+                "{name}: content (input in {inp}s, output in {out}s)"
+            );
         }
         // the limit on the output: exactly enough passes, one byte less is refused
-        assert_eq!(decode_all(format, &stream, Limits::new(len as u64)).map(|o| o.len()), Ok(len), "{name}: limit equal to the size");
+        assert_eq!(
+            decode_all(format, &stream, Limits::new(len as u64)).map(|o| o.len()),
+            Ok(len),
+            "{name}: limit equal to the size"
+        );
         if len > 0 {
             assert!(
-                matches!(decode_all(format, &stream, Limits::new(len as u64 - 1)), Err(Error::OutputLimit { .. })),
+                matches!(
+                    decode_all(format, &stream, Limits::new(len as u64 - 1)),
+                    Err(Error::OutputLimit { .. })
+                ),
                 "{name}: limit one byte short"
             );
         }
         // the lenient format takes what the strict one takes, and a single gzip member is a member
         if f[2] == "zlib" {
-            assert_eq!(decode_all(Format::ZlibOrDeflate, &stream, Limits::unlimited()).map(|o| o.len()), Ok(len), "{name}: zlib or deflate");
+            assert_eq!(
+                decode_all(Format::ZlibOrDeflate, &stream, Limits::unlimited()).map(|o| o.len()),
+                Ok(len),
+                "{name}: zlib or deflate"
+            );
         }
         if f[2] == "gzip" && !name.contains("members") {
-            assert_eq!(decode_all(Format::GzipMember, &stream, Limits::unlimited()).map(|o| o.len()), Ok(len), "{name}: one gzip member");
+            assert_eq!(
+                decode_all(Format::GzipMember, &stream, Limits::unlimited()).map(|o| o.len()),
+                Ok(len),
+                "{name}: one gzip member"
+            );
         }
         count += 1;
-        *by_maker.entry(name.split('.').next().unwrap().to_string()).or_default() += 1;
+        *by_maker
+            .entry(name.split('.').next().unwrap().to_string())
+            .or_default() += 1;
     }
     println!("{count} valid streams: {by_maker:?}");
-    assert!(count >= 200, "the vector file is cut short: {count} valid streams");
+    assert!(
+        count >= 200,
+        "the vector file is cut short: {count} valid streams"
+    );
     for maker in ["py", "go", "gzipcli", "zlibflate", "hand"] {
         assert!(by_maker.contains_key(maker), "no streams from {maker}");
     }
@@ -164,14 +219,26 @@ fn damaged_streams_get_the_verdict_of_zlib() {
         let whole = decode_all(format, &copy, Limits::unlimited());
         // the same answer, the same error, however the input and the output are cut
         for (inp, out) in [(1, 1), (1, 4096), (5, 3), (usize::MAX, 7)] {
-            assert_eq!(run(format, &copy, inp, out, Limits::unlimited()), whole, "{what}: input in {inp}s, output in {out}s");
+            assert_eq!(
+                run(format, &copy, inp, out, Limits::unlimited()),
+                whole,
+                "{what}: input in {inp}s, output in {out}s"
+            );
         }
         // what zlib accepts is accepted and gives the same bytes, and what zlib refuses is refused
-        assert_eq!(ours(&whole), zlib, "{what}: zlib says {zlib:?}, this decoder {:?}", whole.as_ref().map(|o| o.len()));
+        assert_eq!(
+            ours(&whole),
+            zlib,
+            "{what}: zlib says {zlib:?}, this decoder {:?}",
+            whole.as_ref().map(|o| o.len())
+        );
         // Go refuses what zlib refuses, bar the reserved flag bits of a gzip header, and gives the same bytes when it accepts
         if go.is_some() && zlib.is_none() {
             assert_eq!(*fmt, "gzip", "{what}: Go accepts what zlib refuses");
-            assert!(copy[3] & 0xe0 != 0, "{what}: Go accepts what zlib refuses, and no reserved flag is set");
+            assert!(
+                copy[3] & 0xe0 != 0,
+                "{what}: Go accepts what zlib refuses, and no reserved flag is set"
+            );
             go_only += 1;
         }
         if zlib.is_some() {
@@ -181,7 +248,13 @@ fn damaged_streams_get_the_verdict_of_zlib() {
         count += 1;
     }
     println!("{count} damaged copies, {accepted} still valid, {go_only} that only Go accepts");
-    assert!(count >= 900, "the vector file is cut short: {count} damaged copies");
-    assert!(accepted >= 100 && count - accepted >= 600, "the mix of verdicts changed: {accepted} accepted of {count}");
+    assert!(
+        count >= 900,
+        "the vector file is cut short: {count} damaged copies"
+    );
+    assert!(
+        accepted >= 100 && count - accepted >= 600,
+        "the mix of verdicts changed: {accepted} accepted of {count}"
+    );
     assert!(go_only >= 1);
 }

@@ -17,7 +17,10 @@ use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 
-fn serve_one<T: Send + 'static>(config: ServerConfig, handler: impl FnOnce(ServerStream<TcpStream>) -> T + Send + 'static) -> (u16, JoinHandle<Result<T>>) {
+fn serve_one<T: Send + 'static>(
+    config: ServerConfig,
+    handler: impl FnOnce(ServerStream<TcpStream>) -> T + Send + 'static,
+) -> (u16, JoinHandle<Result<T>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let config = Arc::new(config);
@@ -112,7 +115,10 @@ fn key_updates_the_server_asks_for_are_answered_in_order_while_the_client_writes
     let data = Arc::new(pattern(4 << 20, 11));
     let (server, client_config) = setup();
     let (port, handle) = serve_one(server, |s| echo(s, 16));
-    let back = echo_through_halves(client(port, &client_config.with_rekey_after_records(50)), data.clone());
+    let back = echo_through_halves(
+        client(port, &client_config.with_rekey_after_records(50)),
+        data.clone(),
+    );
     assert!(back == *data, "the echo differs");
     let (echoed, asked) = handle.join().unwrap().unwrap();
     assert_eq!(echoed, data.len());
@@ -186,7 +192,10 @@ fn a_tls12_hello_request_is_answered_among_the_records_being_written() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let suite = Suite12::EcdheEcdsaChacha20Poly1305;
     let (key_c, key_s, iv) = ([3u8; 32], [4u8; 32], [5u8; 12]);
-    let conn = ClientConnection::established12(RecordCipher12::new(suite, &key_s, &iv), RecordCipher12::new(suite, &key_c, &iv));
+    let conn = ClientConnection::established12(
+        RecordCipher12::new(suite, &key_s, &iv),
+        RecordCipher12::new(suite, &key_c, &iv),
+    );
     let (ours, mut theirs) = UnixStream::pair().unwrap();
     ours.set_read_timeout(Some(TIMEOUT)).unwrap();
     theirs.set_read_timeout(Some(TIMEOUT)).unwrap();
@@ -202,8 +211,11 @@ fn a_tls12_hello_request_is_answered_among_the_records_being_written() {
             theirs_w.write_all(&wire).unwrap();
         };
         loop {
-            let (header, mut payload) = read_record(&mut theirs).expect("the client closes properly");
-            let (kind, start, len) = peer_in.decrypt_in_place(&header, &mut payload).expect("every record opens, in order");
+            let (header, mut payload) =
+                read_record(&mut theirs).expect("the client closes properly");
+            let (kind, start, len) = peer_in
+                .decrypt_in_place(&header, &mut payload)
+                .expect("every record opens, in order");
             let content = &payload[start..start + len];
             match kind {
                 RT_APPLICATION_DATA => {
@@ -253,7 +265,10 @@ fn a_tls12_hello_request_is_answered_among_the_records_being_written() {
     let sent = w.join().unwrap();
     let (data, asked, answered) = peer.join().unwrap();
     assert!(data == sent, "the data arrived changed");
-    assert!(answered >= 20 && answered <= asked, "{answered} answers to {asked} HelloRequests");
+    assert!(
+        answered >= 20 && answered <= asked,
+        "{answered} answers to {asked} HelloRequests"
+    );
 }
 
 #[test]
@@ -339,7 +354,10 @@ impl Write for Gated {
 
 impl Duplex for Gated {
     fn duplicate(&self) -> io::Result<Self> {
-        Ok(Gated { io: self.io.try_clone()?, gate: self.gate.clone() })
+        Ok(Gated {
+            io: self.io.try_clone()?,
+            gate: self.gate.clone(),
+        })
     }
 }
 
@@ -354,7 +372,13 @@ fn the_reader_goes_on_while_a_write_is_blocked_and_its_answer_follows_that_write
     let conn = ClientConnection::established(suite, &read_secret, &write_secret);
     let (ours, mut theirs) = UnixStream::pair().unwrap();
     theirs.set_read_timeout(Some(TIMEOUT)).unwrap();
-    let ours = Gated { io: ours, gate: Arc::new((std::sync::Mutex::new((true, false)), std::sync::Condvar::new())) };
+    let ours = Gated {
+        io: ours,
+        gate: Arc::new((
+            std::sync::Mutex::new((true, false)),
+            std::sync::Condvar::new(),
+        )),
+    };
     let control = ours.duplicate().unwrap();
     let (mut reader, mut writer) = TlsStream::from_parts(ours, conn).split().unwrap();
     control.set_open(false);
@@ -365,12 +389,16 @@ fn the_reader_goes_on_while_a_write_is_blocked_and_its_answer_follows_that_write
     control.wait_for_a_blocked_write();
     // the request first, alone, so that the reader has an answer to send before it waits for more; the ping a little later
     let mut peer_out = RecordCipher::new(suite, &read_secret);
-    theirs.write_all(&peer_out.encrypt(RT_HANDSHAKE, &[HS_KEY_UPDATE, 0, 0, 1, 1])).unwrap();
+    theirs
+        .write_all(&peer_out.encrypt(RT_HANDSHAKE, &[HS_KEY_UPDATE, 0, 0, 1, 1]))
+        .unwrap();
     peer_out = peer_out.next_generation();
     let mut later = theirs.try_clone().unwrap();
     let pinger = thread::spawn(move || {
         thread::sleep(Duration::from_millis(200));
-        later.write_all(&peer_out.encrypt(RT_APPLICATION_DATA, b"ping")).unwrap();
+        later
+            .write_all(&peer_out.encrypt(RT_APPLICATION_DATA, b"ping"))
+            .unwrap();
     });
     let (tx, rx) = std::sync::mpsc::channel();
     let r = thread::spawn(move || {
@@ -383,7 +411,10 @@ fn the_reader_goes_on_while_a_write_is_blocked_and_its_answer_follows_that_write
     // now let the write through (also if the reader is stuck, so that the test ends): the writer sends what it held, then
     // the answer
     control.set_open(true);
-    assert_eq!(ping.expect("the reader waited for the stuck write"), *b"ping");
+    assert_eq!(
+        ping.expect("the reader waited for the stuck write"),
+        *b"ping"
+    );
     let _reader = r.join().unwrap();
     pinger.join().unwrap();
     let writer = w.join().unwrap();
@@ -394,10 +425,19 @@ fn the_reader_goes_on_while_a_write_is_blocked_and_its_answer_follows_that_write
         let (kind, content) = peer_in.decrypt(&header, &payload).unwrap();
         got.push((kind, content));
     }
-    assert_eq!(got, vec![(RT_APPLICATION_DATA, b"held".to_vec()), (RT_HANDSHAKE, vec![HS_KEY_UPDATE, 0, 0, 1, 0])]);
+    assert_eq!(
+        got,
+        vec![
+            (RT_APPLICATION_DATA, b"held".to_vec()),
+            (RT_HANDSHAKE, vec![HS_KEY_UPDATE, 0, 0, 1, 0])
+        ]
+    );
     // and what follows is under the next keys
     drop(writer);
     let mut peer_in = peer_in.next_generation();
     let (header, payload) = read_record(&mut theirs).unwrap();
-    assert_eq!(peer_in.decrypt(&header, &payload).unwrap(), (RT_ALERT, vec![1, 0]));
+    assert_eq!(
+        peer_in.decrypt(&header, &payload).unwrap(),
+        (RT_ALERT, vec![1, 0])
+    );
 }

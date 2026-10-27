@@ -563,6 +563,17 @@ MUTANTS.update({
     "webpki_store_private": (X509, "let web = opts.web_pki && self.web_pki_rules && opts.purpose", "let web = opts.web_pki && opts.purpose", "itest:chain_cases:a_store_of_private_anchors"),
 })
 
+# --- what the 2026-10-10 campaign on the Mac (B-92 part 5) showed the targets must still catch: tuf's thresholds, sigstore's
+# signed entry timestamps (the two oracles were widened for genuine replays), and idna's ASCII-after-lower-casing labels
+MUTANTS.update({
+    # a role's metadata counts without its keys' signatures
+    "tuf_threshold_off": ("src/tuf.rs", "    if (good.len() as u64) < role.threshold {", "    if false && (good.len() as u64) < role.threshold {", "tuf", 120),
+    # a signed entry timestamp that does not verify is believed
+    "sigstore_set_unchecked": ("src/sigstore.rs", "if !logs.iter().any(|l| l.valid_for.contains(t) && l.key.verify(&payload, promise)) {", "if false && !logs.iter().any(|l| l.valid_for.contains(t) && l.key.verify(&payload, promise)) {", "sigstore", 120),
+    # a label that lower-casing left ASCII is encoded again
+    "idna_kelvin": ("src/idna.rs", "            if chars.iter().all(char::is_ascii) {", "            if false && chars.iter().all(char::is_ascii) {", "test:idna::tests"),
+})
+
 EQUIVALENT = {
     "connection_stream_acked_twice": "acknowledging a chunk twice is the same as once (acknowledgments are idempotent by design)",
     "connection_crypto_acked_never": "the buffers of the handshake's crypto data are dropped with the keys of their space, and the client sends none later",

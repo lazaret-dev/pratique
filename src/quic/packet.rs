@@ -97,7 +97,17 @@ pub fn parse(datagram: &[u8], short_dcid_len: usize) -> Result<Packet<'_>, Parse
         if datagram.len() <= pn_offset {
             return Err(ParseError::Truncated);
         }
-        return Ok(Packet { ty: PacketType::OneRtt, version: 0, dcid, scid: &[], token: &[], versions: &[], retry_tag: None, pn_offset, len: datagram.len() });
+        return Ok(Packet {
+            ty: PacketType::OneRtt,
+            version: 0,
+            dcid,
+            scid: &[],
+            token: &[],
+            versions: &[],
+            retry_tag: None,
+            pn_offset,
+            len: datagram.len(),
+        });
     }
     let version = r.u32()?;
     let dcid_len = r.u8()? as usize;
@@ -114,9 +124,21 @@ pub fn parse(datagram: &[u8], short_dcid_len: usize) -> Result<Packet<'_>, Parse
         // Version Negotiation: what is left is the versions (the bits of the first byte are of no matter)
         let versions = r.rest();
         if versions.is_empty() || versions.len() % 4 != 0 {
-            return Err(ParseError::Invalid("a Version Negotiation packet lists whole versions"));
+            return Err(ParseError::Invalid(
+                "a Version Negotiation packet lists whole versions",
+            ));
         }
-        return Ok(Packet { ty: PacketType::VersionNegotiation, version, dcid, scid, token: &[], versions, retry_tag: None, pn_offset: 0, len: datagram.len() });
+        return Ok(Packet {
+            ty: PacketType::VersionNegotiation,
+            version,
+            dcid,
+            scid,
+            token: &[],
+            versions,
+            retry_tag: None,
+            pn_offset: 0,
+            len: datagram.len(),
+        });
     }
     if version != VERSION_1 {
         return Err(ParseError::UnsupportedVersion(version));
@@ -137,9 +159,23 @@ pub fn parse(datagram: &[u8], short_dcid_len: usize) -> Result<Packet<'_>, Parse
         }
         let (token, tag) = rest.split_at(rest.len() - RETRY_TAG_LEN);
         let tag: &[u8; RETRY_TAG_LEN] = tag.try_into().expect("16 bytes");
-        return Ok(Packet { ty, version, dcid, scid, token, versions: &[], retry_tag: Some(tag), pn_offset: 0, len: datagram.len() });
+        return Ok(Packet {
+            ty,
+            version,
+            dcid,
+            scid,
+            token,
+            versions: &[],
+            retry_tag: Some(tag),
+            pn_offset: 0,
+            len: datagram.len(),
+        });
     }
-    let token = if ty == PacketType::Initial { r.length_prefixed()? } else { &[] };
+    let token = if ty == PacketType::Initial {
+        r.length_prefixed()?
+    } else {
+        &[]
+    };
     let length = r.varint()?;
     if length > r.rest().len() as u64 {
         return Err(ParseError::Truncated);
@@ -148,12 +184,23 @@ pub fn parse(datagram: &[u8], short_dcid_len: usize) -> Result<Packet<'_>, Parse
         return Err(ParseError::Invalid("a packet with no packet number"));
     }
     let pn_offset = r.position();
-    Ok(Packet { ty, version, dcid, scid, token, versions: &[], retry_tag: None, pn_offset, len: pn_offset + length as usize })
+    Ok(Packet {
+        ty,
+        version,
+        dcid,
+        scid,
+        token,
+        versions: &[],
+        retry_tag: None,
+        pn_offset,
+        len: pn_offset + length as usize,
+    })
 }
 
 /// The versions of a Version Negotiation packet (see [`Packet::versions`]).
 pub fn versions(list: &[u8]) -> impl Iterator<Item = u32> + '_ {
-    list.chunks_exact(4).map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+    list.chunks_exact(4)
+        .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
 }
 
 /// What [`write_long_header`] tells of the header it wrote.
@@ -170,7 +217,15 @@ pub struct LongHeader {
 /// is left to be filled in.
 ///
 /// Panics if `ty` is not one of those three, if `token` is given for any but an Initial packet, or if an id is too long.
-pub fn write_long_header(out: &mut Vec<u8>, ty: PacketType, dcid: &[u8], scid: &[u8], token: &[u8], pn: u64, pn_len: usize) -> LongHeader {
+pub fn write_long_header(
+    out: &mut Vec<u8>,
+    ty: PacketType,
+    dcid: &[u8],
+    scid: &[u8],
+    token: &[u8],
+    pn: u64,
+    pn_len: usize,
+) -> LongHeader {
     assert!((1..=4).contains(&pn_len));
     assert!(dcid.len() <= MAX_CID_LEN && scid.len() <= MAX_CID_LEN);
     let type_bits: u8 = match ty {
@@ -179,7 +234,10 @@ pub fn write_long_header(out: &mut Vec<u8>, ty: PacketType, dcid: &[u8], scid: &
         PacketType::Handshake => 2,
         other => panic!("{other:?} is not a long header packet with a packet number"),
     };
-    assert!(ty == PacketType::Initial || token.is_empty(), "only an Initial packet has a token");
+    assert!(
+        ty == PacketType::Initial || token.is_empty(),
+        "only an Initial packet has a token"
+    );
     out.push(0xc0 | (type_bits << 4) | (pn_len as u8 - 1));
     out.extend_from_slice(&VERSION_1.to_be_bytes());
     out.push(dcid.len() as u8);
@@ -194,7 +252,10 @@ pub fn write_long_header(out: &mut Vec<u8>, ty: PacketType, dcid: &[u8], scid: &
     put_varint_len(out, 0, 2);
     let pn_offset = out.len();
     out.extend_from_slice(&pn.to_be_bytes()[8 - pn_len..]);
-    LongHeader { length_at, pn_offset }
+    LongHeader {
+        length_at,
+        pn_offset,
+    }
 }
 
 /// Fills in the Length field of the packet that begins at `start` in `out` and whose header [`write_long_header`] wrote: `out`
@@ -207,7 +268,14 @@ pub fn finish_long(out: &mut [u8], header: LongHeader, tag_len: usize) {
 
 /// Appends the header of a short header packet, up to and including the packet number (`pn_len` bytes of it). Returns where the
 /// packet number begins.
-pub fn write_short_header(out: &mut Vec<u8>, dcid: &[u8], spin: bool, key_phase: bool, pn: u64, pn_len: usize) -> usize {
+pub fn write_short_header(
+    out: &mut Vec<u8>,
+    dcid: &[u8],
+    spin: bool,
+    key_phase: bool,
+    pn: u64,
+    pn_len: usize,
+) -> usize {
     assert!((1..=4).contains(&pn_len));
     out.push(0x40 | (u8::from(spin) << 5) | (u8::from(key_phase) << 2) | (pn_len as u8 - 1));
     out.extend_from_slice(dcid);
@@ -274,7 +342,10 @@ mod tests {
         assert_eq!(pk.dcid, b"");
         assert_eq!(pk.scid, unhex("f067a5502a4262b5"));
         assert_eq!(pk.token, b"token");
-        assert_eq!(pk.retry_tag.unwrap()[..], unhex("04a265ba2eff4d829058fb3f0f2496ba")[..]);
+        assert_eq!(
+            pk.retry_tag.unwrap()[..],
+            unhex("04a265ba2eff4d829058fb3f0f2496ba")[..]
+        );
         assert_eq!(pk.len, 36);
         // a Retry packet that has no room for its tag
         assert_eq!(parse(&p[..15 + 15], 8), Err(ParseError::Truncated));
@@ -293,8 +364,18 @@ mod tests {
         assert_eq!(pk.scid, unhex("f92f4336fa951ba1"));
         assert_eq!(versions(pk.versions).collect::<Vec<_>>(), [0x4547_4716, 1]);
         // not whole versions, or none
-        assert_eq!(parse(&p[..p.len() - 1], 8), Err(ParseError::Invalid("a Version Negotiation packet lists whole versions")));
-        assert_eq!(parse(&p[..p.len() - 8], 8), Err(ParseError::Invalid("a Version Negotiation packet lists whole versions")));
+        assert_eq!(
+            parse(&p[..p.len() - 1], 8),
+            Err(ParseError::Invalid(
+                "a Version Negotiation packet lists whole versions"
+            ))
+        );
+        assert_eq!(
+            parse(&p[..p.len() - 8], 8),
+            Err(ParseError::Invalid(
+                "a Version Negotiation packet lists whole versions"
+            ))
+        );
     }
 
     #[test]
@@ -303,7 +384,10 @@ mod tests {
         p.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
         p.extend_from_slice(&[0xaa; 30]);
         let pk = parse(&p, 8).unwrap();
-        assert_eq!((pk.ty, pk.dcid, pk.pn_offset, pk.len), (PacketType::OneRtt, &[1u8, 2, 3, 4, 5, 6, 7, 8][..], 9, 39));
+        assert_eq!(
+            (pk.ty, pk.dcid, pk.pn_offset, pk.len),
+            (PacketType::OneRtt, &[1u8, 2, 3, 4, 5, 6, 7, 8][..], 9, 39)
+        );
         // our connection ids are of another length
         assert_eq!(parse(&p, 4).unwrap().pn_offset, 5);
         assert_eq!(parse(&p, 0).unwrap().pn_offset, 1);
@@ -338,7 +422,10 @@ mod tests {
         let mut p = good.clone();
         p[16] = 0;
         p[17] = 0;
-        assert_eq!(parse(&p, 8), Err(ParseError::Invalid("a packet with no packet number")));
+        assert_eq!(
+            parse(&p, 8),
+            Err(ParseError::Invalid("a packet with no packet number"))
+        );
         // a Length that is more than there is
         let mut p = good.clone();
         p[16] = 0x7f;
@@ -350,7 +437,15 @@ mod tests {
     fn packets_in_one_datagram_are_told_apart_by_their_lengths() {
         // a Handshake packet followed by a short header packet, in one datagram (RFC 9000 section 12.2)
         let mut d = Vec::new();
-        let h = write_long_header(&mut d, PacketType::Handshake, &[1, 2, 3, 4], &[5, 6], &[], 7, 2);
+        let h = write_long_header(
+            &mut d,
+            PacketType::Handshake,
+            &[1, 2, 3, 4],
+            &[5, 6],
+            &[],
+            7,
+            2,
+        );
         d.extend_from_slice(&[0xee; 40]);
         finish_long(&mut d, h, 16);
         d.extend_from_slice(&[0xdd; 16]);
@@ -359,15 +454,35 @@ mod tests {
         d.extend_from_slice(&[9, 9, 9, 9]);
         d.extend_from_slice(&[0xcc; 25]);
         let p1 = parse(&d, 4).unwrap();
-        assert_eq!((p1.ty, p1.dcid, p1.scid, p1.pn_offset, p1.len), (PacketType::Handshake, &[1u8, 2, 3, 4][..], &[5u8, 6][..], h.pn_offset, first_len));
+        assert_eq!(
+            (p1.ty, p1.dcid, p1.scid, p1.pn_offset, p1.len),
+            (
+                PacketType::Handshake,
+                &[1u8, 2, 3, 4][..],
+                &[5u8, 6][..],
+                h.pn_offset,
+                first_len
+            )
+        );
         let p2 = parse(&d[p1.len..], 4).unwrap();
-        assert_eq!((p2.ty, p2.dcid, p2.pn_offset, p2.len), (PacketType::OneRtt, &[9u8, 9, 9, 9][..], 5, 30));
+        assert_eq!(
+            (p2.ty, p2.dcid, p2.pn_offset, p2.len),
+            (PacketType::OneRtt, &[9u8, 9, 9, 9][..], 5, 30)
+        );
     }
 
     #[test]
     fn headers_are_written_as_they_are_read() {
         let mut out = Vec::new();
-        let h = write_long_header(&mut out, PacketType::Initial, &[0xaa; 8], &[0xbb; 4], b"tok", 0x1234, 2);
+        let h = write_long_header(
+            &mut out,
+            PacketType::Initial,
+            &[0xaa; 8],
+            &[0xbb; 4],
+            b"tok",
+            0x1234,
+            2,
+        );
         out.extend_from_slice(&[0; 30]);
         finish_long(&mut out, h, 16);
         // first byte: long, fixed, Initial, reserved 0, packet number 2 bytes
@@ -378,7 +493,10 @@ mod tests {
         assert_eq!(p, ParseError::Truncated);
         out.extend_from_slice(&[0; 16]);
         let p = parse(&out, 0).unwrap();
-        assert_eq!((p.ty, p.token, p.pn_offset, p.len), (PacketType::Initial, &b"tok"[..], h.pn_offset, out.len()));
+        assert_eq!(
+            (p.ty, p.token, p.pn_offset, p.len),
+            (PacketType::Initial, &b"tok"[..], h.pn_offset, out.len())
+        );
         assert_eq!(&out[h.pn_offset..h.pn_offset + 2], [0x12, 0x34]);
 
         let mut short = Vec::new();

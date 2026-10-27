@@ -41,7 +41,15 @@ pub struct TrustFiles {
 
 /// The variables through which a machine's administrator, or a TLS-inspecting gateway's installer, often hands programs
 /// the roots they need: files of PEM certificates.
-pub const ROOT_FILE_VARIABLES: [&str; 7] = ["SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "NODE_EXTRA_CA_CERTS", "PIP_CERT", "GIT_SSL_CAINFO", "AWS_CA_BUNDLE"];
+pub const ROOT_FILE_VARIABLES: [&str; 7] = [
+    "SSL_CERT_FILE",
+    "REQUESTS_CA_BUNDLE",
+    "CURL_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "PIP_CERT",
+    "GIT_SSL_CAINFO",
+    "AWS_CA_BUNDLE",
+];
 
 /// The roots this machine trusts, together: the system's CA bundle file (the first of the usual places that has one),
 /// the operating system's own store where it has one (the macOS Keychain's trust settings, the Windows certificate
@@ -52,10 +60,20 @@ pub fn local_roots() -> io::Result<TrustStore> {
 }
 
 /// The same with another environment, and without the system's file and store when `system` is false (for tests).
-pub(crate) fn local_roots_from(env: &dyn Fn(&str) -> Option<String>, system: bool) -> io::Result<TrustStore> {
-    let mut roots = Roots { store: TrustStore::empty(), seen: HashSet::new() };
+pub(crate) fn local_roots_from(
+    env: &dyn Fn(&str) -> Option<String>,
+    system: bool,
+) -> io::Result<TrustStore> {
+    let mut roots = Roots {
+        store: TrustStore::empty(),
+        seen: HashSet::new(),
+    };
     if system {
-        if let Some(text) = crate::sys::BUNDLE_FILES.iter().find_map(|f| std::fs::read_to_string(f).ok().filter(|t| t.contains("BEGIN CERTIFICATE"))) {
+        if let Some(text) = crate::sys::BUNDLE_FILES.iter().find_map(|f| {
+            std::fs::read_to_string(f)
+                .ok()
+                .filter(|t| t.contains("BEGIN CERTIFICATE"))
+        }) {
             roots.add_pem(&text);
         }
         if let Ok(native) = crate::sys::native_trust_store() {
@@ -65,7 +83,10 @@ pub(crate) fn local_roots_from(env: &dyn Fn(&str) -> Option<String>, system: boo
         }
     }
     for name in ROOT_FILE_VARIABLES {
-        if let Some(text) = env(name).filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok()) {
+        if let Some(text) = env(name)
+            .filter(|p| !p.is_empty())
+            .and_then(|p| std::fs::read_to_string(p).ok())
+        {
             roots.add_pem(&text);
         }
     }
@@ -89,7 +110,10 @@ impl Roots {
     }
 
     fn add_pem(&mut self, text: &str) {
-        for block in crate::pem::parse(text).into_iter().filter(|b| b.label == "CERTIFICATE") {
+        for block in crate::pem::parse(text)
+            .into_iter()
+            .filter(|b| b.label == "CERTIFICATE")
+        {
             self.add(&block.data);
         }
     }
@@ -151,13 +175,30 @@ impl Proxy {
         let url = format!("http://{auth}{ip}:{}", addr.port());
         let bundle = files.bundle.display().to_string();
         let mut env = Vec::new();
-        for name in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "PIP_PROXY", "npm_config_https_proxy", "npm_config_proxy", "YARN_HTTPS_PROXY", "YARN_HTTP_PROXY"] {
+        for name in [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "PIP_PROXY",
+            "npm_config_https_proxy",
+            "npm_config_proxy",
+            "YARN_HTTPS_PROXY",
+            "YARN_HTTP_PROXY",
+        ] {
             env.push((name.to_string(), url.clone()));
         }
         for name in ["NO_PROXY", "no_proxy", "npm_config_noproxy"] {
             env.push((name.to_string(), "localhost,127.0.0.1,::1".to_string()));
         }
-        for name in ["NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "PIP_CERT", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO"] {
+        for name in [
+            "NODE_EXTRA_CA_CERTS",
+            "SSL_CERT_FILE",
+            "REQUESTS_CA_BUNDLE",
+            "PIP_CERT",
+            "CURL_CA_BUNDLE",
+            "GIT_SSL_CAINFO",
+        ] {
             env.push((name.to_string(), bundle.clone()));
         }
         env
@@ -166,5 +207,7 @@ impl Proxy {
 
 /// `env` as lines for a POSIX shell (`export NAME='value'`), each value quoted.
 pub fn shell_exports(env: &[(String, String)]) -> String {
-    env.iter().map(|(n, v)| format!("export {n}='{}'\n", v.replace('\'', "'\\''"))).collect()
+    env.iter()
+        .map(|(n, v)| format!("export {n}='{}'\n", v.replace('\'', "'\\''")))
+        .collect()
 }

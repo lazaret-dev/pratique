@@ -43,7 +43,10 @@ impl Dit {
     pub(crate) fn on() -> Dit {
         #[cfg(test)]
         if HELD_OFF.with(std::cell::Cell::get) {
-            return Dit { restore: false, _thread: PhantomData };
+            return Dit {
+                restore: false,
+                _thread: PhantomData,
+            };
         }
         #[cfg(test)]
         GUARDS.with(|g| g.set(g.get() + 1));
@@ -51,7 +54,10 @@ impl Dit {
         if restore {
             imp::set(true);
         }
-        Dit { restore, _thread: PhantomData }
+        Dit {
+            restore,
+            _thread: PhantomData,
+        }
     }
 }
 
@@ -144,7 +150,10 @@ mod tests {
         if !Dit::available() {
             assert!(!Dit::is_set());
             let _g = Dit::on();
-            assert!(!Dit::is_set(), "a CPU without the mode never reports the bit set");
+            assert!(
+                !Dit::is_set(),
+                "a CPU without the mode never reports the bit set"
+            );
             return;
         }
         assert!(!Dit::is_set(), "the bit is clear on a fresh test thread");
@@ -182,39 +191,114 @@ mod tests {
         use crate::crypto::sha2::{Sha256, Sha384};
         use crate::crypto::{aes::Aes, ecdh, gcm::AesGcm, hmac, x25519};
         let k = [7u8; 32];
-        let (g, c, a, m) = (AesGcm::new(&k[..16]), ChaCha20Poly1305::new(&k), Aes::new(&k), ChaCha20Mask::new(&k));
+        let (g, c, a, m) = (
+            AesGcm::new(&k[..16]),
+            ChaCha20Poly1305::new(&k),
+            Aes::new(&k),
+            ChaCha20Mask::new(&k),
+        );
         let (s, p) = ecdh::generate(Curve::P384).unwrap();
         let mut buf = vec![0u8; 18];
         let entry_points: Vec<(&str, Box<dyn Fn()>)> = vec![
             ("AesGcm::new", Box::new(|| drop(AesGcm::new(&k[..16])))),
-            ("AesGcm::seal", Box::new(|| drop(g.seal(&[1; 12], b"", b"hi")))),
-            ("AesGcm::open", Box::new(|| drop(g.open(&[1; 12], b"", &[0; 18])))),
-            ("ChaCha20Poly1305::new", Box::new(|| drop(ChaCha20Poly1305::new(&k)))),
-            ("ChaCha20Poly1305::seal", Box::new(|| drop(c.seal(&[1; 12], b"", b"hi")))),
-            ("ChaCha20Poly1305::open", Box::new(|| drop(c.open(&[1; 12], b"", &[0; 18])))),
-            ("ChaCha20Mask::new", Box::new(|| drop(ChaCha20Mask::new(&k)))),
-            ("ChaCha20Mask::mask", Box::new(|| { let _ = m.mask(&[0; 16]); })),
+            (
+                "AesGcm::seal",
+                Box::new(|| drop(g.seal(&[1; 12], b"", b"hi"))),
+            ),
+            (
+                "AesGcm::open",
+                Box::new(|| drop(g.open(&[1; 12], b"", &[0; 18]))),
+            ),
+            (
+                "ChaCha20Poly1305::new",
+                Box::new(|| drop(ChaCha20Poly1305::new(&k))),
+            ),
+            (
+                "ChaCha20Poly1305::seal",
+                Box::new(|| drop(c.seal(&[1; 12], b"", b"hi"))),
+            ),
+            (
+                "ChaCha20Poly1305::open",
+                Box::new(|| drop(c.open(&[1; 12], b"", &[0; 18]))),
+            ),
+            (
+                "ChaCha20Mask::new",
+                Box::new(|| drop(ChaCha20Mask::new(&k))),
+            ),
+            (
+                "ChaCha20Mask::mask",
+                Box::new(|| {
+                    let _ = m.mask(&[0; 16]);
+                }),
+            ),
             ("Aes::new", Box::new(|| drop(Aes::new(&k)))),
-            ("Aes::encrypt_block", Box::new(|| { let _ = a.encrypt_block(&[0; 16]); })),
-            ("Aes::ctr_xor", Box::new(|| a.ctr_xor(&[0; 12], 1, &mut [0; 40]))),
-            ("x25519", Box::new(|| { let _ = x25519::x25519(&k, &x25519::BASE_POINT); })),
-            ("x25519::public_key", Box::new(|| { let _ = x25519::public_key(&k); })),
-            ("ecdh::public_key", Box::new(|| drop(ecdh::public_key(Curve::P256, &k)))),
-            ("ecdh::generate", Box::new(|| drop(ecdh::generate(Curve::P256)))),
-            ("ecdh::shared_secret", Box::new(|| drop(ecdh::shared_secret(Curve::P384, &s, &p)))),
-            ("Hmac::mac", Box::new(|| drop(hmac::Hmac::<Sha256>::mac(&k, b"m")))),
-            ("hkdf_extract", Box::new(|| drop(hmac::hkdf_extract::<Sha384>(b"salt", &k)))),
-            ("hkdf_expand_label", Box::new(|| drop(hmac::hkdf_expand_label::<Sha256>(&k, "key", b"", 16)))),
+            (
+                "Aes::encrypt_block",
+                Box::new(|| {
+                    let _ = a.encrypt_block(&[0; 16]);
+                }),
+            ),
+            (
+                "Aes::ctr_xor",
+                Box::new(|| a.ctr_xor(&[0; 12], 1, &mut [0; 40])),
+            ),
+            (
+                "x25519",
+                Box::new(|| {
+                    let _ = x25519::x25519(&k, &x25519::BASE_POINT);
+                }),
+            ),
+            (
+                "x25519::public_key",
+                Box::new(|| {
+                    let _ = x25519::public_key(&k);
+                }),
+            ),
+            (
+                "ecdh::public_key",
+                Box::new(|| drop(ecdh::public_key(Curve::P256, &k))),
+            ),
+            (
+                "ecdh::generate",
+                Box::new(|| drop(ecdh::generate(Curve::P256))),
+            ),
+            (
+                "ecdh::shared_secret",
+                Box::new(|| drop(ecdh::shared_secret(Curve::P384, &s, &p))),
+            ),
+            (
+                "Hmac::mac",
+                Box::new(|| drop(hmac::Hmac::<Sha256>::mac(&k, b"m"))),
+            ),
+            (
+                "hkdf_extract",
+                Box::new(|| drop(hmac::hkdf_extract::<Sha384>(b"salt", &k))),
+            ),
+            (
+                "hkdf_expand_label",
+                Box::new(|| drop(hmac::hkdf_expand_label::<Sha256>(&k, "key", b"", 16))),
+            ),
         ];
         assert!(!Dit::is_set());
         for (name, f) in &entry_points {
-            assert!(guards_in(|| f()) >= 1, "{name} works without data-independent timing");
+            assert!(
+                guards_in(|| f()) >= 1,
+                "{name} works without data-independent timing"
+            );
             assert!(!Dit::is_set(), "{name} left the bit set");
-            assert_eq!(guards_in(|| held_off(|| f())), 0, "{name}: held off, no guard counts");
+            assert_eq!(
+                guards_in(|| held_off(|| f())),
+                0,
+                "{name}: held off, no guard counts"
+            );
         }
         // in place, too
         assert!(guards_in(|| g.seal_in_place(&[1; 12], b"", &mut buf)) >= 1);
-        assert!(guards_in(|| { let _ = g.open_in_place(&[1; 12], b"", &mut buf); }) >= 1);
+        assert!(
+            guards_in(|| {
+                let _ = g.open_in_place(&[1; 12], b"", &mut buf);
+            }) >= 1
+        );
         // inside a caller's own guard the bit stays set throughout
         let _g = Dit::on();
         for (_, f) in &entry_points {

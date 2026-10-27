@@ -27,7 +27,9 @@ pub const MAX_RTT: Duration = Duration::from_secs(60);
 
 /// `t + d`, or the furthest `t` can go if that is past what an `Instant` holds (a timer that far away never fires).
 fn later(t: Instant, d: Duration) -> Instant {
-    t.checked_add(d).or_else(|| t.checked_add(Duration::from_secs(1 << 32))).unwrap_or(t)
+    t.checked_add(d)
+        .or_else(|| t.checked_add(Duration::from_secs(1 << 32)))
+        .unwrap_or(t)
 }
 
 /// The three packet number spaces.
@@ -100,7 +102,13 @@ struct SpaceState<T> {
 
 impl<T> SpaceState<T> {
     fn new() -> SpaceState<T> {
-        SpaceState { sent: BTreeMap::new(), largest_acked: None, loss_time: None, last_ack_eliciting: None, ack_eliciting_in_flight: 0 }
+        SpaceState {
+            sent: BTreeMap::new(),
+            largest_acked: None,
+            loss_time: None,
+            last_ack_eliciting: None,
+            ack_eliciting_in_flight: 0,
+        }
     }
 }
 
@@ -281,11 +289,19 @@ impl<T> Recovery<T> {
         for r in ranges {
             let keys: Vec<u64> = self.spaces[si].sent.range(r).map(|(&k, _)| k).collect();
             for k in keys {
-                acked.push(self.spaces[si].sent.remove(&k).expect("a key that was just listed"));
+                acked.push(
+                    self.spaces[si]
+                        .sent
+                        .remove(&k)
+                        .expect("a key that was just listed"),
+                );
             }
         }
         if acked.is_empty() {
-            return AckOutcome { acked, lost: Vec::new() };
+            return AckOutcome {
+                acked,
+                lost: Vec::new(),
+            };
         }
         acked.sort_by_key(|p| p.pn);
 
@@ -294,7 +310,11 @@ impl<T> Recovery<T> {
         let newest = acked.last().expect("some acknowledged");
         if newest.pn == largest && acked.iter().any(|p| p.ack_eliciting) {
             self.latest_rtt = now.saturating_duration_since(newest.time).min(MAX_RTT);
-            let delay = if space == Space::Initial { Duration::ZERO } else { ack_delay };
+            let delay = if space == Space::Initial {
+                Duration::ZERO
+            } else {
+                ack_delay
+            };
             self.update_rtt(now, delay);
         }
 
@@ -334,11 +354,23 @@ impl<T> Recovery<T> {
             return;
         }
         self.min_rtt = self.min_rtt.min(self.latest_rtt);
-        let ack_delay = if self.handshake_confirmed { ack_delay.min(self.max_ack_delay) } else { ack_delay };
+        let ack_delay = if self.handshake_confirmed {
+            ack_delay.min(self.max_ack_delay)
+        } else {
+            ack_delay
+        };
         // the delay is taken off the sample if that leaves no less than the smallest round trip seen
-        let adjusted = if self.latest_rtt >= self.min_rtt + ack_delay { self.latest_rtt - ack_delay } else { self.latest_rtt };
+        let adjusted = if self.latest_rtt >= self.min_rtt + ack_delay {
+            self.latest_rtt - ack_delay
+        } else {
+            self.latest_rtt
+        };
         // (the variation is taken against the estimate before this sample, as in RFC 6298 and the appendix of RFC 9002)
-        let deviation = if self.smoothed_rtt > adjusted { self.smoothed_rtt - adjusted } else { adjusted - self.smoothed_rtt };
+        let deviation = if self.smoothed_rtt > adjusted {
+            self.smoothed_rtt - adjusted
+        } else {
+            adjusted - self.smoothed_rtt
+        };
         self.rttvar = self.rttvar * 3 / 4 + deviation / 4;
         self.smoothed_rtt = self.smoothed_rtt * 7 / 8 + adjusted / 8;
     }
@@ -348,12 +380,16 @@ impl<T> Recovery<T> {
     fn detect_lost(&mut self, now: Instant, space: Space) -> Vec<Sent<T>> {
         let si = space.index();
         self.spaces[si].loss_time = None;
-        let Some(largest) = self.spaces[si].largest_acked else { return Vec::new() };
+        let Some(largest) = self.spaces[si].largest_acked else {
+            return Vec::new();
+        };
         let loss_delay = (self.latest_rtt.max(self.smoothed_rtt) * 9 / 8).max(GRANULARITY);
         let mut lost_pns = Vec::new();
         let mut loss_time: Option<Instant> = None;
         for (&pn, p) in self.spaces[si].sent.range(..=largest) {
-            if now.saturating_duration_since(p.time) >= loss_delay || largest >= pn + PACKET_THRESHOLD {
+            if now.saturating_duration_since(p.time) >= loss_delay
+                || largest >= pn + PACKET_THRESHOLD
+            {
                 lost_pns.push(pn);
             } else {
                 let t = later(p.time, loss_delay);
@@ -361,8 +397,14 @@ impl<T> Recovery<T> {
             }
         }
         self.spaces[si].loss_time = loss_time;
-        let lost: Vec<Sent<T>> = lost_pns.into_iter().map(|pn| self.spaces[si].sent.remove(&pn).expect("listed")).collect();
-        self.spaces[si].ack_eliciting_in_flight -= lost.iter().filter(|p| p.in_flight && p.ack_eliciting).count();
+        let lost: Vec<Sent<T>> = lost_pns
+            .into_iter()
+            .map(|pn| self.spaces[si].sent.remove(&pn).expect("listed"))
+            .collect();
+        self.spaces[si].ack_eliciting_in_flight -= lost
+            .iter()
+            .filter(|p| p.in_flight && p.ack_eliciting)
+            .count();
         lost
     }
 
@@ -387,8 +429,12 @@ impl<T> Recovery<T> {
     /// with no packet between them that was not lost, and further apart than the persistent congestion duration (RFC 9002 section
     /// 7.6; only the space of the acknowledgment is looked at, which the RFC allows).
     fn in_persistent_congestion(&self, lost: &[Sent<T>]) -> bool {
-        let Some(first_sample) = self.first_rtt_sample else { return false };
-        let duration = (self.smoothed_rtt + (4 * self.rttvar).max(GRANULARITY) + self.max_ack_delay) * PERSISTENT_CONGESTION_THRESHOLD;
+        let Some(first_sample) = self.first_rtt_sample else {
+            return false;
+        };
+        let duration =
+            (self.smoothed_rtt + (4 * self.rttvar).max(GRANULARITY) + self.max_ack_delay)
+                * PERSISTENT_CONGESTION_THRESHOLD;
         // runs of consecutive packet numbers (a packet between that is not in the list was acknowledged or is still out): from the
         // first ack-eliciting packet of a run to each later one
         let mut run_start: Option<Instant> = None;
@@ -401,7 +447,9 @@ impl<T> Recovery<T> {
             if p.ack_eliciting && p.time > first_sample {
                 match run_start {
                     None => run_start = Some(p.time),
-                    Some(start) if p.time.saturating_duration_since(start) > duration => return true,
+                    Some(start) if p.time.saturating_duration_since(start) > duration => {
+                        return true
+                    }
                     Some(_) => {}
                 }
             }
@@ -431,10 +479,16 @@ impl<T> Recovery<T> {
     /// When the probe timeout is, and for which space (RFC 9002 section 6.2.1, with `now` where the algorithm says "now").
     fn pto_time_and_space(&self, now: Instant) -> Option<(Instant, Space)> {
         let backoff = 1u32 << self.pto_count.min(20);
-        let base = self.smoothed_rtt.saturating_add(self.rttvar.saturating_mul(4).max(GRANULARITY));
+        let base = self
+            .smoothed_rtt
+            .saturating_add(self.rttvar.saturating_mul(4).max(GRANULARITY));
         if !self.any_ack_eliciting_in_flight() {
             // the anti-deadlock probe: from now
-            let space = if self.handshake_keys { Space::Handshake } else { Space::Initial };
+            let space = if self.handshake_keys {
+                Space::Handshake
+            } else {
+                Space::Initial
+            };
             return Some((later(now, base.saturating_mul(backoff)), space));
         }
         let mut best: Option<(Instant, Space)> = None;
@@ -451,7 +505,9 @@ impl<T> Recovery<T> {
                 }
                 duration = duration.saturating_add(self.max_ack_delay.saturating_mul(backoff));
             }
-            let Some(last) = s.last_ack_eliciting else { continue };
+            let Some(last) = s.last_ack_eliciting else {
+                continue;
+            };
             let t = later(last, duration);
             if best.map_or(true, |(b, _)| t < b) {
                 best = Some((t, space));
@@ -480,27 +536,53 @@ impl<T> Recovery<T> {
             let lost = self.detect_lost(now, space);
             self.on_packets_lost(now, &lost);
             self.set_timer(now);
-            return Timeout { lost_space: space, lost, probe: None };
+            return Timeout {
+                lost_space: space,
+                lost,
+                probe: None,
+            };
         }
         let anti_deadlock = !self.any_ack_eliciting_in_flight();
         let probe = if anti_deadlock {
             debug_assert!(!self.peer_completed_address_validation());
-            let space = if self.handshake_keys { Space::Handshake } else { Space::Initial };
-            Probe { space, anti_deadlock: true }
+            let space = if self.handshake_keys {
+                Space::Handshake
+            } else {
+                Space::Initial
+            };
+            Probe {
+                space,
+                anti_deadlock: true,
+            }
         } else {
-            let space = self.pto_time_and_space(now).map(|(_, s)| s).unwrap_or(Space::Application);
-            Probe { space, anti_deadlock: false }
+            let space = self
+                .pto_time_and_space(now)
+                .map(|(_, s)| s)
+                .unwrap_or(Space::Application);
+            Probe {
+                space,
+                anti_deadlock: false,
+            }
         };
         self.pto_count += 1;
         self.set_timer(now);
-        Timeout { lost_space: probe.space, lost: Vec::new(), probe: Some(probe) }
+        Timeout {
+            lost_space: probe.space,
+            lost: Vec::new(),
+            probe: Some(probe),
+        }
     }
 
     /// The keys of `space` are discarded (Initial: when the client sends its first Handshake packet; Handshake: when the handshake is
     /// confirmed): its packets are given up, and the timers start over. Returns what was outstanding.
     pub fn discard_space(&mut self, now: Instant, space: Space) -> Vec<Sent<T>> {
         let s = std::mem::replace(&mut self.spaces[space.index()], SpaceState::new());
-        let bytes: usize = s.sent.values().filter(|p| p.in_flight).map(|p| p.size).sum();
+        let bytes: usize = s
+            .sent
+            .values()
+            .filter(|p| p.in_flight)
+            .map(|p| p.size)
+            .sum();
         self.cc.on_discarded(bytes);
         if space == Space::Handshake {
             self.handshake_keys = false;
@@ -543,7 +625,14 @@ mod tests {
     }
 
     fn sent(pn: u64, time: Instant, ack_eliciting: bool) -> Sent<u64> {
-        Sent { pn, time, size: 1200, ack_eliciting, in_flight: ack_eliciting, payload: pn * 100 }
+        Sent {
+            pn,
+            time,
+            size: 1200,
+            ack_eliciting,
+            in_flight: ack_eliciting,
+            payload: pn * 100,
+        }
     }
 
     /// A connection after the handshake with an RTT of 100 ms and nothing to wait for.
@@ -551,7 +640,13 @@ mod tests {
         let mut r = Recovery::new(MDS);
         r.on_packet_sent(t0, Space::Application, sent(0, t0, true));
         r.on_handshake_confirmed(t0);
-        let out = r.on_ack_received(t0 + ms(100), Space::Application, 0, ms(0), std::iter::once(0..=0));
+        let out = r.on_ack_received(
+            t0 + ms(100),
+            Space::Application,
+            0,
+            ms(0),
+            std::iter::once(0..=0),
+        );
         assert_eq!(out.acked.len(), 1);
         assert_eq!(r.smoothed_rtt(), ms(100));
         r
@@ -577,11 +672,17 @@ mod tests {
         r.on_packet_sent(far, Space::Initial, sent(1, far, true));
         let mut now = far;
         for _ in 0..30 {
-            let Some(t) = r.timer() else { panic!("no timer with a packet out") };
+            let Some(t) = r.timer() else {
+                panic!("no timer with a packet out")
+            };
             assert!(t > now);
             now = t;
             r.on_timeout(now);
-            r.on_packet_sent(now, Space::Initial, sent(100 + r.pto_count() as u64, now, true));
+            r.on_packet_sent(
+                now,
+                Space::Initial,
+                sent(100 + r.pto_count() as u64, now, true),
+            );
         }
         assert_eq!(r.reset(Some(Duration::MAX)).len() > 0, true);
         assert_eq!(r.smoothed_rtt(), MAX_RTT);
@@ -591,10 +692,22 @@ mod tests {
     fn the_first_sample_is_the_estimate() {
         let t0 = Instant::now();
         let mut r = Recovery::new(MDS);
-        assert_eq!((r.smoothed_rtt(), r.rttvar(), r.has_rtt_sample()), (ms(333), ms(333) / 2, false));
+        assert_eq!(
+            (r.smoothed_rtt(), r.rttvar(), r.has_rtt_sample()),
+            (ms(333), ms(333) / 2, false)
+        );
         r.on_packet_sent(t0, Space::Initial, sent(0, t0, true));
-        r.on_ack_received(t0 + ms(80), Space::Initial, 0, ms(0), std::iter::once(0..=0));
-        assert_eq!((r.latest_rtt(), r.smoothed_rtt(), r.rttvar(), r.min_rtt()), (ms(80), ms(80), ms(40), ms(80)));
+        r.on_ack_received(
+            t0 + ms(80),
+            Space::Initial,
+            0,
+            ms(0),
+            std::iter::once(0..=0),
+        );
+        assert_eq!(
+            (r.latest_rtt(), r.smoothed_rtt(), r.rttvar(), r.min_rtt()),
+            (ms(80), ms(80), ms(40), ms(80))
+        );
         assert!(r.has_rtt_sample());
     }
 
@@ -604,8 +717,18 @@ mod tests {
         let mut r = established(t0);
         // 100 ms smoothed, 50 ms variation. A sample of 180 ms with a delay of 20 ms (the handshake is confirmed: at most max_ack_delay,
         // 25 ms): adjusted 160.
-        r.on_packet_sent(t0 + ms(200), Space::Application, sent(1, t0 + ms(200), true));
-        r.on_ack_received(t0 + ms(380), Space::Application, 1, ms(20), std::iter::once(1..=1));
+        r.on_packet_sent(
+            t0 + ms(200),
+            Space::Application,
+            sent(1, t0 + ms(200), true),
+        );
+        r.on_ack_received(
+            t0 + ms(380),
+            Space::Application,
+            1,
+            ms(20),
+            std::iter::once(1..=1),
+        );
         assert_eq!(r.latest_rtt(), ms(180));
         // variation: 3/4 * 50 + 1/4 * |100 - 160| = 37.5 + 15 = 52.5; smoothed: 7/8 * 100 + 1/8 * 160 = 107.5
         assert_eq!(r.rttvar(), Duration::from_micros(52_500));
@@ -617,9 +740,19 @@ mod tests {
     fn a_delay_larger_than_max_ack_delay_is_cut_once_the_handshake_is_confirmed() {
         let t0 = Instant::now();
         let mut r = established(t0);
-        r.on_packet_sent(t0 + ms(200), Space::Application, sent(1, t0 + ms(200), true));
+        r.on_packet_sent(
+            t0 + ms(200),
+            Space::Application,
+            sent(1, t0 + ms(200), true),
+        );
         // reports 90 ms of delay: only 25 ms counts, so adjusted = 200 - 25
-        r.on_ack_received(t0 + ms(400), Space::Application, 1, ms(90), std::iter::once(1..=1));
+        r.on_ack_received(
+            t0 + ms(400),
+            Space::Application,
+            1,
+            ms(90),
+            std::iter::once(1..=1),
+        );
         // 7/8 * 100 + 1/8 * 175 = 109.375
         assert_eq!(r.smoothed_rtt(), Duration::from_micros(109_375));
     }
@@ -628,9 +761,19 @@ mod tests {
     fn the_delay_is_not_taken_off_below_the_smallest_round_trip() {
         let t0 = Instant::now();
         let mut r = established(t0);
-        r.on_packet_sent(t0 + ms(200), Space::Application, sent(1, t0 + ms(200), true));
+        r.on_packet_sent(
+            t0 + ms(200),
+            Space::Application,
+            sent(1, t0 + ms(200), true),
+        );
         // a sample of 110 ms with a reported delay of 20: 110 < 100 + 20, so the delay is not taken off
-        r.on_ack_received(t0 + ms(310), Space::Application, 1, ms(20), std::iter::once(1..=1));
+        r.on_ack_received(
+            t0 + ms(310),
+            Space::Application,
+            1,
+            ms(20),
+            std::iter::once(1..=1),
+        );
         assert_eq!(r.smoothed_rtt(), Duration::from_micros(101_250));
     }
 
@@ -638,31 +781,86 @@ mod tests {
     fn some_acknowledgments_give_no_sample() {
         let t0 = Instant::now();
         let mut r = established(t0);
-        r.on_packet_sent(t0 + ms(200), Space::Application, sent(1, t0 + ms(200), false));
+        r.on_packet_sent(
+            t0 + ms(200),
+            Space::Application,
+            sent(1, t0 + ms(200), false),
+        );
         // the largest acknowledged is not ack-eliciting and nothing else is acknowledged
-        r.on_ack_received(t0 + ms(400), Space::Application, 1, ms(0), std::iter::once(1..=1));
+        r.on_ack_received(
+            t0 + ms(400),
+            Space::Application,
+            1,
+            ms(0),
+            std::iter::once(1..=1),
+        );
         assert_eq!(r.latest_rtt(), ms(100));
         // the largest acknowledged was acknowledged before: 5 first (a sample), then 4 and 5 (4 is new, but it is not the largest)
-        r.on_packet_sent(t0 + ms(500), Space::Application, sent(4, t0 + ms(500), true));
-        r.on_packet_sent(t0 + ms(510), Space::Application, sent(5, t0 + ms(510), true));
-        r.on_ack_received(t0 + ms(630), Space::Application, 5, ms(0), std::iter::once(5..=5));
+        r.on_packet_sent(
+            t0 + ms(500),
+            Space::Application,
+            sent(4, t0 + ms(500), true),
+        );
+        r.on_packet_sent(
+            t0 + ms(510),
+            Space::Application,
+            sent(5, t0 + ms(510), true),
+        );
+        r.on_ack_received(
+            t0 + ms(630),
+            Space::Application,
+            5,
+            ms(0),
+            std::iter::once(5..=5),
+        );
         assert_eq!(r.latest_rtt(), ms(120));
-        r.on_ack_received(t0 + ms(700), Space::Application, 5, ms(0), std::iter::once(4..=5));
+        r.on_ack_received(
+            t0 + ms(700),
+            Space::Application,
+            5,
+            ms(0),
+            std::iter::once(4..=5),
+        );
         assert_eq!(r.latest_rtt(), ms(120));
         // an acknowledgment that tells nothing new
-        let out = r.on_ack_received(t0 + ms(800), Space::Application, 5, ms(0), std::iter::once(4..=5));
+        let out = r.on_ack_received(
+            t0 + ms(800),
+            Space::Application,
+            5,
+            ms(0),
+            std::iter::once(4..=5),
+        );
         assert!(out.acked.is_empty() && out.lost.is_empty());
     }
 
     #[test]
-    fn a_sample_is_taken_when_the_largest_is_newly_acknowledged_with_something_that_needs_an_acknowledgment() {
+    fn a_sample_is_taken_when_the_largest_is_newly_acknowledged_with_something_that_needs_an_acknowledgment(
+    ) {
         let t0 = Instant::now();
         let mut r = established(t0);
-        r.on_packet_sent(t0 + ms(200), Space::Application, sent(1, t0 + ms(200), false));
-        r.on_packet_sent(t0 + ms(210), Space::Application, sent(2, t0 + ms(210), true));
-        r.on_packet_sent(t0 + ms(220), Space::Application, sent(3, t0 + ms(220), false));
+        r.on_packet_sent(
+            t0 + ms(200),
+            Space::Application,
+            sent(1, t0 + ms(200), false),
+        );
+        r.on_packet_sent(
+            t0 + ms(210),
+            Space::Application,
+            sent(2, t0 + ms(210), true),
+        );
+        r.on_packet_sent(
+            t0 + ms(220),
+            Space::Application,
+            sent(3, t0 + ms(220), false),
+        );
         // (RFC 9002 appendix: the largest newly acknowledged is the largest of the frame, and some one acknowledged is ack-eliciting)
-        r.on_ack_received(t0 + ms(400), Space::Application, 3, ms(0), std::iter::once(1..=3));
+        r.on_ack_received(
+            t0 + ms(400),
+            Space::Application,
+            3,
+            ms(0),
+            std::iter::once(1..=3),
+        );
         assert_eq!(r.latest_rtt(), ms(180));
     }
 
@@ -678,7 +876,13 @@ mod tests {
             r.on_packet_sent(t, Space::Application, sent(pn, t, true));
         }
         // 5 is acknowledged: 1 and 2 are three or more behind (5 >= 1 + 3, 5 >= 2 + 3); 3 and 4 are not
-        let out = r.on_ack_received(t + ms(100), Space::Application, 5, ms(0), std::iter::once(5..=5));
+        let out = r.on_ack_received(
+            t + ms(100),
+            Space::Application,
+            5,
+            ms(0),
+            std::iter::once(5..=5),
+        );
         assert_eq!(pns(&out.acked), vec![5]);
         assert_eq!(pns(&out.lost), vec![1, 2]);
         assert_eq!(r.ack_eliciting_in_flight(Space::Application), 3);
@@ -694,13 +898,28 @@ mod tests {
     }
 
     #[test]
-    fn a_packet_that_has_waited_longer_than_the_time_threshold_is_lost_at_the_next_acknowledgment() {
+    fn a_packet_that_has_waited_longer_than_the_time_threshold_is_lost_at_the_next_acknowledgment()
+    {
         let t0 = Instant::now();
         let mut r = established(t0);
-        r.on_packet_sent(t0 + ms(200), Space::Application, sent(1, t0 + ms(200), true));
-        r.on_packet_sent(t0 + ms(290), Space::Application, sent(2, t0 + ms(290), true));
+        r.on_packet_sent(
+            t0 + ms(200),
+            Space::Application,
+            sent(1, t0 + ms(200), true),
+        );
+        r.on_packet_sent(
+            t0 + ms(290),
+            Space::Application,
+            sent(2, t0 + ms(290), true),
+        );
         // 2 is acknowledged 100 ms after 1 is sent... 1 was sent 190 ms before 2 was acknowledged: more than 112.5 ms
-        let out = r.on_ack_received(t0 + ms(390), Space::Application, 2, ms(0), std::iter::once(2..=2));
+        let out = r.on_ack_received(
+            t0 + ms(390),
+            Space::Application,
+            2,
+            ms(0),
+            std::iter::once(2..=2),
+        );
         assert_eq!(pns(&out.lost), vec![1]);
     }
 
@@ -713,9 +932,20 @@ mod tests {
         for pn in 1..=8 {
             r.on_packet_sent(t, Space::Application, sent(pn, t, true));
         }
-        let out = r.on_ack_received(t + ms(100), Space::Application, 8, ms(0), std::iter::once(8..=8));
+        let out = r.on_ack_received(
+            t + ms(100),
+            Space::Application,
+            8,
+            ms(0),
+            std::iter::once(8..=8),
+        );
         assert_eq!(pns(&out.lost), vec![1, 2, 3, 4, 5]);
-        assert!(r.congestion().window() < w, "{} < {}", r.congestion().window(), w);
+        assert!(
+            r.congestion().window() < w,
+            "{} < {}",
+            r.congestion().window(),
+            w
+        );
         assert_eq!(r.congestion().window(), w / 2);
         // 6 and 7 go by the time threshold and are part of the same event
         let timer = r.timer().unwrap();
@@ -724,14 +954,27 @@ mod tests {
     }
 
     #[test]
-    fn packets_that_are_not_in_flight_are_not_counted_but_are_lost_and_acknowledged_like_the_rest() {
+    fn packets_that_are_not_in_flight_are_not_counted_but_are_lost_and_acknowledged_like_the_rest()
+    {
         let t0 = Instant::now();
         let mut r = established(t0);
         let t = t0 + ms(200);
         r.on_packet_sent(t, Space::Application, sent(1, t, false));
-        assert_eq!((r.bytes_in_flight(), r.ack_eliciting_in_flight(Space::Application)), (0, 0));
+        assert_eq!(
+            (
+                r.bytes_in_flight(),
+                r.ack_eliciting_in_flight(Space::Application)
+            ),
+            (0, 0)
+        );
         assert_eq!(r.outstanding(Space::Application).count(), 1);
-        let out = r.on_ack_received(t + ms(50), Space::Application, 1, ms(0), std::iter::once(1..=1));
+        let out = r.on_ack_received(
+            t + ms(50),
+            Space::Application,
+            1,
+            ms(0),
+            std::iter::once(1..=1),
+        );
         assert_eq!(pns(&out.acked), vec![1]);
         assert_eq!(r.outstanding(Space::Application).count(), 0);
     }
@@ -745,7 +988,13 @@ mod tests {
         // an RTT sample first, so that persistent congestion can be established: a round trip of 200 ms and a variation of 100 ms,
         // so the period is 200 + 4 * 100 = 600 ms and the duration three of them
         r.on_packet_sent(t0, Space::Application, sent(0, t0, true));
-        r.on_ack_received(t0 + ms(200), Space::Application, 0, ms(0), std::iter::once(0..=0));
+        r.on_ack_received(
+            t0 + ms(200),
+            Space::Application,
+            0,
+            ms(0),
+            std::iter::once(0..=0),
+        );
         assert_eq!((r.smoothed_rtt(), r.rttvar()), (ms(200), ms(100)));
         let base = t0 + ms(1000);
         for i in 0..7u64 {
@@ -756,7 +1005,13 @@ mod tests {
         r.on_packet_sent(t, Space::Application, sent(8, t, true));
         assert!(r.congestion().window() > 2 * MDS);
         // 8 is acknowledged late: 1 to 7 are lost, 3000 ms from the first to the last, more than 1800 (or what the estimate has become)
-        let out = r.on_ack_received(base + ms(3300), Space::Application, 8, ms(0), std::iter::once(8..=8));
+        let out = r.on_ack_received(
+            base + ms(3300),
+            Space::Application,
+            8,
+            ms(0),
+            std::iter::once(8..=8),
+        );
         assert_eq!(pns(&out.lost), vec![1, 2, 3, 4, 5, 6, 7]);
         // (the packet that was acknowledged then grows the window of two packets by its size, in slow start)
         assert_eq!(r.congestion().window(), 3 * MDS, "persistent congestion");
@@ -769,7 +1024,13 @@ mod tests {
         r.set_max_ack_delay(Duration::ZERO);
         r.on_handshake_confirmed(t0);
         r.on_packet_sent(t0, Space::Application, sent(0, t0, true));
-        r.on_ack_received(t0 + ms(200), Space::Application, 0, ms(0), std::iter::once(0..=0));
+        r.on_ack_received(
+            t0 + ms(200),
+            Space::Application,
+            0,
+            ms(0),
+            std::iter::once(0..=0),
+        );
         let base = t0 + ms(1000);
         for i in 0..7u64 {
             let t = base + ms(500 * i);
@@ -778,9 +1039,19 @@ mod tests {
         // 4 (sent at 1500 after base) is acknowledged along with 8: the lost ones are in two runs, 1..=3 (1000 ms) and 5..=7
         let t = base + ms(3100);
         r.on_packet_sent(t, Space::Application, sent(8, t, true));
-        let out = r.on_ack_received(base + ms(3300), Space::Application, 8, ms(0), [8..=8, 4..=4].into_iter());
+        let out = r.on_ack_received(
+            base + ms(3300),
+            Space::Application,
+            8,
+            ms(0),
+            [8..=8, 4..=4].into_iter(),
+        );
         assert_eq!(pns(&out.lost), vec![1, 2, 3, 5, 6, 7]);
-        assert!(r.congestion().window() > 2 * MDS, "a window of {}", r.congestion().window());
+        assert!(
+            r.congestion().window() > 2 * MDS,
+            "a window of {}",
+            r.congestion().window()
+        );
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
@@ -797,14 +1068,29 @@ mod tests {
         r.on_packet_sent(t, Space::Application, sent(1, t, true));
         assert_eq!(r.timer(), Some(t + ms(325)));
         let out = r.on_timeout(t + ms(325));
-        assert_eq!(out.probe, Some(Probe { space: Space::Application, anti_deadlock: false }));
-        assert!(out.lost.is_empty(), "a probe timeout does not declare anything lost");
+        assert_eq!(
+            out.probe,
+            Some(Probe {
+                space: Space::Application,
+                anti_deadlock: false
+            })
+        );
+        assert!(
+            out.lost.is_empty(),
+            "a probe timeout does not declare anything lost"
+        );
         assert_eq!(r.pto_count(), 1);
         assert_eq!(r.timer(), Some(t + ms(650)));
         r.on_timeout(t + ms(650));
         assert_eq!(r.timer(), Some(t + ms(1300)));
         // an acknowledgment (once the server's address is known to be validated) takes the backoff off
-        r.on_ack_received(t + ms(1400), Space::Application, 1, ms(0), std::iter::once(1..=1));
+        r.on_ack_received(
+            t + ms(1400),
+            Space::Application,
+            1,
+            ms(0),
+            std::iter::once(1..=1),
+        );
         assert_eq!(r.pto_count(), 0);
         assert_eq!(r.timer(), None, "nothing in flight");
     }
@@ -815,14 +1101,27 @@ mod tests {
         let mut r: Recovery<u64> = Recovery::new(MDS);
         r.set_handshake_keys(true);
         r.on_packet_sent(t0, Space::Application, sent(0, t0, true));
-        assert_eq!(r.timer(), None, "only Application Data packets are in flight, and the handshake is not confirmed");
+        assert_eq!(
+            r.timer(),
+            None,
+            "only Application Data packets are in flight, and the handshake is not confirmed"
+        );
         r.on_packet_sent(t0, Space::Handshake, sent(0, t0, true));
-        assert_eq!(r.pto_time_and_space(t0).map(|(_, s)| s), Some(Space::Handshake));
+        assert_eq!(
+            r.pto_time_and_space(t0).map(|(_, s)| s),
+            Some(Space::Handshake)
+        );
         r.on_handshake_confirmed(t0);
         // now both: the Handshake one is earlier (no max_ack_delay), and without it the Application one has a timer
-        assert_eq!(r.pto_time_and_space(t0).map(|(_, s)| s), Some(Space::Handshake));
+        assert_eq!(
+            r.pto_time_and_space(t0).map(|(_, s)| s),
+            Some(Space::Handshake)
+        );
         r.discard_space(t0, Space::Handshake);
-        assert_eq!(r.pto_time_and_space(t0).map(|(_, s)| s), Some(Space::Application));
+        assert_eq!(
+            r.pto_time_and_space(t0).map(|(_, s)| s),
+            Some(Space::Application)
+        );
         assert_eq!(r.timer(), Some(t0 + ms(999) + ms(25)));
     }
 
@@ -837,7 +1136,13 @@ mod tests {
         r.on_packet_sent(t0 + ms(10), Space::Handshake, sent(0, t0 + ms(10), true));
         assert_eq!(r.timer(), Some(t0 + ms(999)), "the Initial packet is older");
         let out = r.on_timeout(t0 + ms(999));
-        assert_eq!(out.probe, Some(Probe { space: Space::Initial, anti_deadlock: false }));
+        assert_eq!(
+            out.probe,
+            Some(Probe {
+                space: Space::Initial,
+                anti_deadlock: false
+            })
+        );
         // the backoff counts for both spaces: the Initial packet is next at 2 * 999, and the Handshake one at 10 + 2 * 999
         assert_eq!(r.timer(), Some(t0 + ms(1998)));
     }
@@ -847,25 +1152,55 @@ mod tests {
         let t0 = Instant::now();
         let mut r: Recovery<u64> = Recovery::new(MDS);
         r.on_packet_sent(t0, Space::Initial, sent(0, t0, true));
-        r.on_ack_received(t0 + ms(50), Space::Initial, 0, ms(0), std::iter::once(0..=0));
+        r.on_ack_received(
+            t0 + ms(50),
+            Space::Initial,
+            0,
+            ms(0),
+            std::iter::once(0..=0),
+        );
         assert_eq!(r.ack_eliciting_in_flight(Space::Initial), 0);
         // (smoothed 50, variation 25: 150 ms from the acknowledgment)
         assert_eq!(r.timer(), Some(t0 + ms(50) + ms(150)));
         assert_eq!(r.pto_count(), 0);
         let out = r.on_timeout(t0 + ms(200));
-        assert_eq!(out.probe, Some(Probe { space: Space::Initial, anti_deadlock: true }));
+        assert_eq!(
+            out.probe,
+            Some(Probe {
+                space: Space::Initial,
+                anti_deadlock: true
+            })
+        );
         assert_eq!(r.pto_count(), 1);
         // and an acknowledgment of an Initial packet does not take the backoff off
         r.on_packet_sent(t0 + ms(200), Space::Initial, sent(1, t0 + ms(200), true));
-        r.on_ack_received(t0 + ms(250), Space::Initial, 1, ms(0), std::iter::once(1..=1));
+        r.on_ack_received(
+            t0 + ms(250),
+            Space::Initial,
+            1,
+            ms(0),
+            std::iter::once(1..=1),
+        );
         assert_eq!(r.pto_count(), 1);
         // once there are Handshake keys the probe is a Handshake packet
         r.set_handshake_keys(true);
         let out = r.on_timeout(r.timer().unwrap());
-        assert_eq!(out.probe, Some(Probe { space: Space::Handshake, anti_deadlock: true }));
+        assert_eq!(
+            out.probe,
+            Some(Probe {
+                space: Space::Handshake,
+                anti_deadlock: true
+            })
+        );
         // and an acknowledgment of a Handshake packet is the proof, and resets it
         r.on_packet_sent(t0 + ms(300), Space::Handshake, sent(0, t0 + ms(300), true));
-        r.on_ack_received(t0 + ms(350), Space::Handshake, 0, ms(0), std::iter::once(0..=0));
+        r.on_ack_received(
+            t0 + ms(350),
+            Space::Handshake,
+            0,
+            ms(0),
+            std::iter::once(0..=0),
+        );
         assert_eq!(r.pto_count(), 0);
         assert_eq!(r.timer(), None);
     }
@@ -883,7 +1218,14 @@ mod tests {
         assert_eq!(r.bytes_in_flight(), 3600);
         let gone = r.discard_space(t0 + ms(1000), Space::Initial);
         assert_eq!(pns(&gone), vec![0, 1]);
-        assert_eq!((r.bytes_in_flight(), r.pto_count(), r.ack_eliciting_in_flight(Space::Initial)), (1200, 0, 0));
+        assert_eq!(
+            (
+                r.bytes_in_flight(),
+                r.pto_count(),
+                r.ack_eliciting_in_flight(Space::Initial)
+            ),
+            (1200, 0, 0)
+        );
         assert_eq!(r.timer(), Some(t0 + ms(5) + ms(999)));
     }
 
@@ -895,7 +1237,10 @@ mod tests {
         r.on_timeout(t0 + ms(999));
         let gone = r.reset(Some(ms(40)));
         assert_eq!(pns(&gone), vec![0]);
-        assert_eq!((r.bytes_in_flight(), r.pto_count(), r.timer()), (0, 0, None));
+        assert_eq!(
+            (r.bytes_in_flight(), r.pto_count(), r.timer()),
+            (0, 0, None)
+        );
         assert_eq!((r.smoothed_rtt(), r.rttvar()), (ms(40), ms(20)));
         assert!(!r.has_rtt_sample());
     }
@@ -927,7 +1272,14 @@ mod tests {
                     0 | 1 => {
                         let ae = next(4) != 0;
                         let size = 100 + next(1100) as usize;
-                        let p = Sent { pn: next_pn, time: now, size, ack_eliciting: ae, in_flight: ae || next(5) == 0, payload: next_pn };
+                        let p = Sent {
+                            pn: next_pn,
+                            time: now,
+                            size,
+                            ack_eliciting: ae,
+                            in_flight: ae || next(5) == 0,
+                            payload: next_pn,
+                        };
                         next_pn += 1;
                         r.on_packet_sent(now, Space::Application, p);
                     }
@@ -938,9 +1290,19 @@ mod tests {
                         let a = next(next_pn);
                         let b = (a + next(6)).min(next_pn - 1);
                         let largest = b;
-                        let out = r.on_ack_received(now, Space::Application, largest, ms(next(5)), std::iter::once(a..=b));
+                        let out = r.on_ack_received(
+                            now,
+                            Space::Application,
+                            largest,
+                            ms(next(5)),
+                            std::iter::once(a..=b),
+                        );
                         for p in out.acked.iter().chain(out.lost.iter()) {
-                            assert!(settled.insert(p.pn), "round {round}: packet {} settled twice", p.pn);
+                            assert!(
+                                settled.insert(p.pn),
+                                "round {round}: packet {} settled twice",
+                                p.pn
+                            );
                         }
                     }
                 }
@@ -949,15 +1311,26 @@ mod tests {
                         now = now.max(t);
                         let out = r.on_timeout(now);
                         for p in &out.lost {
-                            assert!(settled.insert(p.pn), "round {round}: packet {} settled twice", p.pn);
+                            assert!(
+                                settled.insert(p.pn),
+                                "round {round}: packet {} settled twice",
+                                p.pn
+                            );
                         }
                     }
                 }
                 let out: Vec<_> = r.outstanding(Space::Application).collect();
                 let bytes: usize = out.iter().filter(|p| p.in_flight).map(|p| p.size).sum();
                 assert_eq!(r.bytes_in_flight(), bytes, "round {round}");
-                let ae = out.iter().filter(|p| p.in_flight && p.ack_eliciting).count();
-                assert_eq!(r.ack_eliciting_in_flight(Space::Application), ae, "round {round}");
+                let ae = out
+                    .iter()
+                    .filter(|p| p.in_flight && p.ack_eliciting)
+                    .count();
+                assert_eq!(
+                    r.ack_eliciting_in_flight(Space::Application),
+                    ae,
+                    "round {round}"
+                );
                 for p in &out {
                     assert!(!settled.contains(&p.pn));
                 }

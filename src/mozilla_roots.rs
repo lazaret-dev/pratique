@@ -37,13 +37,16 @@ pub struct MozillaRoot {
 
 /// The NSS builtins version the roots come from (`2.90`, say).
 pub fn version() -> &'static str {
-    PEM.lines().find_map(|l| l.strip_prefix("# builtins-version: ")).unwrap_or("unknown")
+    PEM.lines()
+        .find_map(|l| l.strip_prefix("# builtins-version: "))
+        .unwrap_or("unknown")
 }
 
 /// Every root, in the order of the file.
 pub fn roots() -> Vec<MozillaRoot> {
     let mut out = Vec::new();
-    let (mut label, mut distrust, mut block): (String, Option<i64>, Option<String>) = (String::new(), None, None);
+    let (mut label, mut distrust, mut block): (String, Option<i64>, Option<String>) =
+        (String::new(), None, None);
     let mut constraints: Option<Vec<u8>> = None;
     for line in PEM.lines() {
         if let Some(b) = block.as_mut() {
@@ -51,7 +54,12 @@ pub fn roots() -> Vec<MozillaRoot> {
             b.push('\n');
             if line == "-----END CERTIFICATE-----" {
                 if let Some(cert) = pem::parse(b).into_iter().next() {
-                    out.push(MozillaRoot { label: std::mem::take(&mut label), der: cert.data, distrust_tls_after: distrust.take(), name_constraints: constraints.take() });
+                    out.push(MozillaRoot {
+                        label: std::mem::take(&mut label),
+                        der: cert.data,
+                        distrust_tls_after: distrust.take(),
+                        name_constraints: constraints.take(),
+                    });
                 }
                 block = None;
             }
@@ -73,7 +81,10 @@ fn hex(s: &str) -> Option<Vec<u8>> {
     if s.len() % 2 != 0 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
 }
 
 /// A trust store holding every root, each with its distrust date and imposed name constraints. A root this crate cannot
@@ -81,7 +92,10 @@ fn hex(s: &str) -> Option<Vec<u8>> {
 pub fn trust_store() -> TrustStore {
     let mut store = TrustStore::empty();
     for root in roots() {
-        let limits = AnchorLimits { distrust_after: root.distrust_tls_after, name_constraints: root.name_constraints };
+        let limits = AnchorLimits {
+            distrust_after: root.distrust_tls_after,
+            name_constraints: root.name_constraints,
+        };
         let _ = store.add_der_with_limits(&root.der, &limits);
     }
     store

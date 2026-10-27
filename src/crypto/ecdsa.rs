@@ -22,7 +22,9 @@
 //! the reference the new one is compared with, on random keys and signatures and on the special cases of the
 //! group law (adding a point to itself, to its negative).
 
-use super::bignum::fixed::{add_carry, compare, is_zero, limbs_from_be, limbs_from_hex, sub_borrow, Fe, Field};
+use super::bignum::fixed::{
+    add_carry, compare, is_zero, limbs_from_be, limbs_from_hex, sub_borrow, Fe, Field,
+};
 use super::sha2::HashAlg;
 use crate::asn1::{self, Der};
 use std::cmp::Ordering;
@@ -118,8 +120,20 @@ impl<const N: usize> Group<N> {
         let order = Field::<N>::new(n);
         let to_m = |h: &str| f.to_mont(&limbs_from_hex(h));
         let (b, gx, gy) = (to_m(b), to_m(gx), to_m(gy));
-        let n_bits = order.m.iter().rposition(|&l| l != 0).map_or(0, |i| 64 * i + 64 - order.m[i].leading_zeros() as usize);
-        Group { f, n: order, b, g: Aff { x: gx, y: gy }, coord_len, n_bits, g_table: OnceLock::new() }
+        let n_bits = order
+            .m
+            .iter()
+            .rposition(|&l| l != 0)
+            .map_or(0, |i| 64 * i + 64 - order.m[i].leading_zeros() as usize);
+        Group {
+            f,
+            n: order,
+            b,
+            g: Aff { x: gx, y: gy },
+            coord_len,
+            n_bits,
+            g_table: OnceLock::new(),
+        }
     }
 
     /// The field of the coordinates, for the point operations, with a fact the compiler cannot see made plain to it: the
@@ -134,11 +148,19 @@ impl<const N: usize> Group<N> {
     }
 
     fn infinity(&self) -> Jac<N> {
-        Jac { x: self.f.one, y: self.f.one, z: [0; N] }
+        Jac {
+            x: self.f.one,
+            y: self.f.one,
+            z: [0; N],
+        }
     }
 
     fn jac(&self, p: &Aff<N>) -> Jac<N> {
-        Jac { x: p.x, y: p.y, z: self.f.one }
+        Jac {
+            x: p.x,
+            y: p.y,
+            z: self.f.one,
+        }
     }
 
     /// Checks y^2 = x^3 - 3x + b for Montgomery-form coordinates.
@@ -179,7 +201,11 @@ impl<const N: usize> Group<N> {
         let g2x4 = f.add(&g2x2, &g2x2);
         let g2x8 = f.add(&g2x4, &g2x4);
         let y3 = f.sub(&f.mul(&alpha, &f.sub(&beta4, &x3)), &g2x8);
-        Jac { x: x3, y: y3, z: z3 }
+        Jac {
+            x: x3,
+            y: y3,
+            z: z3,
+        }
     }
 
     /// p + q for an affine q (madd-2007-bl: 7 multiplications and 4 squarings), special cases included.
@@ -201,7 +227,11 @@ impl<const N: usize> Group<N> {
         let r0 = f.sub(&s2, &p.y);
         if is_zero(&h) {
             // the same x: the same point (double it) or its negative (infinity)
-            return if is_zero(&r0) { self.double(p) } else { self.infinity() };
+            return if is_zero(&r0) {
+                self.double(p)
+            } else {
+                self.infinity()
+            };
         }
         let hh = f.sqr(&h);
         let i = f.add(&hh, &hh);
@@ -213,7 +243,11 @@ impl<const N: usize> Group<N> {
         let y1j = f.mul(&p.y, &j);
         let y3 = f.sub(&f.mul(&r, &f.sub(&v, &x3)), &f.add(&y1j, &y1j));
         let z3 = f.sub(&f.sub(&f.sqr(&f.add(&p.z, &h)), &z1z1), &hh);
-        Jac { x: x3, y: y3, z: z3 }
+        Jac {
+            x: x3,
+            y: y3,
+            z: z3,
+        }
     }
 
     /// p + q (add-2007-bl: 11 multiplications and 5 squarings), special cases included.
@@ -240,7 +274,11 @@ impl<const N: usize> Group<N> {
         let h = f.sub(&u2, &u1);
         let r0 = f.sub(&s2, &s1);
         if is_zero(&h) {
-            return if is_zero(&r0) { self.double(p) } else { self.infinity() };
+            return if is_zero(&r0) {
+                self.double(p)
+            } else {
+                self.infinity()
+            };
         }
         let h2 = f.add(&h, &h);
         let i = f.sqr(&h2);
@@ -252,11 +290,19 @@ impl<const N: usize> Group<N> {
         let y3 = f.sub(&f.mul(&r, &f.sub(&v, &x3)), &f.add(&s1j, &s1j));
         let zs = f.sub(&f.sub(&f.sqr(&f.add(&p.z, &q.z)), &z1z1), &z2z2);
         let z3 = f.mul(&zs, &h);
-        Jac { x: x3, y: y3, z: z3 }
+        Jac {
+            x: x3,
+            y: y3,
+            z: z3,
+        }
     }
 
     fn neg_jac(&self, p: &Jac<N>) -> Jac<N> {
-        Jac { x: p.x, y: self.f.neg(&p.y), z: p.z }
+        Jac {
+            x: p.x,
+            y: self.f.neg(&p.y),
+            z: p.z,
+        }
     }
 
     /// The odd multiples 1G, 3G, ..., in affine form, with one inversion for all of them (Montgomery's trick).
@@ -278,12 +324,25 @@ impl<const N: usize> Group<N> {
             prefix.push(acc);
         }
         let mut inv_acc = f.inv(&acc);
-        let mut out = vec![Aff { x: [0; N], y: [0; N] }; G_TABLE];
+        let mut out = vec![
+            Aff {
+                x: [0; N],
+                y: [0; N]
+            };
+            G_TABLE
+        ];
         for i in (0..G_TABLE).rev() {
-            let zinv = if i == 0 { inv_acc } else { f.mul(&inv_acc, &prefix[i - 1]) };
+            let zinv = if i == 0 {
+                inv_acc
+            } else {
+                f.mul(&inv_acc, &prefix[i - 1])
+            };
             inv_acc = f.mul(&inv_acc, &pts[i].z);
             let zinv2 = f.sqr(&zinv);
-            out[i] = Aff { x: f.mul(&pts[i].x, &zinv2), y: f.mul(&pts[i].y, &f.mul(&zinv2, &zinv)) };
+            out[i] = Aff {
+                x: f.mul(&pts[i].x, &zinv2),
+                y: f.mul(&pts[i].y, &f.mul(&zinv2, &zinv)),
+            };
         }
         out
     }
@@ -310,7 +369,14 @@ impl<const N: usize> Group<N> {
             r = P::double(self, &r);
             if i < l1 && d1[i] != 0 {
                 let e = &g_table[(d1[i].unsigned_abs() as usize) / 2];
-                let e = if d1[i] < 0 { Aff { x: e.x, y: self.f.neg(&e.y) } } else { *e };
+                let e = if d1[i] < 0 {
+                    Aff {
+                        x: e.x,
+                        y: self.f.neg(&e.y),
+                    }
+                } else {
+                    *e
+                };
                 r = P::add_affine(self, &r, &e);
             }
             if i < l2 && d2[i] != 0 {
@@ -349,12 +415,17 @@ impl<const N: usize> Group<N> {
         if compare(&qx, &self.f.m) != Ordering::Less || compare(&qy, &self.f.m) != Ordering::Less {
             return None;
         }
-        let q = Aff { x: self.f.to_mont(&qx), y: self.f.to_mont(&qy) };
+        let q = Aff {
+            x: self.f.to_mont(&qx),
+            y: self.f.to_mont(&qy),
+        };
         self.on_curve(&q).then_some(q)
     }
 
     fn verify<P: Points<N>>(&self, public_key: &[u8], digest: &[u8], sig_der: &[u8]) -> bool {
-        let Some(q) = self.public_point(public_key) else { return false };
+        let Some(q) = self.public_point(public_key) else {
+            return false;
+        };
 
         // the signature: SEQUENCE { INTEGER r, INTEGER s }, both in 1..n
         let parse = || -> Option<(Fe<N>, Fe<N>)> {
@@ -377,11 +448,18 @@ impl<const N: usize> Group<N> {
         // 2^n_bits and so below 2 n. (For P-256 and P-384 that is whole bytes; the order of P-521 has 521 bits, more than
         // any SHA-2 digest, which is then taken whole: the shift is for a longer one.)
         let take = digest.len().min(self.n_bits.div_ceil(8));
-        let Some(mut e) = limbs_from_be::<N>(&digest[..take]) else { return false };
+        let Some(mut e) = limbs_from_be::<N>(&digest[..take]) else {
+            return false;
+        };
         let extra = (8 * take).saturating_sub(self.n_bits);
         if extra > 0 {
             for i in 0..N {
-                e[i] = (e[i] >> extra) | if i + 1 < N { e[i + 1] << (64 - extra) } else { 0 };
+                e[i] = (e[i] >> extra)
+                    | if i + 1 < N {
+                        e[i + 1] << (64 - extra)
+                    } else {
+                        0
+                    };
             }
         }
         if compare(&e, &self.n.m) != Ordering::Less {
@@ -559,7 +637,11 @@ pub(crate) fn p256_verify(public_key: &[u8], digest: &[u8], sig_der: &[u8]) -> b
 
 /// P-256 verification with the point operations of `P`.
 #[allow(dead_code)] // used by ecdsa_hw.rs (the `net` part)
-pub(crate) fn p256_verify_with<P: Points<4>>(public_key: &[u8], digest: &[u8], sig_der: &[u8]) -> bool {
+pub(crate) fn p256_verify_with<P: Points<4>>(
+    public_key: &[u8],
+    digest: &[u8],
+    sig_der: &[u8],
+) -> bool {
     p256().verify::<P>(public_key, digest, sig_der)
 }
 
@@ -583,8 +665,8 @@ pub(crate) mod tests {
         use std::sync::OnceLock;
 
         pub(super) struct Params {
-            pub(super) f: Mont, // field GF(p)
-            pub(super) n: Mont, // group order
+            pub(super) f: Mont,      // field GF(p)
+            pub(super) n: Mont,      // group order
             pub(super) b: Vec<u64>,  // curve constant b (Montgomery form in f)
             pub(super) gx: Vec<u64>, // generator, Montgomery form
             pub(super) gy: Vec<u64>,
@@ -602,7 +684,13 @@ pub(crate) mod tests {
             let nn = Mont::new(&bignum::from_hex(n));
             let to_m = |h: &str| f.to_mont(&f.fit(&bignum::from_hex(h)));
             let (b, gx, gy) = (to_m(b), to_m(gx), to_m(gy));
-            Params { f, n: nn, b, gx, gy }
+            Params {
+                f,
+                n: nn,
+                b,
+                gx,
+                gy,
+            }
         }
 
         pub(super) fn params(curve: Curve) -> &'static Params {
@@ -642,7 +730,11 @@ pub(crate) mod tests {
 
         impl Params {
             pub(super) fn infinity(&self) -> Point {
-                Point { x: self.f.one(), y: self.f.one(), z: self.f.zero() }
+                Point {
+                    x: self.f.one(),
+                    y: self.f.one(),
+                    z: self.f.zero(),
+                }
             }
 
             pub(super) fn is_infinity(&self, p: &Point) -> bool {
@@ -650,7 +742,11 @@ pub(crate) mod tests {
             }
 
             pub(super) fn affine_point(&self, x: &[u64], y: &[u64]) -> Point {
-                Point { x: x.to_vec(), y: y.to_vec(), z: self.f.one() }
+                Point {
+                    x: x.to_vec(),
+                    y: y.to_vec(),
+                    z: self.f.one(),
+                }
             }
 
             /// Point doubling for a = -3 (dbl-2001-b).
@@ -674,7 +770,11 @@ pub(crate) mod tests {
                 let g2x4 = f.add(&g2x2, &g2x2);
                 let g2x8 = f.add(&g2x4, &g2x4);
                 let y3 = f.sub(&f.mul(&alpha, &f.sub(&beta4, &x3)), &g2x8);
-                Point { x: x3, y: y3, z: z3 }
+                Point {
+                    x: x3,
+                    y: y3,
+                    z: z3,
+                }
             }
 
             /// General Jacobian point addition (add-1998-cmo-2), with the special cases handled.
@@ -695,7 +795,11 @@ pub(crate) mod tests {
                 let h = f.sub(&u2, &u1);
                 let r = f.sub(&s2, &s1);
                 if bignum::is_zero(&h) {
-                    return if bignum::is_zero(&r) { self.double(p) } else { self.infinity() };
+                    return if bignum::is_zero(&r) {
+                        self.double(p)
+                    } else {
+                        self.infinity()
+                    };
                 }
                 let hh = f.sqr(&h);
                 let hhh = f.mul(&h, &hh);
@@ -704,7 +808,11 @@ pub(crate) mod tests {
                 let x3 = f.sub(&f.sub(&f.sqr(&r), &hhh), &v2);
                 let y3 = f.sub(&f.mul(&r, &f.sub(&v, &x3)), &f.mul(&s1, &hhh));
                 let z3 = f.mul(&f.mul(&p.z, &q.z), &h);
-                Point { x: x3, y: y3, z: z3 }
+                Point {
+                    x: x3,
+                    y: y3,
+                    z: z3,
+                }
             }
 
             /// Converts to affine coordinates, returned as ordinary integers.
@@ -791,7 +899,11 @@ pub(crate) mod tests {
         let (r, s) = (der_int(r), der_int(s));
         let len = r.len() + s.len();
         // (P-521's r and s take more than 127 bytes together: the long form of the length)
-        let mut out = if len < 0x80 { vec![0x30, len as u8] } else { vec![0x30, 0x81, len as u8] };
+        let mut out = if len < 0x80 {
+            vec![0x30, len as u8]
+        } else {
+            vec![0x30, 0x81, len as u8]
+        };
         out.extend(r);
         out.extend(s);
         out
@@ -837,7 +949,10 @@ pub(crate) mod tests {
         let rd = nm.mul(&nm.to_mont(&r), &nm.to_mont(&nm.fit(d)));
         let sum = nm.add(&nm.to_mont(&e), &rd);
         let s = nm.from_mont(&nm.mul(&nm.inv(&nm.to_mont(&nm.fit(k))), &sum));
-        (public, der_sig(&bignum::to_be_bytes(&r, cl), &bignum::to_be_bytes(&s, cl)))
+        (
+            public,
+            der_sig(&bignum::to_be_bytes(&r, cl), &bignum::to_be_bytes(&s, cl)),
+        )
     }
 
     #[test]
@@ -883,11 +998,13 @@ pub(crate) mod tests {
         for w in 2..=7u32 {
             for round in 0..400 {
                 let limbs = 1 + round % MAX_LIMBS;
-                let k: Vec<u64> = (0..limbs).map(|_| match splitmix(&mut state) % 5 {
-                    0 => 0,
-                    1 => u64::MAX,
-                    _ => splitmix(&mut state),
-                }).collect();
+                let k: Vec<u64> = (0..limbs)
+                    .map(|_| match splitmix(&mut state) % 5 {
+                        0 => 0,
+                        1 => u64::MAX,
+                        _ => splitmix(&mut state),
+                    })
+                    .collect();
                 let mut digits = [0i8; MAX_DIGITS];
                 let len = wnaf(&k, w, &mut digits);
                 assert!(len <= 64 * limbs + 1);
@@ -895,9 +1012,15 @@ pub(crate) mod tests {
                 let mut last_nonzero: Option<usize> = None;
                 for (i, &d) in digits[..len].iter().enumerate() {
                     if d != 0 {
-                        assert!(d % 2 != 0 && (d.unsigned_abs() as u32) < (1 << (w - 1)), "digit {d} for w {w}");
+                        assert!(
+                            d % 2 != 0 && (d.unsigned_abs() as u32) < (1 << (w - 1)),
+                            "digit {d} for w {w}"
+                        );
                         if let Some(l) = last_nonzero {
-                            assert!(i - l >= w as usize, "digits {l} and {i} too close for w {w}");
+                            assert!(
+                                i - l >= w as usize,
+                                "digits {l} and {i} too close for w {w}"
+                            );
                         }
                         last_nonzero = Some(i);
                     }
@@ -953,12 +1076,22 @@ pub(crate) mod tests {
             let u1 = random_scalar(pr, &mut state);
             let u2 = random_scalar(pr, &mut state);
             let (qx, qy) = ref_mul_g(pr, &d);
-            let q = Aff { x: g.f.to_mont(&to_fe(&qx)), y: g.f.to_mont(&to_fe(&qy)) };
+            let q = Aff {
+                x: g.f.to_mont(&to_fe(&qx)),
+                y: g.f.to_mont(&to_fe(&qy)),
+            };
             assert!(g.on_curve(&q));
             // the reference: u1 G + u2 Q = (u1 + u2 d) G
             let nm = &pr.n;
-            let total = nm.from_mont(&nm.add(&nm.to_mont(&nm.fit(&u1)), &nm.mul(&nm.to_mont(&nm.fit(&u2)), &nm.to_mont(&nm.fit(&d)))));
-            let want = if bignum::is_zero(&total) { None } else { Some(ref_mul_g(pr, &total)) };
+            let total = nm.from_mont(&nm.add(
+                &nm.to_mont(&nm.fit(&u1)),
+                &nm.mul(&nm.to_mont(&nm.fit(&u2)), &nm.to_mont(&nm.fit(&d))),
+            ));
+            let want = if bignum::is_zero(&total) {
+                None
+            } else {
+                Some(ref_mul_g(pr, &total))
+            };
             let got = g.to_affine(&g.mul_add::<P>(&to_fe(&u1), &to_fe(&u2), &q));
             match (want, got) {
                 (None, None) => {}
@@ -966,7 +1099,11 @@ pub(crate) mod tests {
                     assert_eq!(to_fe(&wx), gx, "x, round {round}");
                     assert_eq!(to_fe(&wy), gy, "y, round {round}");
                 }
-                (w, g) => panic!("round {round}: reference {:?}, new {:?}", w.is_some(), g.is_some()),
+                (w, g) => panic!(
+                    "round {round}: reference {:?}, new {:?}",
+                    w.is_some(),
+                    g.is_some()
+                ),
             }
         }
     }
@@ -997,7 +1134,10 @@ pub(crate) mod tests {
             o
         };
         let g_aff = g.g;
-        let minus_g = Aff { x: g.g.x, y: f.neg(&g.g.y) };
+        let minus_g = Aff {
+            x: g.g.x,
+            y: f.neg(&g.g.y),
+        };
         let n_minus_1 = sub_borrow(&g.n.m, &one).0;
         let zero = [0u64; N];
         let affine = |p: &Jac<N>| g.to_affine(p);
@@ -1021,7 +1161,10 @@ pub(crate) mod tests {
                 *l = splitmix(&mut state);
             }
             k[N - 1] &= g.n.m[N - 1] >> 1; // below n
-            assert!(affine(&g.mul_add::<P>(&k, &k, &minus_g)).is_none(), "kG - kG");
+            assert!(
+                affine(&g.mul_add::<P>(&k, &k, &minus_g)).is_none(),
+                "kG - kG"
+            );
             // and u1 G + u2 G = (u1 + u2) G, whatever the digits do when they meet
             let mut k2 = k;
             k2[0] ^= 0x55;
@@ -1057,7 +1200,10 @@ pub(crate) mod tests {
                 let len = [32usize, 48, 64, 20, 0, 70][round % 6];
                 let digest: Vec<u8> = (0..len).map(|_| splitmix(&mut state) as u8).collect();
                 let (public, sig) = ref_sign(curve, &d, &k, &digest);
-                assert!(verify_prehashed(curve, &public, &digest, &sig), "{curve:?} round {round}: a good signature fails");
+                assert!(
+                    verify_prehashed(curve, &public, &digest, &sig),
+                    "{curve:?} round {round}: a good signature fails"
+                );
                 assert!(is_valid_public_key(curve, &public));
                 // one bit of the digest, of the signature, of the key: all refused
                 if !digest.is_empty() {
@@ -1065,17 +1211,26 @@ pub(crate) mod tests {
                     bad[round % digest.len()] ^= 1 << (round % 8);
                     // (a bit beyond the order's width, in a long digest, is not part of the number)
                     if 8 * len <= bignum::bit_len(pr.n.modulus()) {
-                        assert!(!verify_prehashed(curve, &public, &bad, &sig), "{curve:?} round {round}: bad digest");
+                        assert!(
+                            !verify_prehashed(curve, &public, &bad, &sig),
+                            "{curve:?} round {round}: bad digest"
+                        );
                     }
                 }
                 let mut bad = sig.clone();
                 let at = 4 + (round * 7) % (sig.len() - 4);
                 bad[at] ^= 1 << (round % 8);
-                assert!(!verify_prehashed(curve, &public, &digest, &bad), "{curve:?} round {round}: bad signature");
+                assert!(
+                    !verify_prehashed(curve, &public, &digest, &bad),
+                    "{curve:?} round {round}: bad signature"
+                );
                 let mut bad = public.clone();
                 let at = 1 + (round * 5) % (public.len() - 1);
                 bad[at] ^= 1 << (round % 8);
-                assert!(!verify_prehashed(curve, &bad, &digest, &sig), "{curve:?} round {round}: bad key");
+                assert!(
+                    !verify_prehashed(curve, &bad, &digest, &sig),
+                    "{curve:?} round {round}: bad key"
+                );
             }
         }
     }
@@ -1132,9 +1287,15 @@ pub(crate) mod tests {
         let mut state = 0xabcdef ^ cl as u64;
         for round in 0..3 {
             // (64 bytes at most: the order of P-521 has 521 bits, and a longer digest would be cut)
-            let digest: Vec<u8> = (0..cl.min(64)).map(|_| splitmix(&mut state) as u8).collect();
+            let digest: Vec<u8> = (0..cl.min(64))
+                .map(|_| splitmix(&mut state) as u8)
+                .collect();
             let e = nm.fit(&bignum::from_be_bytes(&digest));
-            assert_eq!(bignum::cmp(&e, &n), Ordering::Less, "(the chance that a random digest is not below n is 2^-32)");
+            assert_eq!(
+                bignum::cmp(&e, &n),
+                Ordering::Less,
+                "(the chance that a random digest is not below n is 2^-32)"
+            );
             let s = random_scalar(pr, &mut state);
             let mut r = vec![0u64; nm.limbs()];
             r[0] = t;
@@ -1154,11 +1315,17 @@ pub(crate) mod tests {
             public.extend(bignum::to_be_bytes(&qx, cl));
             public.extend(bignum::to_be_bytes(&qy, cl));
             let sig = der_sig(&bignum::to_be_bytes(&r, cl), &bignum::to_be_bytes(&s, cl));
-            assert!(verify_prehashed(curve, &public, &digest, &sig), "{curve:?} round {round}: x = n + {t} is not matched");
+            assert!(
+                verify_prehashed(curve, &public, &digest, &sig),
+                "{curve:?} round {round}: x = n + {t} is not matched"
+            );
             // and not for an r that is neither x nor x - n
             let mut other = r.clone();
             other[0] += 1;
-            let sig = der_sig(&bignum::to_be_bytes(&other, cl), &bignum::to_be_bytes(&s, cl));
+            let sig = der_sig(
+                &bignum::to_be_bytes(&other, cl),
+                &bignum::to_be_bytes(&s, cl),
+            );
             assert!(!verify_prehashed(curve, &public, &digest, &sig));
         }
     }
@@ -1182,11 +1349,21 @@ pub(crate) mod tests {
             let mut n_minus_1 = n_bytes.clone();
             *n_minus_1.last_mut().unwrap() -= 1;
             // all ones (above the order), the order itself, one above, one below, and a longer one (only its first cl bytes count)
-            for digest in [vec![0xffu8; cl], n_bytes.clone(), n_plus_1, n_minus_1, vec![0xff; cl + 16]] {
+            for digest in [
+                vec![0xffu8; cl],
+                n_bytes.clone(),
+                n_plus_1,
+                n_minus_1,
+                vec![0xff; cl + 16],
+            ] {
                 let d = random_scalar(pr, &mut state);
                 let k = random_scalar(pr, &mut state);
                 let (public, sig) = ref_sign(curve, &d, &k, &digest);
-                assert!(verify_prehashed(curve, &public, &digest, &sig), "{curve:?} digest {:x?}", &digest[..4]);
+                assert!(
+                    verify_prehashed(curve, &public, &digest, &sig),
+                    "{curve:?} digest {:x?}",
+                    &digest[..4]
+                );
             }
         }
     }
@@ -1207,21 +1384,52 @@ pub(crate) mod tests {
         });
         let l2 = f.sqr(&lambda);
         let l3 = f.mul(&l2, &lambda);
-        let same = Jac { x: f.mul(&p.x, &l2), y: f.mul(&p.y, &l3), z: f.mul(&p.z, &lambda) };
+        let same = Jac {
+            x: f.mul(&p.x, &l2),
+            y: f.mul(&p.y, &l3),
+            z: f.mul(&p.z, &lambda),
+        };
         assert_eq!(g.to_affine(&p), g.to_affine(&same));
-        assert_eq!(g.to_affine(&P::double(g, &p)), g.to_affine(&g.double(&p)), "2P");
-        assert_eq!(g.to_affine(&P::add(g, &p, &same)), g.to_affine(&g.double(&p)), "P + P by the general addition");
-        assert!(g.to_affine(&P::add(g, &p, &g.neg_jac(&same))).is_none(), "P + (-P)");
+        assert_eq!(
+            g.to_affine(&P::double(g, &p)),
+            g.to_affine(&g.double(&p)),
+            "2P"
+        );
+        assert_eq!(
+            g.to_affine(&P::add(g, &p, &same)),
+            g.to_affine(&g.double(&p)),
+            "P + P by the general addition"
+        );
+        assert!(
+            g.to_affine(&P::add(g, &p, &g.neg_jac(&same))).is_none(),
+            "P + (-P)"
+        );
         // the mixed addition with the same special cases
         let (ax, ay) = g.to_affine(&p).unwrap();
-        let aff = Aff { x: f.to_mont(&ax), y: f.to_mont(&ay) };
-        assert_eq!(g.to_affine(&P::add_affine(g, &p, &aff)), g.to_affine(&g.double(&p)), "P + P by the mixed addition");
-        let neg = Aff { x: aff.x, y: f.neg(&aff.y) };
-        assert!(g.to_affine(&P::add_affine(g, &p, &neg)).is_none(), "P + (-P) by the mixed addition");
+        let aff = Aff {
+            x: f.to_mont(&ax),
+            y: f.to_mont(&ay),
+        };
+        assert_eq!(
+            g.to_affine(&P::add_affine(g, &p, &aff)),
+            g.to_affine(&g.double(&p)),
+            "P + P by the mixed addition"
+        );
+        let neg = Aff {
+            x: aff.x,
+            y: f.neg(&aff.y),
+        };
+        assert!(
+            g.to_affine(&P::add_affine(g, &p, &neg)).is_none(),
+            "P + (-P) by the mixed addition"
+        );
         // with infinity on either side
         assert_eq!(g.to_affine(&P::add(g, &g.infinity(), &p)), g.to_affine(&p));
         assert_eq!(g.to_affine(&P::add(g, &p, &g.infinity())), g.to_affine(&p));
-        assert_eq!(g.to_affine(&P::add_affine(g, &g.infinity(), &aff)), g.to_affine(&p));
+        assert_eq!(
+            g.to_affine(&P::add_affine(g, &g.infinity(), &aff)),
+            g.to_affine(&p)
+        );
     }
 
     /// The checks of the point operations above, on P-256 with the operations of `P`: what `ecdsa_hw` runs on its copy.
@@ -1258,9 +1466,18 @@ pub(crate) mod tests {
         let r = &sig[4..4 + sig[3] as usize];
         let s_at = 4 + sig[3] as usize;
         let s = &sig[s_at + 2..];
-        for (rr, ss) in [(&zero[..], s), (r, &zero[..]), (&n[..], s), (r, &n[..]), (&one[..], &one[..])] {
+        for (rr, ss) in [
+            (&zero[..], s),
+            (r, &zero[..]),
+            (&n[..], s),
+            (r, &n[..]),
+            (&one[..], &one[..]),
+        ] {
             let bad = der_sig(rr, ss);
-            assert!(!verify_prehashed(Curve::P256, &public, &digest, &bad), "r {rr:x?} s {ss:x?}");
+            assert!(
+                !verify_prehashed(Curve::P256, &public, &digest, &bad),
+                "r {rr:x?} s {ss:x?}"
+            );
         }
     }
 
@@ -1269,7 +1486,13 @@ pub(crate) mod tests {
         let pk = unhex(tv::P256_PUBKEY);
         let sig = unhex(tv::P256_SHA256_SIG);
         assert!(verify(Curve::P256, &pk, HashAlg::Sha256, tv::EC_MSG, &sig));
-        assert!(!verify(Curve::P256, &pk, HashAlg::Sha256, b"tampered", &sig));
+        assert!(!verify(
+            Curve::P256,
+            &pk,
+            HashAlg::Sha256,
+            b"tampered",
+            &sig
+        ));
         let mut bad = sig.clone();
         let last = bad.len() - 1;
         bad[last] ^= 1;
@@ -1279,24 +1502,60 @@ pub(crate) mod tests {
     #[test]
     fn p256_with_sha384_truncates_digest() {
         let pk = unhex(tv::P256_PUBKEY);
-        assert!(verify(Curve::P256, &pk, HashAlg::Sha384, tv::EC_MSG, &unhex(tv::P256_SHA384_SIG)));
+        assert!(verify(
+            Curve::P256,
+            &pk,
+            HashAlg::Sha384,
+            tv::EC_MSG,
+            &unhex(tv::P256_SHA384_SIG)
+        ));
     }
 
     #[test]
     fn p384_verifies() {
         let pk = unhex(tv::P384_PUBKEY);
-        assert!(verify(Curve::P384, &pk, HashAlg::Sha384, tv::EC_MSG, &unhex(tv::P384_SHA384_SIG)));
-        assert!(verify(Curve::P384, &pk, HashAlg::Sha256, tv::EC_MSG, &unhex(tv::P384_SHA256_SIG)));
-        assert!(!verify(Curve::P384, &pk, HashAlg::Sha384, b"nope", &unhex(tv::P384_SHA384_SIG)));
+        assert!(verify(
+            Curve::P384,
+            &pk,
+            HashAlg::Sha384,
+            tv::EC_MSG,
+            &unhex(tv::P384_SHA384_SIG)
+        ));
+        assert!(verify(
+            Curve::P384,
+            &pk,
+            HashAlg::Sha256,
+            tv::EC_MSG,
+            &unhex(tv::P384_SHA256_SIG)
+        ));
+        assert!(!verify(
+            Curve::P384,
+            &pk,
+            HashAlg::Sha384,
+            b"nope",
+            &unhex(tv::P384_SHA384_SIG)
+        ));
     }
 
     #[test]
     fn rejects_wrong_curve_and_off_curve_keys() {
         let pk256 = unhex(tv::P256_PUBKEY);
-        assert!(!verify(Curve::P384, &pk256, HashAlg::Sha256, tv::EC_MSG, &unhex(tv::P256_SHA256_SIG)));
+        assert!(!verify(
+            Curve::P384,
+            &pk256,
+            HashAlg::Sha256,
+            tv::EC_MSG,
+            &unhex(tv::P256_SHA256_SIG)
+        ));
         let mut off = pk256.clone();
         off[40] ^= 1;
-        assert!(!verify(Curve::P256, &off, HashAlg::Sha256, tv::EC_MSG, &unhex(tv::P256_SHA256_SIG)));
+        assert!(!verify(
+            Curve::P256,
+            &off,
+            HashAlg::Sha256,
+            tv::EC_MSG,
+            &unhex(tv::P256_SHA256_SIG)
+        ));
     }
 
     #[test]

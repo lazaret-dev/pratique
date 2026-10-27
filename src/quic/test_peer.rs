@@ -27,13 +27,23 @@ pub struct Hello {
 impl Hello {
     pub fn parse(message: &[u8]) -> Hello {
         assert_eq!(message[0], HS_CLIENT_HELLO);
-        let len = ((message[1] as usize) << 16) | ((message[2] as usize) << 8) | message[3] as usize;
-        assert_eq!(len, message.len() - 4, "the ClientHello is one whole message");
+        let len =
+            ((message[1] as usize) << 16) | ((message[2] as usize) << 8) | message[3] as usize;
+        assert_eq!(
+            len,
+            message.len() - 4,
+            "the ClientHello is one whole message"
+        );
         let mut r = Reader::new(&message[4..]);
         assert_eq!(r.u16(), Some(0x0303));
         let random: [u8; 32] = r.take(32).unwrap().try_into().unwrap();
         let session_id = r.vec8().unwrap().to_vec();
-        let suites: Vec<u16> = r.vec16().unwrap().chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+        let suites: Vec<u16> = r
+            .vec16()
+            .unwrap()
+            .chunks(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
         assert_eq!(r.vec8().unwrap(), &[0], "only the null compression");
         let mut er = Reader::new(r.vec16().unwrap());
         assert!(r.is_empty());
@@ -42,16 +52,27 @@ impl Hello {
             let t = er.u16().unwrap();
             extensions.push((t, er.vec16().unwrap().to_vec()));
         }
-        Hello { message: message.to_vec(), random, session_id, suites, extensions }
+        Hello {
+            message: message.to_vec(),
+            random,
+            session_id,
+            suites,
+            extensions,
+        }
     }
 
     pub fn extension(&self, t: u16) -> Option<&[u8]> {
-        self.extensions.iter().find(|(e, _)| *e == t).map(|(_, d)| d.as_slice())
+        self.extensions
+            .iter()
+            .find(|(e, _)| *e == t)
+            .map(|(_, d)| d.as_slice())
     }
 
     /// The ALPN protocols offered.
     pub fn alpn(&self) -> Vec<Vec<u8>> {
-        let Some(d) = self.extension(EXT_ALPN) else { return Vec::new() };
+        let Some(d) = self.extension(EXT_ALPN) else {
+            return Vec::new();
+        };
         let mut r = Reader::new(Reader::new(d).vec16().unwrap());
         let mut out = Vec::new();
         while !r.is_empty() {
@@ -62,7 +83,11 @@ impl Hello {
 
     /// The key shares offered: (group, public value).
     pub fn key_shares(&self) -> Vec<(u16, Vec<u8>)> {
-        let mut r = Reader::new(Reader::new(self.extension(EXT_KEY_SHARE).unwrap()).vec16().unwrap());
+        let mut r = Reader::new(
+            Reader::new(self.extension(EXT_KEY_SHARE).unwrap())
+                .vec16()
+                .unwrap(),
+        );
         let mut out = Vec::new();
         while !r.is_empty() {
             let group = r.u16().unwrap();
@@ -133,7 +158,9 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn new(name: &str) -> TestServer {
-        TestServer { pki: TestPki::new(&[name]).expect("a test PKI") }
+        TestServer {
+            pki: TestPki::new(&[name]).expect("a test PKI"),
+        }
     }
 
     /// A ServerHello-less HelloRetryRequest that asks for a key share for `group`.
@@ -156,12 +183,22 @@ impl TestServer {
         let suite = o.suite;
         let alg = suite.hash();
         let hash_len = alg.output_len();
-        let (_, client_public) = hello.key_shares().into_iter().find(|(g, _)| *g == GROUP_X25519).expect("an X25519 share");
-        let shared = x25519::x25519(&SERVER_PRIVATE, &client_public.as_slice().try_into().unwrap());
+        let (_, client_public) = hello
+            .key_shares()
+            .into_iter()
+            .find(|(g, _)| *g == GROUP_X25519)
+            .expect("an X25519 share");
+        let shared = x25519::x25519(
+            &SERVER_PRIVATE,
+            &client_public.as_slice().try_into().unwrap(),
+        );
 
         let mut body = 0x0303u16.to_be_bytes().to_vec();
         body.extend_from_slice(&[0x42; 32]);
-        let session_id = o.session_id.clone().unwrap_or_else(|| hello.session_id.clone());
+        let session_id = o
+            .session_id
+            .clone()
+            .unwrap_or_else(|| hello.session_id.clone());
         body.push(session_id.len() as u8);
         body.extend_from_slice(&session_id);
         body.extend_from_slice(&suite.id().to_be_bytes());
@@ -203,13 +240,25 @@ impl TestServer {
         for (t, d) in &o.extra_extensions {
             ext(&mut exts, *t, d);
         }
-        add(handshake_message(HS_ENCRYPTED_EXTENSIONS, &block16(&exts)), &mut transcript, &mut handshake);
+        add(
+            handshake_message(HS_ENCRYPTED_EXTENSIONS, &block16(&exts)),
+            &mut transcript,
+            &mut handshake,
+        );
         if o.request_certificate {
             let mut sigs = Vec::new();
-            ext(&mut sigs, EXT_SIGNATURE_ALGORITHMS, &block16(&0x0807u16.to_be_bytes()));
+            ext(
+                &mut sigs,
+                EXT_SIGNATURE_ALGORITHMS,
+                &block16(&0x0807u16.to_be_bytes()),
+            );
             let mut body = vec![0u8]; // certificate_request_context
             body.extend(block16(&sigs));
-            add(handshake_message(HS_CERTIFICATE_REQUEST, &body), &mut transcript, &mut handshake);
+            add(
+                handshake_message(HS_CERTIFICATE_REQUEST, &body),
+                &mut transcript,
+                &mut handshake,
+            );
         }
         // Certificate
         let mut list = Vec::new();
@@ -221,17 +270,29 @@ impl TestServer {
         let mut cert = vec![0u8];
         cert.extend_from_slice(&(list.len() as u32).to_be_bytes()[1..]);
         cert.extend(list);
-        add(handshake_message(HS_CERTIFICATE, &cert), &mut transcript, &mut handshake);
+        add(
+            handshake_message(HS_CERTIFICATE, &cert),
+            &mut transcript,
+            &mut handshake,
+        );
         // CertificateVerify
         let content = server_certificate_verify_content(&alg.digest(&transcript));
         let signature = self.pki.server_key.sign(&content);
         let mut verify = 0x0807u16.to_be_bytes().to_vec();
         verify.extend(block16(&signature));
-        add(handshake_message(HS_CERTIFICATE_VERIFY, &verify), &mut transcript, &mut handshake);
+        add(
+            handshake_message(HS_CERTIFICATE_VERIFY, &verify),
+            &mut transcript,
+            &mut handshake,
+        );
         // Finished
         let finished_key = expand_label(alg, &s_hs, "finished", &[], hash_len);
         let verify_data = hmac(alg, &finished_key, &alg.digest(&transcript));
-        add(handshake_message(HS_FINISHED, &verify_data), &mut transcript, &mut handshake);
+        add(
+            handshake_message(HS_FINISHED, &verify_data),
+            &mut transcript,
+            &mut handshake,
+        );
 
         let app_hash = alg.digest(&transcript);
         let derived2 = derive_secret(alg, &handshake_secret, "derived", &empty_hash);
@@ -245,7 +306,10 @@ impl TestServer {
             let empty_certificate = handshake_message(HS_CERTIFICATE, &[0, 0, 0, 0]);
             client_transcript.extend_from_slice(&empty_certificate);
         }
-        let client_finished = handshake_message(HS_FINISHED, &hmac(alg, &client_finished_key, &alg.digest(&client_transcript)));
+        let client_finished = handshake_message(
+            HS_FINISHED,
+            &hmac(alg, &client_finished_key, &alg.digest(&client_transcript)),
+        );
         Flight {
             server_hello,
             handshake,

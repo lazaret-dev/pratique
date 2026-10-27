@@ -29,12 +29,13 @@ mod io;
 pub(crate) mod net;
 mod pool;
 pub(crate) mod slots;
+pub mod socket;
 mod timer;
 #[cfg(test)]
 mod timer_tests;
 mod tls;
 
-pub use exec::block_on;
+pub use exec::{block_on, yield_now};
 pub use io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub use net::ThreadedStream;
 pub use pool::{BlockingTask, Pool, TaskError};

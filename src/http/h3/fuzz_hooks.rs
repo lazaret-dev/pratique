@@ -47,7 +47,9 @@ impl Choose for Bytes<'_> {
 /// encoder (in several ways) and read back by a fresh decoder as the same list. The first error ends the script: it is the end of
 /// a connection.
 pub fn qpack_decoder(data: &[u8]) {
-    let Some((&sel, mut rest)) = data.split_first() else { return };
+    let Some((&sel, mut rest)) = data.split_first() else {
+        return;
+    };
     let capacity = [0usize, 64, 220, 4096][(sel & 3) as usize];
     let blocked = [0usize, 1, 4, 100][((sel >> 2) & 3) as usize];
     let limit = [100usize, 1000, 64 << 10, 1 << 20][((sel >> 4) & 3) as usize];
@@ -69,12 +71,20 @@ pub fn qpack_decoder(data: &[u8]) {
                 match dec.decode(stream, payload, &mut out) {
                     Err(_) => break,
                     Ok(Decoded::Done { within_limit }) => {
-                        assert!(out.iter().map(Field::size).sum::<usize>() <= limit, "a list over the limit was given");
+                        assert!(
+                            out.iter().map(Field::size).sum::<usize>() <= limit,
+                            "a list over the limit was given"
+                        );
                         if within_limit {
                             lists.push(out);
                         }
                     }
-                    Ok(Decoded::Blocked { required_insert_count }) => assert!(required_insert_count > dec.insert_count(), "a section waits for what is there"),
+                    Ok(Decoded::Blocked {
+                        required_insert_count,
+                    }) => assert!(
+                        required_insert_count > dec.insert_count(),
+                        "a section waits for what is there"
+                    ),
                 }
             }
             2 => dec.cancel_stream(stream),
@@ -103,10 +113,16 @@ pub fn qpack_exchange(data: &[u8]) {
 /// books balanced: entries counted as referred to are the ones the sections not acknowledged refer to, nothing referred to is evicted,
 /// the table is within its limits, and no more streams may be blocked than allowed.
 pub fn qpack_encoder(data: &[u8]) {
-    let Some((&sel, mut rest)) = data.split_first() else { return };
+    let Some((&sel, mut rest)) = data.split_first() else {
+        return;
+    };
     let capacity = [0usize, 64, 220, 4096, 1 << 21][(sel % 5) as usize];
     let peer_blocked = [0usize, 1, 4, 100][((sel >> 3) & 3) as usize];
-    let cfg = EncoderConfig { table_capacity: [100usize, 300, 4096, 1 << 20][((sel >> 5) & 3) as usize], blocked_streams: [0usize, 1, 3, 50][((sel >> 1) & 3) as usize], only_safe_names: sel & 0x80 != 0 };
+    let cfg = EncoderConfig {
+        table_capacity: [100usize, 300, 4096, 1 << 20][((sel >> 5) & 3) as usize],
+        blocked_streams: [0usize, 1, 3, 50][((sel >> 1) & 3) as usize],
+        only_safe_names: sel & 0x80 != 0,
+    };
     let mut enc = Encoder::new(cfg);
     enc.set_peer_settings(capacity as u64, peer_blocked as u64);
     let mut recent = vec![];
@@ -117,9 +133,27 @@ pub fn qpack_encoder(data: &[u8]) {
         rest = after;
         if op & 1 == 0 {
             // a request: the fields come from the payload (a stream per request, now and then the last one again)
-            let stream = if op & 8 != 0 && next > 0 { next - 4 } else { next += 4; next - 4 };
-            let list = harness::fields(&mut Bytes { data: payload, pos: 0 }, &mut recent);
-            let refs: Vec<FieldRef<'_>> = list.iter().map(|(f, s)| FieldRef { name: &f.name, value: &f.value, sensitive: *s }).collect();
+            let stream = if op & 8 != 0 && next > 0 {
+                next - 4
+            } else {
+                next += 4;
+                next - 4
+            };
+            let list = harness::fields(
+                &mut Bytes {
+                    data: payload,
+                    pos: 0,
+                },
+                &mut recent,
+            );
+            let refs: Vec<FieldRef<'_>> = list
+                .iter()
+                .map(|(f, s)| FieldRef {
+                    name: &f.name,
+                    value: &f.value,
+                    sensitive: *s,
+                })
+                .collect();
             let mut block = vec![];
             enc.encode(stream, &refs, &mut block);
             let _ = enc.take_output();
@@ -135,7 +169,9 @@ pub fn qpack_encoder(data: &[u8]) {
 pub fn qpack_example_decoder_scripts() -> Vec<Vec<u8>> {
     fn hex(s: &str) -> Vec<u8> {
         let s: String = s.split_whitespace().collect();
-        (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+        (0..s.len() / 2)
+            .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+            .collect()
     }
     // (what to do and the stream), then the bytes of it
     fn step(op: u8, stream: u8, bytes: &[u8]) -> Vec<u8> {
@@ -147,10 +183,18 @@ pub fn qpack_example_decoder_scripts() -> Vec<Vec<u8>> {
     let mut all = vec![];
     // the whole of the appendix's exchange
     let mut s = vec![capacity_4096_blocked_100_limit_1m];
-    s.extend(step(0, 0, &hex("3fbd01 c00f 7777772e6578616d706c652e636f6d c10c 2f73616d706c652f70617468")));
+    s.extend(step(
+        0,
+        0,
+        &hex("3fbd01 c00f 7777772e6578616d706c652e636f6d c10c 2f73616d706c652f70617468"),
+    ));
     s.extend(step(1, 1, &hex("0381 10 11")));
     s.extend(step(3, 0, &[]));
-    s.extend(step(0, 0, &hex("4a63 7573 746f 6d2d 6b65 790c 6375 7374 6f6d 2d76 616c 7565")));
+    s.extend(step(
+        0,
+        0,
+        &hex("4a63 7573 746f 6d2d 6b65 790c 6375 7374 6f6d 2d76 616c 7565"),
+    ));
     s.extend(step(1, 2, &hex("0500 80 c1 81")));
     s.extend(step(2, 2, &[]));
     s.extend(step(0, 0, &hex("02")));
@@ -163,12 +207,20 @@ pub fn qpack_example_decoder_scripts() -> Vec<Vec<u8>> {
     // a section with no table: a literal with a static name, then the indexed static entries of a request
     let mut s = vec![0];
     s.extend(step(1, 0, &hex("0000 510b 2f69 6e64 6578 2e68 746d 6c")));
-    s.extend(step(1, 1, &hex("0000 d1 d7 c1 50 0b 7777772e6578616d706c652e636f6d")));
+    s.extend(step(
+        1,
+        1,
+        &hex("0000 d1 d7 c1 50 0b 7777772e6578616d706c652e636f6d"),
+    ));
     all.push(s);
     // the second half: the section first, the instructions after it
     let mut s = vec![capacity_4096_blocked_100_limit_1m];
     s.extend(step(1, 1, &hex("0381 10 11")));
-    s.extend(step(0, 0, &hex("3fbd01 c00f 7777772e6578616d706c652e636f6d")));
+    s.extend(step(
+        0,
+        0,
+        &hex("3fbd01 c00f 7777772e6578616d706c652e636f6d"),
+    ));
     s.extend(step(1, 1, &hex("0381 10 11")));
     s.extend(step(0, 0, &hex("c10c 2f73616d706c652f70617468")));
     s.extend(step(1, 1, &hex("0381 10 11")));
@@ -186,8 +238,14 @@ pub fn qpack_example_encoder_scripts() -> Vec<Vec<u8>> {
     let mut all = vec![];
     for sel in [0x3bu8, 0x7b, 0xfb, 0x00, 0x24] {
         let mut s = vec![sel];
-        s.extend(step(0, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]));
-        s.extend(step(0, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]));
+        s.extend(step(
+            0,
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        ));
+        s.extend(step(
+            0,
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        ));
         s.extend(step(1, &[0x84]));
         s.extend(step(0, &[9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6]));
         s.extend(step(1, &[0x01]));
@@ -221,8 +279,14 @@ pub fn qpack_example_exchange_scripts() -> Vec<Vec<u8>> {
 /// pieces the stream comes in (one more than the byte, repeated); the rest is the stream. However it is cut, the reader must say what the
 /// model says (the frames, the error and the stream's end between frames), and what it read is written again and read back.
 pub fn frames(data: &[u8]) {
-    let (Some(&sel), Some(&n)) = (data.first(), data.get(1)) else { return };
-    let kind = if sel & 1 == 0 { Kind::Request } else { Kind::Control };
+    let (Some(&sel), Some(&n)) = (data.first(), data.get(1)) else {
+        return;
+    };
+    let kind = if sel & 1 == 0 {
+        Kind::Request
+    } else {
+        Kind::Control
+    };
     let max_headers = [0usize, 16, 300, 1 << 20][usize::from(sel >> 1) & 3];
     let rest = &data[2..];
     let n = usize::from(n & 15).min(rest.len());
@@ -256,7 +320,11 @@ pub fn frame_example_streams() -> Vec<Vec<u8>> {
         frame::put_headers(&mut s, &vec![0x11; len]);
         all.push(with(2, &[], &s));
     }
-    let announce = frame::Settings { qpack_max_table_capacity: 4096, qpack_blocked_streams: 16, max_field_section_size: 1 << 16 };
+    let announce = frame::Settings {
+        qpack_max_table_capacity: 4096,
+        qpack_blocked_streams: 16,
+        max_field_section_size: 1 << 16,
+    };
     let mut control = frame::control_stream_start(&announce)[1..].to_vec();
     frame::put_frame_header(&mut control, 0x07, 2);
     control.extend_from_slice(&[0x40, 0x08]);
@@ -289,7 +357,9 @@ pub fn frame_example_streams() -> Vec<Vec<u8>> {
 /// that says only what is well made does not lose the connection and what it sent is what is read, and what the client wrote is what a
 /// decoder makes the requests of.
 pub fn connection_exchange(data: &[u8]) {
-    let Some((&sel, rest)) = data.split_first() else { return };
+    let Some((&sel, rest)) = data.split_first() else {
+        return;
+    };
     connection_harness::exchange(&mut Bytes { data: rest, pos: 0 }, 300, sel & 1 == 1);
 }
 

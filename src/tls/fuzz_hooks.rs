@@ -10,8 +10,8 @@ use super::messages::*;
 use super::scripted::*;
 use super::suite::*;
 use super::*;
-use crate::zeroize::Zeroizing;
 use crate::x509::TrustStore;
+use crate::zeroize::Zeroizing;
 
 // the fixed ClientHello secrets
 const PRIVATE: [u8; 32] = [0x17; 32];
@@ -29,12 +29,20 @@ fn pick_piece(selector: u8) -> usize {
 /// store in `server_flight`.
 pub fn example_chain() -> Vec<Vec<u8>> {
     let der = |p: &str| crate::pem::parse(p).remove(0).data;
-    vec![der(include_str!("../../tests/data/leaf_p384.pem")), der(include_str!("../../tests/data/inter_p256.pem"))]
+    vec![
+        der(include_str!("../../tests/data/leaf_p384.pem")),
+        der(include_str!("../../tests/data/inter_p256.pem")),
+    ]
 }
 
 fn example_trust() -> TrustStore {
     let mut ts = TrustStore::empty();
-    ts.add_der(&crate::pem::parse(include_str!("../../tests/data/root_rsa.pem")).remove(0).data).unwrap();
+    ts.add_der(
+        &crate::pem::parse(include_str!("../../tests/data/root_rsa.pem"))
+            .remove(0)
+            .data,
+    )
+    .unwrap();
     ts
 }
 
@@ -81,9 +89,17 @@ fn drive(c: &mut ClientConnection, bytes: &[u8], piece: usize) -> bool {
 /// handshake into the key schedule.
 pub fn example_server_hello(sel: u8) -> Vec<u8> {
     let cfg = ClientConfig::new(TrustStore::empty()).danger_disable_verification();
-    let c = ClientConnection::start("example.test", &cfg, Zeroizing::new(PRIVATE), &RANDOM, &SESSION_ID);
+    let c = ClientConnection::start(
+        "example.test",
+        &cfg,
+        Zeroizing::new(PRIVATE),
+        &RANDOM,
+        &SESSION_ID,
+    );
     let hello = parse_client_hello(c.output()).expect("our own ClientHello parses");
-    Session::new(hello, Suite::ALL[(sel % 3) as usize]).hello_records(&ShOpts::default()).0
+    Session::new(hello, Suite::ALL[(sel % 3) as usize])
+        .hello_records(&ShOpts::default())
+        .0
 }
 
 /// The wire bytes of a HelloRetryRequest, the server's compatibility change_cipher_spec and a
@@ -102,9 +118,18 @@ pub fn example_hello_retry(sel: u8) -> Vec<u8> {
     };
     let hrr = retry_message(&SESSION_ID, suite, group, cookie);
     let (g, public) = match kind {
-        0 => (GROUP_SECP256R1, ecdh::public_key(Curve::P256, &[&[0u8; 31][..], &[1]].concat()).unwrap()),
-        1 => (GROUP_SECP384R1, ecdh::public_key(Curve::P384, &[&[0u8; 47][..], &[1]].concat()).unwrap()),
-        _ => (GROUP_X25519, crate::crypto::x25519::public_key(&[9; 32]).to_vec()),
+        0 => (
+            GROUP_SECP256R1,
+            ecdh::public_key(Curve::P256, &[&[0u8; 31][..], &[1]].concat()).unwrap(),
+        ),
+        1 => (
+            GROUP_SECP384R1,
+            ecdh::public_key(Curve::P384, &[&[0u8; 47][..], &[1]].concat()).unwrap(),
+        ),
+        _ => (
+            GROUP_X25519,
+            crate::crypto::x25519::public_key(&[9; 32]).to_vec(),
+        ),
     };
     let mut body = 0x0303u16.to_be_bytes().to_vec();
     body.extend_from_slice(&[0x42; 32]);
@@ -127,9 +152,17 @@ pub fn example_hello_retry(sel: u8) -> Vec<u8> {
 /// Raw bytes from the wire into a fresh client: the record layer and the plaintext ServerHello.
 /// `data[0]` chooses the piece size.
 pub fn server_bytes(data: &[u8]) {
-    let Some((&sel, bytes)) = data.split_first() else { return };
+    let Some((&sel, bytes)) = data.split_first() else {
+        return;
+    };
     let cfg = ClientConfig::new(TrustStore::empty()).danger_disable_verification();
-    let mut c = ClientConnection::start("example.test", &cfg, Zeroizing::new(PRIVATE), &RANDOM, &SESSION_ID);
+    let mut c = ClientConnection::start(
+        "example.test",
+        &cfg,
+        Zeroizing::new(PRIVATE),
+        &RANDOM,
+        &SESSION_ID,
+    );
     let out = c.output().len();
     c.consume_output(out);
     drive(&mut c, bytes, pick_piece(sel));
@@ -189,7 +222,9 @@ pub fn server_flight(data: &[u8]) {
 /// With bit 2 of `data[0]` set the connection is a TLS 1.2 one instead (the suite from the top bits): its records carry their
 /// real type, and what the server may send after the handshake is different (a HelloRequest, answered with a warning).
 pub fn peer_records(data: &[u8]) {
-    let Some((&sel, mut rest)) = data.split_first() else { return };
+    let Some((&sel, mut rest)) = data.split_first() else {
+        return;
+    };
     if sel & 0x04 != 0 {
         return peer_records12(sel, rest);
     }
@@ -215,7 +250,12 @@ pub fn peer_records(data: &[u8]) {
         }
         let mut record = Vec::new();
         peer.encrypt_into(ty, content, &mut record);
-        if ty == RT_HANDSHAKE && content.len() == 5 && content[0] == HS_KEY_UPDATE && content[1..4] == [0, 0, 1] && content[4] <= 1 {
+        if ty == RT_HANDSHAKE
+            && content.len() == 5
+            && content[0] == HS_KEY_UPDATE
+            && content[1..4] == [0, 0, 1]
+            && content[4] <= 1
+        {
             peer = peer.next_generation();
         }
         if !drive(&mut c, &record, usize::MAX) {
@@ -229,7 +269,10 @@ fn peer_records12(sel: u8, mut rest: &[u8]) {
     let suite = Suite12::ALL[(sel >> 4) as usize % 6];
     let n = suite.aead_suite().key_len();
     let (key, other, iv) = (vec![3u8; n], vec![4u8; n], [5u8; 12]);
-    let mut c = ClientConnection::established12(RecordCipher12::new(suite, &key, &iv), RecordCipher12::new(suite, &other, &iv));
+    let mut c = ClientConnection::established12(
+        RecordCipher12::new(suite, &key, &iv),
+        RecordCipher12::new(suite, &other, &iv),
+    );
     if sel & 0x08 != 0 {
         c.set_rekey_after(2 + (sel & 3) as u64);
     }
@@ -253,7 +296,6 @@ fn peer_records12(sel: u8, mut rest: &[u8]) {
         }
     }
 }
-
 
 // ------------------------------------------------------------------------------------------------ TLS 1.2 handshake
 
@@ -280,8 +322,16 @@ fn pki12() -> &'static Pki12 {
         leaf_spec.not_before = NOW - 86_400;
         leaf_spec.not_after = NOW + 30 * 86_400;
         let root = issue(&root_spec, &root_key, None);
-        let leaf = issue(&leaf_spec, &leaf_key, Some((&root_spec.common_name, &root_key)));
-        Pki12 { root, leaf, leaf_key }
+        let leaf = issue(
+            &leaf_spec,
+            &leaf_key,
+            Some((&root_spec.common_name, &root_key)),
+        );
+        Pki12 {
+            root,
+            leaf,
+            leaf_key,
+        }
     })
 }
 
@@ -303,7 +353,9 @@ fn vec24(inner: &[u8]) -> Vec<u8> {
 /// renegotiation_info, uncompressed points), acknowledging status_request when `staple`.
 #[cfg(feature = "server")]
 fn server_hello12(sel: u8, staple: bool) -> Vec<u8> {
-    use super::tls12::{Suite12, EXT_EC_POINT_FORMATS, EXT_EXTENDED_MASTER_SECRET, EXT_RENEGOTIATION_INFO};
+    use super::tls12::{
+        Suite12, EXT_EC_POINT_FORMATS, EXT_EXTENDED_MASTER_SECRET, EXT_RENEGOTIATION_INFO,
+    };
     let suite = Suite12::ALL[(sel & 7) as usize % 6];
     let mut body = 0x0303u16.to_be_bytes().to_vec();
     body.extend_from_slice(&SERVER_RANDOM12);
@@ -336,12 +388,21 @@ pub fn example_tls12_flight(sel: u8, variant: u8) -> Vec<u8> {
     if sel & 0x10 != 0 {
         // an OCSP response with an error status (malformedRequest) and nothing to verify: with soft-fail, the default, the chain
         // check writes it down and goes on, as it does in TLS 1.3; the fuzzer makes the rest of what a staple can be
-        messages.push(handshake_message(HS_CERTIFICATE_STATUS, &[&[1u8][..], &vec24(&[0x30, 0x03, 0x0a, 0x01, 0x01])].concat()));
+        messages.push(handshake_message(
+            HS_CERTIFICATE_STATUS,
+            &[&[1u8][..], &vec24(&[0x30, 0x03, 0x0a, 0x01, 0x01])].concat(),
+        ));
     }
     let (group, public) = if variant & 2 != 0 {
-        (GROUP_SECP256R1, ecdh::public_key(Curve::P256, &[&[0u8; 31][..], &[1]].concat()).unwrap())
+        (
+            GROUP_SECP256R1,
+            ecdh::public_key(Curve::P256, &[&[0u8; 31][..], &[1]].concat()).unwrap(),
+        )
     } else {
-        (GROUP_X25519, crate::crypto::x25519::public_key(&SERVER_X25519).to_vec())
+        (
+            GROUP_X25519,
+            crate::crypto::x25519::public_key(&SERVER_X25519).to_vec(),
+        )
     };
     let mut params = vec![3];
     params.extend_from_slice(&group.to_be_bytes());
@@ -369,7 +430,14 @@ pub fn example_tls12_flight(sel: u8, variant: u8) -> Vec<u8> {
     }
     out.extend(plain_record(RT_CHANGE_CIPHER_SPEC, &[1]));
     // explicit nonce (AES-GCM only), a Finished of 16 bytes, the tag
-    let sealed_len = if super::tls12::Suite12::ALL[(sel & 7) as usize % 6].name().contains("CHACHA") { 32 } else { 40 };
+    let sealed_len = if super::tls12::Suite12::ALL[(sel & 7) as usize % 6]
+        .name()
+        .contains("CHACHA")
+    {
+        32
+    } else {
+        40
+    };
     out.extend(plain_record(RT_HANDSHAKE, &vec![0xa5; sealed_len]));
     out
 }
@@ -398,11 +466,20 @@ pub fn server_flight12(data: &[u8]) -> bool {
     } else {
         ClientConfig::new(TrustStore::empty()).danger_disable_verification()
     };
-    let mut c = ClientConnection::start("example.test", &cfg, Zeroizing::new(PRIVATE), &RANDOM, &SESSION_ID);
+    let mut c = ClientConnection::start(
+        "example.test",
+        &cfg,
+        Zeroizing::new(PRIVATE),
+        &RANDOM,
+        &SESSION_ID,
+    );
     let out = c.output().len();
     c.consume_output(out);
     let hello = plain_record(RT_HANDSHAKE, &server_hello12(sel, staple));
-    assert!(drive(&mut c, &hello, usize::MAX) && !c.is_failed(), "the TLS 1.2 ServerHello of the target is refused");
+    assert!(
+        drive(&mut c, &hello, usize::MAX) && !c.is_failed(),
+        "the TLS 1.2 ServerHello of the target is refused"
+    );
     let mut sent = Vec::new();
     let mut sink = [0u8; 512];
     'feed: for part in data[2..].chunks(piece.max(1)) {
@@ -426,7 +503,11 @@ pub fn server_flight12(data: &[u8]) -> bool {
             }
         }
     }
-    assert!(!c.is_established(), "a fuzzed TLS 1.2 server flight completed a handshake");
+    assert!(
+        !c.is_established(),
+        "a fuzzed TLS 1.2 server flight completed a handshake"
+    );
     // the client's change_cipher_spec record
-    sent.windows(6).any(|w| w == [RT_CHANGE_CIPHER_SPEC, 3, 3, 0, 1, 1])
+    sent.windows(6)
+        .any(|w| w == [RT_CHANGE_CIPHER_SPEC, 3, 3, 0, 1, 1])
 }

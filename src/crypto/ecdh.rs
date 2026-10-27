@@ -394,7 +394,15 @@ impl<const N: usize> Field<N> {
     /// The part algorithms 4 and 5 share, from t0 = X1 X2, t1 = Y1 Y2, t2 = Z1 Z2, t3 = X1 Y2 + X2 Y1,
     /// t4 = Y1 Z2 + Y2 Z1 and y3 = X1 Z2 + X2 Z1.
     #[inline(always)]
-    fn add_tail(&self, t0: Limbs<N>, t1: Limbs<N>, t2: Limbs<N>, t3: Limbs<N>, t4: Limbs<N>, y3: Limbs<N>) -> Point<N> {
+    fn add_tail(
+        &self,
+        t0: Limbs<N>,
+        t1: Limbs<N>,
+        t2: Limbs<N>,
+        t3: Limbs<N>,
+        t4: Limbs<N>,
+        y3: Limbs<N>,
+    ) -> Point<N> {
         let b = &self.b;
         let z3 = self.mul(b, &t2);
         let x3 = self.sub(&y3, &z3);
@@ -472,7 +480,11 @@ impl<const N: usize> Field<N> {
         let mut table = [self.infinity(); 16];
         table[1] = *p;
         for i in 2..16 {
-            table[i] = if i % 2 == 0 { self.point_double(&table[i / 2]) } else { self.point_add(&table[i - 1], p) };
+            table[i] = if i % 2 == 0 {
+                self.point_double(&table[i / 2])
+            } else {
+                self.point_add(&table[i - 1], p)
+            };
         }
         let mut r = self.infinity();
         for &byte in k {
@@ -527,7 +539,10 @@ impl<const N: usize> Field<N> {
             let mut table = vec![[[[0u64; N]; 2]; 8]; rows];
             for k in (0..points.len()).rev() {
                 let zinv = self.mul(&inv, &before[k]);
-                table[k / 8][k % 8] = [self.mul(&points[k][0], &zinv), self.mul(&points[k][1], &zinv)];
+                table[k / 8][k % 8] = [
+                    self.mul(&points[k][0], &zinv),
+                    self.mul(&points[k][1], &zinv),
+                ];
                 inv = self.mul(&inv, &points[k][2]);
             }
             table
@@ -555,7 +570,11 @@ impl<const N: usize> Field<N> {
         t[1] = select(mask_of(negative), &minus_y, &t[1]);
         let mut sum = self.point_add_affine(h, &t);
         let keep = !eq_mask(size, 0);
-        let r = [select(keep, &sum[0], &h[0]), select(keep, &sum[1], &h[1]), select(keep, &sum[2], &h[2])];
+        let r = [
+            select(keep, &sum[0], &h[0]),
+            select(keep, &sum[1], &h[1]),
+            select(keep, &sum[2], &h[2]),
+        ];
         t.zeroize();
         sum.zeroize();
         r
@@ -623,7 +642,10 @@ impl<const N: usize> Field<N> {
         let zinv = self.invert(&p[2]);
         let x = self.from_mont(&self.mul(&p[0], &zinv));
         let y = self.from_mont(&self.mul(&p[1], &zinv));
-        Some((Zeroizing::new(self.to_bytes(&x)), Zeroizing::new(self.to_bytes(&y))))
+        Some((
+            Zeroizing::new(self.to_bytes(&x)),
+            Zeroizing::new(self.to_bytes(&y)),
+        ))
     }
 
     /// y^2 = x^3 - 3x + b, for Montgomery-form coordinates.
@@ -701,7 +723,9 @@ fn scalar_len(curve: Curve) -> Option<usize> {
 /// A fresh private scalar (uniform in 1..n, by rejection sampling) and its public key.
 pub fn generate(curve: Curve) -> Result<(Zeroizing<Vec<u8>>, Vec<u8>)> {
     let Some(len) = scalar_len(curve) else {
-        return Err(crate::error::Error::Tls(format!("{curve:?} is not a curve of the key exchange")));
+        return Err(crate::error::Error::Tls(format!(
+            "{curve:?} is not a curve of the key exchange"
+        )));
     };
     loop {
         let mut k = Zeroizing::new(vec![0u8; len]);
@@ -716,7 +740,11 @@ pub fn generate(curve: Curve) -> Result<(Zeroizing<Vec<u8>>, Vec<u8>)> {
 /// The ECDH shared secret: the x coordinate of `scalar` times the peer's point, as `len` bytes.
 /// `None` if the scalar is out of range or the peer's point is not a valid uncompressed point of
 /// the curve (wrong length or prefix, a coordinate not below p, or not on the curve).
-pub fn shared_secret(curve: Curve, scalar: &[u8], peer_public: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
+pub fn shared_secret(
+    curve: Curve,
+    scalar: &[u8],
+    peer_public: &[u8],
+) -> Option<Zeroizing<Vec<u8>>> {
     let _dit = Dit::on(); // data-independent timing while the secret is in use (crypto::dit)
     match curve {
         Curve::P256 => p256().shared_secret(scalar, peer_public),
@@ -788,7 +816,11 @@ mod tests {
                     b[N - 1] >>= 1;
                 }
                 assert_eq!(&f.mul(&a, &b)[..], &reference.mul(&a, &b)[..], "mul");
-                assert_eq!(&f.mul_cios(&a, &b)[..], &reference.mul(&a, &b)[..], "mul by rows");
+                assert_eq!(
+                    &f.mul_cios(&a, &b)[..],
+                    &reference.mul(&a, &b)[..],
+                    "mul by rows"
+                );
                 assert_eq!(&f.add(&a, &b)[..], &reference.add(&a, &b)[..], "add");
                 assert_eq!(&f.sub(&a, &b)[..], &reference.sub(&a, &b)[..], "sub");
                 // the inverse, in the Montgomery domain: a * a^-1 = 1
@@ -820,17 +852,28 @@ mod tests {
             // O + G = G, G + O = G, O + O = O (as projective points: compare after normalizing)
             for (p, q) in [(&inf, &g), (&g, &inf)] {
                 let (x, y) = f.affine(&f.point_add(p, q)).unwrap();
-                assert_eq!((&x[..], &y[..]), (&f.to_bytes(&f.from_mont(&f.g[0]))[..], &f.to_bytes(&f.from_mont(&f.g[1]))[..]));
+                assert_eq!(
+                    (&x[..], &y[..]),
+                    (
+                        &f.to_bytes(&f.from_mont(&f.g[0]))[..],
+                        &f.to_bytes(&f.from_mont(&f.g[1]))[..]
+                    )
+                );
             }
             assert!(f.affine(&f.point_add(&inf, &inf)).is_none());
             assert!(f.affine(&f.point_double(&inf)).is_none());
             // G + (-G) = O, by both additions
             let neg_g: Point<N> = [f.g[0], f.sub(&[0; N], &f.g[1]), f.one];
             assert!(f.affine(&f.point_add(&g, &neg_g)).is_none());
-            assert!(f.affine(&f.point_add_affine(&g, &[neg_g[0], neg_g[1]])).is_none());
+            assert!(f
+                .affine(&f.point_add_affine(&g, &[neg_g[0], neg_g[1]]))
+                .is_none());
             // 2G computed as G + G stays on the curve
             let (x, y) = f.affine(&f.point_add(&g, &g)).unwrap();
-            let (xm, ym) = (f.to_mont(&to_limbs(&bignum::from_be_bytes(&x))), f.to_mont(&to_limbs(&bignum::from_be_bytes(&y))));
+            let (xm, ym) = (
+                f.to_mont(&to_limbs(&bignum::from_be_bytes(&x))),
+                f.to_mont(&to_limbs(&bignum::from_be_bytes(&y))),
+            );
             assert!(f.on_curve(&xm, &ym));
             // n * G = infinity, (n - 1) * G = -G, by both multiplications
             let mut n_bytes = f.to_bytes(&f.order);
@@ -859,18 +902,29 @@ mod tests {
                 points.push(f.scalar_mul(&random_scalar(f, &mut rng), &gp));
             }
             for (i, p) in points.iter().enumerate() {
-                assert_eq!(norm(f, &f.point_double(p)), norm(f, &f.point_add(p, p)), "doubling, point {i}");
+                assert_eq!(
+                    norm(f, &f.point_double(p)),
+                    norm(f, &f.point_add(p, p)),
+                    "doubling, point {i}"
+                );
                 for (j, q) in points.iter().enumerate() {
                     let Some(qa) = norm(f, q) else { continue };
                     let want = norm(f, &f.point_add(p, q));
-                    assert_eq!(norm(f, &f.point_add_affine(p, &qa)), want, "affine addition, points {i} and {j}");
+                    assert_eq!(
+                        norm(f, &f.point_add_affine(p, &qa)),
+                        want,
+                        "affine addition, points {i} and {j}"
+                    );
                     // with p scaled (another Z for the same point)
                     let s = f.to_mont(&[7; N]);
                     let scaled = [f.mul(&p[0], &s), f.mul(&p[1], &s), f.mul(&p[2], &s)];
                     assert_eq!(norm(f, &f.point_add_affine(&scaled, &qa)), want);
                     // p + q where q is p and where q is -p
                     let minus = [qa[0], f.sub(&[0; N], &qa[1])];
-                    assert_eq!(norm(f, &f.point_add_affine(q, &qa)), norm(f, &f.point_double(q)));
+                    assert_eq!(
+                        norm(f, &f.point_add_affine(q, &qa)),
+                        norm(f, &f.point_double(q))
+                    );
                     assert_eq!(norm(f, &f.point_add_affine(q, &minus)), None);
                 }
             }
@@ -931,7 +985,12 @@ mod tests {
                 }
             }
             for k in &scalars {
-                assert_eq!(norm(f, &f.mul_base(k)), norm(f, &f.scalar_mul(k, &g(f))), "k = {}", crate::util::hex(k));
+                assert_eq!(
+                    norm(f, &f.mul_base(k)),
+                    norm(f, &f.scalar_mul(k, &g(f))),
+                    "k = {}",
+                    crate::util::hex(k)
+                );
             }
             assert!(norm(f, &f.mul_base(&vec![0u8; f.len])).is_none(), "0 G");
         }
@@ -951,8 +1010,13 @@ mod tests {
     fn shared_secrets_match_openssl() {
         assert!(SHARED.len() >= 20);
         for (name, scalar, peer, secret) in SHARED {
-            let got = shared_secret(curve_of(name), &unhex(scalar), &unhex(peer)).expect("valid inputs");
-            assert_eq!(&got[..], &unhex(secret)[..], "{name} secret for scalar {scalar}");
+            let got =
+                shared_secret(curve_of(name), &unhex(scalar), &unhex(peer)).expect("valid inputs");
+            assert_eq!(
+                &got[..],
+                &unhex(secret)[..],
+                "{name} secret for scalar {scalar}"
+            );
         }
     }
 
@@ -981,7 +1045,14 @@ mod tests {
             let n = f.to_bytes(&f.order);
             let mut n_plus_1 = n.clone();
             *n_plus_1.last_mut().unwrap() += 1;
-            for bad in [&zero[..], &n[..], &n_plus_1[..], &vec![0xffu8; f.len][..], &vec![1u8; f.len - 1][..], &vec![1u8; f.len + 1][..]] {
+            for bad in [
+                &zero[..],
+                &n[..],
+                &n_plus_1[..],
+                &vec![0xffu8; f.len][..],
+                &vec![1u8; f.len - 1][..],
+                &vec![1u8; f.len + 1][..],
+            ] {
                 assert!(f.public_key(bad).is_none());
                 assert!(f.shared_secret(bad, &g).is_none());
             }

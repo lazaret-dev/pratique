@@ -80,7 +80,12 @@ pub struct EcdsaSigningKey {
 
 impl std::fmt::Debug for EcdsaSigningKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "EcdsaSigningKey({:?}, public {})", self.curve, crate::util::hex(&self.public))
+        write!(
+            f,
+            "EcdsaSigningKey({:?}, public {})",
+            self.curve,
+            crate::util::hex(&self.public)
+        )
     }
 }
 
@@ -88,20 +93,37 @@ impl EcdsaSigningKey {
     /// The key with this private scalar (big-endian; shorter encodings are padded on the left, as SEC 1 allows some
     /// writers to leave the leading zero bytes out). Refused if it is 0 or not below the group order.
     pub fn from_scalar(curve: Curve, d: &[u8]) -> Result<EcdsaSigningKey> {
-        let len = scalar_len(curve).ok_or_else(|| Error::Key(format!("ECDSA signing on {curve:?} is not supported (P-256 and P-384 are)")))?;
+        let len = scalar_len(curve).ok_or_else(|| {
+            Error::Key(format!(
+                "ECDSA signing on {curve:?} is not supported (P-256 and P-384 are)"
+            ))
+        })?;
         if d.len() > len {
-            return Err(Error::Key(format!("an ECDSA {curve:?} private key of {} bytes (at most {len})", d.len())));
+            return Err(Error::Key(format!(
+                "an ECDSA {curve:?} private key of {} bytes (at most {len})",
+                d.len()
+            )));
         }
         let mut padded = Zeroizing::new(vec![0u8; len]);
         padded[len - d.len()..].copy_from_slice(d);
-        let public = ecdh::public_key(curve, &padded).ok_or_else(|| Error::Key(format!("an ECDSA {curve:?} private key that is 0 or not below the group order")))?;
-        Ok(EcdsaSigningKey { curve, d: padded, public })
+        let public = ecdh::public_key(curve, &padded).ok_or_else(|| {
+            Error::Key(format!(
+                "an ECDSA {curve:?} private key that is 0 or not below the group order"
+            ))
+        })?;
+        Ok(EcdsaSigningKey {
+            curve,
+            d: padded,
+            public,
+        })
     }
 
     /// A new random key.
     pub fn generate(curve: Curve) -> Result<EcdsaSigningKey> {
         if scalar_len(curve).is_none() {
-            return Err(Error::Key(format!("ECDSA signing on {curve:?} is not supported (P-256 and P-384 are)")));
+            return Err(Error::Key(format!(
+                "ECDSA signing on {curve:?} is not supported (P-256 and P-384 are)"
+            )));
         }
         let (d, public) = ecdh::generate(curve)?;
         Ok(EcdsaSigningKey { curve, d, public })
@@ -154,7 +176,10 @@ impl EcdsaSigningKey {
     /// (r, s), each exactly the scalar length, big-endian.
     fn sign_raw(&self, alg: HashAlg, digest: &[u8], extra: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
         if digest.len() != alg.output_len() {
-            return Err(Error::Key(format!("a {alg:?} digest of {} bytes", digest.len())));
+            return Err(Error::Key(format!(
+                "a {alg:?} digest of {} bytes",
+                digest.len()
+            )));
         }
         let _dit = Dit::on(); // data-independent timing while the secrets are in use (crypto::dit)
         match self.curve {
@@ -211,7 +236,13 @@ impl Nonces {
         let v = hmac(alg, &k, &[&v]);
         let k = hmac(alg, &k, &[&v, &[0x01], x, h, extra]);
         let v = hmac(alg, &k, &[&v]);
-        Nonces { alg, k, v, len, first: true }
+        Nonces {
+            alg,
+            k,
+            v,
+            len,
+            first: true,
+        }
     }
 
     /// The next candidate: `len` bytes, which the caller checks are in 1..n.
@@ -231,7 +262,14 @@ impl Nonces {
     }
 }
 
-fn sign_with<const N: usize>(n: &Modulus<N>, curve: Curve, d: &[u8], alg: HashAlg, digest: &[u8], extra: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+fn sign_with<const N: usize>(
+    n: &Modulus<N>,
+    curve: Curve,
+    d: &[u8],
+    alg: HashAlg,
+    digest: &[u8],
+    extra: &[u8],
+) -> Result<(Vec<u8>, Vec<u8>)> {
     let len = d.len();
     // z = bits2int(H(m)) mod n: below 2^(8 len) < 2 n, so one conditional subtraction
     let z = n.reduce_below_twice(&bits2int::<N>(digest, len));
@@ -247,7 +285,13 @@ fn sign_with<const N: usize>(n: &Modulus<N>, curve: Curve, d: &[u8], alg: HashAl
 
 /// The signature with nonce `k` (big-endian, the scalar length) for the reduced hash `z`, or `None` if `k` is not in
 /// 1..n or r or s came out zero (the caller takes the next nonce).
-fn sign_core<const N: usize>(n: &Modulus<N>, curve: Curve, d: &[u8], z: &[u64; N], k_bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+fn sign_core<const N: usize>(
+    n: &Modulus<N>,
+    curve: Curve,
+    d: &[u8],
+    z: &[u64; N],
+    k_bytes: &[u8],
+) -> Option<(Vec<u8>, Vec<u8>)> {
     let len = d.len();
     let mut k = ct_mod::limbs_from_be::<N>(k_bytes);
     // 1 <= k < n, by masks; a candidate outside is passed over (see the module documentation)
@@ -268,7 +312,14 @@ fn sign_core<const N: usize>(n: &Modulus<N>, curve: Curve, d: &[u8], z: &[u64; N
     let mut sum = n.add(&n.to_mont(z), &n.mul(&r_m, &d_m));
     let mut s_m = n.mul(&k_inv, &sum);
     let s = n.from_mont(&s_m);
-    for v in [&mut k, &mut k_inv, &mut sum, &mut s_m, &mut d_limbs, &mut d_m] {
+    for v in [
+        &mut k,
+        &mut k_inv,
+        &mut sum,
+        &mut s_m,
+        &mut d_limbs,
+        &mut d_m,
+    ] {
         v.zeroize();
     }
     // r = 0 or s = 0: take the next nonce (RFC 6979 section 3.4)
@@ -281,12 +332,28 @@ fn sign_core<const N: usize>(n: &Modulus<N>, curve: Curve, d: &[u8], z: &[u64; N
 /// For the timing tests: one signature of `digest` with the nonce `k` chosen by the caller (in 1..n), as `sign_core`
 /// makes it inside every signature.
 #[cfg(test)]
-pub(crate) fn sign_with_nonce(key: &EcdsaSigningKey, digest: &[u8], k: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
+pub(crate) fn sign_with_nonce(
+    key: &EcdsaSigningKey,
+    digest: &[u8],
+    k: &[u8],
+) -> Option<(Vec<u8>, Vec<u8>)> {
     let _dit = Dit::on();
     let len = key.d.len();
     match key.curve {
-        Curve::P256 => sign_core(order256(), key.curve, &key.d, &order256().reduce_below_twice(&bits2int::<4>(digest, len)), k),
-        Curve::P384 => sign_core(order384(), key.curve, &key.d, &order384().reduce_below_twice(&bits2int::<6>(digest, len)), k),
+        Curve::P256 => sign_core(
+            order256(),
+            key.curve,
+            &key.d,
+            &order256().reduce_below_twice(&bits2int::<4>(digest, len)),
+            k,
+        ),
+        Curve::P384 => sign_core(
+            order384(),
+            key.curve,
+            &key.d,
+            &order384().reduce_below_twice(&bits2int::<6>(digest, len)),
+            k,
+        ),
         Curve::P521 => None,
     }
 }
@@ -331,12 +398,42 @@ mod tests {
     const P256_KEY: &str = "C9AFA9D845BA75166B5C215767B1D6934E50C3DB36E89B127B8A622B120F6721";
     const P256_PUB: &str = "0460FED4BA255A9D31C961EB74C6356D68C049B8923B61FA6CE669622E60F29FB67903FE1008B8BC99A41AE9E95628BC64F2F1B20C2D7E9F5177A3C294D4462299";
     const P256: [(HashAlg, &str, &str, &str); 6] = [
-        (HashAlg::Sha256, "sample", "EFD48B2AACB6A8FD1140DD9CD45E81D69D2C877B56AAF991C34D0EA84EAF3716", "F7CB1C942D657C41D436C7A1B6E29F65F3E900DBB9AFF4064DC4AB2F843ACDA8"),
-        (HashAlg::Sha384, "sample", "0EAFEA039B20E9B42309FB1D89E213057CBF973DC0CFC8F129EDDDC800EF7719", "4861F0491E6998B9455193E34E7B0D284DDD7149A74B95B9261F13ABDE940954"),
-        (HashAlg::Sha512, "sample", "8496A60B5E9B47C825488827E0495B0E3FA109EC4568FD3F8D1097678EB97F00", "2362AB1ADBE2B8ADF9CB9EDAB740EA6049C028114F2460F96554F61FAE3302FE"),
-        (HashAlg::Sha256, "test", "F1ABB023518351CD71D881567B1EA663ED3EFCF6C5132B354F28D3B0B7D38367", "019F4113742A2B14BD25926B49C649155F267E60D3814B4C0CC84250E46F0083"),
-        (HashAlg::Sha384, "test", "83910E8B48BB0C74244EBDF7F07A1C5413D61472BD941EF3920E623FBCCEBEB6", "8DDBEC54CF8CD5874883841D712142A56A8D0F218F5003CB0296B6B509619F2C"),
-        (HashAlg::Sha512, "test", "461D93F31B6540894788FD206C07CFA0CC35F46FA3C91816FFF1040AD1581A04", "39AF9F15DE0DB8D97E72719C74820D304CE5226E32DEDAE67519E840D1194E55"),
+        (
+            HashAlg::Sha256,
+            "sample",
+            "EFD48B2AACB6A8FD1140DD9CD45E81D69D2C877B56AAF991C34D0EA84EAF3716",
+            "F7CB1C942D657C41D436C7A1B6E29F65F3E900DBB9AFF4064DC4AB2F843ACDA8",
+        ),
+        (
+            HashAlg::Sha384,
+            "sample",
+            "0EAFEA039B20E9B42309FB1D89E213057CBF973DC0CFC8F129EDDDC800EF7719",
+            "4861F0491E6998B9455193E34E7B0D284DDD7149A74B95B9261F13ABDE940954",
+        ),
+        (
+            HashAlg::Sha512,
+            "sample",
+            "8496A60B5E9B47C825488827E0495B0E3FA109EC4568FD3F8D1097678EB97F00",
+            "2362AB1ADBE2B8ADF9CB9EDAB740EA6049C028114F2460F96554F61FAE3302FE",
+        ),
+        (
+            HashAlg::Sha256,
+            "test",
+            "F1ABB023518351CD71D881567B1EA663ED3EFCF6C5132B354F28D3B0B7D38367",
+            "019F4113742A2B14BD25926B49C649155F267E60D3814B4C0CC84250E46F0083",
+        ),
+        (
+            HashAlg::Sha384,
+            "test",
+            "83910E8B48BB0C74244EBDF7F07A1C5413D61472BD941EF3920E623FBCCEBEB6",
+            "8DDBEC54CF8CD5874883841D712142A56A8D0F218F5003CB0296B6B509619F2C",
+        ),
+        (
+            HashAlg::Sha512,
+            "test",
+            "461D93F31B6540894788FD206C07CFA0CC35F46FA3C91816FFF1040AD1581A04",
+            "39AF9F15DE0DB8D97E72719C74820D304CE5226E32DEDAE67519E840D1194E55",
+        ),
     ];
     const P384_KEY: &str = "6B9D3DAD2E1B8C1C05B19875B6659F4DE23C3B667BF297BA9AA47740787137D896D5724E4C70A825F872C9EA60D2EDF5";
     const P384_PUB: &str = "04EC3A4E415B4E19A4568618029F427FA5DA9A8BC4AE92E02E06AAE5286B300C64DEF8F0EA9055866064A254515480BC138015D9B72D7D57244EA8EF9AC0C621896708A59367F9DFB9F54CA84B3F1C9DB1288B231C3AE0D4FE7344FD2533264720";
@@ -351,13 +448,25 @@ mod tests {
 
     #[test]
     fn rfc_6979_vectors() {
-        for (curve, key, public, cases) in [(Curve::P256, P256_KEY, P256_PUB, &P256[..]), (Curve::P384, P384_KEY, P384_PUB, &P384[..])] {
+        for (curve, key, public, cases) in [
+            (Curve::P256, P256_KEY, P256_PUB, &P256[..]),
+            (Curve::P384, P384_KEY, P384_PUB, &P384[..]),
+        ] {
             let k = EcdsaSigningKey::from_scalar(curve, &unhex(key)).unwrap();
             assert_eq!(k.public_key(), &unhex(public)[..], "{curve:?} public key");
             for (alg, msg, r, s) in cases {
                 let got = k.sign_deterministic(*alg, msg.as_bytes()).unwrap();
-                assert_eq!(got, der_signature(&unhex(r), &unhex(s)), "{curve:?} {alg:?} {msg:?}");
-                assert!(ecdsa::verify_prehashed(curve, k.public_key(), &alg.digest(msg.as_bytes()), &got));
+                assert_eq!(
+                    got,
+                    der_signature(&unhex(r), &unhex(s)),
+                    "{curve:?} {alg:?} {msg:?}"
+                );
+                assert!(ecdsa::verify_prehashed(
+                    curve,
+                    k.public_key(),
+                    &alg.digest(msg.as_bytes()),
+                    &got
+                ));
             }
         }
     }
@@ -396,7 +505,11 @@ mod tests {
         for (curve, alg, d, msg, r, s) in PYTHON_ECDSA {
             let k = EcdsaSigningKey::from_scalar(curve, &unhex(d)).unwrap();
             let got = k.sign_deterministic(alg, &unhex(msg)).unwrap();
-            assert_eq!(got, der_signature(&unhex(r), &unhex(s)), "{curve:?} {alg:?} d = {d}");
+            assert_eq!(
+                got,
+                der_signature(&unhex(r), &unhex(s)),
+                "{curve:?} {alg:?} d = {d}"
+            );
         }
     }
 
@@ -410,13 +523,28 @@ mod tests {
                 let b = k.sign(alg, b"the same message").unwrap();
                 assert_ne!(a, b, "the added randomness changes the nonce");
                 for sig in [&a, &b] {
-                    assert!(ecdsa::verify_prehashed(curve, k.public_key(), &alg.digest(b"the same message"), sig));
-                    assert!(!ecdsa::verify_prehashed(curve, k.public_key(), &alg.digest(b"another message"), sig));
+                    assert!(ecdsa::verify_prehashed(
+                        curve,
+                        k.public_key(),
+                        &alg.digest(b"the same message"),
+                        sig
+                    ));
+                    assert!(!ecdsa::verify_prehashed(
+                        curve,
+                        k.public_key(),
+                        &alg.digest(b"another message"),
+                        sig
+                    ));
                 }
                 let raw = k.sign_p1363(alg, b"jws").unwrap();
                 let len = scalar_len(curve).unwrap();
                 assert_eq!(raw.len(), 2 * len);
-                assert!(ecdsa::verify_prehashed(curve, k.public_key(), &alg.digest(b"jws"), &der_signature(&raw[..len], &raw[len..])));
+                assert!(ecdsa::verify_prehashed(
+                    curve,
+                    k.public_key(),
+                    &alg.digest(b"jws"),
+                    &der_signature(&raw[..len], &raw[len..])
+                ));
             }
         }
     }
@@ -429,7 +557,10 @@ mod tests {
                 for len in [0usize, 1, 55, 56, 64, 1000] {
                     let msg = vec![0xa5u8; len];
                     let sig = k.sign(alg, &msg).unwrap();
-                    assert!(ecdsa::verify_prehashed(curve, k.public_key(), &alg.digest(&msg), &sig), "{curve:?} {alg:?} {len}");
+                    assert!(
+                        ecdsa::verify_prehashed(curve, k.public_key(), &alg.digest(&msg), &sig),
+                        "{curve:?} {alg:?} {len}"
+                    );
                 }
             }
         }
@@ -451,7 +582,12 @@ mod tests {
             *n_minus_1.last_mut().unwrap() -= 1;
             let k = EcdsaSigningKey::from_scalar(curve, &n_minus_1).unwrap();
             let sig = k.sign(default_hash(curve), b"edge").unwrap();
-            assert!(ecdsa::verify_prehashed(curve, k.public_key(), &default_hash(curve).digest(b"edge"), &sig));
+            assert!(ecdsa::verify_prehashed(
+                curve,
+                k.public_key(),
+                &default_hash(curve).digest(b"edge"),
+                &sig
+            ));
         }
         assert!(EcdsaSigningKey::from_scalar(Curve::P521, &[1]).is_err());
         assert!(EcdsaSigningKey::generate(Curve::P521).is_err());
@@ -459,7 +595,13 @@ mod tests {
 
     #[test]
     fn der_integers_are_minimal() {
-        assert_eq!(der_signature(&[0, 0, 1], &[0x80, 0]), vec![0x30, 0x08, 0x02, 0x01, 0x01, 0x02, 0x03, 0x00, 0x80, 0x00]);
-        assert_eq!(der_signature(&[0, 0], &[0x7f]), vec![0x30, 0x06, 0x02, 0x01, 0x00, 0x02, 0x01, 0x7f]);
+        assert_eq!(
+            der_signature(&[0, 0, 1], &[0x80, 0]),
+            vec![0x30, 0x08, 0x02, 0x01, 0x01, 0x02, 0x03, 0x00, 0x80, 0x00]
+        );
+        assert_eq!(
+            der_signature(&[0, 0], &[0x7f]),
+            vec![0x30, 0x06, 0x02, 0x01, 0x00, 0x02, 0x01, 0x7f]
+        );
     }
 }

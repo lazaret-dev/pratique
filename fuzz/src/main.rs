@@ -494,8 +494,10 @@ fn install_panic_hook() {
         } else {
             "panic".to_string()
         };
+        // the first 120 characters, which name a finding in the logs; FUZZ_FULL_PANIC=1 (for `replay`) keeps the message whole
+        let keep = if std::env::var_os("FUZZ_FULL_PANIC").is_some() { usize::MAX } else { 120 };
         if let Ok(mut n) = PANIC_NOTE.lock() {
-            *n = format!("{loc}: {}", msg.chars().take(120).collect::<String>());
+            *n = format!("{loc}: {}", msg.chars().take(keep).collect::<String>());
         }
     }));
 }

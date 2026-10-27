@@ -2,10 +2,10 @@
 //!
 //! Usage: cargo run --release --example probe -- host [host ...]
 
-use std::net::TcpStream;
-use std::time::{Duration, Instant};
 use pratique::tls::{ClientConfig, TlsStream};
 use pratique::x509::{Certificate, PublicKey};
+use std::net::TcpStream;
+use std::time::{Duration, Instant};
 
 fn main() {
     let config = match ClientConfig::with_system_roots() {
@@ -31,15 +31,22 @@ fn main() {
             };
             Ok(format!(
                 "{} {} | leaf key {} | {} SANs | alpn {:?}",
-                tls.protocol_version().map_or("?".to_string(), |v| v.to_string()),
+                tls.protocol_version()
+                    .map_or("?".to_string(), |v| v.to_string()),
                 tls.cipher_suite_name().unwrap_or("?"),
                 key,
                 leaf.dns_names.len(),
-                tls.alpn_protocol().map(|p| String::from_utf8_lossy(p).into_owned()),
+                tls.alpn_protocol()
+                    .map(|p| String::from_utf8_lossy(p).into_owned()),
             ))
         })();
         match result {
-            Ok(s) => println!("OK   {:<28} {:>4} ms  {}", host, started.elapsed().as_millis(), s),
+            Ok(s) => println!(
+                "OK   {:<28} {:>4} ms  {}",
+                host,
+                started.elapsed().as_millis(),
+                s
+            ),
             Err(e) => println!("FAIL {:<28} {}", host, e),
         }
     }

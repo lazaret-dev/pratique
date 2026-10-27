@@ -13,20 +13,44 @@ pub struct Report {
 impl Report {
     pub fn from_args() -> Report {
         let args: Vec<String> = std::env::args().skip(1).collect();
-        let option = |n: &str| args.iter().position(|a| a == n).and_then(|i| args.get(i + 1)).cloned();
-        let tsv = option("--tsv").map(|p| std::fs::OpenOptions::new().create(true).append(true).open(&p).unwrap_or_else(|e| panic!("cannot open {p}: {e}")));
+        let option = |n: &str| {
+            args.iter()
+                .position(|a| a == n)
+                .and_then(|i| args.get(i + 1))
+                .cloned()
+        };
+        let tsv = option("--tsv").map(|p| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&p)
+                .unwrap_or_else(|e| panic!("cannot open {p}: {e}"))
+        });
         let label = option("--label").unwrap_or_else(|| "this machine".into());
         // (the other options are the example's own)
-        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        Report { tsv, label, date: date_of(secs) }
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64);
+        Report {
+            tsv,
+            label,
+            date: date_of(secs),
+        }
     }
 
     /// One figure: `name` (a stable name: the TSV and the comparison go by it), its value and unit.
     pub fn row(&mut self, name: &str, value: f64, unit: &str) {
-        let shown = if value >= 100.0 { format!("{value:9.1}") } else if value >= 1.0 { format!("{value:9.2}") } else { format!("{value:9.4}") };
+        let shown = if value >= 100.0 {
+            format!("{value:9.1}")
+        } else if value >= 1.0 {
+            format!("{value:9.2}")
+        } else {
+            format!("{value:9.4}")
+        };
         println!("{name:<58} {shown} {unit}");
         if let Some(f) = &mut self.tsv {
-            writeln!(f, "{}\t{}\t{name}\t{value}\t{unit}", self.label, self.date).expect("write the TSV");
+            writeln!(f, "{}\t{}\t{name}\t{value}\t{unit}", self.label, self.date)
+                .expect("write the TSV");
         }
     }
 }

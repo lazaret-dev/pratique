@@ -27,12 +27,20 @@ const X25519_SERVER_PRIVATE: [u8; 32] = [0x55; 32];
 /// TLS 1.3 only: these tests look at the flights byte by byte, and a ClientHello that offers TLS 1.2 too sends its
 /// compatibility change_cipher_spec later (see `the_compatibility_change_cipher_spec_goes_before_the_second_hello`).
 fn config() -> ClientConfig {
-    ClientConfig::new(crate::x509::TrustStore::empty()).danger_disable_verification().with_min_version(crate::tls::TlsVersion::Tls13)
+    ClientConfig::new(crate::x509::TrustStore::empty())
+        .danger_disable_verification()
+        .with_min_version(crate::tls::TlsVersion::Tls13)
 }
 
 /// A client that has sent its ClientHello (taken from its output, which is returned).
 fn start() -> (ClientConnection, Vec<u8>) {
-    let mut c = ClientConnection::start("example.com", &config(), Zeroizing::new([7u8; 32]), &RANDOM, &SESSION);
+    let mut c = ClientConnection::start(
+        "example.com",
+        &config(),
+        Zeroizing::new([7u8; 32]),
+        &RANDOM,
+        &SESSION,
+    );
     let out = take_output(&mut c);
     (c, out)
 }
@@ -93,11 +101,20 @@ impl Hello {
             let t = er.u16().unwrap();
             exts.push((t, er.vec16().unwrap().to_vec()));
         }
-        Hello { msg: msg.to_vec(), random, session_id, suites, exts }
+        Hello {
+            msg: msg.to_vec(),
+            random,
+            session_id,
+            suites,
+            exts,
+        }
     }
 
     fn ext(&self, t: u16) -> Option<&[u8]> {
-        self.exts.iter().find(|(x, _)| *x == t).map(|(_, d)| d.as_slice())
+        self.exts
+            .iter()
+            .find(|(x, _)| *x == t)
+            .map(|(_, d)| d.as_slice())
     }
 
     fn types(&self) -> Vec<u16> {
@@ -106,7 +123,11 @@ impl Hello {
 
     /// The one key share: (group, public value).
     fn key_share(&self) -> (u16, Vec<u8>) {
-        let mut list = Reader::new(Reader::new(self.ext(EXT_KEY_SHARE).unwrap()).vec16().unwrap());
+        let mut list = Reader::new(
+            Reader::new(self.ext(EXT_KEY_SHARE).unwrap())
+                .vec16()
+                .unwrap(),
+        );
         let group = list.u16().unwrap();
         let key = list.vec16().unwrap().to_vec();
         assert!(list.is_empty(), "exactly one key share");
@@ -207,13 +228,20 @@ fn server_cipher(suite: Suite, shared: &[u8], transcript: &[u8]) -> RecordCipher
     let early = hkdf_extract(alg, &[], &zeros);
     let derived = derive_secret(alg, &early, "derived", &alg.digest(&[]));
     let hs = hkdf_extract(alg, &derived, shared);
-    RecordCipher::new(suite, &derive_secret(alg, &hs, "s hs traffic", &alg.digest(transcript)))
+    RecordCipher::new(
+        suite,
+        &derive_secret(alg, &hs, "s hs traffic", &alg.digest(transcript)),
+    )
 }
 
 /// An empty EncryptedExtensions message sealed as the server's first protected record.
 fn sealed_encrypted_extensions(cipher: &mut RecordCipher) -> Vec<u8> {
     let mut out = Vec::new();
-    cipher.encrypt_into(RT_HANDSHAKE, &handshake_message(HS_ENCRYPTED_EXTENSIONS, &[0, 0]), &mut out);
+    cipher.encrypt_into(
+        RT_HANDSHAKE,
+        &handshake_message(HS_ENCRYPTED_EXTENSIONS, &[0, 0]),
+        &mut out,
+    );
     out
 }
 
@@ -221,10 +249,14 @@ fn sealed_encrypted_extensions(cipher: &mut RecordCipher) -> Vec<u8> {
 fn server_exchange(group: u16, client_public: &[u8]) -> (Vec<u8>, Vec<u8>) {
     if group == GROUP_X25519 {
         let client: [u8; 32] = client_public.try_into().unwrap();
-        (x25519::public_key(&X25519_SERVER_PRIVATE).to_vec(), x25519::x25519(&X25519_SERVER_PRIVATE, &client).to_vec())
+        (
+            x25519::public_key(&X25519_SERVER_PRIVATE).to_vec(),
+            x25519::x25519(&X25519_SERVER_PRIVATE, &client).to_vec(),
+        )
     } else {
         let (secret, public) = ecdh::generate(curve(group)).unwrap();
-        let shared = ecdh::shared_secret(curve(group), &secret, client_public).expect("the client's share is a valid point");
+        let shared = ecdh::shared_secret(curve(group), &secret, client_public)
+            .expect("the client's share is a valid point");
         (public, shared.to_vec())
     }
 }
@@ -234,12 +266,20 @@ fn server_exchange(group: u16, client_public: &[u8]) -> (Vec<u8>, Vec<u8>) {
 fn retried(retry: &Retry) -> (ClientConnection, Hello, Hello, Vec<u8>) {
     let (mut c, out1) = start();
     let r1 = records(&out1);
-    assert_eq!(r1.len(), 2, "ClientHello and the compatibility change_cipher_spec");
+    assert_eq!(
+        r1.len(),
+        2,
+        "ClientHello and the compatibility change_cipher_spec"
+    );
     assert_eq!((r1[0].0, r1[1].0), (RT_HANDSHAKE, RT_CHANGE_CIPHER_SPEC));
     let ch1 = Hello::parse(&r1[0].1);
     feed(&mut c, &retry.record()).expect("the retry is accepted");
     let r2 = records(&take_output(&mut c));
-    assert_eq!(r2.len(), 1, "only the second ClientHello: the change_cipher_spec went out once already");
+    assert_eq!(
+        r2.len(),
+        1,
+        "only the second ClientHello: the change_cipher_spec went out once already"
+    );
     assert_eq!(r2[0].0, RT_HANDSHAKE);
     let ch2 = Hello::parse(&r2[0].1);
     (c, ch1, ch2, retry.message())
@@ -247,11 +287,22 @@ fn retried(retry: &Retry) -> (ClientConnection, Hello, Hello, Vec<u8>) {
 
 /// Finishes the exchange the way a server would and returns whether the client could read the
 /// server's first protected record. `message_hash` false builds the transcript the wrong way.
-fn finish_exchange(c: &mut ClientConnection, suite: Suite, ch1: &Hello, hrr: &[u8], ch2: &Hello, message_hash: bool) -> crate::error::Result<()> {
+fn finish_exchange(
+    c: &mut ClientConnection,
+    suite: Suite,
+    ch1: &Hello,
+    hrr: &[u8],
+    ch2: &Hello,
+    message_hash: bool,
+) -> crate::error::Result<()> {
     let (group, client_public) = ch2.key_share();
     let (server_public, shared) = server_exchange(group, &client_public);
     let sh = server_hello(suite.id(), group, &server_public);
-    let mut transcript = if message_hash { handshake_message(HS_MESSAGE_HASH, &suite.hash().digest(&ch1.msg)) } else { ch1.msg.clone() };
+    let mut transcript = if message_hash {
+        handshake_message(HS_MESSAGE_HASH, &suite.hash().digest(&ch1.msg))
+    } else {
+        ch1.msg.clone()
+    };
     transcript.extend_from_slice(hrr);
     transcript.extend_from_slice(&ch2.msg);
     transcript.extend_from_slice(&sh);
@@ -276,7 +327,8 @@ fn a_retry_to_a_nist_group_completes_the_key_exchange_for_every_suite() {
             assert_eq!(g, group);
             assert_eq!(public.len(), if group == GROUP_SECP256R1 { 65 } else { 97 });
             assert_eq!(public[0], 4, "uncompressed point");
-            finish_exchange(&mut c, suite, &ch1, &hrr, &ch2, true).unwrap_or_else(|e| panic!("{suite:?} group {group:#x}: {e}"));
+            finish_exchange(&mut c, suite, &ch1, &hrr, &ch2, true)
+                .unwrap_or_else(|e| panic!("{suite:?} group {group:#x}: {e}"));
             assert!(c.is_handshaking() && !c.is_failed());
         }
     }
@@ -288,7 +340,8 @@ fn the_transcript_must_restart_with_message_hash() {
     // message_hash) derives different keys, and the client cannot read its record.
     let retry = Retry::to(GROUP_SECP256R1);
     let (mut c, ch1, ch2, hrr) = retried(&retry);
-    let err = finish_exchange(&mut c, Suite::Aes128GcmSha256, &ch1, &hrr, &ch2, false).expect_err("wrong transcript");
+    let err = finish_exchange(&mut c, Suite::Aes128GcmSha256, &ch1, &hrr, &ch2, false)
+        .expect_err("wrong transcript");
     assert!(message(err).contains("bad_record_mac"));
 }
 
@@ -297,8 +350,15 @@ fn the_second_client_hello_changes_only_the_key_share() {
     let (_, out1) = start();
     let ch1 = Hello::parse(&records(&out1)[0].1);
     assert_eq!(ch1.key_share().0, GROUP_X25519);
-    let groups = Reader::new(ch1.ext(EXT_SUPPORTED_GROUPS).unwrap()).vec16().unwrap().to_vec();
-    assert_eq!(groups, [0x00, 0x1d, 0x00, 0x17, 0x00, 0x18], "x25519, secp256r1, secp384r1 in that order");
+    let groups = Reader::new(ch1.ext(EXT_SUPPORTED_GROUPS).unwrap())
+        .vec16()
+        .unwrap()
+        .to_vec();
+    assert_eq!(
+        groups,
+        [0x00, 0x1d, 0x00, 0x17, 0x00, 0x18],
+        "x25519, secp256r1, secp384r1 in that order"
+    );
 
     let (_, ch1, ch2, _) = retried(&Retry::to(GROUP_SECP384R1));
     assert_eq!(ch2.random, RANDOM);
@@ -306,7 +366,11 @@ fn the_second_client_hello_changes_only_the_key_share() {
     assert_eq!(ch2.random, ch1.random);
     assert_eq!(ch2.session_id, ch1.session_id);
     assert_eq!(ch2.suites, ch1.suites);
-    assert_eq!(ch2.types(), ch1.types(), "same extensions in the same order");
+    assert_eq!(
+        ch2.types(),
+        ch1.types(),
+        "same extensions in the same order"
+    );
     for ((t, d1), (_, d2)) in ch1.exts.iter().zip(&ch2.exts) {
         if *t != EXT_KEY_SHARE {
             assert_eq!(d1, d2, "extension {t} must not change");
@@ -346,24 +410,76 @@ fn a_retry_that_breaks_the_rules_ends_the_handshake() {
         f(&mut r);
         cases.push((name, r, expect));
     };
-    add("the group already sent", &|r| r.group = Some(GROUP_X25519), "illegal_parameter");
-    add("a group we never offered (secp521r1)", &|r| r.group = Some(0x0019), "illegal_parameter");
-    add("a group we never offered (ffdhe2048)", &|r| r.group = Some(0x0100), "illegal_parameter");
+    add(
+        "the group already sent",
+        &|r| r.group = Some(GROUP_X25519),
+        "illegal_parameter",
+    );
+    add(
+        "a group we never offered (secp521r1)",
+        &|r| r.group = Some(0x0019),
+        "illegal_parameter",
+    );
+    add(
+        "a group we never offered (ffdhe2048)",
+        &|r| r.group = Some(0x0100),
+        "illegal_parameter",
+    );
     add("nothing changes", &|r| r.group = None, "illegal_parameter");
-    add("wrong session id", &|r| r.session_id = vec![9; 32], "illegal_parameter");
-    add("empty session id", &|r| r.session_id = Vec::new(), "illegal_parameter");
-    add("unknown cipher suite", &|r| r.suite = 0x1304, "illegal_parameter");
-    add("legacy version 1.2 changed", &|r| r.legacy_version = 0x0302, "illegal_parameter");
+    add(
+        "wrong session id",
+        &|r| r.session_id = vec![9; 32],
+        "illegal_parameter",
+    );
+    add(
+        "empty session id",
+        &|r| r.session_id = Vec::new(),
+        "illegal_parameter",
+    );
+    add(
+        "unknown cipher suite",
+        &|r| r.suite = 0x1304,
+        "illegal_parameter",
+    );
+    add(
+        "legacy version 1.2 changed",
+        &|r| r.legacy_version = 0x0302,
+        "illegal_parameter",
+    );
     add("compression", &|r| r.compression = 1, "illegal_parameter");
-    add("no supported_versions", &|r| r.version = None, "protocol_version");
-    add("TLS 1.2 selected", &|r| r.version = Some(0x0303), "protocol_version");
-    add("a key in the key_share", &|r| r.key_after_group = vec![0, 1, 7], "decode_error");
-    add("an empty cookie", &|r| r.cookie = Some(Vec::new()), "decode_error");
-    add("an unsolicited extension", &|r| r.extra = vec![(EXT_SERVER_NAME, vec![])], "unsupported_extension");
-    add("a second cookie", &|r| {
-        r.cookie = Some(vec![1]);
-        r.extra = vec![(EXT_COOKIE, block16(&[2]))];
-    }, "illegal_parameter");
+    add(
+        "no supported_versions",
+        &|r| r.version = None,
+        "protocol_version",
+    );
+    add(
+        "TLS 1.2 selected",
+        &|r| r.version = Some(0x0303),
+        "protocol_version",
+    );
+    add(
+        "a key in the key_share",
+        &|r| r.key_after_group = vec![0, 1, 7],
+        "decode_error",
+    );
+    add(
+        "an empty cookie",
+        &|r| r.cookie = Some(Vec::new()),
+        "decode_error",
+    );
+    add(
+        "an unsolicited extension",
+        &|r| r.extra = vec![(EXT_SERVER_NAME, vec![])],
+        "unsupported_extension",
+    );
+    add(
+        "a second cookie",
+        &|r| {
+            r.cookie = Some(vec![1]);
+            r.extra = vec![(EXT_COOKIE, block16(&[2]))];
+        },
+        "illegal_parameter",
+    );
     for (name, retry, expect) in cases {
         let (mut c, _) = start();
         let err = feed(&mut c, &retry.record()).expect_err(name);
@@ -375,7 +491,8 @@ fn a_retry_that_breaks_the_rules_ends_the_handshake() {
 #[test]
 fn a_second_retry_is_refused() {
     let (mut c, _, _, _) = retried(&Retry::to(GROUP_SECP256R1));
-    let err = feed(&mut c, &Retry::to(GROUP_SECP384R1).record()).expect_err("second HelloRetryRequest");
+    let err =
+        feed(&mut c, &Retry::to(GROUP_SECP384R1).record()).expect_err("second HelloRetryRequest");
     assert!(message(err).contains("unexpected_message"));
     // also when it only carries a cookie
     let (mut c, _, _, _) = retried(&Retry::to(GROUP_SECP256R1));
@@ -390,7 +507,8 @@ fn more_handshake_data_after_the_retry_in_the_same_record_is_refused() {
     let (mut c, _) = start();
     let mut content = Retry::to(GROUP_SECP256R1).message();
     content.push(HS_ENCRYPTED_EXTENSIONS); // the start of another message
-    let err = feed(&mut c, &plain_record(RT_HANDSHAKE, &content)).expect_err("data after the retry");
+    let err =
+        feed(&mut c, &plain_record(RT_HANDSHAKE, &content)).expect_err("data after the retry");
     assert!(message(err).contains("unexpected_message"));
 }
 
@@ -399,27 +517,57 @@ fn a_server_hello_after_a_retry_must_match_the_retry() {
     let valid_share = |client_public: &[u8]| server_exchange(GROUP_SECP256R1, client_public).0;
     type Case = (&'static str, Box<dyn Fn(&[u8]) -> Vec<u8>>);
     let cases: Vec<Case> = vec![
-        ("a different cipher suite", Box::new(move |p| server_hello(Suite::Aes256GcmSha384.id(), GROUP_SECP256R1, &valid_share(p)))),
-        ("another group", Box::new(|_| server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP384R1, &[4; 97]))),
-        ("the group that was first sent", Box::new(|_| server_hello(Suite::Aes128GcmSha256.id(), GROUP_X25519, &[9; 32]))),
-        ("a point off the curve", Box::new(move |p| {
-            let mut s = valid_share(p);
-            *s.last_mut().unwrap() ^= 1;
-            server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &s)
-        })),
-        ("a compressed point", Box::new(move |p| {
-            let s = valid_share(p);
-            let mut compressed = vec![2 + (s[64] & 1)];
-            compressed.extend_from_slice(&s[1..33]);
-            server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &compressed)
-        })),
-        ("a short key", Box::new(|_| server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &[4; 64]))),
-        ("an empty key", Box::new(|_| server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &[]))),
-        ("the point (0, 0)", Box::new(|_| {
-            let mut z = vec![0u8; 65];
-            z[0] = 4;
-            server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &z)
-        })),
+        (
+            "a different cipher suite",
+            Box::new(move |p| {
+                server_hello(
+                    Suite::Aes256GcmSha384.id(),
+                    GROUP_SECP256R1,
+                    &valid_share(p),
+                )
+            }),
+        ),
+        (
+            "another group",
+            Box::new(|_| server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP384R1, &[4; 97])),
+        ),
+        (
+            "the group that was first sent",
+            Box::new(|_| server_hello(Suite::Aes128GcmSha256.id(), GROUP_X25519, &[9; 32])),
+        ),
+        (
+            "a point off the curve",
+            Box::new(move |p| {
+                let mut s = valid_share(p);
+                *s.last_mut().unwrap() ^= 1;
+                server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &s)
+            }),
+        ),
+        (
+            "a compressed point",
+            Box::new(move |p| {
+                let s = valid_share(p);
+                let mut compressed = vec![2 + (s[64] & 1)];
+                compressed.extend_from_slice(&s[1..33]);
+                server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &compressed)
+            }),
+        ),
+        (
+            "a short key",
+            Box::new(|_| server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &[4; 64])),
+        ),
+        (
+            "an empty key",
+            Box::new(|_| server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &[])),
+        ),
+        (
+            "the point (0, 0)",
+            Box::new(|_| {
+                let mut z = vec![0u8; 65];
+                z[0] = 4;
+                server_hello(Suite::Aes128GcmSha256.id(), GROUP_SECP256R1, &z)
+            }),
+        ),
     ];
     for (name, build) in cases {
         let (mut c, _, ch2, _) = retried(&Retry::to(GROUP_SECP256R1));
@@ -441,9 +589,17 @@ fn a_nist_key_share_without_a_retry_is_refused() {
 
 #[test]
 fn a_connection_started_from_a_recorded_hello_cannot_retry() {
-    let mut c = ClientConnection::with_recorded_hello("example.com", &config(), [7; 32], &[], &[1, 0, 0, 0], &[]);
+    let mut c = ClientConnection::with_recorded_hello(
+        "example.com",
+        &config(),
+        [7; 32],
+        &[],
+        &[1, 0, 0, 0],
+        &[],
+    );
     take_output(&mut c);
-    let err = feed(&mut c, &Retry::to(GROUP_SECP256R1).record()).expect_err("no inputs to rebuild the hello");
+    let err = feed(&mut c, &Retry::to(GROUP_SECP256R1).record())
+        .expect_err("no inputs to rebuild the hello");
     assert!(message(err).contains("internal"));
 }
 
@@ -460,7 +616,10 @@ impl std::io::Read for RetryingServer {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.reads += 1;
         if self.reads == 1 {
-            assert!(self.writes >= 1, "the first ClientHello goes out before the first read");
+            assert!(
+                self.writes >= 1,
+                "the first ClientHello goes out before the first read"
+            );
             // the client picked its own session id: echo it
             let hello = Hello::parse(&records(&self.first_write)[0].1);
             let mut retry = Retry::to(GROUP_SECP256R1);
@@ -468,7 +627,10 @@ impl std::io::Read for RetryingServer {
             self.pending = retry.record();
         } else {
             assert!(self.writes >= 2, "the second ClientHello must be written before waiting for the server again (it would never arrive)");
-            return Err(std::io::Error::new(std::io::ErrorKind::ConnectionReset, "the test ends here"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "the test ends here",
+            ));
         }
         let n = buf.len().min(self.pending.len());
         buf[..n].copy_from_slice(&self.pending[..n]);
@@ -494,8 +656,15 @@ impl std::io::Write for RetryingServer {
 fn the_blocking_driver_sends_the_second_client_hello_before_it_reads_again() {
     // Regression test: the blocking driver once sent only the first flight, so a server that
     // answered with a HelloRetryRequest waited for a second ClientHello that never came.
-    let io = RetryingServer { writes: 0, reads: 0, pending: Vec::new(), first_write: Vec::new() };
-    let err = TlsStream::connect(io, "example.com", &config()).err().expect("the transport fails afterwards");
+    let io = RetryingServer {
+        writes: 0,
+        reads: 0,
+        pending: Vec::new(),
+        first_write: Vec::new(),
+    };
+    let err = TlsStream::connect(io, "example.com", &config())
+        .err()
+        .expect("the transport fails afterwards");
     let text = message(err);
     assert!(text.contains("the test ends here"), "{text}");
 }
@@ -510,10 +679,20 @@ fn the_scripted_retry_server_gets_the_client_to_read_its_flight() {
         for suite in Suite::preference_order() {
             let flight = handshake_message(HS_ENCRYPTED_EXTENSIONS, &[0, 0]);
             let io = RetryServer::new(suite, kind, flight, usize::MAX);
-            let err = TlsStream::connect(io, "example.test", &config()).err().expect("no certificate follows");
+            let err = TlsStream::connect(io, "example.test", &config())
+                .err()
+                .expect("no certificate follows");
             let text = message(err);
-            assert!(!text.contains("bad_record_mac") && !text.contains("illegal_parameter"), "kind {kind} {suite:?}: {text}");
-            assert!(text.to_lowercase().contains("eof") || text.contains("closed") || text.contains("end"), "kind {kind} {suite:?}: {text}");
+            assert!(
+                !text.contains("bad_record_mac") && !text.contains("illegal_parameter"),
+                "kind {kind} {suite:?}: {text}"
+            );
+            assert!(
+                text.to_lowercase().contains("eof")
+                    || text.contains("closed")
+                    || text.contains("end"),
+                "kind {kind} {suite:?}: {text}"
+            );
         }
     }
 }
@@ -523,12 +702,23 @@ fn the_compatibility_change_cipher_spec_goes_before_the_second_hello() {
     // a ClientHello that offers TLS 1.2 as well is sent alone (a TLS 1.2 server would take a change_cipher_spec before its
     // ServerHello for an error); after a HelloRetryRequest, which only a TLS 1.3 server sends, it goes before the second hello
     let config = ClientConfig::new(crate::x509::TrustStore::empty()).danger_disable_verification();
-    let mut c = ClientConnection::start("example.com", &config, Zeroizing::new([7u8; 32]), &RANDOM, &SESSION);
+    let mut c = ClientConnection::start(
+        "example.com",
+        &config,
+        Zeroizing::new([7u8; 32]),
+        &RANDOM,
+        &SESSION,
+    );
     let r1 = records(&take_output(&mut c));
-    assert_eq!(r1.iter().map(|r| r.0).collect::<Vec<_>>(), vec![RT_HANDSHAKE]);
+    assert_eq!(
+        r1.iter().map(|r| r.0).collect::<Vec<_>>(),
+        vec![RT_HANDSHAKE]
+    );
     let retry = Retry::to(GROUP_SECP256R1);
     feed(&mut c, &retry.record()).expect("the retry is accepted");
     let r2 = records(&take_output(&mut c));
-    assert_eq!(r2.iter().map(|r| r.0).collect::<Vec<_>>(), vec![RT_CHANGE_CIPHER_SPEC, RT_HANDSHAKE]);
+    assert_eq!(
+        r2.iter().map(|r| r.0).collect::<Vec<_>>(),
+        vec![RT_CHANGE_CIPHER_SPEC, RT_HANDSHAKE]
+    );
 }
-

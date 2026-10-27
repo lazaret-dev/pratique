@@ -14,8 +14,13 @@ use pratique::x509::TrustStore;
 use std::path::Path;
 
 fn certs_in(path: &Path) -> Result<Vec<Vec<u8>>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    Ok(pem::parse(&text).into_iter().filter(|b| b.label == "CERTIFICATE").map(|b| b.data).collect())
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    Ok(pem::parse(&text)
+        .into_iter()
+        .filter(|b| b.label == "CERTIFICATE")
+        .map(|b| b.data)
+        .collect())
 }
 
 /// The library's verdict on one case.
@@ -27,10 +32,15 @@ fn judge(dir: &Path, name: &str, host: &str, time: i64, anchor: &str) -> Result<
     let mut store = TrustStore::empty();
     if anchor != "-" {
         for der in certs_in(&dir.join(anchor))? {
-            store.add_der(&der).map_err(|e| format!("the anchor does not parse: {e}"))?;
+            store
+                .add_der(&der)
+                .map_err(|e| format!("the anchor does not parse: {e}"))?;
         }
     }
-    store.verify_server_chain(&chain, host, time).map(|_| ()).map_err(|e| e.to_string())
+    store
+        .verify_server_chain(&chain, host, time)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn main() {
@@ -43,7 +53,10 @@ fn main() {
         eprintln!("cannot read {}/fixtures.tsv: {e}", dir.display());
         std::process::exit(2);
     });
-    for line in text.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')) {
+    for line in text
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+    {
         let c: Vec<&str> = line.split('\t').collect();
         if c.len() < 5 {
             eprintln!("fixtures.tsv: a line with fewer than 5 columns: {line}");

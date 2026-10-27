@@ -16,7 +16,11 @@ pub enum Suite {
 
 impl Suite {
     /// Every cipher suite this library implements.
-    pub const ALL: [Suite; 3] = [Suite::Chacha20Poly1305Sha256, Suite::Aes128GcmSha256, Suite::Aes256GcmSha384];
+    pub const ALL: [Suite; 3] = [
+        Suite::Chacha20Poly1305Sha256,
+        Suite::Aes128GcmSha256,
+        Suite::Aes256GcmSha384,
+    ];
 
     /// The suites in the order the ClientHello offers them, which servers that honour client
     /// preference follow. AES-GCM first when the CPU has AES instructions in use (several times
@@ -24,9 +28,17 @@ impl Suite {
     /// portable constant-time AES is much slower than ChaCha20.
     pub fn preference_order() -> [Suite; 3] {
         if crate::crypto::aes::hardware_accelerated() {
-            [Suite::Aes128GcmSha256, Suite::Aes256GcmSha384, Suite::Chacha20Poly1305Sha256]
+            [
+                Suite::Aes128GcmSha256,
+                Suite::Aes256GcmSha384,
+                Suite::Chacha20Poly1305Sha256,
+            ]
         } else {
-            [Suite::Chacha20Poly1305Sha256, Suite::Aes128GcmSha256, Suite::Aes256GcmSha384]
+            [
+                Suite::Chacha20Poly1305Sha256,
+                Suite::Aes128GcmSha256,
+                Suite::Aes256GcmSha384,
+            ]
         }
     }
 
@@ -95,7 +107,13 @@ pub fn hkdf_extract(alg: HashAlg, salt: &[u8], ikm: &[u8]) -> Vec<u8> {
     }
 }
 
-pub fn expand_label(alg: HashAlg, secret: &[u8], label: &str, context: &[u8], len: usize) -> Vec<u8> {
+pub fn expand_label(
+    alg: HashAlg,
+    secret: &[u8],
+    label: &str,
+    context: &[u8],
+    len: usize,
+) -> Vec<u8> {
     Prk::new(alg, secret).expand_label(label, context, len)
 }
 
@@ -165,7 +183,12 @@ impl Aead {
     }
 
     /// `buf` = ciphertext || tag. Returns the plaintext length on success; on failure `buf` is untouched.
-    pub(crate) fn open_in_place(&self, nonce: &[u8; 12], aad: &[u8], buf: &mut [u8]) -> Option<usize> {
+    pub(crate) fn open_in_place(
+        &self,
+        nonce: &[u8; 12],
+        aad: &[u8],
+        buf: &mut [u8],
+    ) -> Option<usize> {
         match self {
             Aead::Gcm(g) => g.open_in_place(nonce, aad, buf),
             Aead::ChaCha(c) => c.open_in_place(nonce, aad, buf),
@@ -209,13 +232,25 @@ impl RecordCipher {
         let iv_vec = Zeroizing::new(prk.expand_label("iv", &[], 12));
         let mut iv = [0u8; 12];
         iv.copy_from_slice(&iv_vec);
-        RecordCipher { suite, aead: Aead::new(suite, &key), iv, seq: 0, secret: traffic_secret.to_vec() }
+        RecordCipher {
+            suite,
+            aead: Aead::new(suite, &key),
+            iv,
+            seq: 0,
+            secret: traffic_secret.to_vec(),
+        }
     }
 
     /// The cipher for the next generation of traffic keys (KeyUpdate, RFC 8446 section 7.2).
     pub fn next_generation(&self) -> RecordCipher {
         let alg = self.suite.hash();
-        let next = Zeroizing::new(expand_label(alg, &self.secret, "traffic upd", &[], alg.output_len()));
+        let next = Zeroizing::new(expand_label(
+            alg,
+            &self.secret,
+            "traffic upd",
+            &[],
+            alg.output_len(),
+        ));
         RecordCipher::new(self.suite, &next)
     }
 
@@ -238,7 +273,13 @@ impl RecordCipher {
     pub fn encrypt_into(&mut self, inner_type: u8, content: &[u8], out: &mut Vec<u8>) {
         debug_assert!(content.len() <= MAX_PLAINTEXT);
         let ct_len = content.len() + 1 + AEAD_TAG_LEN;
-        let header = [RT_APPLICATION_DATA, 0x03, 0x03, (ct_len >> 8) as u8, ct_len as u8];
+        let header = [
+            RT_APPLICATION_DATA,
+            0x03,
+            0x03,
+            (ct_len >> 8) as u8,
+            ct_len as u8,
+        ];
         let start = out.len();
         out.reserve(5 + ct_len);
         out.extend_from_slice(&header);
@@ -246,7 +287,8 @@ impl RecordCipher {
         out.push(inner_type);
         out.resize(start + 5 + ct_len, 0); // room for the tag
         let nonce = self.nonce();
-        self.aead.seal_in_place(&nonce, &header, &mut out[start + 5..]);
+        self.aead
+            .seal_in_place(&nonce, &header, &mut out[start + 5..]);
         self.seq += 1;
     }
 
@@ -261,7 +303,11 @@ impl RecordCipher {
     /// Opens a protected record in place. `payload` is the record body (ciphertext || tag) exactly
     /// as received. Returns (true content type, content length); the content is `payload[..len]`.
     /// If authentication fails `payload` is left untouched and the sequence number does not advance.
-    pub fn decrypt_in_place(&mut self, header: &[u8; 5], payload: &mut [u8]) -> Result<(u8, usize)> {
+    pub fn decrypt_in_place(
+        &mut self,
+        header: &[u8; 5],
+        payload: &mut [u8],
+    ) -> Result<(u8, usize)> {
         let nonce = self.nonce();
         let mut n = self
             .aead
@@ -270,14 +316,18 @@ impl RecordCipher {
         self.seq += 1;
         // the whole TLSInnerPlaintext, padding included, is at most 2^14 + 1 octets (RFC 8446 section 5.4)
         if n > MAX_PLAINTEXT + 1 {
-            return Err(Error::Tls("record_overflow: inner plaintext too long".into()));
+            return Err(Error::Tls(
+                "record_overflow: inner plaintext too long".into(),
+            ));
         }
         // Strip the optional zero padding; the last non-zero byte is the true content type.
         while n > 0 && payload[n - 1] == 0 {
             n -= 1;
         }
         if n == 0 {
-            return Err(Error::Tls("unexpected_message: record with no content type".into()));
+            return Err(Error::Tls(
+                "unexpected_message: record with no content type".into(),
+            ));
         }
         let inner_type = payload[n - 1];
         Ok((inner_type, n - 1))
@@ -287,7 +337,13 @@ impl RecordCipher {
     #[cfg(test)]
     pub fn encrypt_padded(&mut self, inner_type: u8, content: &[u8], padding: usize) -> Vec<u8> {
         let ct_len = content.len() + 1 + padding + AEAD_TAG_LEN;
-        let header = [RT_APPLICATION_DATA, 0x03, 0x03, (ct_len >> 8) as u8, ct_len as u8];
+        let header = [
+            RT_APPLICATION_DATA,
+            0x03,
+            0x03,
+            (ct_len >> 8) as u8,
+            ct_len as u8,
+        ];
         let mut rec = header.to_vec();
         rec.extend_from_slice(content);
         rec.push(inner_type);
@@ -317,14 +373,28 @@ mod tests {
         // RFC 8446 section 5.4; tlsfuzzer's test-tls13-record-layer-limits found the padding was not counted
         for suite in Suite::ALL {
             let secret = vec![7u8; suite.hash().output_len()];
-            let (mut enc, mut dec) = (RecordCipher::new(suite, &secret), RecordCipher::new(suite, &secret));
-            for (content, padding, ok) in [(36, MAX_PLAINTEXT - 36, true), (36, MAX_PLAINTEXT - 35, false), (MAX_PLAINTEXT, 0, true), (MAX_PLAINTEXT - 8, 9, false)] {
+            let (mut enc, mut dec) = (
+                RecordCipher::new(suite, &secret),
+                RecordCipher::new(suite, &secret),
+            );
+            for (content, padding, ok) in [
+                (36, MAX_PLAINTEXT - 36, true),
+                (36, MAX_PLAINTEXT - 35, false),
+                (MAX_PLAINTEXT, 0, true),
+                (MAX_PLAINTEXT - 8, 9, false),
+            ] {
                 let rec = enc.encrypt_padded(RT_HANDSHAKE, &vec![1u8; content], padding);
                 let header: [u8; 5] = rec[..5].try_into().unwrap();
                 match dec.decrypt(&header, &rec[5..]) {
-                    Ok((t, body)) => assert!(ok && t == RT_HANDSHAKE && body.len() == content, "{content} + {padding}"),
+                    Ok((t, body)) => assert!(
+                        ok && t == RT_HANDSHAKE && body.len() == content,
+                        "{content} + {padding}"
+                    ),
                     Err(e) => {
-                        assert!(!ok && e.to_string().contains("record_overflow"), "{content} + {padding}: {e}");
+                        assert!(
+                            !ok && e.to_string().contains("record_overflow"),
+                            "{content} + {padding}: {e}"
+                        );
                         // (the sequence moved on: the record opened)
                         dec = RecordCipher::new(suite, &secret);
                         enc = RecordCipher::new(suite, &secret);
@@ -430,7 +500,8 @@ mod tests {
     #[test]
     fn rfc8448_traffic_key_derivation() {
         // RFC 8448 section 3: server handshake traffic secret -> write key and iv (TLS_AES_128_GCM_SHA256)
-        let s_hs = crate::util::unhex("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38");
+        let s_hs =
+            crate::util::unhex("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38");
         let key = expand_label(HashAlg::Sha256, &s_hs, "key", &[], 16);
         let iv = expand_label(HashAlg::Sha256, &s_hs, "iv", &[], 12);
         assert_eq!(crate::util::hex(&key), "3fce516009c21727d0f2e4e86ee403bc");
@@ -469,7 +540,12 @@ mod tests {
             assert_eq!(crate::util::hex(&next.secret), next_secret, "{:?}", suite);
             assert_eq!(crate::util::hex(&next.iv), iv, "{:?}", suite);
             assert_eq!(next.records(), 0);
-            assert_eq!(crate::util::hex(&next.encrypt(RT_APPLICATION_DATA, b"hello, key update")), record, "{:?}", suite);
+            assert_eq!(
+                crate::util::hex(&next.encrypt(RT_APPLICATION_DATA, b"hello, key update")),
+                record,
+                "{:?}",
+                suite
+            );
             assert_eq!(next.records(), 1);
             // and the generation after that is another one, not the same keys again
             assert_ne!(next.next_generation().secret, next.secret);

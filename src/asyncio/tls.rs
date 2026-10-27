@@ -36,7 +36,11 @@ pub struct AsyncTlsStream<S> {
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncTlsStream<S> {
     /// Performs the TLS 1.3 handshake over `io`, verifying the server against `server_name`
     /// (a DNS name or IP literal).
-    pub async fn connect(io: S, server_name: &str, config: &ClientConfig) -> Result<AsyncTlsStream<S>> {
+    pub async fn connect(
+        io: S,
+        server_name: &str,
+        config: &ClientConfig,
+    ) -> Result<AsyncTlsStream<S>> {
         let conn = ClientConnection::new(server_name, config)?;
         let mut s = AsyncTlsStream { io, conn };
         poll_fn(|cx| s.poll_handshake(cx)).await?;
@@ -66,7 +70,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncTlsStream<S> {
                 Poll::Ready(Ok(0)) => {
                     let n = self.conn.output().len();
                     self.conn.consume_output(n);
-                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::WriteZero, "the transport accepted no bytes")));
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "the transport accepted no bytes",
+                    )));
                 }
                 Poll::Ready(Ok(n)) => self.conn.consume_output(n),
                 Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -176,7 +183,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncTlsStream<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for AsyncTlsStream<S> {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         if buf.is_empty() {
             return Poll::Ready(Ok(0));
@@ -208,7 +219,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for AsyncTlsStream<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for AsyncTlsStream<S> {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         if buf.is_empty() {
             return Poll::Ready(Ok(0));

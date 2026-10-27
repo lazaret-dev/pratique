@@ -28,8 +28,8 @@ use crate::crypto::ecdsa::{self, Curve};
 use crate::crypto::ed25519;
 use crate::crypto::rsa::RsaPublicKey;
 use crate::crypto::sha2::HashAlg;
-use crate::verify_error::{cert, Error, Result};
 use crate::pem;
+use crate::verify_error::{cert, Error, Result};
 use core::net::IpAddr;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -98,7 +98,10 @@ const MAX_PATH_ATTEMPTS: usize = 256;
 #[non_exhaustive]
 pub enum PublicKey {
     Rsa(RsaPublicKey),
-    Ec { curve: Curve, point: Vec<u8> },
+    Ec {
+        curve: Curve,
+        point: Vec<u8>,
+    },
     /// An Ed25519 key (RFC 8410): the 32 bytes of the encoded point.
     Ed25519([u8; 32]),
     Unsupported,
@@ -130,10 +133,16 @@ impl SigAlg {
         if oid == OID_RSASSA_PSS {
             return Ok(pss_params(params).map(SigAlg::RsaPss));
         }
-        let Some(alg) = SigAlg::from_oid(oid) else { return Ok(None) };
+        let Some(alg) = SigAlg::from_oid(oid) else {
+            return Ok(None);
+        };
         Ok(match params {
             None => Some(alg),
-            Some(p) if p.tag == asn1::TAG_NULL && p.content.is_empty() && alg != SigAlg::Ed25519 => Some(alg),
+            Some(p)
+                if p.tag == asn1::TAG_NULL && p.content.is_empty() && alg != SigAlg::Ed25519 =>
+            {
+                Some(alg)
+            }
             Some(_) => None,
         })
     }
@@ -163,14 +172,19 @@ fn pss_params(params: Option<Tlv>) -> Option<HashAlg> {
     // [0] EXPLICIT hashAlgorithm
     let hash = hash_of(explicit_sequence(d.optional(0xa0).ok()??.content)?)?;
     // [1] EXPLICIT maskGenAlgorithm: MGF1 with an AlgorithmIdentifier of the same hash as its parameter
-    let (mgf, mgf_params) = parse_algorithm_identifier(explicit_sequence(d.optional(0xa1).ok()??.content)?).ok()?;
-    let mgf_hash = mgf_params.filter(|p| p.tag == asn1::TAG_SEQUENCE).and_then(|p| hash_of(p.content))?;
+    let (mgf, mgf_params) =
+        parse_algorithm_identifier(explicit_sequence(d.optional(0xa1).ok()??.content)?).ok()?;
+    let mgf_hash = mgf_params
+        .filter(|p| p.tag == asn1::TAG_SEQUENCE)
+        .and_then(|p| hash_of(p.content))?;
     if mgf != OID_MGF1 || mgf_hash != hash {
         return None;
     }
     // [2] EXPLICIT saltLength: the hash's length (32, 48 or 64, one content byte)
     let mut salt = Der::new(d.optional(0xa2).ok()??.content);
-    if salt.expect(asn1::TAG_INTEGER).ok()?.content != [hash.output_len() as u8] || salt.finish().is_err() {
+    if salt.expect(asn1::TAG_INTEGER).ok()?.content != [hash.output_len() as u8]
+        || salt.finish().is_err()
+    {
         return None;
     }
     // [3] trailerField is DEFAULT 1, so in DER it is absent
@@ -384,7 +398,9 @@ pub(crate) fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
 fn directory_string(tag: u8, content: &[u8]) -> Option<Result<String>> {
     let bad = || Err(Error::Asn1("a directory string that does not decode"));
     Some(match tag {
-        0x0c => std::str::from_utf8(content).map(str::to_string).or_else(|_| bad()),
+        0x0c => std::str::from_utf8(content)
+            .map(str::to_string)
+            .or_else(|_| bad()),
         0x13 | 0x16 | 0x1a | 0x14 => Ok(content.iter().map(|&b| b as char).collect()),
         0x1e if content.len() % 2 == 0 => content
             .chunks(2)
@@ -427,7 +443,10 @@ pub(crate) fn canonical_name(der: &[u8]) -> Result<Vec<u8>> {
                     let bytes = text.as_bytes();
                     let space = |b: &u8| matches!(b, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r');
                     let start = bytes.iter().position(|b| !space(b)).unwrap_or(bytes.len());
-                    let end = bytes.iter().rposition(|b| !space(b)).map_or(start, |i| i + 1);
+                    let end = bytes
+                        .iter()
+                        .rposition(|b| !space(b))
+                        .map_or(start, |i| i + 1);
                     let mut canon = Vec::with_capacity(end - start);
                     let mut i = start;
                     while i < end {
@@ -487,12 +506,17 @@ pub(crate) fn describe_name(name_der: &[u8]) -> String {
                 let value = atv.next()?;
                 let Some(label) = tag_for(oid) else { continue };
                 let text = match value.tag {
-                    asn1::TAG_UTF8_STRING | asn1::TAG_PRINTABLE_STRING | asn1::TAG_IA5_STRING | 0x14 => {
-                        String::from_utf8_lossy(value.content).into_owned()
-                    }
+                    asn1::TAG_UTF8_STRING
+                    | asn1::TAG_PRINTABLE_STRING
+                    | asn1::TAG_IA5_STRING
+                    | 0x14 => String::from_utf8_lossy(value.content).into_owned(),
                     _ => "<unsupported string type>".to_string(),
                 };
-                let clean: String = text.chars().take(64).map(|c| if c.is_control() { '?' } else { c }).collect();
+                let clean: String = text
+                    .chars()
+                    .take(64)
+                    .map(|c| if c.is_control() { '?' } else { c })
+                    .collect();
                 parts.push(format!("{}={}", label, clean));
             }
         }
@@ -540,7 +564,10 @@ fn parse_public_key(spki: &Tlv) -> Result<PublicKey> {
             Some(p) if p.tag == asn1::TAG_OID && p.content == OID_CURVE_P521 => Curve::P521,
             _ => return Ok(PublicKey::Unsupported),
         };
-        Ok(PublicKey::Ec { curve, point: key_bytes.to_vec() })
+        Ok(PublicKey::Ec {
+            curve,
+            point: key_bytes.to_vec(),
+        })
     } else if oid == OID_ED25519 {
         // RFC 8410 section 3: no parameters, and the key is exactly the 32 bytes of the point
         match (params, <[u8; 32]>::try_from(key_bytes)) {
@@ -561,13 +588,18 @@ fn domain_constraint_is_valid(c: &str) -> bool {
         return true;
     }
     let body = c.strip_prefix('.').unwrap_or(c);
-    !body.is_empty() && body.split('.').all(|label| !label.is_empty() && label.bytes().all(|b| (0x21..=0x7e).contains(&b)))
+    !body.is_empty()
+        && body
+            .split('.')
+            .all(|label| !label.is_empty() && label.bytes().all(|b| (0x21..=0x7e).contains(&b)))
 }
 
 /// An e-mail constraint is one mailbox (`local@domain`) or a domain as above.
 fn mailbox_constraint_is_valid(c: &str) -> bool {
     match c.rsplit_once('@') {
-        Some((local, domain)) => !local.is_empty() && !domain.is_empty() && domain_constraint_is_valid(domain),
+        Some((local, domain)) => {
+            !local.is_empty() && !domain.is_empty() && domain_constraint_is_valid(domain)
+        }
         None => domain_constraint_is_valid(c),
     }
 }
@@ -583,10 +615,16 @@ fn parse_name_constraints(value: &[u8]) -> Result<NameConstraints> {
             while !subtrees.is_empty() {
                 let mut subtree = subtrees.sequence()?;
                 let base = subtree.next()?;
-                let text = || core::str::from_utf8(base.content).ok().filter(|s| s.is_ascii());
+                let text = || {
+                    core::str::from_utf8(base.content)
+                        .ok()
+                        .filter(|s| s.is_ascii())
+                };
                 let c = match base.tag {
                     0x82 => {
-                        let s = text().ok_or(Error::Asn1("bad dNSName constraint"))?.to_ascii_lowercase();
+                        let s = text()
+                            .ok_or(Error::Asn1("bad dNSName constraint"))?
+                            .to_ascii_lowercase();
                         if !domain_constraint_is_valid(&s) {
                             return Err(Error::Asn1("bad dNSName constraint"));
                         }
@@ -594,15 +632,21 @@ fn parse_name_constraints(value: &[u8]) -> Result<NameConstraints> {
                     }
                     0x81 => match text() {
                         None => Constraint::Unsupported(0x81),
-                        Some(s) if mailbox_constraint_is_valid(s) => Constraint::Email(s.to_string()),
+                        Some(s) if mailbox_constraint_is_valid(s) => {
+                            Constraint::Email(s.to_string())
+                        }
                         Some(_) => return Err(Error::Asn1("bad rfc822Name constraint")),
                     },
                     0x86 => match text() {
                         None => Constraint::Unsupported(0x86),
-                        Some(s) if domain_constraint_is_valid(&s.to_ascii_lowercase()) => Constraint::Uri(s.to_ascii_lowercase()),
+                        Some(s) if domain_constraint_is_valid(&s.to_ascii_lowercase()) => {
+                            Constraint::Uri(s.to_ascii_lowercase())
+                        }
                         Some(_) => return Err(Error::Asn1("bad URI constraint")),
                     },
-                    0x87 if base.content.len() == 8 || base.content.len() == 32 => Constraint::Ip(base.content.to_vec()),
+                    0x87 if base.content.len() == 8 || base.content.len() == 32 => {
+                        Constraint::Ip(base.content.to_vec())
+                    }
                     other => Constraint::Unsupported(other),
                 };
                 if permitted {
@@ -695,11 +739,18 @@ fn tls_feature_requires_status_request(value: &[u8]) -> Result<bool> {
 /// Verifies `signature` over `msg` with `key`, for a signature algorithm taken from a certificate,
 /// CRL or OCSP response. `None` (an algorithm this library does not support, SHA-1 included) is a
 /// failure.
-pub(crate) fn verify_signature(alg: Option<SigAlg>, key: &PublicKey, msg: &[u8], signature: &[u8]) -> bool {
+pub(crate) fn verify_signature(
+    alg: Option<SigAlg>,
+    key: &PublicKey,
+    msg: &[u8],
+    signature: &[u8],
+) -> bool {
     match (alg, key) {
         (Some(SigAlg::RsaPkcs1(h)), PublicKey::Rsa(k)) => k.verify_pkcs1(h, msg, signature),
         (Some(SigAlg::RsaPss(h)), PublicKey::Rsa(k)) => k.verify_pss(h, msg, signature),
-        (Some(SigAlg::Ecdsa(h)), PublicKey::Ec { curve, point }) => ecdsa::verify(*curve, point, h, msg, signature),
+        (Some(SigAlg::Ecdsa(h)), PublicKey::Ec { curve, point }) => {
+            ecdsa::verify(*curve, point, h, msg, signature)
+        }
         (Some(SigAlg::Ed25519), PublicKey::Ed25519(k)) => ed25519::verify(k, msg, signature),
         _ => false,
     }
@@ -760,7 +811,11 @@ impl Certificate {
         };
         let serial: Vec<u8> = {
             let c = serial_tlv.content;
-            let zeros = c.iter().take_while(|&&b| b == 0).count().min(c.len().saturating_sub(1));
+            let zeros = c
+                .iter()
+                .take_while(|&&b| b == 0)
+                .count()
+                .min(c.len().saturating_sub(1));
             c[zeros..].to_vec()
         };
         tbs.optional(0x81)?; // issuerUniqueID
@@ -805,7 +860,10 @@ impl Certificate {
             // reading them would let it be a CA, or name hosts, that its version says it cannot be. Found by tools/chain_judges.sh
             // against OpenSSL, which refuses it, and Go, which ignores the extensions.)
             if version != 2 {
-                return Err(Error::Certificate(format!("extensions in a certificate of version {}", version + 1)));
+                return Err(Error::Certificate(format!(
+                    "extensions in a certificate of version {}",
+                    version + 1
+                )));
             }
             let mut list = Der::new(exts.content).sequence()?;
             let mut seen: Vec<Vec<u8>> = Vec::new();
@@ -822,7 +880,11 @@ impl Certificate {
                     return cert("duplicate extension");
                 }
                 seen.push(oid.to_vec());
-                out.extensions.push(Extension { oid: oid.to_vec(), critical, value: value.to_vec() });
+                out.extensions.push(Extension {
+                    oid: oid.to_vec(),
+                    critical,
+                    value: value.to_vec(),
+                });
                 out.apply_extension(oid, critical, value)?;
             }
         }
@@ -845,7 +907,8 @@ impl Certificate {
                     // that kind must still refuse the certificate (see `check_name_constraints`).
                     let kept = match n.tag {
                         0x82 => {
-                            let s = std::str::from_utf8(n.content).map_err(|_| Error::Asn1("bad dNSName"))?;
+                            let s = std::str::from_utf8(n.content)
+                                .map_err(|_| Error::Asn1("bad dNSName"))?;
                             if !s.is_ascii() {
                                 return cert("non-ASCII dNSName");
                             }
@@ -862,9 +925,16 @@ impl Certificate {
                             self.san.push(GeneralName::Ip(n.content.to_vec()));
                             true
                         }
-                        0x81 | 0x86 => match core::str::from_utf8(n.content).ok().filter(|s| s.is_ascii()) {
+                        0x81 | 0x86 => match core::str::from_utf8(n.content)
+                            .ok()
+                            .filter(|s| s.is_ascii())
+                        {
                             Some(s) => {
-                                self.san.push(if n.tag == 0x81 { GeneralName::Email(s.to_string()) } else { GeneralName::Uri(s.to_string()) });
+                                self.san.push(if n.tag == 0x81 {
+                                    GeneralName::Email(s.to_string())
+                                } else {
+                                    GeneralName::Uri(s.to_string())
+                                });
                                 true
                             }
                             None => false,
@@ -883,7 +953,10 @@ impl Certificate {
                             let mut d = Der::new(n.content);
                             match (d.expect(asn1::TAG_OID), d.expect(0xa0)) {
                                 (Ok(oid), Ok(v)) if d.finish().is_ok() => {
-                                    self.san.push(GeneralName::Other { type_id: oid.content.to_vec(), value: v.content.to_vec() });
+                                    self.san.push(GeneralName::Other {
+                                        type_id: oid.content.to_vec(),
+                                        value: v.content.to_vec(),
+                                    });
                                     true
                                 }
                                 _ => false,
@@ -950,14 +1023,22 @@ impl Certificate {
                 self.crl_uris = parse_crl_uris(value).unwrap_or_default();
             }
             OID_TLS_FEATURE => {
-                self.must_staple = tls_feature_requires_status_request(value).unwrap_or(false);
+                self.must_staple = tls_feature_requires_status_request(value)?;
             }
             OID_AIA => {
                 // advisory, like the CRL distribution points: where to ask about revocation
                 self.ocsp_uris = parse_ocsp_uris(value).unwrap_or_default();
             }
-            OID_SKI | OID_AKI | OID_SCT_LIST | OID_CERT_POLICIES | OID_POLICY_MAPPINGS
-            | OID_POLICY_CONSTRAINTS | OID_INHIBIT_ANY_POLICY => {}
+
+            OID_SKI | OID_AKI | OID_SCT_LIST => {}
+            OID_CERT_POLICIES
+            | OID_POLICY_MAPPINGS
+            | OID_POLICY_CONSTRAINTS
+            | OID_INHIBIT_ANY_POLICY => {
+                if critical {
+                    self.unrecognized_critical.push(oid.to_vec());
+                }
+            }
             _ => {
                 if critical {
                     self.unrecognized_critical.push(oid.to_vec());
@@ -1023,7 +1104,9 @@ impl Certificate {
 
     /// True if the extendedKeyUsage extension lists `oid`.
     pub(crate) fn has_ext_key_usage(&self, oid: &[u8]) -> bool {
-        self.ext_key_usage.as_ref().is_some_and(|l| l.iter().any(|o| o == oid))
+        self.ext_key_usage
+            .as_ref()
+            .is_some_and(|l| l.iter().any(|o| o == oid))
     }
 
     /// Every entry of the subjectAltName extension, in order; empty if there is none.
@@ -1033,13 +1116,25 @@ impl Certificate {
 
     /// The e-mail addresses (rfc822Name entries) in the subjectAltName extension.
     pub fn email_addresses(&self) -> impl Iterator<Item = &str> {
-        self.san.iter().filter_map(|n| if let GeneralName::Email(s) = n { Some(s.as_str()) } else { None })
+        self.san.iter().filter_map(|n| {
+            if let GeneralName::Email(s) = n {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
     }
 
     /// The URIs in the subjectAltName extension. A Sigstore (Fulcio) certificate identifies the
     /// signing workflow or person this way.
     pub fn uris(&self) -> impl Iterator<Item = &str> {
-        self.san.iter().filter_map(|n| if let GeneralName::Uri(s) = n { Some(s.as_str()) } else { None })
+        self.san.iter().filter_map(|n| {
+            if let GeneralName::Uri(s) = n {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
     }
 
     /// The DER of the certificate's `SubjectPublicKeyInfo`, as written.
@@ -1072,7 +1167,9 @@ impl Certificate {
     /// True if this certificate may be used for `purpose`: it has no extendedKeyUsage extension, or
     /// it lists the purpose or anyExtendedKeyUsage.
     fn allows(&self, purpose: &Purpose) -> bool {
-        let Some(oid) = purpose.eku_oid() else { return true };
+        let Some(oid) = purpose.eku_oid() else {
+            return true;
+        };
         match &self.ext_key_usage {
             None => true,
             Some(list) => list.iter().any(|o| o == oid || o == OID_EKU_ANY),
@@ -1139,10 +1236,14 @@ impl Purpose {
     /// The keyUsage bits of which the leaf must have at least one, if it has the extension.
     fn leaf_key_usage(&self) -> (u16, &'static str) {
         match self {
-            Purpose::ServerAuth | Purpose::ClientAuth | Purpose::CodeSigning | Purpose::OcspSigning => {
-                (KU_DIGITAL_SIGNATURE, "digitalSignature")
-            }
-            _ => (KU_DIGITAL_SIGNATURE | KU_NON_REPUDIATION, "digitalSignature or nonRepudiation"),
+            Purpose::ServerAuth
+            | Purpose::ClientAuth
+            | Purpose::CodeSigning
+            | Purpose::OcspSigning => (KU_DIGITAL_SIGNATURE, "digitalSignature"),
+            _ => (
+                KU_DIGITAL_SIGNATURE | KU_NON_REPUDIATION,
+                "digitalSignature or nonRepudiation",
+            ),
         }
     }
 }
@@ -1186,7 +1287,14 @@ pub struct VerifyOptions {
 impl VerifyOptions {
     /// Options for `purpose` at `time`, with no host name check and a leaf that must name the purpose.
     pub fn new(purpose: Purpose, time: i64) -> VerifyOptions {
-        VerifyOptions { purpose, time, hostname: None, allow_missing_leaf_eku: false, accept_critical: Vec::new(), web_pki: false }
+        VerifyOptions {
+            purpose,
+            time,
+            hostname: None,
+            allow_missing_leaf_eku: false,
+            accept_critical: Vec::new(),
+            web_pki: false,
+        }
     }
 
     /// Options for a TLS server certificate for `hostname` at `time`, under the CA/Browser Forum's rules
@@ -1251,7 +1359,9 @@ pub fn dns_pattern_matches(pattern: &str, host: &str) -> bool {
         return pattern.eq_ignore_ascii_case(host);
     }
     // wildcard only as the whole left-most label, with at least two labels after it
-    let Some(base) = pattern.strip_prefix("*.") else { return false };
+    let Some(base) = pattern.strip_prefix("*.") else {
+        return false;
+    };
     if base.contains('*') || !base.contains('.') {
         return false;
     }
@@ -1303,7 +1413,9 @@ struct Root {
 
 impl Root {
     fn certificate(&self) -> Option<&Certificate> {
-        self.parsed.get_or_init(|| Certificate::from_der(&self.der).ok()).as_ref()
+        self.parsed
+            .get_or_init(|| Certificate::from_der(&self.der).ok())
+            .as_ref()
     }
 }
 
@@ -1372,7 +1484,12 @@ impl TrustStore {
     }
 
     pub fn empty() -> TrustStore {
-        TrustStore { roots: Vec::new(), by_subject: HashMap::new(), min_rsa_bits: DEFAULT_MIN_RSA_BITS, web_pki_rules: true }
+        TrustStore {
+            roots: Vec::new(),
+            by_subject: HashMap::new(),
+            min_rsa_bits: DEFAULT_MIN_RSA_BITS,
+            web_pki_rules: true,
+        }
     }
 
     /// Number of trust anchors in the store.
@@ -1391,8 +1508,15 @@ impl TrustStore {
 
     fn push_root(&mut self, der: &[u8], subject: &[u8], parsed: OnceLock<Option<Certificate>>) {
         let idx = self.roots.len();
-        self.roots.push(Root { der: der.to_vec(), parsed, distrust_after: None });
-        self.by_subject.entry(name_key(subject)).or_default().push(idx);
+        self.roots.push(Root {
+            der: der.to_vec(),
+            parsed,
+            distrust_after: None,
+        });
+        self.by_subject
+            .entry(name_key(subject))
+            .or_default()
+            .push(idx);
     }
 
     /// Adds one certificate, parsing it completely now so that problems are reported to the caller.
@@ -1410,7 +1534,13 @@ impl TrustStore {
     /// how a root program stops trusting a CA without breaking what it issued before (Mozilla's "distrust after" date,
     /// which the `mozilla-roots` feature carries over).
     pub fn add_der_distrusted_after(&mut self, der: &[u8], time: i64) -> Result<()> {
-        self.add_der_with_limits(der, &AnchorLimits { distrust_after: Some(time), name_constraints: None })
+        self.add_der_with_limits(
+            der,
+            &AnchorLimits {
+                distrust_after: Some(time),
+                name_constraints: None,
+            },
+        )
     }
 
     /// Adds one certificate as [`add_der`](TrustStore::add_der) does, with the limits a root program puts on it beyond
@@ -1452,21 +1582,43 @@ impl TrustStore {
     }
 
     /// The parsed anchors whose subject name matches the name whose [`name_key`] is `key`, with their distrust dates.
-    fn anchors_for<'a>(&'a self, key: &[u8]) -> impl Iterator<Item = (&'a Certificate, Option<i64>)> + 'a {
-        self.by_subject.get(key).into_iter().flatten().filter_map(move |&i| self.roots[i].certificate().map(|c| (c, self.roots[i].distrust_after)))
+    fn anchors_for<'a>(
+        &'a self,
+        key: &[u8],
+    ) -> impl Iterator<Item = (&'a Certificate, Option<i64>)> + 'a {
+        self.by_subject
+            .get(key)
+            .into_iter()
+            .flatten()
+            .filter_map(move |&i| {
+                self.roots[i]
+                    .certificate()
+                    .map(|c| (c, self.roots[i].distrust_after))
+            })
     }
 
     /// Validates a server-presented chain (leaf first, DER encoded) for `hostname` at time `now`
     /// (Unix seconds). Returns the parsed leaf on success. This is [`verify_chain`](TrustStore::verify_chain)
     /// with [`VerifyOptions::tls_server`].
-    pub fn verify_server_chain(&self, chain_der: &[Vec<u8>], hostname: &str, now: i64) -> Result<Certificate> {
-        self.verify_server_path(chain_der, hostname, now).map(|(leaf, _)| leaf)
+    pub fn verify_server_chain(
+        &self,
+        chain_der: &[Vec<u8>],
+        hostname: &str,
+        now: i64,
+    ) -> Result<Certificate> {
+        self.verify_server_path(chain_der, hostname, now)
+            .map(|(leaf, _)| leaf)
     }
 
     /// Like [`verify_server_chain`](TrustStore::verify_server_chain), and also returns the path it
     /// built: the DER of every certificate from the leaf to the trust anchor, in that order (the
     /// anchor is last). Revocation checking needs each certificate's issuer.
-    pub(crate) fn verify_server_path(&self, chain_der: &[Vec<u8>], hostname: &str, now: i64) -> Result<(Certificate, Vec<Vec<u8>>)> {
+    pub(crate) fn verify_server_path(
+        &self,
+        chain_der: &[Vec<u8>],
+        hostname: &str,
+        now: i64,
+    ) -> Result<(Certificate, Vec<Vec<u8>>)> {
         let chain: Vec<&[u8]> = chain_der.iter().map(|d| d.as_slice()).collect();
         self.build_path(&chain, &VerifyOptions::tls_server(hostname, now))
     }
@@ -1494,18 +1646,28 @@ impl TrustStore {
     /// addresses, URIs, other names, any extension) is for the caller to read and compare; see
     /// [`Certificate::subject_alt_names`] and [`Certificate::extension`]. Revocation is a separate
     /// step ([`crate::revocation`]).
-    pub fn verify_chain<D: AsRef<[u8]>>(&self, chain_der: &[D], options: &VerifyOptions) -> Result<VerifiedChain> {
+    pub fn verify_chain<D: AsRef<[u8]>>(
+        &self,
+        chain_der: &[D],
+        options: &VerifyOptions,
+    ) -> Result<VerifiedChain> {
         let chain: Vec<&[u8]> = chain_der.iter().map(|d| d.as_ref()).collect();
         let (leaf, path) = self.build_path(&chain, options)?;
         Ok(VerifiedChain { leaf, path })
     }
 
-    fn build_path(&self, chain_der: &[&[u8]], opts: &VerifyOptions) -> Result<(Certificate, Vec<Vec<u8>>)> {
+    fn build_path(
+        &self,
+        chain_der: &[&[u8]],
+        opts: &VerifyOptions,
+    ) -> Result<(Certificate, Vec<Vec<u8>>)> {
         if chain_der.is_empty() {
             return cert("server sent no certificates");
         }
         if opts.purpose == Purpose::ServerAuth && opts.hostname.is_none() {
-            return cert("a host name is required to verify a certificate for TLS server authentication");
+            return cert(
+                "a host name is required to verify a certificate for TLS server authentication",
+            );
         }
         let leaf = Certificate::parse(chain_der[0])?;
         let mut intermediates = Vec::new();
@@ -1526,7 +1688,15 @@ impl TrustStore {
         let mut last_err: Option<Error> = None;
         let mut dead_end: Option<String> = None;
         let mut attempts = 0usize;
-        if self.search(&mut path, &intermediates, &mut used, opts, &mut last_err, &mut dead_end, &mut attempts) {
+        if self.search(
+            &mut path,
+            &intermediates,
+            &mut used,
+            opts,
+            &mut last_err,
+            &mut dead_end,
+            &mut attempts,
+        ) {
             let path_der: Vec<Vec<u8>> = path.iter().map(|c| c.der.clone()).collect();
             drop(path);
             return Ok((leaf, path_der));
@@ -1557,7 +1727,9 @@ impl TrustStore {
         dead_end: &mut Option<String>,
         attempts: &mut usize,
     ) -> bool {
-        let Some(&cur) = path.last() else { return false };
+        let Some(&cur) = path.last() else {
+            return false;
+        };
         let mut candidates = 0usize;
         for (root, distrust_after) in self.anchors_for(&cur.issuer_key) {
             *attempts += 1;
@@ -1581,7 +1753,9 @@ impl TrustStore {
             path.pop();
         }
         if path.len() > MAX_CHAIN_DEPTH {
-            dead_end.get_or_insert_with(|| format!("chain is longer than {} certificates", MAX_CHAIN_DEPTH));
+            dead_end.get_or_insert_with(|| {
+                format!("chain is longer than {} certificates", MAX_CHAIN_DEPTH)
+            });
             return false;
         }
         for (i, ic) in inters.iter().enumerate() {
@@ -1627,7 +1801,12 @@ fn utc_date(t: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, secs / 60 % 60, secs % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
 }
 
 /// A certificate error that names the certificate it is about.
@@ -1644,7 +1823,8 @@ fn uri_host_matches(constraint: &str, host: &str) -> bool {
         return true;
     }
     if constraint.starts_with('.') {
-        host.len() > constraint.len() && host[host.len() - constraint.len()..].eq_ignore_ascii_case(constraint)
+        host.len() > constraint.len()
+            && host[host.len() - constraint.len()..].eq_ignore_ascii_case(constraint)
     } else {
         host.eq_ignore_ascii_case(constraint)
     }
@@ -1670,12 +1850,15 @@ fn email_constraint_matches(constraint: &str, mailbox: &str) -> bool {
     if constraint.is_empty() {
         return true;
     }
-    let Some((local, domain)) = mailbox.rsplit_once('@') else { return false };
+    let Some((local, domain)) = mailbox.rsplit_once('@') else {
+        return false;
+    };
     if let Some((c_local, c_domain)) = constraint.rsplit_once('@') {
         return local == c_local && domain.eq_ignore_ascii_case(c_domain);
     }
     if constraint.starts_with('.') {
-        domain.len() > constraint.len() && domain[domain.len() - constraint.len()..].eq_ignore_ascii_case(constraint)
+        domain.len() > constraint.len()
+            && domain[domain.len() - constraint.len()..].eq_ignore_ascii_case(constraint)
     } else {
         domain.eq_ignore_ascii_case(constraint)
     }
@@ -1686,7 +1869,10 @@ fn ip_constraint_matches(constraint: &[u8], ip: &[u8]) -> bool {
         return false;
     }
     let (addr, mask) = constraint.split_at(ip.len());
-    ip.iter().zip(addr).zip(mask).all(|((i, a), m)| i & m == a & m)
+    ip.iter()
+        .zip(addr)
+        .zip(mask)
+        .all(|((i, a), m)| i & m == a & m)
 }
 
 /// A host name without the one trailing dot that writes it as fully qualified. Matching ignores it
@@ -1698,17 +1884,23 @@ fn without_trailing_dot(host: &str) -> &str {
 /// `Some(whether `name` is within `c`)`, or `None` if `c` is about another kind of name.
 fn constraint_covers(c: &Constraint, name: &GeneralName) -> Option<bool> {
     match (c, name) {
-        (Constraint::Dns(c), GeneralName::Dns(n)) => Some(dns_constraint_matches(c, without_trailing_dot(n))),
+        (Constraint::Dns(c), GeneralName::Dns(n)) => {
+            Some(dns_constraint_matches(c, without_trailing_dot(n)))
+        }
         (Constraint::Email(c), GeneralName::Email(n)) => Some(
             c.is_empty()
                 || match n.rsplit_once('@') {
-                    Some((local, domain)) => email_constraint_matches(c, &format!("{}@{}", local, without_trailing_dot(domain))),
+                    Some((local, domain)) => email_constraint_matches(
+                        c,
+                        &format!("{}@{}", local, without_trailing_dot(domain)),
+                    ),
                     None => false,
                 },
         ),
-        (Constraint::Uri(c), GeneralName::Uri(n)) => {
-            Some(c.is_empty() || uri_host(n).is_some_and(|h| uri_host_matches(c, without_trailing_dot(h))))
-        }
+        (Constraint::Uri(c), GeneralName::Uri(n)) => Some(
+            c.is_empty()
+                || uri_host(n).is_some_and(|h| uri_host_matches(c, without_trailing_dot(h))),
+        ),
         (Constraint::Ip(c), GeneralName::Ip(n)) => Some(ip_constraint_matches(c, n)),
         _ => None,
     }
@@ -1719,7 +1911,9 @@ fn name_label(name: &GeneralName) -> String {
         GeneralName::Dns(n) => format!("DNS name {:?}", n),
         GeneralName::Email(n) => format!("e-mail address {:?}", n),
         GeneralName::Uri(n) => format!("URI {:?}", n),
-        GeneralName::Ip(b) if b.len() == 4 => format!("IP address {}", IpAddr::from([b[0], b[1], b[2], b[3]])),
+        GeneralName::Ip(b) if b.len() == 4 => {
+            format!("IP address {}", IpAddr::from([b[0], b[1], b[2], b[3]]))
+        }
         GeneralName::Ip(b) => match <[u8; 16]>::try_from(b.as_slice()) {
             Ok(a) => format!("IP address {}", IpAddr::from(a)),
             Err(_) => "IP address".to_string(),
@@ -1734,13 +1928,19 @@ fn subject_email_addresses(name_der: &[u8]) -> Vec<String> {
     const OID_EMAIL_ADDRESS: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x01];
     let mut out = Vec::new();
     let mut outer = Der::new(name_der);
-    let Ok(mut rdns) = outer.sequence() else { return out };
+    let Ok(mut rdns) = outer.sequence() else {
+        return out;
+    };
     while !rdns.is_empty() {
-        let Ok(set) = rdns.expect(asn1::TAG_SET) else { break };
+        let Ok(set) = rdns.expect(asn1::TAG_SET) else {
+            break;
+        };
         let mut atvs = Der::new(set.content);
         while !atvs.is_empty() {
             let Ok(mut atv) = atvs.sequence() else { break };
-            let (Ok(oid), Ok(value)) = (atv.expect(asn1::TAG_OID), atv.next()) else { break };
+            let (Ok(oid), Ok(value)) = (atv.expect(asn1::TAG_OID), atv.next()) else {
+                break;
+            };
             if oid.content == OID_EMAIL_ADDRESS {
                 out.push(String::from_utf8_lossy(value.content).into_owned());
             }
@@ -1759,10 +1959,17 @@ fn subject_email_addresses(name_der: &[u8]) -> Vec<String> {
 /// ignoring the constraint would let the CA issue outside the subtree it was limited to (OpenSSL enforces such
 /// a constraint and Go refuses the chain as an unhandled critical extension). Self-issued certificates are not
 /// exempt here as RFC 5280 would have it, but none is ever an intermediate of a path (see `search`).
-fn check_name_constraints(ca: &Certificate, nc: &NameConstraints, below: &[&Certificate]) -> Result<()> {
+fn check_name_constraints(
+    ca: &Certificate,
+    nc: &NameConstraints,
+    below: &[&Certificate],
+) -> Result<()> {
     let constraints = || nc.permitted.iter().chain(nc.excluded.iter());
     if constraints().any(|c| c.kind() == 0xa4) {
-        return Err(path_err(ca, "directoryName name constraints are not supported, in"));
+        return Err(path_err(
+            ca,
+            "directoryName name constraints are not supported, in",
+        ));
     }
     for cert in below {
         for name in &cert.san {
@@ -1770,7 +1977,10 @@ fn check_name_constraints(ca: &Certificate, nc: &NameConstraints, below: &[&Cert
         }
         for &kind in &cert.dropped_san {
             if constraints().any(|c| c.kind() == kind) {
-                return Err(path_err(ca, "a name that cannot be read is under a name constraint of its kind, in"));
+                return Err(path_err(
+                    ca,
+                    "a name that cannot be read is under a name constraint of its kind, in",
+                ));
             }
         }
         if constraints().any(|c| matches!(c, Constraint::Email(_))) {
@@ -1785,14 +1995,29 @@ fn check_name_constraints(ca: &Certificate, nc: &NameConstraints, below: &[&Cert
 fn check_one_name(ca: &Certificate, nc: &NameConstraints, name: &GeneralName) -> Result<()> {
     let kind = name.tag();
     let unsupported = |c: &Constraint| matches!(c, Constraint::Unsupported(t) if *t == kind);
-    if nc.permitted.iter().chain(nc.excluded.iter()).any(unsupported) {
+    if nc
+        .permitted
+        .iter()
+        .chain(nc.excluded.iter())
+        .any(unsupported)
+    {
         return Err(path_err(
             ca,
-            &format!("{} is under a name constraint of a kind that is not supported, in", name_label(name)),
+            &format!(
+                "{} is under a name constraint of a kind that is not supported, in",
+                name_label(name)
+            ),
         ));
     }
-    if nc.excluded.iter().any(|c| constraint_covers(c, name) == Some(true)) {
-        return Err(path_err(ca, &format!("{} is excluded by a name constraint of", name_label(name))));
+    if nc
+        .excluded
+        .iter()
+        .any(|c| constraint_covers(c, name) == Some(true))
+    {
+        return Err(path_err(
+            ca,
+            &format!("{} is excluded by a name constraint of", name_label(name)),
+        ));
     }
     let mut applies = false;
     let mut permitted = false;
@@ -1803,7 +2028,13 @@ fn check_one_name(ca: &Certificate, nc: &NameConstraints, name: &GeneralName) ->
         }
     }
     if applies && !permitted {
-        return Err(path_err(ca, &format!("{} is not permitted by name constraints of", name_label(name))));
+        return Err(path_err(
+            ca,
+            &format!(
+                "{} is not permitted by name constraints of",
+                name_label(name)
+            ),
+        ));
     }
     Ok(())
 }
@@ -1819,7 +2050,10 @@ fn authority_key_id(c: &Certificate) -> Option<&[u8]> {
 /// A certificate's subjectKeyIdentifier, if it has one that reads.
 fn subject_key_id(c: &Certificate) -> Option<&[u8]> {
     let ext = c.extension(&[0x55, 0x1d, 0x0e])?;
-    Der::new(&ext.value).expect(asn1::TAG_OCTET_STRING).ok().map(|k| k.content)
+    Der::new(&ext.value)
+        .expect(asn1::TAG_OCTET_STRING)
+        .ok()
+        .map(|k| k.content)
 }
 
 /// The CA/Browser Forum's rules that bind a client, for a TLS server's path (leaf first, anchor last): see
@@ -1858,7 +2092,12 @@ fn check_web_pki(path: &[&Certificate]) -> Result<()> {
 
 /// Checks everything about a candidate path (leaf first, trust anchor last) except signatures; `web`: the CA/Browser
 /// Forum's rules as well ([`VerifyOptions::web_pki`]).
-fn check_path(path: &[&Certificate], opts: &VerifyOptions, min_rsa_bits: usize, web: bool) -> Result<()> {
+fn check_path(
+    path: &[&Certificate],
+    opts: &VerifyOptions,
+    min_rsa_bits: usize,
+    web: bool,
+) -> Result<()> {
     let leaf = path[0];
     for c in path {
         if opts.time < c.not_before {
@@ -1867,8 +2106,18 @@ fn check_path(path: &[&Certificate], opts: &VerifyOptions, min_rsa_bits: usize, 
         if opts.time > c.not_after {
             return Err(path_err(c, "certificate has expired"));
         }
-        if let Some(oid) = c.unrecognized_critical.iter().find(|o| !opts.accept_critical.contains(o)) {
-            return Err(path_err(c, &format!("unrecognized critical extension {} in", asn1::oid_to_string(oid))));
+        if let Some(oid) = c
+            .unrecognized_critical
+            .iter()
+            .find(|o| !opts.accept_critical.contains(o))
+        {
+            return Err(path_err(
+                c,
+                &format!(
+                    "unrecognized critical extension {} in",
+                    asn1::oid_to_string(oid)
+                ),
+            ));
         }
     }
     // Key-size policy for everything the server controls; the trust anchor (last) is exempt.
@@ -1877,7 +2126,11 @@ fn check_path(path: &[&Certificate], opts: &VerifyOptions, min_rsa_bits: usize, 
             if k.bits() < min_rsa_bits {
                 return Err(path_err(
                     c,
-                    &format!("RSA key of {} bits is below the minimum of {} bits", k.bits(), min_rsa_bits),
+                    &format!(
+                        "RSA key of {} bits is below the minimum of {} bits",
+                        k.bits(),
+                        min_rsa_bits
+                    ),
                 ));
             }
         }
@@ -1888,7 +2141,11 @@ fn check_path(path: &[&Certificate], opts: &VerifyOptions, min_rsa_bits: usize, 
             if leaf.dns_names.len() > 5 {
                 names.push("...".to_string());
             }
-            let valid_for = if names.is_empty() { "it lists no DNS names".to_string() } else { format!("it is valid for: {}", names.join(", ")) };
+            let valid_for = if names.is_empty() {
+                "it lists no DNS names".to_string()
+            } else {
+                format!("it is valid for: {}", names.join(", "))
+            };
             return Err(Error::Certificate(format!(
                 "certificate [{}] is not valid for host name {:?}; {}",
                 leaf.subject_summary(),
@@ -1899,18 +2156,30 @@ fn check_path(path: &[&Certificate], opts: &VerifyOptions, min_rsa_bits: usize, 
     }
     let purpose = &opts.purpose;
     if !leaf.allows(purpose) {
-        return Err(path_err(leaf, &format!("leaf certificate is not valid for {}", purpose.description())));
+        return Err(path_err(
+            leaf,
+            &format!(
+                "leaf certificate is not valid for {}",
+                purpose.description()
+            ),
+        ));
     }
     if leaf.ext_key_usage.is_none() && !opts.allow_missing_leaf_eku && *purpose != Purpose::Any {
         return Err(path_err(
             leaf,
-            &format!("leaf certificate has no extendedKeyUsage, which must name {}:", purpose.description()),
+            &format!(
+                "leaf certificate has no extendedKeyUsage, which must name {}:",
+                purpose.description()
+            ),
         ));
     }
     if let Some(ku) = leaf.key_usage {
         let (needed, what) = purpose.leaf_key_usage();
         if ku & needed == 0 {
-            return Err(path_err(leaf, &format!("leaf certificate keyUsage does not permit {}", what)));
+            return Err(path_err(
+                leaf,
+                &format!("leaf certificate keyUsage does not permit {}", what),
+            ));
         }
     }
     let last = path.len() - 1;
@@ -1926,17 +2195,29 @@ fn check_path(path: &[&Certificate], opts: &VerifyOptions, min_rsa_bits: usize, 
         }
         if let Some(ku) = ca.key_usage {
             if ku & KU_KEY_CERT_SIGN == 0 {
-                return Err(path_err(ca, "issuing certificate keyUsage does not permit certificate signing"));
+                return Err(path_err(
+                    ca,
+                    "issuing certificate keyUsage does not permit certificate signing",
+                ));
             }
         }
         if !ca.allows(purpose) {
-            return Err(path_err(ca, &format!("issuing certificate is not valid for {}", purpose.description())));
+            return Err(path_err(
+                ca,
+                &format!(
+                    "issuing certificate is not valid for {}",
+                    purpose.description()
+                ),
+            ));
         }
         if let Some(limit) = ca.path_len {
             // intermediates strictly between the leaf and this CA, excluding self-issued ones
             let below = path[1..i].iter().filter(|c| !c.is_self_issued()).count() as u32;
             if below > limit {
-                return Err(path_err(ca, "certificate path exceeds the pathLenConstraint of"));
+                return Err(path_err(
+                    ca,
+                    "certificate path exceeds the pathLenConstraint of",
+                ));
             }
         }
         if let Some(nc) = &ca.name_constraints {
@@ -1994,7 +2275,10 @@ mod tests {
     }
 
     fn pem_of(der: &[u8]) -> String {
-        format!("-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n", pem::base64_encode(der))
+        format!(
+            "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n",
+            pem::base64_encode(der)
+        )
     }
 
     fn parsed_count(ts: &TrustStore) -> usize {
@@ -2005,18 +2289,31 @@ mod tests {
     fn bulk_loading_is_lazy_and_only_parses_the_anchors_it_uses() {
         // A bundle with several unrelated roots plus junk between the blocks.
         let mut text = String::from("# bundle\n");
-        for der in [fixture!("root_p384"), fixture!("inter_nc"), fixture!("root_rsa"), fixture!("leaf_by_leaf")] {
+        for der in [
+            fixture!("root_p384"),
+            fixture!("inter_nc"),
+            fixture!("root_rsa"),
+            fixture!("leaf_by_leaf"),
+        ] {
             text.push_str(&pem_of(&der));
             text.push_str("some text between blocks\n");
         }
         let mut ts = TrustStore::empty();
         assert_eq!(ts.add_pem(&text), 4);
         assert_eq!(ts.len(), 4);
-        assert_eq!(parsed_count(&ts), 0, "nothing should be parsed at load time");
+        assert_eq!(
+            parsed_count(&ts),
+            0,
+            "nothing should be parsed at load time"
+        );
 
         let chain = vec![fixture!("leaf_p384"), fixture!("inter_p256")];
         ts.verify_server_chain(&chain, "example.test", NOW).unwrap();
-        assert_eq!(parsed_count(&ts), 1, "only the matching root should have been parsed");
+        assert_eq!(
+            parsed_count(&ts),
+            1,
+            "only the matching root should have been parsed"
+        );
         // A second lookup reuses the cached parse.
         ts.verify_server_chain(&chain, "example.test", NOW).unwrap();
         assert_eq!(parsed_count(&ts), 1);
@@ -2080,7 +2377,9 @@ mod tests {
         let ts = store(&[fixture!("root_rsa")]);
         let chain = vec![fixture!("leaf_p384"), fixture!("inter_p256")];
         assert!(ts.verify_server_chain(&chain, "other.test", NOW).is_err());
-        assert!(ts.verify_server_chain(&chain, "a.b.wild.test", NOW).is_err());
+        assert!(ts
+            .verify_server_chain(&chain, "a.b.wild.test", NOW)
+            .is_err());
         assert!(ts.verify_server_chain(&chain, "wild.test", NOW).is_err());
         assert!(ts.verify_server_chain(&chain, "127.0.0.2", NOW).is_err());
     }
@@ -2096,30 +2395,46 @@ mod tests {
     #[test]
     fn missing_intermediate_or_wrong_root_rejected() {
         let ts = store(&[fixture!("root_rsa")]);
-        assert!(ts.verify_server_chain(&[fixture!("leaf_p384")], "example.test", NOW).is_err());
+        assert!(ts
+            .verify_server_chain(&[fixture!("leaf_p384")], "example.test", NOW)
+            .is_err());
         let other = store(&[fixture!("root_p384")]);
         let chain = vec![fixture!("leaf_p384"), fixture!("inter_p256")];
-        assert!(other.verify_server_chain(&chain, "example.test", NOW).is_err());
+        assert!(other
+            .verify_server_chain(&chain, "example.test", NOW)
+            .is_err());
     }
 
     #[test]
     fn expiry_enforced() {
         let ts = store(&[fixture!("root_rsa")]);
         let chain = vec![fixture!("leaf_expired"), fixture!("inter_p256")];
-        let err = ts.verify_server_chain(&chain, "expired.test", NOW).unwrap_err();
+        let err = ts
+            .verify_server_chain(&chain, "expired.test", NOW)
+            .unwrap_err();
         assert!(err.to_string().contains("expired"), "{}", err);
         // same chain is fine back in time
-        assert!(ts.verify_server_chain(&chain, "expired.test", 1_600_000_000).is_ok());
+        assert!(ts
+            .verify_server_chain(&chain, "expired.test", 1_600_000_000)
+            .is_ok());
         // a not-yet-valid moment
-        assert!(ts.verify_server_chain(&chain, "expired.test", 1_000_000_000).is_err());
+        assert!(ts
+            .verify_server_chain(&chain, "expired.test", 1_000_000_000)
+            .is_err());
     }
 
     #[test]
     fn non_ca_cannot_issue() {
         let ts = store(&[fixture!("root_rsa")]);
         // leaf2 was signed by leaf_p384, which chains to the root but is not a CA
-        let chain = vec![fixture!("leaf_by_leaf"), fixture!("leaf_p384"), fixture!("inter_p256")];
-        let err = ts.verify_server_chain(&chain, "byleaf.test", NOW).unwrap_err();
+        let chain = vec![
+            fixture!("leaf_by_leaf"),
+            fixture!("leaf_p384"),
+            fixture!("inter_p256"),
+        ];
+        let err = ts
+            .verify_server_chain(&chain, "byleaf.test", NOW)
+            .unwrap_err();
         assert!(err.to_string().contains("not a CA"), "{}", err);
     }
 
@@ -2127,8 +2442,14 @@ mod tests {
     fn path_length_enforced() {
         let ts = store(&[fixture!("root_rsa")]);
         // inter_p256 has pathLen 0, so a second CA below it is not allowed
-        let chain = vec![fixture!("leaf_deep"), fixture!("inter2_p256"), fixture!("inter_p256")];
-        let err = ts.verify_server_chain(&chain, "deep.test", NOW).unwrap_err();
+        let chain = vec![
+            fixture!("leaf_deep"),
+            fixture!("inter2_p256"),
+            fixture!("inter_p256"),
+        ];
+        let err = ts
+            .verify_server_chain(&chain, "deep.test", NOW)
+            .unwrap_err();
         assert!(err.to_string().contains("pathLen"), "{}", err);
     }
 
@@ -2136,9 +2457,13 @@ mod tests {
     fn name_constraints_enforced() {
         let ts = store(&[fixture!("root_rsa")]);
         let ok = vec![fixture!("leaf_nc_ok"), fixture!("inter_nc")];
-        assert!(ts.verify_server_chain(&ok, "a.constrained.test", NOW).is_ok());
+        assert!(ts
+            .verify_server_chain(&ok, "a.constrained.test", NOW)
+            .is_ok());
         let bad = vec![fixture!("leaf_nc_bad"), fixture!("inter_nc")];
-        let err = ts.verify_server_chain(&bad, "outside.test", NOW).unwrap_err();
+        let err = ts
+            .verify_server_chain(&bad, "outside.test", NOW)
+            .unwrap_err();
         assert!(err.to_string().contains("name constraints"), "{}", err);
     }
 
@@ -2168,46 +2493,88 @@ mod tests {
     fn rsa_key_size_policy_applies_to_leaf_and_intermediates_but_not_to_anchors() {
         let ts = store(&[fixture!("ks_root_p256")]);
         // control: a 2048-bit leaf is fine
-        ts.verify_server_chain(&[fixture!("ks_leaf_rsa2048")], "big.test", NOW).unwrap();
+        ts.verify_server_chain(&[fixture!("ks_leaf_rsa2048")], "big.test", NOW)
+            .unwrap();
         // a 1024-bit leaf is rejected and the error says why and which certificate
-        let err = ts.verify_server_chain(&[fixture!("ks_leaf_rsa1024")], "small.test", NOW).unwrap_err();
+        let err = ts
+            .verify_server_chain(&[fixture!("ks_leaf_rsa1024")], "small.test", NOW)
+            .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("1024 bits is below the minimum of 2048"), "{}", msg);
+        assert!(
+            msg.contains("1024 bits is below the minimum of 2048"),
+            "{}",
+            msg
+        );
         assert!(msg.contains("CN=small-rsa-leaf"), "{}", msg);
         // ...unless the caller lowers the floor
         let relaxed = store(&[fixture!("ks_root_p256")]).with_min_rsa_bits(1024);
-        relaxed.verify_server_chain(&[fixture!("ks_leaf_rsa1024")], "small.test", NOW).unwrap();
+        relaxed
+            .verify_server_chain(&[fixture!("ks_leaf_rsa1024")], "small.test", NOW)
+            .unwrap();
         // a 1024-bit intermediate is rejected too, even though it signed the leaf correctly
-        let chain = [fixture!("ks_leaf_by_small_inter"), fixture!("ks_inter_rsa1024")];
+        let chain = [
+            fixture!("ks_leaf_by_small_inter"),
+            fixture!("ks_inter_rsa1024"),
+        ];
         let err = ts.verify_server_chain(&chain, "via.test", NOW).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("1024 bits") && msg.contains("CN=KS Small Intermediate"), "{}", msg);
+        assert!(
+            msg.contains("1024 bits") && msg.contains("CN=KS Small Intermediate"),
+            "{}",
+            msg
+        );
         // an old 1024-bit trust anchor remains usable
         let old = store(&[fixture!("ks_root_rsa1024")]);
-        old.verify_server_chain(&[fixture!("ks_leaf_old_root")], "old.test", NOW).unwrap();
+        old.verify_server_chain(&[fixture!("ks_leaf_old_root")], "old.test", NOW)
+            .unwrap();
     }
 
     #[test]
     fn errors_name_the_certificate_involved() {
         let ts = store(&[fixture!("root_rsa")]);
         // the intermediate was not sent: the message names the leaf and the missing issuer
-        let err = ts.verify_server_chain(&[fixture!("leaf_p384")], "example.test", NOW).unwrap_err();
+        let err = ts
+            .verify_server_chain(&[fixture!("leaf_p384")], "example.test", NOW)
+            .unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("[CN=leaf]") && msg.contains("[CN=Test Intermediate P256]"), "{}", msg);
+        assert!(
+            msg.contains("[CN=leaf]") && msg.contains("[CN=Test Intermediate P256]"),
+            "{}",
+            msg
+        );
         // wrong host name: lists what the certificate is valid for
         let chain = vec![fixture!("leaf_p384"), fixture!("inter_p256")];
-        let msg = ts.verify_server_chain(&chain, "nope.test", NOW).unwrap_err().to_string();
-        assert!(msg.contains("[CN=leaf]") && msg.contains("valid for: example.test, *.wild.test"), "{}", msg);
+        let msg = ts
+            .verify_server_chain(&chain, "nope.test", NOW)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("[CN=leaf]") && msg.contains("valid for: example.test, *.wild.test"),
+            "{}",
+            msg
+        );
         // expiry names the expired certificate
         let chain = vec![fixture!("leaf_expired"), fixture!("inter_p256")];
-        let msg = ts.verify_server_chain(&chain, "expired.test", NOW).unwrap_err().to_string();
+        let msg = ts
+            .verify_server_chain(&chain, "expired.test", NOW)
+            .unwrap_err()
+            .to_string();
         assert!(msg.contains("has expired [CN=expired]"), "{}", msg);
         // an issuer that is present but did not sign the certificate
         let other = store(&[fixture!("root_p384")]);
-        other.verify_server_chain(&[fixture!("leaf_rsa")], "rsa.test", NOW).unwrap(); // control
+        other
+            .verify_server_chain(&[fixture!("leaf_rsa")], "rsa.test", NOW)
+            .unwrap(); // control
         let wrong = store(&[fixture!("root_rsa")]);
-        let msg = wrong.verify_server_chain(&[fixture!("leaf_rsa")], "rsa.test", NOW).unwrap_err().to_string();
-        assert!(msg.contains("[CN=rsaleaf]") && msg.contains("[CN=Test Root P384]"), "{}", msg);
+        let msg = wrong
+            .verify_server_chain(&[fixture!("leaf_rsa")], "rsa.test", NOW)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("[CN=rsaleaf]") && msg.contains("[CN=Test Root P384]"),
+            "{}",
+            msg
+        );
     }
 
     #[test]
@@ -2223,7 +2590,10 @@ mod tests {
             name.extend(set);
             name
         }
-        assert_eq!(describe_name(&name_with_cn(b"example.com")), "CN=example.com");
+        assert_eq!(
+            describe_name(&name_with_cn(b"example.com")),
+            "CN=example.com"
+        );
         // control characters cannot forge log lines
         assert_eq!(describe_name(&name_with_cn(b"a\nb\x1b[31m")), "CN=a?b?[31m");
         // long values are cut
@@ -2232,7 +2602,10 @@ mod tests {
         // garbage never panics and says so
         assert_eq!(describe_name(&[0x30, 0x05, 0x01]), "<unreadable name>");
         assert_eq!(describe_name(&[]), "<unreadable name>");
-        assert_eq!(describe_name(&[0x30, 0x00]), "<name without common attributes>");
+        assert_eq!(
+            describe_name(&[0x30, 0x00]),
+            "<name without common attributes>"
+        );
     }
 
     // ------------------------------------------------------------ B-69: chains for other purposes
@@ -2268,18 +2641,36 @@ mod tests {
         let chain = [fixture!("cs_leaf_workflow"), fixture!("cs_inter")];
         let ok = ts.verify_chain(&chain, &code_signing(SIGNED_AT)).unwrap();
         // the path is the leaf, the intermediate and the store's own copy of the root
-        assert_eq!(ok.path, vec![fixture!("cs_leaf_workflow"), fixture!("cs_inter"), fixture!("cs_root")]);
+        assert_eq!(
+            ok.path,
+            vec![
+                fixture!("cs_leaf_workflow"),
+                fixture!("cs_inter"),
+                fixture!("cs_root")
+            ]
+        );
         assert_eq!(ok.anchor(), &fixture!("cs_root")[..]);
         assert_eq!(ok.leaf.der, ok.path[0]);
         // the leaf lives for ten minutes: valid at both ends, not a minute either side, not now
-        assert!(ts.verify_chain(&chain, &code_signing(1_740_830_400)).is_ok());
-        assert!(ts.verify_chain(&chain, &code_signing(1_740_831_000)).is_ok());
-        assert!(err_text(ts.verify_chain(&chain, &code_signing(1_740_830_399))).contains("not yet valid"));
-        assert!(err_text(ts.verify_chain(&chain, &code_signing(1_740_831_001))).contains("has expired"));
+        assert!(ts
+            .verify_chain(&chain, &code_signing(1_740_830_400))
+            .is_ok());
+        assert!(ts
+            .verify_chain(&chain, &code_signing(1_740_831_000))
+            .is_ok());
+        assert!(
+            err_text(ts.verify_chain(&chain, &code_signing(1_740_830_399)))
+                .contains("not yet valid")
+        );
+        assert!(
+            err_text(ts.verify_chain(&chain, &code_signing(1_740_831_001))).contains("has expired")
+        );
         assert!(err_text(ts.verify_chain(&chain, &code_signing(NOW))).contains("has expired"));
         // the intermediate may also be an anchor of the caller's, and then it need not be sent
         let by_inter = store(&[fixture!("cs_inter")]);
-        let ok = by_inter.verify_chain(&[fixture!("cs_leaf_workflow")], &code_signing(SIGNED_AT)).unwrap();
+        let ok = by_inter
+            .verify_chain(&[fixture!("cs_leaf_workflow")], &code_signing(SIGNED_AT))
+            .unwrap();
         assert_eq!(ok.path.len(), 2);
         // and the chain may be given as slices as well as vectors
         let slices: [&[u8]; 2] = [&chain[0], &chain[1]];
@@ -2290,9 +2681,15 @@ mod tests {
     fn what_the_certificate_says_about_the_signer_is_readable() {
         let ts = fulcio_store();
         let chain = [fixture!("cs_leaf_workflow"), fixture!("cs_inter")];
-        let leaf = ts.verify_chain(&chain, &code_signing(SIGNED_AT)).unwrap().leaf;
+        let leaf = ts
+            .verify_chain(&chain, &code_signing(SIGNED_AT))
+            .unwrap()
+            .leaf;
         assert_eq!(leaf.uris().collect::<Vec<_>>(), vec![WORKFLOW]);
-        assert_eq!(leaf.subject_alt_names(), &[GeneralName::Uri(WORKFLOW.to_string())]);
+        assert_eq!(
+            leaf.subject_alt_names(),
+            &[GeneralName::Uri(WORKFLOW.to_string())]
+        );
         assert_eq!(leaf.email_addresses().count(), 0);
         let ext = |n: u32| leaf.extension(&oid(&format!("1.3.6.1.4.1.57264.1.{}", n)));
         // the first-generation issuer extension is raw text, the later ones are DER strings
@@ -2300,15 +2697,27 @@ mod tests {
         assert_eq!(ext(1).unwrap().der_string(), None);
         assert_eq!(ext(8).unwrap().der_string().as_deref(), Some(GITHUB_ISSUER));
         assert_eq!(ext(9).unwrap().der_string().as_deref(), Some(WORKFLOW));
-        assert_eq!(ext(12).unwrap().der_string().as_deref(), Some("https://github.com/example-org/example-repo"));
-        assert_eq!(ext(13).unwrap().der_string().as_deref(), Some("0123456789abcdef0123456789abcdef01234567"));
-        assert_eq!(ext(14).unwrap().der_string().as_deref(), Some("refs/tags/v1.2.3"));
+        assert_eq!(
+            ext(12).unwrap().der_string().as_deref(),
+            Some("https://github.com/example-org/example-repo")
+        );
+        assert_eq!(
+            ext(13).unwrap().der_string().as_deref(),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+        assert_eq!(
+            ext(14).unwrap().der_string().as_deref(),
+            Some("refs/tags/v1.2.3")
+        );
         assert_eq!(ext(8).unwrap().oid_string(), "1.3.6.1.4.1.57264.1.8");
         assert!(ext(2).is_none());
         assert!(!ext(8).unwrap().critical);
         // the extensions this code acts on are listed too, with their critical flags
         let san = leaf.extension(&oid("2.5.29.17")).unwrap();
-        assert!(san.critical, "an empty subject makes the subjectAltName critical");
+        assert!(
+            san.critical,
+            "an empty subject makes the subjectAltName critical"
+        );
         assert!(!leaf.extension(&oid("2.5.29.37")).unwrap().critical);
         assert_eq!(leaf.extended_key_usage().unwrap(), &[oid(OID_CODE_SIGNING)]);
         assert_eq!(leaf.key_usage_bits(), Some(KU_DIGITAL_SIGNATURE));
@@ -2317,12 +2726,18 @@ mod tests {
         assert!(oids.contains(&"1.3.6.1.4.1.57264.1.14".to_string()));
 
         let email = Certificate::from_der(&fixture!("cs_leaf_email")).unwrap();
-        assert_eq!(email.email_addresses().collect::<Vec<_>>(), vec!["dev@example.test"]);
+        assert_eq!(
+            email.email_addresses().collect::<Vec<_>>(),
+            vec!["dev@example.test"]
+        );
         assert_eq!(email.uris().count(), 0);
         let other = Certificate::from_der(&fixture!("cs_leaf_other")).unwrap();
         assert_eq!(
             other.subject_alt_names(),
-            &[GeneralName::Other { type_id: oid("1.3.6.1.4.1.57264.1.7"), value: b"\x0c\x05alice".to_vec() }]
+            &[GeneralName::Other {
+                type_id: oid("1.3.6.1.4.1.57264.1.7"),
+                value: b"\x0c\x05alice".to_vec()
+            }]
         );
     }
 
@@ -2333,14 +2748,26 @@ mod tests {
         assert_eq!(names.len(), 8);
         assert_eq!(names[0], GeneralName::Dns("host.example.test".to_string())); // lower-cased
         assert_eq!(names[1], GeneralName::Ip(vec![192, 0, 2, 7]));
-        assert_eq!(names[2], GeneralName::Ip(vec![0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]));
+        assert_eq!(
+            names[2],
+            GeneralName::Ip(vec![
+                0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1
+            ])
+        );
         assert_eq!(names[3], GeneralName::Email("Dev@Example.test".to_string())); // as written
-        assert_eq!(names[4], GeneralName::Uri("https://example.test/a?b#c".to_string()));
+        assert_eq!(
+            names[4],
+            GeneralName::Uri("https://example.test/a?b#c".to_string())
+        );
         match &names[5] {
-            GeneralName::Directory(name) => assert_eq!(describe_name(name), "O=Some Org, CN=Some Person"),
+            GeneralName::Directory(name) => {
+                assert_eq!(describe_name(name), "O=Some Org, CN=Some Person")
+            }
             other => panic!("{:?}", other),
         }
-        assert!(matches!(&names[6], GeneralName::Other { type_id, .. } if *type_id == oid("1.3.6.1.4.1.57264.1.7")));
+        assert!(
+            matches!(&names[6], GeneralName::Other { type_id, .. } if *type_id == oid("1.3.6.1.4.1.57264.1.7"))
+        );
         assert_eq!(names[7], GeneralName::RegisteredId(oid("1.2.3.4.5")));
         // the fields TLS host name matching uses are unchanged
         assert_eq!(c.dns_names, vec!["host.example.test"]);
@@ -2354,28 +2781,50 @@ mod tests {
         // a leaf for TLS servers under a code-signing intermediate
         let tls = [fixture!("cs_leaf_tls"), fixture!("cs_inter")];
         let msg = err_text(ts.verify_chain(&tls, &code_signing(SIGNED_AT)));
-        assert!(msg.contains("leaf certificate is not valid for code signing"), "{}", msg);
+        assert!(
+            msg.contains("leaf certificate is not valid for code signing"),
+            "{}",
+            msg
+        );
         // ...which is not a TLS CA either, though the leaf is fine for TLS
         let server = VerifyOptions::tls_server("tls-only.example.test", SIGNED_AT);
         let msg = err_text(ts.verify_chain(&tls, &server));
-        assert!(msg.contains("issuing certificate is not valid for TLS server authentication"), "{}", msg);
+        assert!(
+            msg.contains("issuing certificate is not valid for TLS server authentication"),
+            "{}",
+            msg
+        );
         // no purpose, no objection
-        ts.verify_chain(&tls, &VerifyOptions::new(Purpose::Any, SIGNED_AT)).unwrap();
+        ts.verify_chain(&tls, &VerifyOptions::new(Purpose::Any, SIGNED_AT))
+            .unwrap();
         // an anyExtendedKeyUsage leaf is acceptable for any purpose its CAs allow
         let any = [fixture!("cs_leaf_anyeku"), fixture!("cs_inter")];
         ts.verify_chain(&any, &code_signing(SIGNED_AT)).unwrap();
-        assert!(ts.verify_chain(&any, &VerifyOptions::new(Purpose::TimeStamping, SIGNED_AT)).is_err());
+        assert!(ts
+            .verify_chain(&any, &VerifyOptions::new(Purpose::TimeStamping, SIGNED_AT))
+            .is_err());
         // an OID of the caller's choosing
         let a = store(&[fixture!("as_root")]);
         let chain = [fixture!("as_leaf"), fixture!("as_inter")];
         let lifetime = Purpose::Oid(oid("1.3.6.1.4.1.311.10.3.13"));
-        let msg = err_text(a.verify_chain(&chain, &VerifyOptions::new(lifetime.clone(), 1_685_577_600)));
+        let msg =
+            err_text(a.verify_chain(&chain, &VerifyOptions::new(lifetime.clone(), 1_685_577_600)));
         // the leaf allows it but the intermediate lists only code signing
-        assert!(msg.contains("issuing certificate is not valid for extended key usage 1.3.6.1.4.1.311.10.3.13"), "{}", msg);
-        assert!(err_text(a.verify_chain(&chain, &VerifyOptions::new(Purpose::Oid(oid("1.3.6.1.4.1.311.10.3.14")), 1_685_577_600)))
-            .contains("leaf certificate is not valid for extended key usage 1.3.6.1.4.1.311.10.3.14"));
+        assert!(
+            msg.contains(
+                "issuing certificate is not valid for extended key usage 1.3.6.1.4.1.311.10.3.13"
+            ),
+            "{}",
+            msg
+        );
+        assert!(err_text(a.verify_chain(
+            &chain,
+            &VerifyOptions::new(Purpose::Oid(oid("1.3.6.1.4.1.311.10.3.14")), 1_685_577_600)
+        ))
+        .contains("leaf certificate is not valid for extended key usage 1.3.6.1.4.1.311.10.3.14"));
         // TLS server authentication needs a host name, whatever else is in order
-        let msg = err_text(ts.verify_chain(&tls, &VerifyOptions::new(Purpose::ServerAuth, SIGNED_AT)));
+        let msg =
+            err_text(ts.verify_chain(&tls, &VerifyOptions::new(Purpose::ServerAuth, SIGNED_AT)));
         assert!(msg.contains("a host name is required"), "{}", msg);
     }
 
@@ -2384,11 +2833,16 @@ mod tests {
         let ts = fulcio_store();
         let chain = [fixture!("cs_leaf_noeku"), fixture!("cs_inter")];
         let msg = err_text(ts.verify_chain(&chain, &code_signing(SIGNED_AT)));
-        assert!(msg.contains("leaf certificate has no extendedKeyUsage, which must name code signing"), "{}", msg);
+        assert!(
+            msg.contains("leaf certificate has no extendedKeyUsage, which must name code signing"),
+            "{}",
+            msg
+        );
         let mut lenient = code_signing(SIGNED_AT);
         lenient.allow_missing_leaf_eku = true;
         ts.verify_chain(&chain, &lenient).unwrap();
-        ts.verify_chain(&chain, &VerifyOptions::new(Purpose::Any, SIGNED_AT)).unwrap();
+        ts.verify_chain(&chain, &VerifyOptions::new(Purpose::Any, SIGNED_AT))
+            .unwrap();
     }
 
     #[test]
@@ -2396,7 +2850,11 @@ mod tests {
         let ts = fulcio_store();
         let chain = [fixture!("cs_leaf_noku"), fixture!("cs_inter")];
         let msg = err_text(ts.verify_chain(&chain, &code_signing(SIGNED_AT)));
-        assert!(msg.contains("keyUsage does not permit digitalSignature"), "{}", msg);
+        assert!(
+            msg.contains("keyUsage does not permit digitalSignature"),
+            "{}",
+            msg
+        );
         // S/MIME: nonRepudiation is as good as digitalSignature for signing; TLS client auth needs the latter
         let em = store(&[fixture!("em_root")]);
         let both = [fixture!("em_leaf")];
@@ -2407,9 +2865,14 @@ mod tests {
         em.verify_chain(&both, &client(NOW)).unwrap();
         em.verify_chain(&nr, &email(NOW)).unwrap();
         let msg = err_text(em.verify_chain(&nr, &client(NOW)));
-        assert!(msg.contains("keyUsage does not permit digitalSignature"), "{}", msg);
+        assert!(
+            msg.contains("keyUsage does not permit digitalSignature"),
+            "{}",
+            msg
+        );
         // no purpose still means a leaf that can sign, by either of the two usages
-        em.verify_chain(&nr, &VerifyOptions::new(Purpose::Any, NOW)).unwrap();
+        em.verify_chain(&nr, &VerifyOptions::new(Purpose::Any, NOW))
+            .unwrap();
     }
 
     #[test]
@@ -2421,9 +2884,15 @@ mod tests {
         // RFC 3161 asks for the extension to be critical; whether it is, is for the caller to see
         let eku = ok.leaf.extension(&oid("2.5.29.37")).unwrap();
         assert!(eku.critical);
-        assert_eq!(ok.leaf.extended_key_usage().unwrap(), &[oid("1.3.6.1.5.5.7.3.8")]);
-        assert!(err_text(ts.verify_chain(&chain, &code_signing(NOW))).contains("not valid for code signing"));
-        assert!(err_text(ts.verify_chain(&chain, &stamping(1_640_995_199))).contains("not yet valid"));
+        assert_eq!(
+            ok.leaf.extended_key_usage().unwrap(),
+            &[oid("1.3.6.1.5.5.7.3.8")]
+        );
+        assert!(err_text(ts.verify_chain(&chain, &code_signing(NOW)))
+            .contains("not valid for code signing"));
+        assert!(
+            err_text(ts.verify_chain(&chain, &stamping(1_640_995_199))).contains("not yet valid")
+        );
         // the authority's certificate was valid for ten years from 2022, which is what a stamp
         // made in 2024 is checked against even in 2035
         assert!(ts.verify_chain(&chain, &stamping(1_700_000_000)).is_ok());
@@ -2440,18 +2909,27 @@ mod tests {
         assert!(matches!(ok.leaf.public_key, PublicKey::Rsa(_)));
         assert_eq!(ok.path.len(), 3);
         // the certificate has expired by now, which is why the validation time is a parameter
-        assert!(err_text(ts.verify_chain(&chain, &code_signing(NOW))).contains("has expired [C=US, O=Example Software Inc, CN=Example Software Inc]"));
-        assert!(err_text(ts.verify_chain(&chain, &code_signing(1_640_995_200))).contains("not yet valid"));
+        assert!(err_text(ts.verify_chain(&chain, &code_signing(NOW)))
+            .contains("has expired [C=US, O=Example Software Inc, CN=Example Software Inc]"));
+        assert!(
+            err_text(ts.verify_chain(&chain, &code_signing(1_640_995_200)))
+                .contains("not yet valid")
+        );
         // lifetime signing and code signing both listed on the leaf
         assert_eq!(ok.leaf.extended_key_usage().unwrap().len(), 2);
         // the same hierarchy's TLS certificate cannot sign code, and its CA is not a TLS CA
         let tls = [fixture!("as_leaf_tls"), fixture!("as_inter")];
-        assert!(err_text(ts.verify_chain(&tls, &code_signing(NOW))).contains("not valid for code signing"));
+        assert!(err_text(ts.verify_chain(&tls, &code_signing(NOW)))
+            .contains("not valid for code signing"));
         let server = VerifyOptions::tls_server("tls.example.test", NOW);
-        assert!(err_text(ts.verify_chain(&tls, &server)).contains("issuing certificate is not valid for TLS server authentication"));
+        assert!(err_text(ts.verify_chain(&tls, &server))
+            .contains("issuing certificate is not valid for TLS server authentication"));
         // an RSA key under the floor is refused whatever the purpose
         let strict = store(&[fixture!("as_root")]).with_min_rsa_bits(3072);
-        assert!(err_text(strict.verify_chain(&chain, &code_signing(june_2023))).contains("2048 bits is below the minimum of 3072"));
+        assert!(
+            err_text(strict.verify_chain(&chain, &code_signing(june_2023)))
+                .contains("2048 bits is below the minimum of 3072")
+        );
     }
 
     #[test]
@@ -2461,14 +2939,31 @@ mod tests {
         let msg = err_text(wrong.verify_chain(&chain, &code_signing(SIGNED_AT)));
         assert!(msg.contains("neither a trusted root nor sent"), "{}", msg);
         // an empty store trusts nothing
-        assert!(TrustStore::empty().verify_chain(&chain, &code_signing(SIGNED_AT)).is_err());
+        assert!(TrustStore::empty()
+            .verify_chain(&chain, &code_signing(SIGNED_AT))
+            .is_err());
         // several anchors: the one that matches is used
-        let both = store(&[fixture!("as_root"), fixture!("cs_root"), fixture!("ts_root")]);
-        assert_eq!(both.verify_chain(&chain, &code_signing(SIGNED_AT)).unwrap().anchor(), &fixture!("cs_root")[..]);
+        let both = store(&[
+            fixture!("as_root"),
+            fixture!("cs_root"),
+            fixture!("ts_root"),
+        ]);
+        assert_eq!(
+            both.verify_chain(&chain, &code_signing(SIGNED_AT))
+                .unwrap()
+                .anchor(),
+            &fixture!("cs_root")[..]
+        );
         // junk among the chain is ignored, as for TLS
-        let junk = [fixture!("cs_leaf_workflow"), b"not a certificate".to_vec(), fixture!("cs_inter")];
+        let junk = [
+            fixture!("cs_leaf_workflow"),
+            b"not a certificate".to_vec(),
+            fixture!("cs_inter"),
+        ];
         both.verify_chain(&junk, &code_signing(SIGNED_AT)).unwrap();
-        assert!(both.verify_chain::<Vec<u8>>(&[], &code_signing(SIGNED_AT)).is_err());
+        assert!(both
+            .verify_chain::<Vec<u8>>(&[], &code_signing(SIGNED_AT))
+            .is_err());
     }
 
     #[test]
@@ -2479,35 +2974,108 @@ mod tests {
         // parsing a certificate on its own refuses it, as before
         assert!(Certificate::from_der(&fixture!("cs_leaf_critical")).is_err());
         let msg = err_text(ts.verify_chain(&chain, &code_signing(SIGNED_AT)));
-        assert!(msg.contains("unrecognized critical extension 1.3.6.1.4.1.99999.1 in ["), "{}", msg);
+        assert!(
+            msg.contains("unrecognized critical extension 1.3.6.1.4.1.99999.1 in ["),
+            "{}",
+            msg
+        );
         // a caller that says it interprets that extension gets the chain, and can read the extension
-        let ok = ts.verify_chain(&chain, &code_signing(SIGNED_AT).with_critical_extension(&private)).unwrap();
+        let ok = ts
+            .verify_chain(
+                &chain,
+                &code_signing(SIGNED_AT).with_critical_extension(&private),
+            )
+            .unwrap();
         let ext = ok.leaf.extension(&private).unwrap();
         assert!(ext.critical);
         assert_eq!(ext.der_string().as_deref(), Some("private"));
         // naming some other extension does not help
-        assert!(ts.verify_chain(&chain, &code_signing(SIGNED_AT).with_critical_extension(&oid("1.2.3"))).is_err());
+        assert!(ts
+            .verify_chain(
+                &chain,
+                &code_signing(SIGNED_AT).with_critical_extension(&oid("1.2.3"))
+            )
+            .is_err());
         // TLS never accepts it
         let msg = err_text(ts.verify_server_chain(&chain, "x.test", SIGNED_AT));
         assert!(msg.contains("unrecognized critical extension"), "{}", msg);
     }
 
     #[test]
+    fn unsupported_critical_policy_extensions_are_not_silently_accepted() {
+        for oid in [
+            OID_CERT_POLICIES,
+            OID_POLICY_MAPPINGS,
+            OID_POLICY_CONSTRAINTS,
+            OID_INHIBIT_ANY_POLICY,
+        ] {
+            let mut cert = Certificate::parse(&fixture!("cs_leaf_workflow")).unwrap();
+
+            cert.apply_extension(oid, false, b"").unwrap();
+            assert!(!cert
+                .unrecognized_critical
+                .iter()
+                .any(|critical| critical == oid));
+
+            cert.apply_extension(oid, true, b"").unwrap();
+            assert!(cert
+                .unrecognized_critical
+                .iter()
+                .any(|critical| critical == oid));
+        }
+    }
+
+    #[test]
+    fn a_malformed_tls_feature_extension_is_rejected() {
+        let mut cert = Certificate::parse(&fixture!("cs_leaf_workflow")).unwrap();
+
+        assert!(cert
+            .apply_extension(OID_TLS_FEATURE, true, b"\x30\x03\x02\x01")
+            .is_err());
+
+        cert.apply_extension(OID_TLS_FEATURE, true, b"\x30\x03\x02\x01\x05")
+            .unwrap();
+        assert!(cert.must_staple);
+    }
+
+    #[test]
     fn name_constraints_cover_email_uri_and_ip_names() {
         let ts = fulcio_store();
-        let check = |leaf: Vec<u8>| ts.verify_chain(&[leaf, fixture!("cs_inter_nc")], &code_signing(NOW));
+        let check =
+            |leaf: Vec<u8>| ts.verify_chain(&[leaf, fixture!("cs_inter_nc")], &code_signing(NOW));
         let ok = check(fixture!("cs_nc_ok")).unwrap();
         assert_eq!(ok.leaf.subject_alt_names().len(), 4);
         // a name of a kind the CA does not constrain is not affected
         check(fixture!("cs_nc_other_kind")).unwrap();
         for (leaf, expect) in [
-            ("cs_nc_bad_email", "e-mail address \"dev@evil.test\" is not permitted by name constraints of"),
-            ("cs_nc_bad_email_sub", "e-mail address \"dev@sub.example.test\" is not permitted by name constraints of"),
-            ("cs_nc_excluded_email", "e-mail address \"banned@example.test\" is excluded by a name constraint of"),
-            ("cs_nc_bad_uri", "URI \"https://evil.test/x\" is not permitted by name constraints of"),
-            ("cs_nc_bad_uri_sub", "URI \"https://api.github.com/x\" is not permitted by name constraints of"),
-            ("cs_nc_bad_ip", "IP address 198.51.100.1 is not permitted by name constraints of"),
-            ("cs_nc_excluded_dns", "DNS name \"bad.example.test\" is excluded by a name constraint of"),
+            (
+                "cs_nc_bad_email",
+                "e-mail address \"dev@evil.test\" is not permitted by name constraints of",
+            ),
+            (
+                "cs_nc_bad_email_sub",
+                "e-mail address \"dev@sub.example.test\" is not permitted by name constraints of",
+            ),
+            (
+                "cs_nc_excluded_email",
+                "e-mail address \"banned@example.test\" is excluded by a name constraint of",
+            ),
+            (
+                "cs_nc_bad_uri",
+                "URI \"https://evil.test/x\" is not permitted by name constraints of",
+            ),
+            (
+                "cs_nc_bad_uri_sub",
+                "URI \"https://api.github.com/x\" is not permitted by name constraints of",
+            ),
+            (
+                "cs_nc_bad_ip",
+                "IP address 198.51.100.1 is not permitted by name constraints of",
+            ),
+            (
+                "cs_nc_excluded_dns",
+                "DNS name \"bad.example.test\" is excluded by a name constraint of",
+            ),
         ] {
             let der = match leaf {
                 "cs_nc_bad_email" => fixture!("cs_nc_bad_email"),
@@ -2520,16 +3088,26 @@ mod tests {
             };
             let msg = err_text(check(der));
             assert!(msg.contains(expect), "{}: {}", leaf, msg);
-            assert!(msg.contains("CN=Fulcio-profile Constrained Intermediate"), "{}", msg);
+            assert!(
+                msg.contains("CN=Fulcio-profile Constrained Intermediate"),
+                "{}",
+                msg
+            );
         }
     }
 
     #[test]
     fn a_constraint_of_a_kind_that_is_not_evaluated_refuses_names_of_that_kind_only() {
         let ts = fulcio_store();
-        let under = |leaf: Vec<u8>| ts.verify_chain(&[leaf, fixture!("cs_inter_nc_other")], &code_signing(NOW));
+        let under = |leaf: Vec<u8>| {
+            ts.verify_chain(&[leaf, fixture!("cs_inter_nc_other")], &code_signing(NOW))
+        };
         let msg = err_text(under(fixture!("cs_nco_other")));
-        assert!(msg.contains("under a name constraint of a kind that is not supported"), "{}", msg);
+        assert!(
+            msg.contains("under a name constraint of a kind that is not supported"),
+            "{}",
+            msg
+        );
         // an e-mail name under a CA whose only constraint is on otherNames is not constrained at all
         under(fixture!("cs_nco_email")).unwrap();
     }
@@ -2541,13 +3119,25 @@ mod tests {
         assert!(email_constraint_matches("a@example.com", "a@EXAMPLE.com"));
         assert!(!email_constraint_matches("a@example.com", "A@example.com"));
         assert!(email_constraint_matches("example.com", "x@example.com"));
-        assert!(!email_constraint_matches("example.com", "x@sub.example.com"));
-        assert!(email_constraint_matches(".example.com", "x@sub.example.com"));
+        assert!(!email_constraint_matches(
+            "example.com",
+            "x@sub.example.com"
+        ));
+        assert!(email_constraint_matches(
+            ".example.com",
+            "x@sub.example.com"
+        ));
         assert!(!email_constraint_matches(".example.com", "x@example.com"));
-        assert!(!email_constraint_matches(".example.com", "x@badexample.com"));
+        assert!(!email_constraint_matches(
+            ".example.com",
+            "x@badexample.com"
+        ));
         assert!(!email_constraint_matches("example.com", "no-at-sign"));
         // URI: the host, exactly, or the subdomains of a domain
-        assert_eq!(uri_host("https://user:pw@Example.com:8443/p?q#f"), Some("Example.com"));
+        assert_eq!(
+            uri_host("https://user:pw@Example.com:8443/p?q#f"),
+            Some("Example.com")
+        );
         assert_eq!(uri_host("https://example.com"), Some("example.com"));
         assert_eq!(uri_host("https://example.com?x"), Some("example.com"));
         assert_eq!(uri_host("https://192.0.2.1/x"), None);
@@ -2564,15 +3154,51 @@ mod tests {
         assert!(!ip_constraint_matches(&net, &[192, 0, 3, 1]));
         assert!(!ip_constraint_matches(&net, &[0u8; 16])); // an IPv6 address is not in an IPv4 range
         assert!(ip_constraint_matches(&[0u8; 8], &[10, 1, 2, 3])); // 0.0.0.0/0
-        // a trailing dot does not get a name past a constraint
+                                                                   // a trailing dot does not get a name past a constraint
         let covers = |c: Constraint, n: GeneralName| constraint_covers(&c, &n);
-        assert_eq!(covers(Constraint::Dns("bad.example.test".into()), GeneralName::Dns("bad.example.test.".into())), Some(true));
-        assert_eq!(covers(Constraint::Email("example.test".into()), GeneralName::Email("x@example.test.".into())), Some(true));
-        assert_eq!(covers(Constraint::Uri("github.com".into()), GeneralName::Uri("https://github.com./x".into())), Some(true));
-        assert_eq!(covers(Constraint::Uri("github.com".into()), GeneralName::Uri("https://github.com.evil.test/x".into())), Some(false));
+        assert_eq!(
+            covers(
+                Constraint::Dns("bad.example.test".into()),
+                GeneralName::Dns("bad.example.test.".into())
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            covers(
+                Constraint::Email("example.test".into()),
+                GeneralName::Email("x@example.test.".into())
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            covers(
+                Constraint::Uri("github.com".into()),
+                GeneralName::Uri("https://github.com./x".into())
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            covers(
+                Constraint::Uri("github.com".into()),
+                GeneralName::Uri("https://github.com.evil.test/x".into())
+            ),
+            Some(false)
+        );
         // and a constraint of one kind says nothing about a name of another
-        assert_eq!(covers(Constraint::Dns("example.test".into()), GeneralName::Email("x@example.test".into())), None);
-        assert_eq!(covers(Constraint::Unsupported(0xa4), GeneralName::Dns("example.test".into())), None);
+        assert_eq!(
+            covers(
+                Constraint::Dns("example.test".into()),
+                GeneralName::Email("x@example.test".into())
+            ),
+            None
+        );
+        assert_eq!(
+            covers(
+                Constraint::Unsupported(0xa4),
+                GeneralName::Dns("example.test".into())
+            ),
+            None
+        );
     }
 
     // The signing certificate of the npm provenance attestation of lazaret 0.1.8: real, from Sigstore's
@@ -2580,7 +3206,8 @@ mod tests {
     const LAZARET_BUNDLE: &str = include_str!("../tests/data/real_lazaret_0_1_8.sigstore.json");
     /// Rekor's integratedTime for it: 2026-10-03 19:30:27 UTC, one second into the certificate's ten minutes.
     const LAZARET_LOGGED_AT: i64 = 1_791_055_827;
-    const LAZARET_WORKFLOW: &str = "https://github.com/lazaret-dev/lazaret/.github/workflows/release.yml@refs/tags/v0.1.8";
+    const LAZARET_WORKFLOW: &str =
+        "https://github.com/lazaret-dev/lazaret/.github/workflows/release.yml@refs/tags/v0.1.8";
 
     #[test]
     fn a_real_fulcio_leaf_verifies_at_the_time_it_was_logged_and_says_where_it_was_built() {
@@ -2591,44 +3218,96 @@ mod tests {
 
         let ts = store(&[fixture!("fulcio_real_root")]);
         let chain = [leaf_der.clone(), fixture!("fulcio_real_inter")];
-        let ok = ts.verify_chain(&chain, &code_signing(LAZARET_LOGGED_AT)).unwrap();
-        assert_eq!(ok.path, vec![leaf_der.clone(), fixture!("fulcio_real_inter"), fixture!("fulcio_real_root")]);
+        let ok = ts
+            .verify_chain(&chain, &code_signing(LAZARET_LOGGED_AT))
+            .unwrap();
+        assert_eq!(
+            ok.path,
+            vec![
+                leaf_der.clone(),
+                fixture!("fulcio_real_inter"),
+                fixture!("fulcio_real_root")
+            ]
+        );
         // ten minutes of validity, 19:30:26 to 19:40:26: neither a second before nor a second after
         let (from, to) = (LAZARET_LOGGED_AT - 1, LAZARET_LOGGED_AT + 599);
         assert_eq!((ok.leaf.not_before, ok.leaf.not_after), (from, to));
         ts.verify_chain(&chain, &code_signing(from)).unwrap();
         ts.verify_chain(&chain, &code_signing(to)).unwrap();
-        assert!(err_text(ts.verify_chain(&chain, &code_signing(from - 1))).contains("not yet valid"));
+        assert!(
+            err_text(ts.verify_chain(&chain, &code_signing(from - 1))).contains("not yet valid")
+        );
         assert!(err_text(ts.verify_chain(&chain, &code_signing(to + 1))).contains("has expired"));
         // the certificate did not exist yet when the other tests' clock (NOW) was set
         assert!(err_text(ts.verify_chain(&chain, &code_signing(NOW))).contains("not yet valid"));
         // the intermediate alone is a fine anchor, and the wrong anchors are not
         let by_inter = store(&[fixture!("fulcio_real_inter")]);
-        assert_eq!(by_inter.verify_chain(&[leaf_der.clone()], &code_signing(LAZARET_LOGGED_AT)).unwrap().path.len(), 2);
+        assert_eq!(
+            by_inter
+                .verify_chain(&[leaf_der.clone()], &code_signing(LAZARET_LOGGED_AT))
+                .unwrap()
+                .path
+                .len(),
+            2
+        );
         let wrong = store(&[fixture!("cs_root"), fixture!("as_root")]);
-        assert!(err_text(wrong.verify_chain(&chain, &code_signing(LAZARET_LOGGED_AT))).contains("neither a trusted root nor sent"));
+        assert!(
+            err_text(wrong.verify_chain(&chain, &code_signing(LAZARET_LOGGED_AT)))
+                .contains("neither a trusted root nor sent")
+        );
         // it is for code signing and nothing else
-        let msg = err_text(ts.verify_chain(&chain, &VerifyOptions::new(Purpose::TimeStamping, LAZARET_LOGGED_AT)));
-        assert!(msg.contains("leaf certificate is not valid for time stamping"), "{}", msg);
-        let msg = err_text(ts.verify_chain(&chain, &VerifyOptions::new(Purpose::EmailProtection, LAZARET_LOGGED_AT)));
-        assert!(msg.contains("leaf certificate is not valid for e-mail protection"), "{}", msg);
+        let msg = err_text(ts.verify_chain(
+            &chain,
+            &VerifyOptions::new(Purpose::TimeStamping, LAZARET_LOGGED_AT),
+        ));
+        assert!(
+            msg.contains("leaf certificate is not valid for time stamping"),
+            "{}",
+            msg
+        );
+        let msg = err_text(ts.verify_chain(
+            &chain,
+            &VerifyOptions::new(Purpose::EmailProtection, LAZARET_LOGGED_AT),
+        ));
+        assert!(
+            msg.contains("leaf certificate is not valid for e-mail protection"),
+            "{}",
+            msg
+        );
         // any bit of it changed, and it is not the certificate that was signed
         let mut bad = leaf_der.clone();
         let mid = bad.len() / 2;
         bad[mid] ^= 1;
-        assert!(ts.verify_chain(&[bad, fixture!("fulcio_real_inter")], &code_signing(LAZARET_LOGGED_AT)).is_err());
+        assert!(ts
+            .verify_chain(
+                &[bad, fixture!("fulcio_real_inter")],
+                &code_signing(LAZARET_LOGGED_AT)
+            )
+            .is_err());
 
         // what Fulcio put in it: an empty subject and the workflow as a critical subjectAltName URI
         let leaf = &ok.leaf;
         assert_eq!(leaf.subject_der, [0x30, 0x00]);
-        assert!(matches!(&leaf.public_key, PublicKey::Ec { curve: Curve::P256, .. }));
-        assert_eq!(leaf.subject_alt_names(), &[GeneralName::Uri(LAZARET_WORKFLOW.to_string())]);
+        assert!(matches!(
+            &leaf.public_key,
+            PublicKey::Ec {
+                curve: Curve::P256,
+                ..
+            }
+        ));
+        assert_eq!(
+            leaf.subject_alt_names(),
+            &[GeneralName::Uri(LAZARET_WORKFLOW.to_string())]
+        );
         assert_eq!(leaf.uris().collect::<Vec<_>>(), vec![LAZARET_WORKFLOW]);
         assert!(leaf.extension(&oid("2.5.29.17")).unwrap().critical);
         assert_eq!(leaf.key_usage_bits(), Some(KU_DIGITAL_SIGNATURE));
         assert_eq!(leaf.extended_key_usage().unwrap(), &[oid(OID_CODE_SIGNING)]);
         // ...and the claims, under 1.3.6.1.4.1.57264.1: the first six are raw text, the rest DER strings
-        let ext = |n: u32| leaf.extension(&oid(&format!("1.3.6.1.4.1.57264.1.{}", n))).unwrap_or_else(|| panic!("no extension .1.{}", n));
+        let ext = |n: u32| {
+            leaf.extension(&oid(&format!("1.3.6.1.4.1.57264.1.{}", n)))
+                .unwrap_or_else(|| panic!("no extension .1.{}", n))
+        };
         let sha = "562f28618a0c20381f07dffa258391b866f7836e";
         let raw: [(u32, &str); 6] = [
             (1, GITHUB_ISSUER),
@@ -2656,10 +3335,16 @@ mod tests {
             (18, LAZARET_WORKFLOW),
             (19, sha),
             (20, "push"),
-            (21, "https://github.com/lazaret-dev/lazaret/actions/runs/37144612030/attempts/1"),
+            (
+                21,
+                "https://github.com/lazaret-dev/lazaret/actions/runs/37144612030/attempts/1",
+            ),
             (22, "public"),
             (23, "npm"),
-            (24, "repo:lazaret-dev@333496726/lazaret@1386943603:environment:npm"),
+            (
+                24,
+                "repo:lazaret-dev@333496726/lazaret@1386943603:environment:npm",
+            ),
         ];
         for (n, want) in der_strings {
             assert_eq!(ext(n).der_string().as_deref(), Some(want), ".1.{}", n);
@@ -2668,7 +3353,12 @@ mod tests {
         assert!(leaf.extension(&oid("1.3.6.1.4.1.57264.1.7")).is_none());
         // every extension is kept: keyUsage, EKU, SKI, AKI, SAN, the 23 claims and the SCT list
         assert_eq!(leaf.extensions().len(), 29);
-        assert!(!leaf.extension(&oid("1.3.6.1.4.1.11129.2.4.2")).unwrap().critical);
+        assert!(
+            !leaf
+                .extension(&oid("1.3.6.1.4.1.11129.2.4.2"))
+                .unwrap()
+                .critical
+        );
     }
 
     #[test]
@@ -2680,15 +3370,30 @@ mod tests {
         let ts = store(&[fixture!("apple_root_ca")]);
         let chain = [leaf_der.clone(), fixture!("apple_wwdr_g5")];
         let (from, to) = (1_720_826_167, 1_786_490_166); // 2024-07-12 23:16:07 and 2026-08-11 23:16:06 UTC
-        let ok = ts.verify_chain(&chain, &code_signing(1_748_736_000)).unwrap(); // 2025-06-01
-        assert_eq!(ok.path, vec![leaf_der.clone(), fixture!("apple_wwdr_g5"), fixture!("apple_root_ca")]);
+        let ok = ts
+            .verify_chain(&chain, &code_signing(1_748_736_000))
+            .unwrap(); // 2025-06-01
+        assert_eq!(
+            ok.path,
+            vec![
+                leaf_der.clone(),
+                fixture!("apple_wwdr_g5"),
+                fixture!("apple_root_ca")
+            ]
+        );
         assert_eq!((ok.leaf.not_before, ok.leaf.not_after), (from, to));
         ts.verify_chain(&chain, &code_signing(from)).unwrap();
         ts.verify_chain(&chain, &code_signing(to)).unwrap();
-        assert!(err_text(ts.verify_chain(&chain, &code_signing(from - 1))).contains("not yet valid"));
+        assert!(
+            err_text(ts.verify_chain(&chain, &code_signing(from - 1))).contains("not yet valid")
+        );
         // it has expired by the clock the other tests use (2026-09-15), which is why the time is a parameter
         let msg = err_text(ts.verify_chain(&chain, &code_signing(NOW)));
-        assert!(msg.contains("has expired [CN=Apple Mac OS Application Signing, O=Apple Inc., C=US]"), "{}", msg);
+        assert!(
+            msg.contains("has expired [CN=Apple Mac OS Application Signing, O=Apple Inc., C=US]"),
+            "{}",
+            msg
+        );
         // the leaf's own profile: RSA, a critical EKU naming code signing, a critical keyUsage, not a CA
         let leaf = &ok.leaf;
         assert!(matches!(leaf.public_key, PublicKey::Rsa(_)));
@@ -2704,23 +3409,43 @@ mod tests {
             assert_eq!(e.value, [0x05, 0x00]);
         }
         let wwdr = Certificate::from_der(&fixture!("apple_wwdr_g5")).unwrap();
-        assert_eq!(wwdr.extension(&oid("1.2.840.113635.100.6.2.1")).unwrap().value, [0x05, 0x00]);
+        assert_eq!(
+            wwdr.extension(&oid("1.2.840.113635.100.6.2.1"))
+                .unwrap()
+                .value,
+            [0x05, 0x00]
+        );
         assert!(wwdr.is_ca && wwdr.path_len == Some(0));
         assert_eq!(leaf.crl_uris, vec!["http://crl.apple.com/wwdrg5.crl"]);
         assert_eq!(wwdr.crl_uris, vec!["http://crl.apple.com/root.crl"]);
         // purposes: any is fine; the EKU rules out everything else
-        ts.verify_chain(&chain, &VerifyOptions::new(Purpose::Any, 1_748_736_000)).unwrap();
-        let msg = err_text(ts.verify_chain(&chain, &VerifyOptions::new(Purpose::TimeStamping, 1_748_736_000)));
-        assert!(msg.contains("leaf certificate is not valid for time stamping"), "{}", msg);
+        ts.verify_chain(&chain, &VerifyOptions::new(Purpose::Any, 1_748_736_000))
+            .unwrap();
+        let msg = err_text(ts.verify_chain(
+            &chain,
+            &VerifyOptions::new(Purpose::TimeStamping, 1_748_736_000),
+        ));
+        assert!(
+            msg.contains("leaf certificate is not valid for time stamping"),
+            "{}",
+            msg
+        );
         // the RSA floor applies to the leaf and the intermediate, not to the anchor
         let strict = store(&[fixture!("apple_root_ca")]).with_min_rsa_bits(3072);
-        assert!(err_text(strict.verify_chain(&chain, &code_signing(1_748_736_000))).contains("2048 bits is below the minimum of 3072"));
+        assert!(
+            err_text(strict.verify_chain(&chain, &code_signing(1_748_736_000)))
+                .contains("2048 bits is below the minimum of 3072")
+        );
         // the root is self-issued with SHA-1, which is refused as a signature but irrelevant to an anchor
         let root = Certificate::from_der(&fixture!("apple_root_ca")).unwrap();
-        assert!(err_text(root.verify_signed_by(&root)).contains("unsupported certificate signature algorithm"));
+        assert!(err_text(root.verify_signed_by(&root))
+            .contains("unsupported certificate signature algorithm"));
         // another vendor's anchors do not do
         let other = store(&[fixture!("fulcio_real_root"), fixture!("as_root")]);
-        assert!(err_text(other.verify_chain(&chain, &code_signing(1_748_736_000))).contains("neither a trusted root nor sent"));
+        assert!(
+            err_text(other.verify_chain(&chain, &code_signing(1_748_736_000)))
+                .contains("neither a trusted root nor sent")
+        );
     }
 
     #[test]
@@ -2729,9 +3454,18 @@ mod tests {
         let root = Certificate::from_der(&fixture!("fulcio_real_root")).unwrap();
         let inter = Certificate::from_der(&fixture!("fulcio_real_inter")).unwrap();
         assert_eq!(root.subject_summary(), "O=sigstore.dev, CN=sigstore");
-        assert_eq!(inter.subject_summary(), "O=sigstore.dev, CN=sigstore-intermediate");
+        assert_eq!(
+            inter.subject_summary(),
+            "O=sigstore.dev, CN=sigstore-intermediate"
+        );
         assert_eq!(inter.issuer_summary(), root.subject_summary());
-        assert!(matches!(&root.public_key, PublicKey::Ec { curve: Curve::P384, .. }));
+        assert!(matches!(
+            &root.public_key,
+            PublicKey::Ec {
+                curve: Curve::P384,
+                ..
+            }
+        ));
         root.verify_signed_by(&root).unwrap();
         inter.verify_signed_by(&root).unwrap();
         assert!(root.verify_signed_by(&inter).is_err());
@@ -2739,20 +3473,44 @@ mod tests {
         // what makes the intermediate a code-signing CA, and nothing else
         assert!(inter.is_ca && inter.path_len == Some(0));
         assert_eq!(inter.key_usage_bits(), Some(KU_KEY_CERT_SIGN | KU_CRL_SIGN));
-        assert_eq!(inter.extended_key_usage().unwrap(), &[oid(OID_CODE_SIGNING)]);
+        assert_eq!(
+            inter.extended_key_usage().unwrap(),
+            &[oid(OID_CODE_SIGNING)]
+        );
         assert!(inter.extension(&oid("2.5.29.19")).unwrap().critical);
         assert!(inter.extension(&oid("2.5.29.15")).unwrap().critical);
         assert!(!inter.extension(&oid("2.5.29.37")).unwrap().critical);
-        assert_eq!((inter.not_before, inter.not_after), (1_649_880_375, 1_948_975_018));
-        assert_eq!((root.not_before, root.not_after), (1_633_615_019, 1_948_975_018));
+        assert_eq!(
+            (inter.not_before, inter.not_after),
+            (1_649_880_375, 1_948_975_018)
+        );
+        assert_eq!(
+            (root.not_before, root.not_after),
+            (1_633_615_019, 1_948_975_018)
+        );
         assert!(root.extended_key_usage().is_none());
         // through the chain code: the root's signature on the intermediate is checked on the way, and
         // then a CA certificate is not acceptable as the signing certificate itself
         let ts = store(&[fixture!("fulcio_real_root")]);
-        let msg = err_text(ts.verify_chain(&[fixture!("fulcio_real_inter")], &VerifyOptions::new(Purpose::Any, 1_700_000_000)));
-        assert!(msg.contains("keyUsage does not permit digitalSignature or nonRepudiation") && msg.contains("sigstore-intermediate"), "{}", msg);
-        let msg = err_text(ts.verify_chain(&[fixture!("fulcio_real_inter")], &VerifyOptions::new(Purpose::Any, 1_640_995_200)));
-        assert!(msg.contains("not yet valid [O=sigstore.dev, CN=sigstore-intermediate]"), "{}", msg);
+        let msg = err_text(ts.verify_chain(
+            &[fixture!("fulcio_real_inter")],
+            &VerifyOptions::new(Purpose::Any, 1_700_000_000),
+        ));
+        assert!(
+            msg.contains("keyUsage does not permit digitalSignature or nonRepudiation")
+                && msg.contains("sigstore-intermediate"),
+            "{}",
+            msg
+        );
+        let msg = err_text(ts.verify_chain(
+            &[fixture!("fulcio_real_inter")],
+            &VerifyOptions::new(Purpose::Any, 1_640_995_200),
+        ));
+        assert!(
+            msg.contains("not yet valid [O=sigstore.dev, CN=sigstore-intermediate]"),
+            "{}",
+            msg
+        );
     }
 
     // ---------------------------------------------------------------- Ed25519 (RFC 8410)
@@ -2765,22 +3523,41 @@ mod tests {
     fn an_all_ed25519_chain_verifies() {
         // (under the CA/Browser Forum's rules, which allow RSA and ECDSA only, it is refused; a store of private anchors takes it)
         let chain = vec![fixture!("ed_leaf"), fixture!("ed_inter")];
-        let msg = err_text(store(&[fixture!("ed_root")]).verify_server_chain(&chain, "ed.example.test", NOW));
-        assert!(msg.contains("Ed25519 is not a key or signature algorithm"), "{msg}");
+        let msg = err_text(store(&[fixture!("ed_root")]).verify_server_chain(
+            &chain,
+            "ed.example.test",
+            NOW,
+        ));
+        assert!(
+            msg.contains("Ed25519 is not a key or signature algorithm"),
+            "{msg}"
+        );
         let ts = private(&[fixture!("ed_root")]);
-        let leaf = ts.verify_server_chain(&chain, "ed.example.test", NOW).unwrap();
+        let leaf = ts
+            .verify_server_chain(&chain, "ed.example.test", NOW)
+            .unwrap();
         assert!(is_ed25519(&leaf));
         assert_eq!(leaf.sig_alg, Some(SigAlg::Ed25519));
-        assert!(is_ed25519(&Certificate::from_der(&fixture!("ed_inter")).unwrap()));
-        assert!(is_ed25519(&Certificate::from_der(&fixture!("ed_root")).unwrap()));
+        assert!(is_ed25519(
+            &Certificate::from_der(&fixture!("ed_inter")).unwrap()
+        ));
+        assert!(is_ed25519(
+            &Certificate::from_der(&fixture!("ed_root")).unwrap()
+        ));
         // the same through the purpose-parameterized entry point
         let opts = VerifyOptions::tls_server("ed.example.test", NOW);
         let verified = ts.verify_chain(&chain, &opts).unwrap();
         assert_eq!(verified.path.len(), 3);
         // the wrong name, the wrong time and a missing intermediate are still refused
-        assert!(ts.verify_server_chain(&chain, "other.example.test", NOW).is_err());
-        assert!(ts.verify_server_chain(&chain, "ed.example.test", 1_500_000_000).is_err());
-        assert!(ts.verify_server_chain(&chain[..1], "ed.example.test", NOW).is_err());
+        assert!(ts
+            .verify_server_chain(&chain, "other.example.test", NOW)
+            .is_err());
+        assert!(ts
+            .verify_server_chain(&chain, "ed.example.test", 1_500_000_000)
+            .is_err());
+        assert!(ts
+            .verify_server_chain(&chain[..1], "ed.example.test", NOW)
+            .is_err());
     }
 
     #[test]
@@ -2788,15 +3565,37 @@ mod tests {
         // a P-256 leaf under an Ed25519 intermediate under an Ed25519 root (a private PKI's: the CA/Browser Forum's rules
         // refuse the Ed25519 signature on the leaf)
         let chain = vec![fixture!("ed_leaf_p256"), fixture!("ed_inter")];
-        assert!(err_text(store(&[fixture!("ed_root")]).verify_server_chain(&chain, "ed.example.test", NOW)).contains("Ed25519"));
+        assert!(err_text(store(&[fixture!("ed_root")]).verify_server_chain(
+            &chain,
+            "ed.example.test",
+            NOW
+        ))
+        .contains("Ed25519"));
         let ts = private(&[fixture!("ed_root")]);
-        let leaf = ts.verify_server_chain(&chain, "ed.example.test", NOW).unwrap();
-        assert!(matches!(leaf.public_key, PublicKey::Ec { curve: Curve::P256, .. }));
+        let leaf = ts
+            .verify_server_chain(&chain, "ed.example.test", NOW)
+            .unwrap();
+        assert!(matches!(
+            leaf.public_key,
+            PublicKey::Ec {
+                curve: Curve::P256,
+                ..
+            }
+        ));
         assert_eq!(leaf.sig_alg, Some(SigAlg::Ed25519));
         // an Ed25519 leaf under a P-256 root (and the CA/Browser Forum's rules refuse its key)
-        assert!(err_text(store(&[fixture!("ed_ec_root")]).verify_server_chain(&[fixture!("ed_leaf_by_ec")], "ed.example.test", NOW)).contains("Ed25519"));
+        assert!(
+            err_text(store(&[fixture!("ed_ec_root")]).verify_server_chain(
+                &[fixture!("ed_leaf_by_ec")],
+                "ed.example.test",
+                NOW
+            ))
+            .contains("Ed25519")
+        );
         let ts = private(&[fixture!("ed_ec_root")]);
-        let leaf = ts.verify_server_chain(&[fixture!("ed_leaf_by_ec")], "ed.example.test", NOW).unwrap();
+        let leaf = ts
+            .verify_server_chain(&[fixture!("ed_leaf_by_ec")], "ed.example.test", NOW)
+            .unwrap();
         assert!(is_ed25519(&leaf));
         assert!(matches!(leaf.sig_alg, Some(SigAlg::Ecdsa(HashAlg::Sha256))));
     }
@@ -2808,24 +3607,40 @@ mod tests {
         // the last byte of a certificate is the last byte of its signature
         let mut damaged = fixture!("ed_leaf");
         *damaged.last_mut().unwrap() ^= 1;
-        let msg = err_text(ts.verify_server_chain(&[damaged, inter.clone()], "ed.example.test", NOW));
+        let msg =
+            err_text(ts.verify_server_chain(&[damaged, inter.clone()], "ed.example.test", NOW));
         assert!(msg.contains("signature"), "{}", msg);
         // a change inside the signed part that nothing else looks at: the CRL distribution point's host
         let mut edited = fixture!("ed_leaf");
-        let at = edited.windows(16).position(|w| w == b"crl.example.test").unwrap();
+        let at = edited
+            .windows(16)
+            .position(|w| w == b"crl.example.test")
+            .unwrap();
         edited[at] = b'C';
-        let msg = err_text(ts.verify_server_chain(&[edited, inter.clone()], "ed.example.test", NOW));
+        let msg =
+            err_text(ts.verify_server_chain(&[edited, inter.clone()], "ed.example.test", NOW));
         assert!(msg.contains("signature"), "{}", msg);
         // a certificate signed by another Ed25519 key, under the right issuer name
         let other = store(&[fixture!("ed_ec_root")]);
-        assert!(other.verify_server_chain(&[fixture!("ed_leaf"), inter.clone()], "ed.example.test", NOW).is_err());
-        assert!(ts.verify_server_chain(&[fixture!("ed_leaf_by_ec"), inter], "ed.example.test", NOW).is_err());
+        assert!(other
+            .verify_server_chain(
+                &[fixture!("ed_leaf"), inter.clone()],
+                "ed.example.test",
+                NOW
+            )
+            .is_err());
+        assert!(ts
+            .verify_server_chain(&[fixture!("ed_leaf_by_ec"), inter], "ed.example.test", NOW)
+            .is_err());
         let ed_leaf = Certificate::from_der(&fixture!("ed_leaf")).unwrap();
         let ed_root = Certificate::from_der(&fixture!("ed_root")).unwrap();
         let ed_inter = Certificate::from_der(&fixture!("ed_inter")).unwrap();
         ed_leaf.verify_signed_by(&ed_inter).unwrap();
         ed_inter.verify_signed_by(&ed_root).unwrap();
-        assert!(ed_leaf.verify_signed_by(&ed_root).is_err(), "the root did not sign the leaf");
+        assert!(
+            ed_leaf.verify_signed_by(&ed_root).is_err(),
+            "the root did not sign the leaf"
+        );
         assert!(ed_root.verify_signed_by(&ed_inter).is_err());
     }
 
@@ -2836,7 +3651,12 @@ mod tests {
         let sets: Vec<u8> = rdns
             .iter()
             .flat_map(|atvs| {
-                let inner: Vec<u8> = atvs.iter().flat_map(|&(t, tag, v)| tlv(0x30, &[tlv(0x06, &[0x55, 0x04, t]), tlv(tag, v)].concat())).collect();
+                let inner: Vec<u8> = atvs
+                    .iter()
+                    .flat_map(|&(t, tag, v)| {
+                        tlv(0x30, &[tlv(0x06, &[0x55, 0x04, t]), tlv(tag, v)].concat())
+                    })
+                    .collect();
                 tlv(0x31, &inner)
             })
             .collect();
@@ -2851,19 +3671,34 @@ mod tests {
         let same = |a: &[u8], b: &[u8]| canonical_name(a).unwrap() == canonical_name(b).unwrap();
         let base = name_der(&[&[(O, 0x13, b"Example Org")], &[(CN, 0x13, b"Test CA")]]);
         // other string types, case, white space at the ends and inside
-        let bmp: Vec<u8> = "test ca".encode_utf16().flat_map(|u| u.to_be_bytes()).collect();
-        let universal: Vec<u8> = "TEST CA".chars().flat_map(|c| (c as u32).to_be_bytes()).collect();
+        let bmp: Vec<u8> = "test ca"
+            .encode_utf16()
+            .flat_map(|u| u.to_be_bytes())
+            .collect();
+        let universal: Vec<u8> = "TEST CA"
+            .chars()
+            .flat_map(|c| (c as u32).to_be_bytes())
+            .collect();
         for other in [
             name_der(&[&[(O, 0x0c, b"example org")], &[(CN, 0x0c, b"TEST CA")]]),
-            name_der(&[&[(O, 0x0c, b"  Example \t\n Org ")], &[(CN, 0x16, b"Test  CA")]]),
+            name_der(&[
+                &[(O, 0x0c, b"  Example \t\n Org ")],
+                &[(CN, 0x16, b"Test  CA")],
+            ]),
             name_der(&[&[(O, 0x14, b"EXAMPLE ORG")], &[(CN, 0x1e, &bmp)]]),
             name_der(&[&[(O, 0x1a, b"Example Org")], &[(CN, 0x1c, &universal)]]),
         ] {
             assert!(same(&base, &other), "{}", describe_name(&other));
         }
         // the order of RDNs matters; the order inside a multi-valued RDN does not
-        assert!(!same(&base, &name_der(&[&[(CN, 0x13, b"Test CA")], &[(O, 0x13, b"Example Org")]])));
-        assert!(same(&name_der(&[&[(O, 0x0c, b"A"), (OU, 0x0c, b"B")]]), &name_der(&[&[(OU, 0x0c, b"b"), (O, 0x0c, b"a")]])));
+        assert!(!same(
+            &base,
+            &name_der(&[&[(CN, 0x13, b"Test CA")], &[(O, 0x13, b"Example Org")]])
+        ));
+        assert!(same(
+            &name_der(&[&[(O, 0x0c, b"A"), (OU, 0x0c, b"B")]]),
+            &name_der(&[&[(OU, 0x0c, b"b"), (O, 0x0c, b"a")]])
+        ));
         // different text, a missing RDN, an attribute of another type
         for other in [
             name_der(&[&[(O, 0x13, b"Example Org")], &[(CN, 0x13, b"Test CA 2")]]),
@@ -2876,17 +3711,32 @@ mod tests {
         // only ASCII letters are folded (as OpenSSL does): no Unicode case folding, no normalization
         let upper = name_der(&[&[(CN, 0x0c, "Über".as_bytes())]]);
         assert!(same(&upper, &name_der(&[&[(CN, 0x0c, "ÜBER".as_bytes())]])));
-        assert!(!same(&upper, &name_der(&[&[(CN, 0x0c, "über".as_bytes())]])));
-        assert!(!same(&upper, &name_der(&[&[(CN, 0x0c, "U\u{308}ber".as_bytes())]])));
+        assert!(!same(
+            &upper,
+            &name_der(&[&[(CN, 0x0c, "über".as_bytes())]])
+        ));
+        assert!(!same(
+            &upper,
+            &name_der(&[&[(CN, 0x0c, "U\u{308}ber".as_bytes())]])
+        ));
         // a type that is not text (NumericString) is compared as it is, its tag included
-        assert!(!same(&name_der(&[&[(5, 0x12, b"123")]]), &name_der(&[&[(5, 0x13, b"123")]])));
+        assert!(!same(
+            &name_der(&[&[(5, 0x12, b"123")]]),
+            &name_der(&[&[(5, 0x13, b"123")]])
+        ));
         // what does not decode has no canonical form, and is then compared by its bytes alone
         assert!(canonical_name(&name_der(&[&[(CN, 0x0c, b"\xff\xfe")]])).is_err());
-        assert!(canonical_name(&name_der(&[&[(CN, 0x1e, b"\xd8\x00")]])).is_err(), "a lone surrogate in a BMPString");
+        assert!(
+            canonical_name(&name_der(&[&[(CN, 0x1e, b"\xd8\x00")]])).is_err(),
+            "a lone surrogate in a BMPString"
+        );
         assert!(canonical_name(&name_der(&[&[]])).is_err(), "an empty RDN");
         let broken = name_der(&[&[(CN, 0x0c, b"\xff")]]);
         assert_eq!(name_key(&broken), [&[0xff][..], &broken].concat());
-        assert_ne!(name_key(&broken), name_key(&name_der(&[&[(CN, 0x0c, b"\xff\xfe")]])));
+        assert_ne!(
+            name_key(&broken),
+            name_key(&name_der(&[&[(CN, 0x0c, b"\xff\xfe")]]))
+        );
         // the empty name is a name
         assert_eq!(canonical_name(&[0x30, 0x00]).unwrap(), Vec::<u8>::new());
     }
@@ -2895,28 +3745,74 @@ mod tests {
     fn a_chain_whose_names_are_written_differently_is_built_like_openssl_builds_it() {
         // (RFC 5280's comparison: what a store of private anchors, and every purpose but a TLS server's, does; the CA/Browser
         // Forum's rule 7.1.4.1 wants the bytes, and a TLS server's chain under the default store is refused)
-        let msg = err_text(store(&[fixture!("nm_root")]).verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW));
+        let msg = err_text(store(&[fixture!("nm_root")]).verify_server_chain(
+            &[fixture!("nm_leaf"), fixture!("nm_inter")],
+            "name.example.test",
+            NOW,
+        ));
         assert!(msg.contains("byte for byte"), "{msg}");
-        store(&[fixture!("nm_root")]).verify_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], &VerifyOptions::new(Purpose::ServerAuth, NOW).with_hostname("name.example.test")).unwrap();
+        store(&[fixture!("nm_root")])
+            .verify_chain(
+                &[fixture!("nm_leaf"), fixture!("nm_inter")],
+                &VerifyOptions::new(Purpose::ServerAuth, NOW).with_hostname("name.example.test"),
+            )
+            .unwrap();
         let ts = private(&[fixture!("nm_root")]);
         // issuer names that differ from their issuer's subject in string type, case and white space
-        let leaf = ts.verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW).unwrap();
-        assert_ne!(leaf.issuer_der, Certificate::from_der(&fixture!("nm_inter")).unwrap().subject_der);
-        ts.verify_server_chain(&[fixture!("nm_leaf_u_ascii"), fixture!("nm_inter_u")], "name.example.test", NOW).unwrap();
+        let leaf = ts
+            .verify_server_chain(
+                &[fixture!("nm_leaf"), fixture!("nm_inter")],
+                "name.example.test",
+                NOW,
+            )
+            .unwrap();
+        assert_ne!(
+            leaf.issuer_der,
+            Certificate::from_der(&fixture!("nm_inter"))
+                .unwrap()
+                .subject_der
+        );
+        ts.verify_server_chain(
+            &[fixture!("nm_leaf_u_ascii"), fixture!("nm_inter_u")],
+            "name.example.test",
+            NOW,
+        )
+        .unwrap();
         // Ü is not ü: refused, as OpenSSL refuses it
-        let msg = err_text(ts.verify_server_chain(&[fixture!("nm_leaf_u_lower"), fixture!("nm_inter_u")], "name.example.test", NOW));
-        assert!(msg.contains("is neither a trusted root nor sent by the server"), "{msg}");
+        let msg = err_text(ts.verify_server_chain(
+            &[fixture!("nm_leaf_u_lower"), fixture!("nm_inter_u")],
+            "name.example.test",
+            NOW,
+        ));
+        assert!(
+            msg.contains("is neither a trusted root nor sent by the server"),
+            "{msg}"
+        );
         // a name that matches does not make a signature: a root with the same name and another key is tried and refused,
         // and with both in the store the right one is found
         let twin = private(&[fixture!("nm_root_twin")]);
-        let msg = err_text(twin.verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW));
+        let msg = err_text(twin.verify_server_chain(
+            &[fixture!("nm_leaf"), fixture!("nm_inter")],
+            "name.example.test",
+            NOW,
+        ));
         assert!(msg.contains("signature"), "{msg}");
         let both = private(&[fixture!("nm_root_twin"), fixture!("nm_root")]);
-        both.verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW).unwrap();
+        both.verify_server_chain(
+            &[fixture!("nm_leaf"), fixture!("nm_inter")],
+            "name.example.test",
+            NOW,
+        )
+        .unwrap();
         // and the bulk loader, which reads only the subject, finds the anchor the same way
         let mut bulk = TrustStore::empty().with_web_pki_rules(false);
         assert_eq!(bulk.add_pem(include_str!("../tests/data/nm_root.pem")), 1);
-        bulk.verify_server_chain(&[fixture!("nm_leaf"), fixture!("nm_inter")], "name.example.test", NOW).unwrap();
+        bulk.verify_server_chain(
+            &[fixture!("nm_leaf"), fixture!("nm_inter")],
+            "name.example.test",
+            NOW,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -2931,26 +3827,70 @@ mod tests {
             ts.add_der_with_limits(&root, &limits).unwrap();
             ts.verify_server_chain(&chain, "name.example.test", NOW)
         };
-        with(AnchorLimits { name_constraints: Some(nc(".example.test")), ..Default::default() }).unwrap();
-        let msg = err_text(with(AnchorLimits { name_constraints: Some(nc(".tr")), ..Default::default() }));
-        assert!(msg.contains("is not permitted by name constraints of") && msg.contains("Name Test Root"), "{msg}");
+        with(AnchorLimits {
+            name_constraints: Some(nc(".example.test")),
+            ..Default::default()
+        })
+        .unwrap();
+        let msg = err_text(with(AnchorLimits {
+            name_constraints: Some(nc(".tr")),
+            ..Default::default()
+        }));
+        assert!(
+            msg.contains("is not permitted by name constraints of")
+                && msg.contains("Name Test Root"),
+            "{msg}"
+        );
         // a distrust date: leaves issued after it are refused, at it or before accepted
         let issued = Certificate::from_der(&chain[0]).unwrap().not_before;
-        with(AnchorLimits { distrust_after: Some(issued), ..Default::default() }).unwrap();
-        let msg = err_text(with(AnchorLimits { distrust_after: Some(issued - 1), ..Default::default() }));
-        assert!(msg.contains("after the date") && msg.contains("2020-01-01T00:00:00Z"), "{msg}");
+        with(AnchorLimits {
+            distrust_after: Some(issued),
+            ..Default::default()
+        })
+        .unwrap();
+        let msg = err_text(with(AnchorLimits {
+            distrust_after: Some(issued - 1),
+            ..Default::default()
+        }));
+        assert!(
+            msg.contains("after the date") && msg.contains("2020-01-01T00:00:00Z"),
+            "{msg}"
+        );
         // both, and nothing
-        assert!(with(AnchorLimits { distrust_after: Some(issued), name_constraints: Some(nc(".tr")) }).is_err());
+        assert!(with(AnchorLimits {
+            distrust_after: Some(issued),
+            name_constraints: Some(nc(".tr"))
+        })
+        .is_err());
         with(AnchorLimits::default()).unwrap();
         // constraints that do not parse are an error when the anchor is added
         let mut ts = TrustStore::empty();
-        assert!(ts.add_der_with_limits(&root, &AnchorLimits { name_constraints: Some(vec![0x30, 0x03, 0x01]), ..Default::default() }).is_err());
+        assert!(ts
+            .add_der_with_limits(
+                &root,
+                &AnchorLimits {
+                    name_constraints: Some(vec![0x30, 0x03, 0x01]),
+                    ..Default::default()
+                }
+            )
+            .is_err());
         assert!(ts.is_empty());
         // an anchor with name constraints of its own keeps them, and the imposed ones are not added (as in NSS)
         let mut ts = TrustStore::empty();
-        ts.add_der_with_limits(&fixture!("cs_inter_nc"), &AnchorLimits { name_constraints: Some(nc(".tr")), ..Default::default() }).unwrap();
-        ts.verify_chain(&[fixture!("cs_nc_ok")], &code_signing(NOW)).unwrap();
-        assert!(err_text(ts.verify_chain(&[fixture!("cs_nc_bad_ip")], &code_signing(NOW))).contains("not permitted by name constraints"));
+        ts.add_der_with_limits(
+            &fixture!("cs_inter_nc"),
+            &AnchorLimits {
+                name_constraints: Some(nc(".tr")),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        ts.verify_chain(&[fixture!("cs_nc_ok")], &code_signing(NOW))
+            .unwrap();
+        assert!(
+            err_text(ts.verify_chain(&[fixture!("cs_nc_bad_ip")], &code_signing(NOW)))
+                .contains("not permitted by name constraints")
+        );
         assert_eq!(utc_date(0), "1970-01-01T00:00:00Z");
         assert_eq!(utc_date(1_776_297_599), "2026-04-15T23:59:59Z");
         assert_eq!(utc_date(951_782_400), "2000-02-29T00:00:00Z");
@@ -2985,19 +3925,38 @@ mod tests {
             ("example.com", "", false),
             ("bücher.example", "bücher.example", false),
         ] {
-            assert_eq!(dns_pattern_matches(pattern, &normalize_host(host)), want, "{pattern:?} for {host:?}");
+            assert_eq!(
+                dns_pattern_matches(pattern, &normalize_host(host)),
+                want,
+                "{pattern:?} for {host:?}"
+            );
         }
         // an IP address is matched against iPAddress names only, and only in the same family
         let mut ip_leaf = Certificate::from_der(&fixture!("leaf_p384")).unwrap();
         ip_leaf.dns_names = vec!["127.0.0.1".into(), "*.example.test".into()];
-        ip_leaf.ip_addrs = vec![vec![192, 0, 2, 1], [0u8; 15].iter().copied().chain([1]).collect()];
-        assert!(!ip_leaf.matches_hostname("127.0.0.1"), "a dNSName that looks like an address is not an address");
+        ip_leaf.ip_addrs = vec![
+            vec![192, 0, 2, 1],
+            [0u8; 15].iter().copied().chain([1]).collect(),
+        ];
+        assert!(
+            !ip_leaf.matches_hostname("127.0.0.1"),
+            "a dNSName that looks like an address is not an address"
+        );
         assert!(ip_leaf.matches_hostname("192.0.2.1"));
         assert!(ip_leaf.matches_hostname("::1"));
-        assert!(!ip_leaf.matches_hostname("::ffff:192.0.2.1"), "no mapping between the families");
-        assert!(ip_leaf.matches_hostname("x.example.test") && !ip_leaf.matches_hostname("192.0.2.1.example"));
+        assert!(
+            !ip_leaf.matches_hostname("::ffff:192.0.2.1"),
+            "no mapping between the families"
+        );
+        assert!(
+            ip_leaf.matches_hostname("x.example.test")
+                && !ip_leaf.matches_hostname("192.0.2.1.example")
+        );
         assert!(!ip_leaf.matches_hostname("[::1]"));
-        assert!(!ip_leaf.matches_hostname("192.0.2.1."), "an address with a dot after it is not an address, and no name");
+        assert!(
+            !ip_leaf.matches_hostname("192.0.2.1."),
+            "an address with a dot after it is not an address, and no name"
+        );
     }
 
     // ---- B-33: ECDSA P-521 and RSASSA-PSS certificate signatures (tools/gen_algorithm_fixtures.py)
@@ -3006,12 +3965,26 @@ mod tests {
     fn a_p521_chain_verifies_and_a_changed_signature_does_not() {
         let ts = store(&[fixture!("alg_p521_root")]);
         let (leaf, inter) = (fixture!("alg_p521_leaf"), fixture!("alg_p521_inter"));
-        let got = ts.verify_server_chain(&[leaf.clone(), inter.clone()], "p521.example.test", NOW).unwrap();
-        assert!(matches!(got.public_key, PublicKey::Ec { curve: Curve::P521, .. }));
+        let got = ts
+            .verify_server_chain(&[leaf.clone(), inter.clone()], "p521.example.test", NOW)
+            .unwrap();
+        assert!(matches!(
+            got.public_key,
+            PublicKey::Ec {
+                curve: Curve::P521,
+                ..
+            }
+        ));
         assert_eq!(got.sig_alg, Some(SigAlg::Ecdsa(HashAlg::Sha384)));
         let root = Certificate::from_der(&fixture!("alg_p521_root")).unwrap();
         let inter_c = Certificate::from_der(&inter).unwrap();
-        assert!(matches!(root.public_key, PublicKey::Ec { curve: Curve::P521, .. }));
+        assert!(matches!(
+            root.public_key,
+            PublicKey::Ec {
+                curve: Curve::P521,
+                ..
+            }
+        ));
         assert_eq!(inter_c.sig_alg, Some(SigAlg::Ecdsa(HashAlg::Sha512)));
         inter_c.verify_signed_by(&root).unwrap();
         root.verify_signed_by(&root).unwrap();
@@ -3019,33 +3992,70 @@ mod tests {
         for at in [inter.len() - 1, inter.len() - 60] {
             let mut bad = inter.clone();
             bad[at] ^= 1;
-            let msg = err_text(ts.verify_server_chain(&[leaf.clone(), bad], "p521.example.test", NOW));
+            let msg =
+                err_text(ts.verify_server_chain(&[leaf.clone(), bad], "p521.example.test", NOW));
             assert!(msg.contains("signature"), "{at}: {msg}");
         }
         // and the root does not verify what the intermediate signed
-        assert!(Certificate::from_der(&leaf).unwrap().verify_signed_by(&root).is_err());
+        assert!(Certificate::from_der(&leaf)
+            .unwrap()
+            .verify_signed_by(&root)
+            .is_err());
     }
 
     #[test]
     fn rsa_pss_chains_with_the_web_pki_parameters_verify() {
         let ts = store(&[fixture!("alg_pss_root")]);
         let inter = fixture!("alg_pss_inter");
-        assert_eq!(Certificate::from_der(&inter).unwrap().sig_alg, Some(SigAlg::RsaPss(HashAlg::Sha256)));
-        for (leaf, hash) in [(fixture!("alg_pss_leaf"), HashAlg::Sha512), (fixture!("alg_pss_leaf_sha384"), HashAlg::Sha384)] {
-            let got = ts.verify_server_chain(&[leaf.clone(), inter.clone()], "pss.example.test", NOW).unwrap();
+        assert_eq!(
+            Certificate::from_der(&inter).unwrap().sig_alg,
+            Some(SigAlg::RsaPss(HashAlg::Sha256))
+        );
+        for (leaf, hash) in [
+            (fixture!("alg_pss_leaf"), HashAlg::Sha512),
+            (fixture!("alg_pss_leaf_sha384"), HashAlg::Sha384),
+        ] {
+            let got = ts
+                .verify_server_chain(&[leaf.clone(), inter.clone()], "pss.example.test", NOW)
+                .unwrap();
             assert_eq!(got.sig_alg, Some(SigAlg::RsaPss(hash)));
             let mut bad = leaf.clone();
             *bad.last_mut().unwrap() ^= 1;
-            assert!(err_text(ts.verify_server_chain(&[bad, inter.clone()], "pss.example.test", NOW)).contains("signature"));
+            assert!(err_text(ts.verify_server_chain(
+                &[bad, inter.clone()],
+                "pss.example.test",
+                NOW
+            ))
+            .contains("signature"));
         }
         // a PKCS#1 v1.5 verification of a PSS signature, and the reverse, fail: the algorithm is the certificate's
         let leaf = Certificate::from_der(&fixture!("alg_pss_leaf")).unwrap();
         let inter_c = Certificate::from_der(&inter).unwrap();
-        assert!(verify_signature(Some(SigAlg::RsaPss(HashAlg::Sha512)), &inter_c.public_key, &leaf.tbs, &leaf.signature));
-        assert!(!verify_signature(Some(SigAlg::RsaPkcs1(HashAlg::Sha512)), &inter_c.public_key, &leaf.tbs, &leaf.signature));
-        assert!(!verify_signature(Some(SigAlg::RsaPss(HashAlg::Sha384)), &inter_c.public_key, &leaf.tbs, &leaf.signature));
+        assert!(verify_signature(
+            Some(SigAlg::RsaPss(HashAlg::Sha512)),
+            &inter_c.public_key,
+            &leaf.tbs,
+            &leaf.signature
+        ));
+        assert!(!verify_signature(
+            Some(SigAlg::RsaPkcs1(HashAlg::Sha512)),
+            &inter_c.public_key,
+            &leaf.tbs,
+            &leaf.signature
+        ));
+        assert!(!verify_signature(
+            Some(SigAlg::RsaPss(HashAlg::Sha384)),
+            &inter_c.public_key,
+            &leaf.tbs,
+            &leaf.signature
+        ));
         let root = Certificate::from_der(&fixture!("alg_pss_root")).unwrap();
-        assert!(!verify_signature(Some(SigAlg::RsaPss(HashAlg::Sha256)), &root.public_key, &root.tbs, &root.signature));
+        assert!(!verify_signature(
+            Some(SigAlg::RsaPss(HashAlg::Sha256)),
+            &root.public_key,
+            &root.tbs,
+            &root.signature
+        ));
     }
 
     #[test]
@@ -3058,8 +4068,15 @@ mod tests {
                 _ => fixture!("alg_pss_leaf_mgf_sha512"),
             };
             assert_eq!(Certificate::from_der(&der).unwrap().sig_alg, None, "{name}");
-            let msg = err_text(ts.verify_server_chain(&[der, fixture!("alg_pss_inter")], "pss.example.test", NOW));
-            assert!(msg.contains("unsupported certificate signature algorithm"), "{name}: {msg}");
+            let msg = err_text(ts.verify_server_chain(
+                &[der, fixture!("alg_pss_inter")],
+                "pss.example.test",
+                NOW,
+            ));
+            assert!(
+                msg.contains("unsupported certificate signature algorithm"),
+                "{name}: {msg}"
+            );
         }
     }
 
@@ -3074,11 +4091,18 @@ mod tests {
         ];
         for (hex, hash) in mozilla {
             let der = unhex(hex);
-            assert_eq!(SigAlg::from_algorithm_identifier(&der[2..]).unwrap(), Some(SigAlg::RsaPss(hash)), "{hex}");
+            assert_eq!(
+                SigAlg::from_algorithm_identifier(&der[2..]).unwrap(),
+                Some(SigAlg::RsaPss(hash)),
+                "{hex}"
+            );
         }
         // the hash AlgorithmIdentifiers without their NULL (RFC 4055 section 2.1 allows both)
         let bare = "06092a864886f70d01010a3030a00d300b0609608648016503040201a11a301806092a864886f70d010108300b0609608648016503040201a203020120";
-        assert_eq!(SigAlg::from_algorithm_identifier(&unhex(bare)).unwrap(), Some(SigAlg::RsaPss(HashAlg::Sha256)));
+        assert_eq!(
+            SigAlg::from_algorithm_identifier(&unhex(bare)).unwrap(),
+            Some(SigAlg::RsaPss(HashAlg::Sha256))
+        );
         let content = |hex: &str| unhex(hex)[2..].to_vec();
         let sha256 = content(mozilla[0].0);
         let edits: [(&str, Vec<u8>); 8] = [
@@ -3097,38 +4121,80 @@ mod tests {
             ("not MGF1", { let mut d = sha256.clone(); let at = d.windows(9).position(|w| w == [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08]).unwrap(); d[at + 8] = 0x09; d }),
         ];
         for (what, der) in edits {
-            assert_eq!(SigAlg::from_algorithm_identifier(&der).unwrap(), None, "{what}");
+            assert_eq!(
+                SigAlg::from_algorithm_identifier(&der).unwrap(),
+                None,
+                "{what}"
+            );
         }
         // a SHA-1 hash: no
         let sha1 = "06092a864886f70d01010a302ca00b300906052b0e03021a0500a118301606092a864886f70d010108300906052b0e03021a0500a203020114";
-        assert_eq!(SigAlg::from_algorithm_identifier(&unhex(sha1)).unwrap(), None);
+        assert_eq!(
+            SigAlg::from_algorithm_identifier(&unhex(sha1)).unwrap(),
+            None
+        );
     }
 
     #[test]
     fn a_crl_signed_with_rsa_pss_is_checked() {
-        let crl = crate::revocation::Crl::from_der(include_bytes!("../tests/data/alg_pss_crl.der")).unwrap();
+        let crl = crate::revocation::Crl::from_der(include_bytes!("../tests/data/alg_pss_crl.der"))
+            .unwrap();
         assert_eq!(crl.len(), 1);
         let inter = fixture!("alg_pss_inter");
-        let path = vec![fixture!("alg_pss_leaf_sha384"), inter.clone(), fixture!("alg_pss_root")];
-        let evidence = crate::revocation::ChainEvidence { sent: &path[..2], staples: &[] };
+        let path = vec![
+            fixture!("alg_pss_leaf_sha384"),
+            inter.clone(),
+            fixture!("alg_pss_root"),
+        ];
+        let evidence = crate::revocation::ChainEvidence {
+            sent: &path[..2],
+            staples: &[],
+        };
         let cfg = crate::revocation::Revocation::hard_fail().with_crl(crl);
         let msg = err_text(crate::revocation::check_path(&cfg, &path, &evidence, NOW));
-        assert!(msg.contains("certificate_revoked") && msg.contains("a CRL"), "{msg}");
+        assert!(
+            msg.contains("certificate_revoked") && msg.contains("a CRL"),
+            "{msg}"
+        );
         // the other leaf of the same intermediate is on no list: the PSS-signed list settles it
         let path = vec![fixture!("alg_pss_leaf"), inter, fixture!("alg_pss_root")];
-        let cfg = crate::revocation::Revocation::hard_fail().with_crl(crate::revocation::Crl::from_der(include_bytes!("../tests/data/alg_pss_crl.der")).unwrap());
-        crate::revocation::check_path(&cfg, &path, &crate::revocation::ChainEvidence { sent: &path[..2], staples: &[] }, NOW).unwrap();
+        let cfg = crate::revocation::Revocation::hard_fail().with_crl(
+            crate::revocation::Crl::from_der(include_bytes!("../tests/data/alg_pss_crl.der"))
+                .unwrap(),
+        );
+        crate::revocation::check_path(
+            &cfg,
+            &path,
+            &crate::revocation::ChainEvidence {
+                sent: &path[..2],
+                staples: &[],
+            },
+            NOW,
+        )
+        .unwrap();
     }
 
     #[test]
     fn the_algorithm_identifier_of_ed25519_has_no_parameters() {
         let oid = [0x06, 0x03, 0x2b, 0x65, 0x70];
-        assert_eq!(SigAlg::from_algorithm_identifier(&oid).unwrap(), Some(SigAlg::Ed25519));
+        assert_eq!(
+            SigAlg::from_algorithm_identifier(&oid).unwrap(),
+            Some(SigAlg::Ed25519)
+        );
         // RFC 8410 section 3: the parameters MUST be absent, so a NULL is not Ed25519 (unlike RSA and ECDSA)
-        assert_eq!(SigAlg::from_algorithm_identifier(&[&oid[..], &[0x05, 0x00]].concat()).unwrap(), None);
-        assert_eq!(SigAlg::from_algorithm_identifier(&[&oid[..], &[0x04, 0x00]].concat()).unwrap(), None);
+        assert_eq!(
+            SigAlg::from_algorithm_identifier(&[&oid[..], &[0x05, 0x00]].concat()).unwrap(),
+            None
+        );
+        assert_eq!(
+            SigAlg::from_algorithm_identifier(&[&oid[..], &[0x04, 0x00]].concat()).unwrap(),
+            None
+        );
         // and Ed448 (1.3.101.113) is not supported
-        assert_eq!(SigAlg::from_algorithm_identifier(&[0x06, 0x03, 0x2b, 0x65, 0x71]).unwrap(), None);
+        assert_eq!(
+            SigAlg::from_algorithm_identifier(&[0x06, 0x03, 0x2b, 0x65, 0x71]).unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -3148,9 +4214,18 @@ mod tests {
         let key = [7u8; 32];
         assert!(matches!(parse(&spki(&oid, &key)), PublicKey::Ed25519(k) if k == key));
         // parameters present (even NULL), a short key and a long key are all not an Ed25519 key
-        assert!(matches!(parse(&spki(&[&oid[..], &[0x05, 0x00]].concat(), &key)), PublicKey::Unsupported));
-        assert!(matches!(parse(&spki(&oid, &key[..31])), PublicKey::Unsupported));
-        assert!(matches!(parse(&spki(&oid, &[7u8; 33])), PublicKey::Unsupported));
+        assert!(matches!(
+            parse(&spki(&[&oid[..], &[0x05, 0x00]].concat(), &key)),
+            PublicKey::Unsupported
+        ));
+        assert!(matches!(
+            parse(&spki(&oid, &key[..31])),
+            PublicKey::Unsupported
+        ));
+        assert!(matches!(
+            parse(&spki(&oid, &[7u8; 33])),
+            PublicKey::Unsupported
+        ));
         assert!(matches!(parse(&spki(&oid, &[])), PublicKey::Unsupported));
     }
 
@@ -3162,10 +4237,25 @@ mod tests {
         let ec = Certificate::from_der(&fixture!("ed_leaf_p256")).unwrap();
         let rsa = Certificate::from_der(&fixture!("leaf_rsa")).unwrap();
         for key in [&ec.public_key, &rsa.public_key] {
-            assert!(!verify_signature(leaf.sig_alg, key, &leaf.tbs, &leaf.signature));
+            assert!(!verify_signature(
+                leaf.sig_alg,
+                key,
+                &leaf.tbs,
+                &leaf.signature
+            ));
         }
-        assert!(!verify_signature(ec.sig_alg, &leaf.public_key, &ec.tbs, &ec.signature));
-        assert!(!verify_signature(None, &leaf.public_key, &leaf.tbs, &leaf.signature));
+        assert!(!verify_signature(
+            ec.sig_alg,
+            &leaf.public_key,
+            &ec.tbs,
+            &ec.signature
+        ));
+        assert!(!verify_signature(
+            None,
+            &leaf.public_key,
+            &leaf.tbs,
+            &leaf.signature
+        ));
     }
 
     // ---- regression tests for the first review of this file (BACKLOG B-93). The certificates are made by
@@ -3181,7 +4271,12 @@ mod tests {
     }
 
     /// Verifies `chain` (leaf first) against the one trust anchor `root`, at `NOW`.
-    fn rv_verify(root: &str, chain: &[&str], purpose: Purpose, host: Option<&str>) -> Result<VerifiedChain> {
+    fn rv_verify(
+        root: &str,
+        chain: &[&str],
+        purpose: Purpose,
+        host: Option<&str>,
+    ) -> Result<VerifiedChain> {
         let ts = store(&[rv(root)]);
         let chain: Vec<Vec<u8>> = chain.iter().map(|n| rv(n)).collect();
         let mut options = VerifyOptions::new(purpose, NOW);
@@ -3215,7 +4310,10 @@ mod tests {
             }
         }
         let ts = store(&[rv("ladder_unrelated_root")]);
-        let err = ts.verify_server_chain(&chain, "host.test", NOW).unwrap_err().to_string();
+        let err = ts
+            .verify_server_chain(&chain, "host.test", NOW)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("gave up after"), "{err}");
     }
 
@@ -3237,7 +4335,10 @@ mod tests {
     #[test]
     fn an_anchor_must_be_a_ca_unless_it_is_a_version_1_certificate() {
         // version 3 with no basicConstraints: an end-entity certificate, with or without keyUsage
-        for (root, leaf) in [("anchor_v3_nobc", "anchor_v3_nobc_leaf"), ("anchor_v3_nobc_ku", "anchor_v3_nobc_ku_leaf")] {
+        for (root, leaf) in [
+            ("anchor_v3_nobc", "anchor_v3_nobc_leaf"),
+            ("anchor_v3_nobc_ku", "anchor_v3_nobc_ku_leaf"),
+        ] {
             let err = refused(rv_server(root, &[leaf]));
             assert!(err.contains("not a CA"), "{root}: {err}");
         }
@@ -3250,12 +4351,21 @@ mod tests {
         // (found by tools/chain_judges.sh, B-92: the library read the extensions of a certificate that said version 2, where
         // OpenSSL refuses it and Go ignores them)
         let v3 = rv("anchor_v3_nobc_leaf");
-        let at = v3.windows(5).position(|w| w == [0xa0, 0x03, 0x02, 0x01, 0x02]).expect("a version 3 certificate's version field");
+        let at = v3
+            .windows(5)
+            .position(|w| w == [0xa0, 0x03, 0x02, 0x01, 0x02])
+            .expect("a version 3 certificate's version field");
         Certificate::from_der(&v3).unwrap();
         let mut v2 = v3.clone();
         v2[at + 4] = 0x01;
-        let err = Certificate::from_der(&v2).map(|_| ()).expect_err("a version 2 certificate with extensions parsed").to_string();
-        assert!(err.contains("extensions in a certificate of version 2"), "{err}");
+        let err = Certificate::from_der(&v2)
+            .map(|_| ())
+            .expect_err("a version 2 certificate with extensions parsed")
+            .to_string();
+        assert!(
+            err.contains("extensions in a certificate of version 2"),
+            "{err}"
+        );
         // version 1 (the field left out) with extensions: the TBS and the certificate are five bytes shorter
         let mut v1 = v3[..at].to_vec();
         v1.extend_from_slice(&v3[at + 5..]);
@@ -3268,8 +4378,14 @@ mod tests {
         if v1[1] == 0x82 && v1[5] == 0x82 {
             shrink(&mut v1, 1);
             shrink(&mut v1, 5);
-            let err = Certificate::from_der(&v1).map(|_| ()).expect_err("a version 1 certificate with extensions parsed").to_string();
-            assert!(err.contains("extensions in a certificate of version 1"), "{err}");
+            let err = Certificate::from_der(&v1)
+                .map(|_| ())
+                .expect_err("a version 1 certificate with extensions parsed")
+                .to_string();
+            assert!(
+                err.contains("extensions in a certificate of version 1"),
+                "{err}"
+            );
         }
         // a version 1 certificate without extensions still parses (the old roots)
         Certificate::from_der(&rv("anchor_v1")).unwrap();
@@ -3296,14 +4412,18 @@ mod tests {
         assert!(err.contains("unrecognized critical extension"), "{err}");
         // True written as 0x01 is not DER. OpenSSL reads it as critical and Go refuses the certificate;
         // reading it as "not critical" would let an extension this code ignores through.
-        let err = Certificate::from_der(&rv("bool_leaf_01")).unwrap_err().to_string();
+        let err = Certificate::from_der(&rv("bool_leaf_01"))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("BOOLEAN"), "{err}");
         assert!(rv_server("bool_root", &["bool_leaf_01"]).is_err());
     }
 
     #[test]
     fn a_dns_name_with_a_control_character_makes_the_certificate_invalid() {
-        let err = Certificate::from_der(&rv("nm_leaf_ctl_dns")).unwrap_err().to_string();
+        let err = Certificate::from_der(&rv("nm_leaf_ctl_dns"))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("control character"), "{err}");
     }
 
@@ -3312,21 +4432,49 @@ mod tests {
         for inter in ["nm_inter_trailing_dot", "nm_inter_empty_label"] {
             assert!(Certificate::from_der(&rv(inter)).is_err(), "{inter} parsed");
         }
-        for (inter, leaf) in [("nm_inter_trailing_dot", "nm_leaf_bad_host"), ("nm_inter_empty_label", "nm_leaf_bad_host2")] {
-            let err = refused(rv_verify("nm_root", &[leaf, inter], Purpose::ServerAuth, Some("bad.example.com")));
-            assert!(!err.contains("host name"), "{leaf}: the host name was what stopped it: {err}");
+        for (inter, leaf) in [
+            ("nm_inter_trailing_dot", "nm_leaf_bad_host"),
+            ("nm_inter_empty_label", "nm_leaf_bad_host2"),
+        ] {
+            let err = refused(rv_verify(
+                "nm_root",
+                &[leaf, inter],
+                Purpose::ServerAuth,
+                Some("bad.example.com"),
+            ));
+            assert!(
+                !err.contains("host name"),
+                "{leaf}: the host name was what stopped it: {err}"
+            );
         }
         // an empty constraint holds for everything, as it already did for DNS names: excluded, it excludes every address
-        let err = refused(rv_verify("nm_root", &["nm_leaf_email", "nm_inter_empty_email"], Purpose::EmailProtection, None));
+        let err = refused(rv_verify(
+            "nm_root",
+            &["nm_leaf_email", "nm_inter_empty_email"],
+            Purpose::EmailProtection,
+            None,
+        ));
         assert!(err.contains("excluded"), "{err}");
         // and an ordinary exclusion keeps working
-        let err = refused(rv_verify("nm_root", &["nm_leaf_bad_host3", "nm_inter_excl_plain"], Purpose::ServerAuth, Some("bad.example.com")));
+        let err = refused(rv_verify(
+            "nm_root",
+            &["nm_leaf_bad_host3", "nm_inter_excl_plain"],
+            Purpose::ServerAuth,
+            Some("bad.example.com"),
+        ));
         assert!(err.contains("excluded"), "{err}");
     }
 
     #[test]
     fn the_e_mail_address_in_the_subject_name_is_held_to_e_mail_constraints() {
-        let mail = |leaf: &str| rv_verify("nm_root", &[leaf, "nm_inter_corp_email"], Purpose::EmailProtection, None);
+        let mail = |leaf: &str| {
+            rv_verify(
+                "nm_root",
+                &[leaf, "nm_inter_corp_email"],
+                Purpose::EmailProtection,
+                None,
+            )
+        };
         assert!(mail("nm_leaf_subject_email_in").is_ok());
         // outside the constraint, with no SAN at all or next to a SAN that is inside it
         for leaf in ["nm_leaf_subject_email_out", "nm_leaf_san_in_subject_out"] {
@@ -3340,7 +4488,10 @@ mod tests {
         // Every certificate has a subject name, so a constraint on directory names applies to all of them. This code
         // does not compare names, and ignoring the constraint lets a CA issue outside the subtree it was limited to
         // (OpenSSL enforces it, Go refuses the chain as an unhandled critical extension).
-        for (inter, leaf) in [("nm_inter_dir_perm", "nm_leaf_o_other"), ("nm_inter_dir_excl", "nm_leaf_o_corp")] {
+        for (inter, leaf) in [
+            ("nm_inter_dir_perm", "nm_leaf_o_other"),
+            ("nm_inter_dir_excl", "nm_leaf_o_corp"),
+        ] {
             let err = refused(rv_server("nm_root", &[leaf, inter]));
             assert!(err.contains("directoryName"), "{leaf}: {err}");
         }
@@ -3348,14 +4499,35 @@ mod tests {
 
     #[test]
     fn the_names_of_an_intermediate_are_held_to_the_constraints_above_it() {
-        let under = |sub: &str, leaf: &str, ca: &str| rv_verify("nm_root", &[leaf, sub, ca], Purpose::ServerAuth, Some("www.good.example"));
+        let under = |sub: &str, leaf: &str, ca: &str| {
+            rv_verify(
+                "nm_root",
+                &[leaf, sub, ca],
+                Purpose::ServerAuth,
+                Some("www.good.example"),
+            )
+        };
         // a CA limited to good.example certifies a CA whose own name is evil.test: OpenSSL and Go refuse the chain
-        let err = refused(under("nm_sub_san_out", "nm_leaf_under_sub_san_out", "nm_inter_good"));
-        assert!(err.contains("not permitted") && err.contains("evil.test"), "{err}");
+        let err = refused(under(
+            "nm_sub_san_out",
+            "nm_leaf_under_sub_san_out",
+            "nm_inter_good",
+        ));
+        assert!(
+            err.contains("not permitted") && err.contains("evil.test"),
+            "{err}"
+        );
         // the same with a name inside the limit
         under("nm_sub_san_in", "nm_leaf_under_sub_san_in", "nm_inter_good").unwrap();
         // and the e-mail address in an intermediate's subject name
-        let mail = |sub: &str, leaf: &str| rv_verify("nm_root", &[leaf, sub, "nm_inter_corp_email2"], Purpose::EmailProtection, None);
+        let mail = |sub: &str, leaf: &str| {
+            rv_verify(
+                "nm_root",
+                &[leaf, sub, "nm_inter_corp_email2"],
+                Purpose::EmailProtection,
+                None,
+            )
+        };
         let err = refused(mail("nm_sub_mail_out", "nm_leaf_under_sub_mail_out"));
         assert!(err.contains("not permitted"), "{err}");
         mail("nm_sub_mail_in", "nm_leaf_under_sub_mail_in").unwrap();

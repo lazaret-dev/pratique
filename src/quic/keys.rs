@@ -34,12 +34,18 @@ const LONG_FIRST_BYTE_MASK: u8 = 0x0f;
 const SHORT_FIRST_BYTE_MASK: u8 = 0x1f;
 
 /// The salt that Initial secrets are made with, for version 1 (RFC 9001 section 5.2).
-pub const INITIAL_SALT_V1: [u8; 20] =
-    [0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad, 0xcc, 0xbb, 0x7f, 0x0a];
+pub const INITIAL_SALT_V1: [u8; 20] = [
+    0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad,
+    0xcc, 0xbb, 0x7f, 0x0a,
+];
 
 /// The key and nonce of the AEAD that signs a Retry packet, for version 1 (RFC 9001 section 5.8).
-const RETRY_KEY_V1: [u8; 16] = [0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e];
-const RETRY_NONCE_V1: [u8; 12] = [0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb];
+const RETRY_KEY_V1: [u8; 16] = [
+    0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e,
+];
+const RETRY_NONCE_V1: [u8; 12] = [
+    0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb,
+];
 
 /// Whether the reserved bits of a first byte that has been unmasked are zero, as RFC 9000 sections 17.2 and 17.3 require of a
 /// packet that has been opened: if not, the connection is to be closed with PROTOCOL_VIOLATION.
@@ -107,9 +113,16 @@ impl HeaderKey {
     /// (the tag is on the end). Returns false, and does nothing, if the packet is too short to have a sample.
     pub fn protect(&self, packet: &mut [u8], pn_offset: usize, pn_len: usize) -> bool {
         debug_assert!((1..=4).contains(&pn_len));
-        let Some(sample) = Self::sample(packet, pn_offset) else { return false };
+        let Some(sample) = Self::sample(packet, pn_offset) else {
+            return false;
+        };
         let mask = self.mask(&sample);
-        packet[0] ^= mask[0] & if packet[0] & 0x80 != 0 { LONG_FIRST_BYTE_MASK } else { SHORT_FIRST_BYTE_MASK };
+        packet[0] ^= mask[0]
+            & if packet[0] & 0x80 != 0 {
+                LONG_FIRST_BYTE_MASK
+            } else {
+                SHORT_FIRST_BYTE_MASK
+            };
         for i in 0..pn_len {
             packet[pn_offset + i] ^= mask[1 + i];
         }
@@ -125,7 +138,13 @@ impl HeaderKey {
     pub fn unprotect(&self, packet: &mut [u8], pn_offset: usize) -> Option<Unmasked> {
         let sample = Self::sample(packet, pn_offset)?;
         let mask = self.mask(&sample);
-        let first = packet[0] ^ (mask[0] & if packet[0] & 0x80 != 0 { LONG_FIRST_BYTE_MASK } else { SHORT_FIRST_BYTE_MASK });
+        let first = packet[0]
+            ^ (mask[0]
+                & if packet[0] & 0x80 != 0 {
+                    LONG_FIRST_BYTE_MASK
+                } else {
+                    SHORT_FIRST_BYTE_MASK
+                });
         let pn_len = (first & 3) as usize + 1;
         packet[0] = first;
         let mut truncated_pn = 0u64;
@@ -134,7 +153,11 @@ impl HeaderKey {
             packet[pn_offset + i] = b;
             truncated_pn = (truncated_pn << 8) | b as u64;
         }
-        Some(Unmasked { first, pn_len, truncated_pn })
+        Some(Unmasked {
+            first,
+            pn_len,
+            truncated_pn,
+        })
     }
 }
 
@@ -179,7 +202,13 @@ impl PacketKey {
         assert_eq!(key.len(), suite.key_len());
         let mut v = [0u8; 12];
         v.copy_from_slice(iv);
-        PacketKey { suite, aead: Aead::new(suite, key), iv: v, sealed: 0, failed: 0 }
+        PacketKey {
+            suite,
+            aead: Aead::new(suite, key),
+            iv: v,
+            sealed: 0,
+            failed: 0,
+        }
     }
 
     /// The IV with the packet number, as eight bytes on the right, xor-ed into it (RFC 9001 section 5.3).
@@ -279,7 +308,10 @@ pub struct Keys {
 }
 
 /// The AEAD key, the IV and the header protection key that a secret makes (RFC 9001 section 5.1).
-fn derive(suite: Suite, secret: &[u8]) -> (Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>) {
+fn derive(
+    suite: Suite,
+    secret: &[u8],
+) -> (Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>) {
     let alg = suite.hash();
     let key = Zeroizing::new(expand_label(alg, secret, "quic key", &[], suite.key_len()));
     let iv = Zeroizing::new(expand_label(alg, secret, "quic iv", &[], 12));
@@ -291,7 +323,12 @@ impl Keys {
     /// The keys that a traffic secret of TLS 1.3 (or an Initial secret) makes, for `suite`.
     pub fn new(suite: Suite, secret: &[u8]) -> Keys {
         let (key, iv, hp) = derive(suite, secret);
-        Keys { suite, secret: Zeroizing::new(secret.to_vec()), header: HeaderKey::new(suite, &hp), packet: PacketKey::new(suite, &key, &iv) }
+        Keys {
+            suite,
+            secret: Zeroizing::new(secret.to_vec()),
+            header: HeaderKey::new(suite, &hp),
+            packet: PacketKey::new(suite, &key, &iv),
+        }
     }
 
     pub fn suite(&self) -> Suite {
@@ -302,9 +339,20 @@ impl Keys {
     /// key for header protection.
     pub fn next(&self) -> Keys {
         let alg = self.suite.hash();
-        let secret = Zeroizing::new(expand_label(alg, &self.secret, "quic ku", &[], alg.output_len()));
+        let secret = Zeroizing::new(expand_label(
+            alg,
+            &self.secret,
+            "quic ku",
+            &[],
+            alg.output_len(),
+        ));
         let (key, iv, _hp) = derive(self.suite, &secret);
-        Keys { suite: self.suite, secret, header: self.header.clone(), packet: PacketKey::new(self.suite, &key, &iv) }
+        Keys {
+            suite: self.suite,
+            secret,
+            header: self.header.clone(),
+            packet: PacketKey::new(self.suite, &key, &iv),
+        }
     }
 
     /// Protects a packet that has been written in full, but for the tag, which this adds: `packet` is the header, through the
@@ -312,10 +360,19 @@ impl Keys {
     /// has to count the tag already ([`finish_long`](super::packet::finish_long) with [`TAG_LEN`]).
     ///
     /// Refuses, and leaves the packet as it is, if the payload is too short.
-    pub fn seal(&mut self, packet: &mut Vec<u8>, pn_offset: usize, pn_len: usize, pn: u64) -> Result<(), PayloadTooShort> {
+    pub fn seal(
+        &mut self,
+        packet: &mut Vec<u8>,
+        pn_offset: usize,
+        pn_len: usize,
+        pn: u64,
+    ) -> Result<(), PayloadTooShort> {
         let header_end = pn_offset + pn_len;
         debug_assert!(packet.len() >= header_end);
-        debug_assert!(packet[pn_offset..header_end] == pn.to_be_bytes()[8 - pn_len..], "the packet number is written as it is sent");
+        debug_assert!(
+            packet[pn_offset..header_end] == pn.to_be_bytes()[8 - pn_len..],
+            "the packet number is written as it is sent"
+        );
         if packet.len() - header_end + TAG_LEN < SAMPLE_OFFSET + SAMPLE_LEN - pn_len {
             return Err(PayloadTooShort);
         }
@@ -338,24 +395,44 @@ impl Keys {
     ///
     /// For a short header packet that is in a key phase other than this one's, use [`HeaderKey::unprotect`] and
     /// [`PacketKey::open`] with the keys of that phase.
-    pub fn open(&mut self, packet: &mut [u8], pn_offset: usize, largest_received: Option<u64>) -> Result<Opened, OpenError> {
+    pub fn open(
+        &mut self,
+        packet: &mut [u8],
+        pn_offset: usize,
+        largest_received: Option<u64>,
+    ) -> Result<Opened, OpenError> {
         let _dit = Dit::on(); // one switch for both steps, as in `seal`
-        let hdr = self.header.unprotect(packet, pn_offset).ok_or(OpenError::TooShort)?;
+        let hdr = self
+            .header
+            .unprotect(packet, pn_offset)
+            .ok_or(OpenError::TooShort)?;
         let pn = decode_packet_number(largest_received, hdr.truncated_pn, hdr.pn_len);
         let payload = open_payload(&mut self.packet, packet, pn_offset, &hdr, pn)?;
-        Ok(Opened { pn, first: hdr.first, payload })
+        Ok(Opened {
+            pn,
+            first: hdr.first,
+            payload,
+        })
     }
 }
 
 /// Opens the payload of a packet whose header protection has been taken off, with `key`, and checks what only a genuine packet
 /// can be held to. Returns where the frames are.
-pub fn open_payload(key: &mut PacketKey, packet: &mut [u8], pn_offset: usize, hdr: &Unmasked, pn: u64) -> Result<Range<usize>, OpenError> {
+pub fn open_payload(
+    key: &mut PacketKey,
+    packet: &mut [u8],
+    pn_offset: usize,
+    hdr: &Unmasked,
+    pn: u64,
+) -> Result<Range<usize>, OpenError> {
     let header_end = pn_offset + hdr.pn_len;
     if packet.len() < header_end + TAG_LEN {
         return Err(OpenError::TooShort);
     }
     let (header, body) = packet.split_at_mut(header_end);
-    let n = key.open(pn, header, body).ok_or(OpenError::Authentication)?;
+    let n = key
+        .open(pn, header, body)
+        .ok_or(OpenError::Authentication)?;
     if !reserved_bits_clear(hdr.first) {
         return Err(OpenError::ReservedBits);
     }
@@ -370,8 +447,20 @@ pub fn open_payload(key: &mut PacketKey, packet: &mut [u8], pn_offset: usize, hd
 pub fn initial_secrets(dcid: &[u8]) -> (Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>) {
     let alg = Suite::Aes128GcmSha256.hash();
     let initial = Zeroizing::new(hkdf_extract(alg, &INITIAL_SALT_V1, dcid));
-    let client = Zeroizing::new(expand_label(alg, &initial, "client in", &[], alg.output_len()));
-    let server = Zeroizing::new(expand_label(alg, &initial, "server in", &[], alg.output_len()));
+    let client = Zeroizing::new(expand_label(
+        alg,
+        &initial,
+        "client in",
+        &[],
+        alg.output_len(),
+    ));
+    let server = Zeroizing::new(expand_label(
+        alg,
+        &initial,
+        "server in",
+        &[],
+        alg.output_len(),
+    ));
     (client, server)
 }
 
@@ -379,7 +468,10 @@ pub fn initial_secrets(dcid: &[u8]) -> (Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>) 
 /// (Initial packets are protected with AES-128-GCM.)
 pub fn initial_keys(dcid: &[u8]) -> (Keys, Keys) {
     let (client, server) = initial_secrets(dcid);
-    (Keys::new(Suite::Aes128GcmSha256, &client), Keys::new(Suite::Aes128GcmSha256, &server))
+    (
+        Keys::new(Suite::Aes128GcmSha256, &client),
+        Keys::new(Suite::Aes128GcmSha256, &server),
+    )
 }
 
 /// The tag that ends a Retry packet, which is the integrity check of that packet, made from the Destination Connection ID that
@@ -392,14 +484,20 @@ pub fn retry_tag(original_dcid: &[u8], retry_without_tag: &[u8]) -> [u8; TAG_LEN
     pseudo.extend_from_slice(retry_without_tag);
     // AES-128-GCM of nothing: the tag is all there is
     let mut tag = [0u8; TAG_LEN];
-    Aead::new(Suite::Aes128GcmSha256, &RETRY_KEY_V1).seal_in_place(&RETRY_NONCE_V1, &pseudo, &mut tag);
+    Aead::new(Suite::Aes128GcmSha256, &RETRY_KEY_V1).seal_in_place(
+        &RETRY_NONCE_V1,
+        &pseudo,
+        &mut tag,
+    );
     tag
 }
 
 /// Whether `retry` (a whole Retry packet, tag included) is one that a server that was sent a first Initial packet with
 /// `original_dcid` could have made. A client that gets a Retry packet that is not has to drop it.
 pub fn retry_is_genuine(original_dcid: &[u8], retry: &[u8]) -> bool {
-    let Some(split) = retry.len().checked_sub(TAG_LEN) else { return false };
+    let Some(split) = retry.len().checked_sub(TAG_LEN) else {
+        return false;
+    };
     let (body, tag) = retry.split_at(split);
     ct_eq(&retry_tag(original_dcid, body), tag)
 }
@@ -417,8 +515,14 @@ mod tests {
     fn initial_secrets_and_keys_are_those_of_the_rfc() {
         // RFC 9001 appendix A.1
         let (client, server) = initial_secrets(&unhex(DCID));
-        assert_eq!(hex(&client), "c00cf151ca5be075ed0ebfb5c80323c42d6b7db67881289af4008f1f6c357aea");
-        assert_eq!(hex(&server), "3c199828fd139efd216c155ad844cc81fb82fa8d7446fa7d78be803acdda951b");
+        assert_eq!(
+            hex(&client),
+            "c00cf151ca5be075ed0ebfb5c80323c42d6b7db67881289af4008f1f6c357aea"
+        );
+        assert_eq!(
+            hex(&server),
+            "3c199828fd139efd216c155ad844cc81fb82fa8d7446fa7d78be803acdda951b"
+        );
         let (key, iv, hp) = derive(AES128, &client);
         assert_eq!(hex(&key), "1f369613dd76d5467730efcbe3b1a22d");
         assert_eq!(hex(&iv), "fa044b2f42a3fd3b46fb255c");
@@ -433,28 +537,66 @@ mod tests {
     fn chacha20_keys_are_those_of_the_rfc() {
         // RFC 9001 appendix A.5
         let (key, iv, hp) = derive(Suite::Chacha20Poly1305Sha256, &unhex(CHACHA_SECRET));
-        assert_eq!(hex(&key), "c6d98ff3441c3fe1b2182094f69caa2ed4b716b65488960a7a984979fb23e1c8");
+        assert_eq!(
+            hex(&key),
+            "c6d98ff3441c3fe1b2182094f69caa2ed4b716b65488960a7a984979fb23e1c8"
+        );
         assert_eq!(hex(&iv), "e0459b3474bdd0e44a41c144");
-        assert_eq!(hex(&hp), "25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4");
+        assert_eq!(
+            hex(&hp),
+            "25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4"
+        );
     }
 
     #[test]
     fn header_protection_masks_are_those_of_the_rfc() {
         // A.2: the sample of the client Initial packet, and the mask it makes with the client's header protection key
         let k = HeaderKey::new(AES128, &unhex("9f50449e04a0e810283a1e9933adedd2"));
-        assert_eq!(hex(&k.mask(&unhex("d1b1c98dd7689fb8ec11d242b123dc9b").try_into().unwrap())), "437b9aec36");
+        assert_eq!(
+            hex(&k.mask(
+                &unhex("d1b1c98dd7689fb8ec11d242b123dc9b")
+                    .try_into()
+                    .unwrap()
+            )),
+            "437b9aec36"
+        );
         // A.3: the server's
         let k = HeaderKey::new(AES128, &unhex("c206b8d9b9f0f37644430b490eeaa314"));
-        assert_eq!(hex(&k.mask(&unhex("2cd0991cd25b0aac406a5816b6394100").try_into().unwrap())), "2ec0d8356a");
+        assert_eq!(
+            hex(&k.mask(
+                &unhex("2cd0991cd25b0aac406a5816b6394100")
+                    .try_into()
+                    .unwrap()
+            )),
+            "2ec0d8356a"
+        );
         // A.5: ChaCha20
-        let k = HeaderKey::new(Suite::Chacha20Poly1305Sha256, &unhex("25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4"));
-        assert_eq!(hex(&k.mask(&unhex("5e5cd55c41f69080575d7999c25a5bfb").try_into().unwrap())), "aefefe7d03");
+        let k = HeaderKey::new(
+            Suite::Chacha20Poly1305Sha256,
+            &unhex("25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4"),
+        );
+        assert_eq!(
+            hex(&k.mask(
+                &unhex("5e5cd55c41f69080575d7999c25a5bfb")
+                    .try_into()
+                    .unwrap()
+            )),
+            "aefefe7d03"
+        );
     }
 
     /// The client Initial packet of appendix A.2, written but not protected: its header, the CRYPTO frame and the padding.
     fn client_initial_unprotected() -> (Vec<u8>, usize) {
         let mut out = Vec::new();
-        let h = write_long_header(&mut out, PacketType::Initial, &unhex(DCID), &[], &[], CLIENT_INITIAL_PN, 4);
+        let h = write_long_header(
+            &mut out,
+            PacketType::Initial,
+            &unhex(DCID),
+            &[],
+            &[],
+            CLIENT_INITIAL_PN,
+            4,
+        );
         out.extend_from_slice(&unhex(CLIENT_INITIAL_CRYPTO));
         out.resize(out.len() + CLIENT_INITIAL_PADDING, 0);
         finish_long(&mut out, h, TAG_LEN);
@@ -467,7 +609,9 @@ mod tests {
         let (mut p, pn_offset) = client_initial_unprotected();
         assert_eq!(hex(&p[..pn_offset + 4]), CLIENT_INITIAL_HEADER);
         let (mut client, _server) = initial_keys(&unhex(DCID));
-        client.seal(&mut p, pn_offset, 4, CLIENT_INITIAL_PN).unwrap();
+        client
+            .seal(&mut p, pn_offset, 4, CLIENT_INITIAL_PN)
+            .unwrap();
         assert_eq!(p.len(), 1200);
         assert_eq!(hex(&p), CLIENT_INITIAL_PACKET);
         assert_eq!(client.packet.sealed(), 1);
@@ -483,8 +627,15 @@ mod tests {
         assert_eq!(o.first, 0xc3);
         assert_eq!(hex(&p[..22]), CLIENT_INITIAL_HEADER);
         assert_eq!(o.payload, 22..1200 - TAG_LEN);
-        assert_eq!(hex(&p[o.payload.start..o.payload.start + unhex(CLIENT_INITIAL_CRYPTO).len()]), CLIENT_INITIAL_CRYPTO);
-        assert!(p[o.payload.start + unhex(CLIENT_INITIAL_CRYPTO).len()..o.payload.end].iter().all(|&b| b == 0));
+        assert_eq!(
+            hex(&p[o.payload.start..o.payload.start + unhex(CLIENT_INITIAL_CRYPTO).len()]),
+            CLIENT_INITIAL_CRYPTO
+        );
+        assert!(
+            p[o.payload.start + unhex(CLIENT_INITIAL_CRYPTO).len()..o.payload.end]
+                .iter()
+                .all(|&b| b == 0)
+        );
     }
 
     #[test]
@@ -528,7 +679,9 @@ mod tests {
     fn packets_protected_by_aioquic_are_the_same_here() {
         // 72 packets of an independent implementation: every suite, long and short headers, every length of packet number, and the
         // same under the next generation of keys
-        for &(suite_id, secret, clear, pn_offset, pn_len, pn, sealed, sealed_next) in super::super::vectors_aioquic::AIOQUIC {
+        for &(suite_id, secret, clear, pn_offset, pn_len, pn, sealed, sealed_next) in
+            super::super::vectors_aioquic::AIOQUIC
+        {
             let suite = Suite::from_id(suite_id).unwrap();
             let secret = unhex(secret);
             let clear = unhex(clear);
@@ -548,9 +701,15 @@ mod tests {
                 if generation == 1 {
                     keys = keys.next();
                 }
-                let o = keys.open(&mut p, pn_offset, pn.checked_sub(1)).unwrap_or_else(|e| panic!("{e:?}: {what}, generation {generation}"));
+                let o = keys
+                    .open(&mut p, pn_offset, pn.checked_sub(1))
+                    .unwrap_or_else(|e| panic!("{e:?}: {what}, generation {generation}"));
                 assert_eq!(o.pn, pn, "{what}");
-                assert_eq!(p[..o.payload.end], clear[..], "opened: {what}, generation {generation}");
+                assert_eq!(
+                    p[..o.payload.end],
+                    clear[..],
+                    "opened: {what}, generation {generation}"
+                );
             }
         }
     }
@@ -558,9 +717,13 @@ mod tests {
     #[test]
     fn the_retry_tag_of_the_rfc_is_made_and_checked() {
         // RFC 9001 appendix A.4
-        let retry = unhex("ff000000010008f067a5502a4262b5746f6b656e04a265ba2eff4d829058fb3f0f2496ba");
+        let retry =
+            unhex("ff000000010008f067a5502a4262b5746f6b656e04a265ba2eff4d829058fb3f0f2496ba");
         let odcid = unhex(DCID);
-        assert_eq!(hex(&retry_tag(&odcid, &retry[..retry.len() - TAG_LEN])), "04a265ba2eff4d829058fb3f0f2496ba");
+        assert_eq!(
+            hex(&retry_tag(&odcid, &retry[..retry.len() - TAG_LEN])),
+            "04a265ba2eff4d829058fb3f0f2496ba"
+        );
         assert!(retry_is_genuine(&odcid, &retry));
         // not for another original destination connection id
         assert!(!retry_is_genuine(&unhex("8394c8f03e515709"), &retry));
@@ -582,7 +745,10 @@ mod tests {
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0 >> 33
         }
         fn bytes(&mut self, n: usize) -> Vec<u8> {
@@ -591,14 +757,38 @@ mod tests {
     }
 
     /// A packet to seal: long (a Handshake packet) or short, with a payload of `payload_len` bytes.
-    fn build(rng: &mut Lcg, long: bool, pn: u64, pn_len: usize, payload_len: usize) -> (Vec<u8>, usize) {
+    fn build(
+        rng: &mut Lcg,
+        long: bool,
+        pn: u64,
+        pn_len: usize,
+        payload_len: usize,
+    ) -> (Vec<u8>, usize) {
         let mut out = Vec::new();
         let dcid = rng.bytes(8);
         let (pn_offset, h) = if long {
-            let h = write_long_header(&mut out, PacketType::Handshake, &dcid, &rng.bytes(4), &[], pn, pn_len);
+            let h = write_long_header(
+                &mut out,
+                PacketType::Handshake,
+                &dcid,
+                &rng.bytes(4),
+                &[],
+                pn,
+                pn_len,
+            );
             (h.pn_offset, Some(h))
         } else {
-            (write_short_header(&mut out, &dcid, rng.next() & 1 == 1, rng.next() & 1 == 1, pn, pn_len), None)
+            (
+                write_short_header(
+                    &mut out,
+                    &dcid,
+                    rng.next() & 1 == 1,
+                    rng.next() & 1 == 1,
+                    pn,
+                    pn_len,
+                ),
+                None,
+            )
         };
         out.extend_from_slice(&rng.bytes(payload_len));
         if let Some(h) = h {
@@ -618,11 +808,17 @@ mod tests {
                         let pn = rng.next() << (rng.next() % 12);
                         let (clear, pn_offset) = build(&mut rng, long, pn, pn_len, payload_len);
                         let mut p = clear.clone();
-                        Keys::new(suite, &secret).seal(&mut p, pn_offset, pn_len, pn).unwrap();
+                        Keys::new(suite, &secret)
+                            .seal(&mut p, pn_offset, pn_len, pn)
+                            .unwrap();
                         assert_eq!(p.len(), clear.len() + TAG_LEN);
                         let header_end = pn_offset + pn_len;
                         if payload_len >= 4 {
-                            assert_ne!(p[header_end..header_end + 4], clear[header_end..header_end + 4], "the payload is hidden");
+                            assert_ne!(
+                                p[header_end..header_end + 4],
+                                clear[header_end..header_end + 4],
+                                "the payload is hidden"
+                            );
                         }
                         // the peer has everything before this one, so the packet number comes back in full
                         let o = Keys::new(suite, &secret)
@@ -647,15 +843,28 @@ mod tests {
         for pn_len in 1..=4usize {
             let (clear, pn_offset) = build(&mut rng, false, 5, pn_len, 4 - pn_len);
             let mut p = clear.clone();
-            assert_eq!(keys.seal(&mut p, pn_offset, pn_len, 5), Ok(()), "pn_len {pn_len}");
+            assert_eq!(
+                keys.seal(&mut p, pn_offset, pn_len, 5),
+                Ok(()),
+                "pn_len {pn_len}"
+            );
             assert_eq!(p.len(), clear.len() + TAG_LEN);
-            assert_eq!(Keys::new(AES128, &[0; 32]).header.protect(&mut [0; 4], 1, 1), false);
+            assert_eq!(
+                Keys::new(AES128, &[0; 32])
+                    .header
+                    .protect(&mut [0; 4], 1, 1),
+                false
+            );
         }
         assert_eq!(keys.packet.sealed(), 4);
         for pn_len in 1..=3usize {
             let (clear, pn_offset) = build(&mut rng, false, 5, pn_len, 3 - pn_len);
             let mut p = clear.clone();
-            assert_eq!(keys.seal(&mut p, pn_offset, pn_len, 5), Err(PayloadTooShort), "pn_len {pn_len}");
+            assert_eq!(
+                keys.seal(&mut p, pn_offset, pn_len, 5),
+                Err(PayloadTooShort),
+                "pn_len {pn_len}"
+            );
             assert_eq!(p, clear);
         }
         assert_eq!(keys.packet.sealed(), 4);
@@ -669,7 +878,9 @@ mod tests {
             for long in [false, true] {
                 let (clear, pn_offset) = build(&mut rng, long, 0x1234, 2, 60);
                 let mut p = clear.clone();
-                Keys::new(suite, &secret).seal(&mut p, pn_offset, 2, 0x1234).unwrap();
+                Keys::new(suite, &secret)
+                    .seal(&mut p, pn_offset, 2, 0x1234)
+                    .unwrap();
                 // every bit of the packet; but the bits of the first byte that the header protection leaves alone, and, in a long
                 // header, the version and the connection ids and the Length, are only tied to the packet by what the AEAD covers
                 for bit in 0..p.len() * 8 {
@@ -677,18 +888,26 @@ mod tests {
                     q[bit / 8] ^= 1 << (bit % 8);
                     let mut opener = Keys::new(suite, &secret);
                     let r = opener.open(&mut q, pn_offset, Some(0x1233));
-                    assert!(r.is_err(), "{suite:?} long {long}: bit {bit} changed and the packet opened");
+                    assert!(
+                        r.is_err(),
+                        "{suite:?} long {long}: bit {bit} changed and the packet opened"
+                    );
                 }
                 // and the genuine one does
                 let mut opener = Keys::new(suite, &secret);
                 assert!(opener.open(&mut p.clone(), pn_offset, Some(0x1233)).is_ok());
                 // not with the keys of another secret
                 let mut other = Keys::new(suite, &rng.bytes(suite.hash().output_len()));
-                assert_eq!(other.open(&mut p.clone(), pn_offset, Some(0x1233)), Err(OpenError::Authentication));
+                assert_eq!(
+                    other.open(&mut p.clone(), pn_offset, Some(0x1233)),
+                    Err(OpenError::Authentication)
+                );
                 assert_eq!(other.packet.failed(), 1);
                 // nor when the packet number is taken to be another one
                 let mut opener = Keys::new(suite, &secret);
-                assert!(opener.open(&mut p.clone(), pn_offset, Some(0x1233 + 0x8000)).is_err());
+                assert!(opener
+                    .open(&mut p.clone(), pn_offset, Some(0x1233 + 0x8000))
+                    .is_err());
             }
         }
     }
@@ -699,17 +918,28 @@ mod tests {
         let secret = rng.bytes(32);
         let (clear, pn_offset) = build(&mut rng, false, 9, 1, 40);
         let mut p = clear.clone();
-        Keys::new(AES128, &secret).seal(&mut p, pn_offset, 1, 9).unwrap();
+        Keys::new(AES128, &secret)
+            .seal(&mut p, pn_offset, 1, 9)
+            .unwrap();
         for cut in 0..p.len() {
             let mut q = p[..cut].to_vec();
             let r = Keys::new(AES128, &secret).open(&mut q, pn_offset, None);
             assert!(r.is_err(), "cut at {cut}");
         }
         // not even a sample
-        assert_eq!(Keys::new(AES128, &secret).open(&mut p[..pn_offset + 19].to_vec(), pn_offset, None), Err(OpenError::TooShort));
+        assert_eq!(
+            Keys::new(AES128, &secret).open(&mut p[..pn_offset + 19].to_vec(), pn_offset, None),
+            Err(OpenError::TooShort)
+        );
         // a pn_offset that is nonsense
-        assert_eq!(Keys::new(AES128, &secret).open(&mut p.clone(), usize::MAX - 3, None), Err(OpenError::TooShort));
-        assert_eq!(Keys::new(AES128, &secret).open(&mut [], 0, None), Err(OpenError::TooShort));
+        assert_eq!(
+            Keys::new(AES128, &secret).open(&mut p.clone(), usize::MAX - 3, None),
+            Err(OpenError::TooShort)
+        );
+        assert_eq!(
+            Keys::new(AES128, &secret).open(&mut [], 0, None),
+            Err(OpenError::TooShort)
+        );
     }
 
     #[test]
@@ -719,35 +949,61 @@ mod tests {
         for long in [false, true] {
             let (clear, pn_offset) = build(&mut rng, long, 1, 1, 30);
             // the two reserved bits of a long header, 0x08 and 0x04; of a short header 0x10 and 0x08 (0x04 there is the key phase)
-            let bits: &[u8] = if long { &[0x08, 0x04, 0x0c] } else { &[0x10, 0x08, 0x18] };
+            let bits: &[u8] = if long {
+                &[0x08, 0x04, 0x0c]
+            } else {
+                &[0x10, 0x08, 0x18]
+            };
             for &reserved in bits {
                 let mut bad = clear.clone();
                 bad[0] |= reserved;
                 let mut p = bad.clone();
-                Keys::new(AES128, &secret).seal(&mut p, pn_offset, 1, 1).unwrap();
-                assert_eq!(Keys::new(AES128, &secret).open(&mut p, pn_offset, None), Err(OpenError::ReservedBits), "long {long} bits {reserved:#x}");
+                Keys::new(AES128, &secret)
+                    .seal(&mut p, pn_offset, 1, 1)
+                    .unwrap();
+                assert_eq!(
+                    Keys::new(AES128, &secret).open(&mut p, pn_offset, None),
+                    Err(OpenError::ReservedBits),
+                    "long {long} bits {reserved:#x}"
+                );
                 // the same bits changed in a packet that was sent properly: not genuine any more, and not told as a violation
                 let mut p = clear.clone();
-                Keys::new(AES128, &secret).seal(&mut p, pn_offset, 1, 1).unwrap();
+                Keys::new(AES128, &secret)
+                    .seal(&mut p, pn_offset, 1, 1)
+                    .unwrap();
                 p[0] ^= reserved;
                 let wrong = Keys::new(AES128, &secret).open(&mut p, pn_offset, None);
                 assert_eq!(wrong, Err(OpenError::Authentication));
             }
             // and a packet that has the other bits (of the key phase, of the spin, of the packet type) is not told
-            for other in if long { [0x00u8, 0x10, 0x20] } else { [0x00, 0x04, 0x20] } {
+            for other in if long {
+                [0x00u8, 0x10, 0x20]
+            } else {
+                [0x00, 0x04, 0x20]
+            } {
                 let mut p = clear.clone();
                 p[0] ^= other;
                 assert!(reserved_bits_clear(p[0]));
             }
         }
-        assert!(reserved_bits_clear(0xc3) && reserved_bits_clear(0x43) && !reserved_bits_clear(0xcf) && !reserved_bits_clear(0x58));
+        assert!(
+            reserved_bits_clear(0xc3)
+                && reserved_bits_clear(0x43)
+                && !reserved_bits_clear(0xcf)
+                && !reserved_bits_clear(0x58)
+        );
         for bit in [0x04, 0x08] {
             assert!(!reserved_bits_clear(0xc0 | bit), "long {bit:#x}");
         }
         for bit in [0x08, 0x10] {
             assert!(!reserved_bits_clear(0x40 | bit), "short {bit:#x}");
         }
-        assert!(reserved_bits_clear(0x40 | 0x04) && reserved_bits_clear(0x40 | 0x20) && reserved_bits_clear(0xc0 | 0x10) && reserved_bits_clear(0xc0 | 0x20));
+        assert!(
+            reserved_bits_clear(0x40 | 0x04)
+                && reserved_bits_clear(0x40 | 0x20)
+                && reserved_bits_clear(0xc0 | 0x10)
+                && reserved_bits_clear(0xc0 | 0x20)
+        );
     }
 
     #[test]
@@ -781,11 +1037,18 @@ mod tests {
             assert_ne!(packets[1], packets[2]);
             // the key for header protection is the same in all of them, the AEAD key is not
             for n in 1..3 {
-                assert_eq!(generation(0).header.mask(&[7; 16]), generation(n).header.mask(&[7; 16]));
+                assert_eq!(
+                    generation(0).header.mask(&[7; 16]),
+                    generation(n).header.mask(&[7; 16])
+                );
             }
             for (opener, sealer) in (0..3).flat_map(|a| (0..3).map(move |b| (a, b))) {
                 let r = generation(opener).open(&mut packets[sealer].clone(), pn_offset, Some(76));
-                assert_eq!(r.is_ok(), opener == sealer, "{suite:?}: generation {opener} opens one of generation {sealer}");
+                assert_eq!(
+                    r.is_ok(),
+                    opener == sealer,
+                    "{suite:?}: generation {opener} opens one of generation {sealer}"
+                );
             }
         }
     }
@@ -806,14 +1069,19 @@ mod tests {
         assert_eq!(k.packet.failed(), 0);
         // a failure is counted, a success is not
         let mut p = clear.clone();
-        Keys::new(AES128, &secret).seal(&mut p, pn_offset, 1, 1).unwrap();
+        Keys::new(AES128, &secret)
+            .seal(&mut p, pn_offset, 1, 1)
+            .unwrap();
         p[pn_offset + 3] ^= 1;
         assert!(k.open(&mut p, pn_offset, None).is_err());
         assert_eq!(k.packet.failed(), 1);
         assert_eq!(confidentiality_limit(AES128), 1 << 23);
         assert_eq!(confidentiality_limit(Suite::Aes256GcmSha384), 1 << 23);
         assert_eq!(integrity_limit(AES128), 1 << 52);
-        assert_eq!(confidentiality_limit(Suite::Chacha20Poly1305Sha256), 1 << 62);
+        assert_eq!(
+            confidentiality_limit(Suite::Chacha20Poly1305Sha256),
+            1 << 62
+        );
         assert_eq!(integrity_limit(Suite::Chacha20Poly1305Sha256), 1 << 36);
         k.packet.sealed = (1 << 23) - 1;
         assert!(!k.packet.confidentiality_limit_reached());
@@ -830,6 +1098,19 @@ mod tests {
         let k = PacketKey::new(AES128, &[0; 16], &unhex("fa044b2f42a3fd3b46fb255c"));
         assert_eq!(hex(&k.nonce(0)), "fa044b2f42a3fd3b46fb255c");
         assert_eq!(hex(&k.nonce(2)), "fa044b2f42a3fd3b46fb255e");
-        assert_eq!(hex(&k.nonce(0x3fff_ffff_ffff_ffff)), "fa044b2f" .to_string() + &hex(&[0x42 ^ 0x3f, 0xa3 ^ 0xff, 0xfd ^ 0xff, 0x3b ^ 0xff, 0x46 ^ 0xff, 0xfb ^ 0xff, 0x25 ^ 0xff, 0x5c ^ 0xff]));
+        assert_eq!(
+            hex(&k.nonce(0x3fff_ffff_ffff_ffff)),
+            "fa044b2f".to_string()
+                + &hex(&[
+                    0x42 ^ 0x3f,
+                    0xa3 ^ 0xff,
+                    0xfd ^ 0xff,
+                    0x3b ^ 0xff,
+                    0x46 ^ 0xff,
+                    0xfb ^ 0xff,
+                    0x25 ^ 0xff,
+                    0x5c ^ 0xff
+                ])
+        );
     }
 }

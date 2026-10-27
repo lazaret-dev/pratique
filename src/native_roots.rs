@@ -154,7 +154,10 @@ pub(crate) fn decide(per_domain: &[Vec<(Vec<u8>, Verdict)>]) -> NativeRoots {
         match decided.remove(&der).flatten() {
             Some((true, _)) => out.trusted.push(der),
             Some((false, why)) => out.excluded.push((der, why)),
-            None => out.excluded.push((der, "trust settings for other purposes only (user or administrator)".into())),
+            None => out.excluded.push((
+                der,
+                "trust settings for other purposes only (user or administrator)".into(),
+            )),
         }
     }
     out
@@ -170,8 +173,13 @@ pub(crate) fn windows_verdict(disallowed: bool, usage: &Option<Vec<String>>) -> 
     match usage {
         None => Ok(()),
         Some(list) if list.iter().any(|o| o == "1.3.6.1.5.5.7.3.1") => Ok(()),
-        Some(list) if list.is_empty() => Err("its enhanced key usage property allows no use".into()),
-        Some(list) => Err(format!("its enhanced key usage property does not include TLS server authentication ({})", list.join(", "))),
+        Some(list) if list.is_empty() => {
+            Err("its enhanced key usage property allows no use".into())
+        }
+        Some(list) => Err(format!(
+            "its enhanced key usage property does not include TLS server authentication ({})",
+            list.join(", ")
+        )),
     }
 }
 
@@ -194,7 +202,13 @@ mod imp {
         fn CFDataGetBytePtr(data: CFTypeRef) -> *const u8;
         fn CFDictionaryGetValue(dict: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
         fn CFNumberGetValue(number: CFTypeRef, the_type: CFIndex, out: *mut c_void) -> u8;
-        fn CFStringCreateWithBytes(alloc: CFTypeRef, bytes: *const u8, len: CFIndex, encoding: u32, external: u8) -> CFTypeRef;
+        fn CFStringCreateWithBytes(
+            alloc: CFTypeRef,
+            bytes: *const u8,
+            len: CFIndex,
+            encoding: u32,
+            external: u8,
+        ) -> CFTypeRef;
         fn CFEqual(a: CFTypeRef, b: CFTypeRef) -> u8;
         fn CFRelease(cf: CFTypeRef);
         fn CFGetTypeID(cf: CFTypeRef) -> usize;
@@ -204,7 +218,11 @@ mod imp {
     #[link(name = "Security", kind = "framework")]
     extern "C" {
         fn SecTrustSettingsCopyCertificates(domain: u32, certs: *mut CFTypeRef) -> OSStatus;
-        fn SecTrustSettingsCopyTrustSettings(cert: CFTypeRef, domain: u32, settings: *mut CFTypeRef) -> OSStatus;
+        fn SecTrustSettingsCopyTrustSettings(
+            cert: CFTypeRef,
+            domain: u32,
+            settings: *mut CFTypeRef,
+        ) -> OSStatus;
         fn SecCertificateCopyData(cert: CFTypeRef) -> CFTypeRef;
         fn SecPolicyCopyProperties(policy: CFTypeRef) -> CFTypeRef;
         static kSecPolicyOid: CFTypeRef;
@@ -232,7 +250,9 @@ mod imp {
     /// A CFString of `s`.
     fn cfstr(s: &str) -> Owned {
         // SAFETY: the bytes are valid for `s.len()` and are copied; a null allocator is the default one.
-        Owned(unsafe { CFStringCreateWithBytes(core::ptr::null(), s.as_ptr(), s.len() as CFIndex, UTF8, 0) })
+        Owned(unsafe {
+            CFStringCreateWithBytes(core::ptr::null(), s.as_ptr(), s.len() as CFIndex, UTF8, 0)
+        })
     }
 
     /// The bytes of a CFData.
@@ -251,7 +271,9 @@ mod imp {
     ///
     /// SAFETY: `array` must be a live CFArray, and outlive what is returned.
     unsafe fn items(array: CFTypeRef) -> Vec<CFTypeRef> {
-        (0..CFArrayGetCount(array)).map(|i| CFArrayGetValueAtIndex(array, i)).collect()
+        (0..CFArrayGetCount(array))
+            .map(|i| CFArrayGetValueAtIndex(array, i))
+            .collect()
     }
 
     struct Keys {
@@ -283,7 +305,8 @@ mod imp {
             return None;
         }
         let mut v: i64 = 0;
-        (CFNumberGetValue(value, NUMBER_SINT64, (&mut v as *mut i64).cast()) != 0).then_some(v as i32)
+        (CFNumberGetValue(value, NUMBER_SINT64, (&mut v as *mut i64).cast()) != 0)
+            .then_some(v as i32)
     }
 
     /// One entry of a certificate's trust settings.
@@ -293,12 +316,19 @@ mod imp {
         let policy = CFDictionaryGetValue(dict, k.policy.0);
         let key_usage = CFDictionaryGetValue(dict, k.key_usage.0);
         // a key usage limits the entry unless it is "any" (one that cannot be read limits it)
-        let limited = [&k.policy_string, &k.application].iter().any(|key| !CFDictionaryGetValue(dict, key.0).is_null())
+        let limited = [&k.policy_string, &k.application]
+            .iter()
+            .any(|key| !CFDictionaryGetValue(dict, key.0).is_null())
             || (!key_usage.is_null() && number(key_usage) != Some(super::KEY_USE_ANY));
         let result = CFDictionaryGetValue(dict, k.result.0);
         // a result that is not a number is no result this code can read: "unspecified", so the entry is passed over
-        let result = (!result.is_null()).then(|| number(result).unwrap_or(super::RESULT_UNSPECIFIED));
-        Setting { policy: (!policy.is_null()).then(|| is_ssl(policy)), limited, result }
+        let result =
+            (!result.is_null()).then(|| number(result).unwrap_or(super::RESULT_UNSPECIFIED));
+        Setting {
+            policy: (!policy.is_null()).then(|| is_ssl(policy)),
+            limited,
+            result,
+        }
     }
 
     pub(super) fn read() -> Result<NativeRoots, String> {
@@ -309,7 +339,16 @@ mod imp {
             key_usage: cfstr("kSecTrustSettingsKeyUsage"),
             result: cfstr("kSecTrustSettingsResult"),
         };
-        if [&keys.policy, &keys.policy_string, &keys.application, &keys.key_usage, &keys.result].iter().any(|k| k.0.is_null()) {
+        if [
+            &keys.policy,
+            &keys.policy_string,
+            &keys.application,
+            &keys.key_usage,
+            &keys.result,
+        ]
+        .iter()
+        .any(|k| k.0.is_null())
+        {
             return Err("CoreFoundation could not make a string".into());
         }
         let mut per_domain = Vec::new();
@@ -325,7 +364,11 @@ mod imp {
                     per_domain.push(found);
                     continue;
                 }
-                e => return Err(format!("SecTrustSettingsCopyCertificates for the {name} domain: OSStatus {e}")),
+                e => {
+                    return Err(format!(
+                        "SecTrustSettingsCopyCertificates for the {name} domain: OSStatus {e}"
+                    ))
+                }
             }
             // SAFETY: `certs` is a live CFArray of SecCertificateRefs, kept alive by `certs` until the end of this block.
             for cert in unsafe { items(certs.0) } {
@@ -339,15 +382,24 @@ mod imp {
                 };
                 let mut settings: CFTypeRef = core::ptr::null();
                 // SAFETY: `cert` is live and the out pointer valid; on success the array is owned.
-                let status = unsafe { SecTrustSettingsCopyTrustSettings(cert, domain, &mut settings) };
+                let status =
+                    unsafe { SecTrustSettingsCopyTrustSettings(cert, domain, &mut settings) };
                 let settings = Owned(settings);
-                let v = match status {
-                    // SAFETY: a live CFArray of CFDictionaries, owned by `settings` until the end of this arm.
-                    0 if !settings.0.is_null() => verdict(&unsafe { items(settings.0) }.into_iter().map(|d| unsafe { setting(d, &keys) }).collect::<Vec<_>>()),
-                    0 => Verdict::Trusted,
-                    NO_TRUST_SETTINGS | ITEM_NOT_FOUND => Verdict::NoWord,
-                    e => return Err(format!("SecTrustSettingsCopyTrustSettings in the {name} domain: OSStatus {e}")),
-                };
+                let v =
+                    match status {
+                        // SAFETY: a live CFArray of CFDictionaries, owned by `settings` until the end of this arm.
+                        0 if !settings.0.is_null() => verdict(
+                            &unsafe { items(settings.0) }
+                                .into_iter()
+                                .map(|d| unsafe { setting(d, &keys) })
+                                .collect::<Vec<_>>(),
+                        ),
+                        0 => Verdict::Trusted,
+                        NO_TRUST_SETTINGS | ITEM_NOT_FOUND => Verdict::NoWord,
+                        e => return Err(format!(
+                            "SecTrustSettingsCopyTrustSettings in the {name} domain: OSStatus {e}"
+                        )),
+                    };
                 found.push((der, v));
             }
             per_domain.push(found);
@@ -386,9 +438,17 @@ mod imp {
     #[link(name = "crypt32")]
     extern "system" {
         fn CertOpenSystemStoreW(prov: usize, name: *const u16) -> *mut c_void;
-        fn CertEnumCertificatesInStore(store: *mut c_void, prev: *const CertContext) -> *const CertContext;
+        fn CertEnumCertificatesInStore(
+            store: *mut c_void,
+            prev: *const CertContext,
+        ) -> *const CertContext;
         fn CertCloseStore(store: *mut c_void, flags: u32) -> i32;
-        fn CertGetEnhancedKeyUsage(cert: *const CertContext, flags: u32, usage: *mut EnhKeyUsage, len: *mut u32) -> i32;
+        fn CertGetEnhancedKeyUsage(
+            cert: *const CertContext,
+            flags: u32,
+            usage: *mut EnhKeyUsage,
+            len: *mut u32,
+        ) -> i32;
     }
 
     const PROP_ONLY: u32 = 0x4; // CERT_FIND_PROP_ONLY_ENHKEY_USAGE_FLAG
@@ -403,7 +463,10 @@ mod imp {
             // SAFETY: `wide` is a NUL-terminated UTF-16 string that lives through the call; 0 is "no provider".
             let h = unsafe { CertOpenSystemStoreW(0, wide.as_ptr()) };
             if h.is_null() {
-                return Err(format!("CertOpenSystemStoreW({name}): {}", std::io::Error::last_os_error()));
+                return Err(format!(
+                    "CertOpenSystemStoreW({name}): {}",
+                    std::io::Error::last_os_error()
+                ));
             }
             Ok(Store(h))
         }
@@ -419,7 +482,9 @@ mod imp {
                     break;
                 }
                 // SAFETY: `ctx` is a live context; its encoded bytes are valid for `encoded_len`.
-                let der = unsafe { std::slice::from_raw_parts((*ctx).encoded, (*ctx).encoded_len as usize).to_vec() };
+                let der = unsafe {
+                    std::slice::from_raw_parts((*ctx).encoded, (*ctx).encoded_len as usize).to_vec()
+                };
                 out.push((der, usage(ctx)?));
             }
             Ok(out)
@@ -440,7 +505,8 @@ mod imp {
     fn usage(ctx: *const CertContext) -> Result<Usage, String> {
         let mut len: u32 = 0;
         // SAFETY: a size query (null buffer) on a live context.
-        let ok = unsafe { CertGetEnhancedKeyUsage(ctx, PROP_ONLY, core::ptr::null_mut(), &mut len) };
+        let ok =
+            unsafe { CertGetEnhancedKeyUsage(ctx, PROP_ONLY, core::ptr::null_mut(), &mut len) };
         if ok == 0 {
             let e = std::io::Error::last_os_error();
             return match e.raw_os_error() {
@@ -459,7 +525,10 @@ mod imp {
             CertGetEnhancedKeyUsage(ctx, PROP_ONLY, usage, &mut len)
         };
         if ok == 0 {
-            return Err(format!("CertGetEnhancedKeyUsage: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "CertGetEnhancedKeyUsage: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         // SAFETY: the call filled the structure; its pointers point into `buf`, at NUL-terminated ASCII strings.
         unsafe {
@@ -472,12 +541,24 @@ mod imp {
                 };
             }
             let ids = std::slice::from_raw_parts((*usage).ids, count);
-            Ok(Some(ids.iter().map(|&p| std::ffi::CStr::from_ptr(p.cast()).to_string_lossy().into_owned()).collect()))
+            Ok(Some(
+                ids.iter()
+                    .map(|&p| {
+                        std::ffi::CStr::from_ptr(p.cast())
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .collect(),
+            ))
         }
     }
 
     pub(super) fn read() -> Result<NativeRoots, String> {
-        let disallowed: Vec<Vec<u8>> = Store::open("Disallowed")?.certificates()?.into_iter().map(|(der, _)| der).collect();
+        let disallowed: Vec<Vec<u8>> = Store::open("Disallowed")?
+            .certificates()?
+            .into_iter()
+            .map(|(der, _)| der)
+            .collect();
         let mut out = NativeRoots::default();
         for (der, usage) in Store::open("ROOT")?.certificates()? {
             if out.trusted.contains(&der) {
@@ -508,25 +589,68 @@ mod tests {
     use super::*;
 
     fn s(policy: Option<bool>, limited: bool, result: Option<i32>) -> Setting {
-        Setting { policy, limited, result }
+        Setting {
+            policy,
+            limited,
+            result,
+        }
     }
 
     #[test]
     fn the_settings_of_a_domain_come_to_a_verdict_for_tls() {
-        assert_eq!(verdict(&[]), Verdict::Trusted, "an empty list is trust as root");
-        assert_eq!(verdict(&[s(None, false, None)]), Verdict::Trusted, "no result is trust as root");
-        assert_eq!(verdict(&[s(Some(true), false, Some(RESULT_DENY))]), Verdict::Denied);
-        assert_eq!(verdict(&[s(Some(true), false, Some(RESULT_TRUST_AS_ROOT))]), Verdict::Trusted);
+        assert_eq!(
+            verdict(&[]),
+            Verdict::Trusted,
+            "an empty list is trust as root"
+        );
+        assert_eq!(
+            verdict(&[s(None, false, None)]),
+            Verdict::Trusted,
+            "no result is trust as root"
+        );
+        assert_eq!(
+            verdict(&[s(Some(true), false, Some(RESULT_DENY))]),
+            Verdict::Denied
+        );
+        assert_eq!(
+            verdict(&[s(Some(true), false, Some(RESULT_TRUST_AS_ROOT))]),
+            Verdict::Trusted
+        );
         // another policy's entry says nothing for TLS; the next one decides
-        assert_eq!(verdict(&[s(Some(false), false, Some(RESULT_TRUST_ROOT))]), Verdict::NoWord);
-        assert_eq!(verdict(&[s(Some(false), false, Some(RESULT_TRUST_ROOT)), s(Some(true), false, Some(RESULT_DENY))]), Verdict::Denied);
+        assert_eq!(
+            verdict(&[s(Some(false), false, Some(RESULT_TRUST_ROOT))]),
+            Verdict::NoWord
+        );
+        assert_eq!(
+            verdict(&[
+                s(Some(false), false, Some(RESULT_TRUST_ROOT)),
+                s(Some(true), false, Some(RESULT_DENY))
+            ]),
+            Verdict::Denied
+        );
         // unspecified passes to the next; the first that decides wins
-        assert_eq!(verdict(&[s(None, false, Some(RESULT_UNSPECIFIED)), s(None, false, Some(RESULT_DENY)), s(None, false, None)]), Verdict::Denied);
-        assert_eq!(verdict(&[s(None, false, Some(RESULT_UNSPECIFIED))]), Verdict::NoWord);
+        assert_eq!(
+            verdict(&[
+                s(None, false, Some(RESULT_UNSPECIFIED)),
+                s(None, false, Some(RESULT_DENY)),
+                s(None, false, None)
+            ]),
+            Verdict::Denied
+        );
+        assert_eq!(
+            verdict(&[s(None, false, Some(RESULT_UNSPECIFIED))]),
+            Verdict::NoWord
+        );
         // limited to a host, an application or a key usage: not a trust this store can keep
-        assert_eq!(verdict(&[s(Some(true), true, Some(RESULT_TRUST_ROOT))]), Verdict::NoWord);
+        assert_eq!(
+            verdict(&[s(Some(true), true, Some(RESULT_TRUST_ROOT))]),
+            Verdict::NoWord
+        );
         // (a deny so limited is not taken either: the next entry, or the domain after, decides)
-        assert_eq!(verdict(&[s(Some(true), true, Some(RESULT_DENY)), s(None, false, None)]), Verdict::Trusted);
+        assert_eq!(
+            verdict(&[s(Some(true), true, Some(RESULT_DENY)), s(None, false, None)]),
+            Verdict::Trusted
+        );
         // a value nobody knows
         assert_eq!(verdict(&[s(None, false, Some(99))]), Verdict::NoWord);
     }
@@ -534,31 +658,74 @@ mod tests {
     #[test]
     fn the_users_word_comes_before_the_administrators_and_the_systems() {
         let (a, b, c, d, e) = (vec![1u8], vec![2u8], vec![3u8], vec![4u8], vec![5u8]);
-        let user = vec![(a.clone(), Verdict::Denied), (b.clone(), Verdict::NoWord), (d.clone(), Verdict::Trusted)];
-        let admin = vec![(b.clone(), Verdict::Denied), (c.clone(), Verdict::NoWord), (e.clone(), Verdict::NoWord)];
-        let system = vec![(a.clone(), Verdict::Trusted), (c.clone(), Verdict::NoWord), (d.clone(), Verdict::Denied)];
+        let user = vec![
+            (a.clone(), Verdict::Denied),
+            (b.clone(), Verdict::NoWord),
+            (d.clone(), Verdict::Trusted),
+        ];
+        let admin = vec![
+            (b.clone(), Verdict::Denied),
+            (c.clone(), Verdict::NoWord),
+            (e.clone(), Verdict::NoWord),
+        ];
+        let system = vec![
+            (a.clone(), Verdict::Trusted),
+            (c.clone(), Verdict::NoWord),
+            (d.clone(), Verdict::Denied),
+        ];
         let r = decide(&[user, admin, system]);
         // a: denied by the user, though the system trusts it; b: the user says nothing, the administrator denies;
         // c: nobody says anything, and it is a system root: trusted; d: trusted by the user, whatever the system says;
         // e: the administrator's, with settings for other purposes only: left out
         assert_eq!(r.trusted, [d.clone(), c.clone()]);
-        let why: Vec<(&[u8], &str)> = r.excluded.iter().map(|(d, w)| (d.as_slice(), w.as_str())).collect();
-        assert_eq!(why, [(&a[..], "denied by the user trust settings"), (&b[..], "denied by the admin trust settings"), (&e[..], "trust settings for other purposes only (user or administrator)")]);
+        let why: Vec<(&[u8], &str)> = r
+            .excluded
+            .iter()
+            .map(|(d, w)| (d.as_slice(), w.as_str()))
+            .collect();
+        assert_eq!(
+            why,
+            [
+                (&a[..], "denied by the user trust settings"),
+                (&b[..], "denied by the admin trust settings"),
+                (
+                    &e[..],
+                    "trust settings for other purposes only (user or administrator)"
+                )
+            ]
+        );
     }
 
     #[test]
     fn windows_leaves_out_the_disallowed_and_roots_for_other_uses() {
         assert!(windows_verdict(false, &None).is_ok());
-        assert!(windows_verdict(false, &Some(vec!["1.3.6.1.5.5.7.3.3".into(), "1.3.6.1.5.5.7.3.1".into()])).is_ok());
-        assert!(windows_verdict(true, &None).unwrap_err().contains("Disallowed"));
-        assert!(windows_verdict(false, &Some(vec!["1.3.6.1.5.5.7.3.4".into()])).unwrap_err().contains("does not include"));
-        assert!(windows_verdict(false, &Some(vec![])).unwrap_err().contains("no use"));
+        assert!(windows_verdict(
+            false,
+            &Some(vec!["1.3.6.1.5.5.7.3.3".into(), "1.3.6.1.5.5.7.3.1".into()])
+        )
+        .is_ok());
+        assert!(windows_verdict(true, &None)
+            .unwrap_err()
+            .contains("Disallowed"));
+        assert!(
+            windows_verdict(false, &Some(vec!["1.3.6.1.5.5.7.3.4".into()]))
+                .unwrap_err()
+                .contains("does not include")
+        );
+        assert!(windows_verdict(false, &Some(vec![]))
+            .unwrap_err()
+            .contains("no use"));
     }
 
     #[test]
     fn a_certificate_that_does_not_parse_moves_to_the_excluded() {
-        let root = crate::pem::parse(include_str!("../tests/data/as_root.pem")).remove(0).data;
-        let mut n = NativeRoots { trusted: vec![root.clone(), vec![0x30, 0x00]], excluded: vec![] };
+        let root = crate::pem::parse(include_str!("../tests/data/as_root.pem"))
+            .remove(0)
+            .data;
+        let mut n = NativeRoots {
+            trusted: vec![root.clone(), vec![0x30, 0x00]],
+            excluded: vec![],
+        };
         let store = n.trust_store();
         assert_eq!(store.len(), 1);
         assert_eq!(n.trusted, [root]);
@@ -574,9 +741,15 @@ mod tests {
             Err(_) => {}
             Ok(mut r) => {
                 let store = r.trust_store();
-                eprintln!("native store: {} trusted, {} left out", store.len(), r.excluded.len());
+                eprintln!(
+                    "native store: {} trusted, {} left out",
+                    store.len(),
+                    r.excluded.len()
+                );
                 for (der, why) in r.excluded.iter().take(20) {
-                    let name = crate::x509::Certificate::from_der(der).map(|c| c.subject_summary()).unwrap_or_else(|_| "?".into());
+                    let name = crate::x509::Certificate::from_der(der)
+                        .map(|c| c.subject_summary())
+                        .unwrap_or_else(|_| "?".into());
                     eprintln!("  left out [{name}]: {why}");
                 }
                 assert!(store.len() > 10, "{} roots", store.len());

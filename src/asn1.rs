@@ -46,12 +46,18 @@ impl<'a> Der<'a> {
 
     pub fn next(&mut self) -> Result<Tlv<'a>> {
         let start = self.pos;
-        let tag = *self.data.get(self.pos).ok_or(Error::Asn1("unexpected end of data"))?;
+        let tag = *self
+            .data
+            .get(self.pos)
+            .ok_or(Error::Asn1("unexpected end of data"))?;
         if tag & 0x1f == 0x1f {
             return Err(Error::Asn1("high tag numbers are not supported"));
         }
         self.pos += 1;
-        let first = *self.data.get(self.pos).ok_or(Error::Asn1("missing length"))?;
+        let first = *self
+            .data
+            .get(self.pos)
+            .ok_or(Error::Asn1("missing length"))?;
         self.pos += 1;
         let len = if first < 0x80 {
             first as usize
@@ -63,7 +69,10 @@ impl<'a> Der<'a> {
             if n > 4 {
                 return Err(Error::Asn1("length too large"));
             }
-            let bytes = self.data.get(self.pos..self.pos + n).ok_or(Error::Asn1("truncated length"))?;
+            let bytes = self
+                .data
+                .get(self.pos..self.pos + n)
+                .ok_or(Error::Asn1("truncated length"))?;
             self.pos += n;
             if bytes[0] == 0 {
                 return Err(Error::Asn1("non-minimal length encoding"));
@@ -77,10 +86,20 @@ impl<'a> Der<'a> {
             }
             len
         };
-        let end = self.pos.checked_add(len).ok_or(Error::Asn1("length overflow"))?;
-        let content = self.data.get(self.pos..end).ok_or(Error::Asn1("content exceeds buffer"))?;
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or(Error::Asn1("length overflow"))?;
+        let content = self
+            .data
+            .get(self.pos..end)
+            .ok_or(Error::Asn1("content exceeds buffer"))?;
         self.pos = end;
-        Ok(Tlv { tag, content, raw: &self.data[start..end] })
+        Ok(Tlv {
+            tag,
+            content,
+            raw: &self.data[start..end],
+        })
     }
 
     /// Reads the next element and requires a specific tag.
@@ -242,7 +261,11 @@ pub fn oid_to_string(content: &[u8]) -> String {
         if !pending {
             if arcs.is_empty() {
                 // the first subidentifier carries the first two arcs
-                let (first, second) = if acc < 80 { (acc / 40, acc % 40) } else { (2, acc - 80) };
+                let (first, second) = if acc < 80 {
+                    (acc / 40, acc % 40)
+                } else {
+                    (2, acc - 80)
+                };
                 arcs.push(first);
                 arcs.push(second);
             } else {
@@ -254,14 +277,20 @@ pub fn oid_to_string(content: &[u8]) -> String {
     if pending || arcs.is_empty() {
         return "<invalid OID>".to_string();
     }
-    arcs.iter().map(|a| a.to_string()).collect::<Vec<_>>().join(".")
+    arcs.iter()
+        .map(|a| a.to_string())
+        .collect::<Vec<_>>()
+        .join(".")
 }
 
 /// The content octets of the OBJECT IDENTIFIER written in dotted form, or `None` if `s` is not one
 /// (fewer than two arcs, a non-numeric arc, a first arc above 2, a second arc of 40 or more under
 /// arcs 0 and 1, or an arc too large for this code).
 pub fn oid_from_string(s: &str) -> Option<Vec<u8>> {
-    let arcs: Vec<u64> = s.split('.').map(|a| a.parse::<u64>().ok()).collect::<Option<Vec<_>>>()?;
+    let arcs: Vec<u64> = s
+        .split('.')
+        .map(|a| a.parse::<u64>().ok())
+        .collect::<Option<Vec<_>>>()?;
     if arcs.len() < 2 || arcs[0] > 2 || (arcs[0] < 2 && arcs[1] >= 40) || arcs[1] > u64::MAX - 80 {
         return None;
     }
@@ -386,19 +415,37 @@ mod tests {
             assert_eq!(t.content.len(), n);
             assert!(d.is_empty());
         }
-        for (be, want) in [(&[][..], &[0x02, 0x01, 0x00][..]), (&[0, 0][..], &[0x02, 0x01, 0x00]), (&[0x7f], &[0x02, 0x01, 0x7f]), (&[0x80], &[0x02, 0x02, 0x00, 0x80]), (&[0, 0, 1, 2], &[0x02, 0x02, 0x01, 0x02])] {
+        for (be, want) in [
+            (&[][..], &[0x02, 0x01, 0x00][..]),
+            (&[0, 0][..], &[0x02, 0x01, 0x00]),
+            (&[0x7f], &[0x02, 0x01, 0x7f]),
+            (&[0x80], &[0x02, 0x02, 0x00, 0x80]),
+            (&[0, 0, 1, 2], &[0x02, 0x02, 0x01, 0x02]),
+        ] {
             assert_eq!(integer(be), want);
             if !be.iter().all(|&b| b == 0) {
                 let w = integer(be);
                 let mut d = Der::new(&w);
                 let start = be.iter().position(|&b| b != 0).unwrap();
-                assert_eq!(unsigned_integer(&d.next().unwrap()).unwrap(), be[start..].to_vec());
+                assert_eq!(
+                    unsigned_integer(&d.next().unwrap()).unwrap(),
+                    be[start..].to_vec()
+                );
             }
         }
-        let s = sequence(&[&oid_str("1.2.840.10045.2.1"), &null(), &bit_string(0, &[1, 2]), &boolean(true), &context(0, true, &integer(&[2]))]);
+        let s = sequence(&[
+            &oid_str("1.2.840.10045.2.1"),
+            &null(),
+            &bit_string(0, &[1, 2]),
+            &boolean(true),
+            &context(0, true, &integer(&[2])),
+        ]);
         let mut d = Der::new(&s);
         let mut seq = d.sequence().unwrap();
-        assert_eq!(oid_to_string(seq.expect(TAG_OID).unwrap().content), "1.2.840.10045.2.1");
+        assert_eq!(
+            oid_to_string(seq.expect(TAG_OID).unwrap().content),
+            "1.2.840.10045.2.1"
+        );
         seq.expect(TAG_NULL).unwrap();
         assert_eq!(bit_string_bytes(&seq.next().unwrap()).unwrap(), &[1, 2]);
         assert!(super::boolean(&seq.next().unwrap()).unwrap());
@@ -409,31 +456,61 @@ mod tests {
     #[test]
     fn oids_convert_both_ways() {
         let cases: [(&str, &[u8]); 5] = [
-            ("1.3.6.1.5.5.7.3.3", &[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03]),
-            ("1.3.6.1.4.1.57264.1.8", &[0x2b, 0x06, 0x01, 0x04, 0x01, 0x83, 0xbf, 0x30, 0x01, 0x08]),
+            (
+                "1.3.6.1.5.5.7.3.3",
+                &[0x2b, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x03],
+            ),
+            (
+                "1.3.6.1.4.1.57264.1.8",
+                &[0x2b, 0x06, 0x01, 0x04, 0x01, 0x83, 0xbf, 0x30, 0x01, 0x08],
+            ),
             ("2.5.29.37", &[0x55, 0x1d, 0x25]),
             ("2.999.1", &[0x88, 0x37, 0x01]),
-            ("1.2.840.113549.1.1.11", &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b]),
+            (
+                "1.2.840.113549.1.1.11",
+                &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b],
+            ),
         ];
         for (text, der) in cases {
             assert_eq!(oid_to_string(der), text);
             assert_eq!(oid_from_string(text).as_deref(), Some(der), "{}", text);
         }
-        for bad in ["", "1", "3.1", "1.40", "1..2", "1.x", "1.2.", "-1.2", "1.18446744073709551615"] {
+        for bad in [
+            "",
+            "1",
+            "3.1",
+            "1.40",
+            "1..2",
+            "1.x",
+            "1.2.",
+            "-1.2",
+            "1.18446744073709551615",
+        ] {
             assert_eq!(oid_from_string(bad), None, "{:?}", bad);
         }
         for bad in [&[][..], &[0x2b, 0x86], &[0x80]] {
             assert_eq!(oid_to_string(bad), "<invalid OID>");
         }
         // an arc wider than 64 bits is still printed, not truncated
-        assert_eq!(oid_to_string(&[0x2b, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00]), "1.3.18446744073709551616");
+        assert_eq!(
+            oid_to_string(&[0x2b, 0x82, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00]),
+            "1.3.18446744073709551616"
+        );
     }
 
     #[test]
     fn a_boolean_is_00_or_ff_and_nothing_else() {
         assert!(!boolean_content(&[0x00]).unwrap());
         assert!(boolean_content(&[0xff]).unwrap());
-        for bad in [&[][..], &[0x01], &[0x7f], &[0x80], &[0xfe], &[0xff, 0xff], &[0x00, 0x00]] {
+        for bad in [
+            &[][..],
+            &[0x01],
+            &[0x7f],
+            &[0x80],
+            &[0xfe],
+            &[0xff, 0xff],
+            &[0x00, 0x00],
+        ] {
             assert!(boolean_content(bad).is_err(), "{bad:?}");
         }
         let data = [0x01, 0x01, 0xff, 0x01, 0x01, 0x01, 0x02, 0x01, 0x00];
@@ -450,7 +527,10 @@ mod tests {
         let mut d = Der::new(&data);
         let mut seq = d.sequence().unwrap();
         d.finish().unwrap();
-        assert_eq!(unsigned_integer(&seq.expect(TAG_INTEGER).unwrap()).unwrap(), vec![5]);
+        assert_eq!(
+            unsigned_integer(&seq.expect(TAG_INTEGER).unwrap()).unwrap(),
+            vec![5]
+        );
         assert_eq!(seq.expect(TAG_OCTET_STRING).unwrap().content, b"hi");
         seq.finish().unwrap();
     }
@@ -468,52 +548,133 @@ mod tests {
 
     #[test]
     fn time_parsing() {
-        let t = Tlv { tag: TAG_UTC_TIME, content: b"700101000000Z", raw: &[] };
+        let t = Tlv {
+            tag: TAG_UTC_TIME,
+            content: b"700101000000Z",
+            raw: &[],
+        };
         assert_eq!(parse_time(&t).unwrap(), 0);
-        let t = Tlv { tag: TAG_GENERALIZED_TIME, content: b"20000301120000Z", raw: &[] };
+        let t = Tlv {
+            tag: TAG_GENERALIZED_TIME,
+            content: b"20000301120000Z",
+            raw: &[],
+        };
         assert_eq!(parse_time(&t).unwrap(), 951912000);
-        let t = Tlv { tag: TAG_UTC_TIME, content: b"260101000000Z", raw: &[] };
+        let t = Tlv {
+            tag: TAG_UTC_TIME,
+            content: b"260101000000Z",
+            raw: &[],
+        };
         assert_eq!(parse_time(&t).unwrap(), 1767225600);
     }
 
     #[test]
     fn days_that_do_not_exist_are_refused() {
-        let utc = |s: &'static [u8]| parse_time(&Tlv { tag: TAG_UTC_TIME, content: s, raw: &[] });
-        let gen = |s: &'static [u8]| parse_time(&Tlv { tag: TAG_GENERALIZED_TIME, content: s, raw: &[] });
-        for bad in [&b"260231000000Z"[..], b"260230120000Z", b"250229000000Z", b"260431000000Z", b"260631000000Z", b"260931000000Z", b"261131000000Z", b"260100000000Z", b"260132000000Z"] {
+        let utc = |s: &'static [u8]| {
+            parse_time(&Tlv {
+                tag: TAG_UTC_TIME,
+                content: s,
+                raw: &[],
+            })
+        };
+        let gen = |s: &'static [u8]| {
+            parse_time(&Tlv {
+                tag: TAG_GENERALIZED_TIME,
+                content: s,
+                raw: &[],
+            })
+        };
+        for bad in [
+            &b"260231000000Z"[..],
+            b"260230120000Z",
+            b"250229000000Z",
+            b"260431000000Z",
+            b"260631000000Z",
+            b"260931000000Z",
+            b"261131000000Z",
+            b"260100000000Z",
+            b"260132000000Z",
+        ] {
             assert!(utc(bad).is_err(), "{}", String::from_utf8_lossy(bad));
         }
-        for bad in [&b"21000229000000Z"[..], b"19000229000000Z", b"20260431000000Z"] {
+        for bad in [
+            &b"21000229000000Z"[..],
+            b"19000229000000Z",
+            b"20260431000000Z",
+        ] {
             assert!(gen(bad).is_err(), "{}", String::from_utf8_lossy(bad));
         }
         // leap days, and the ends of the other months, are fine
-        for good in [&b"240229000000Z"[..], b"280229235959Z", b"260131000000Z", b"260228000000Z", b"260430000000Z", b"261231235959Z"] {
+        for good in [
+            &b"240229000000Z"[..],
+            b"280229235959Z",
+            b"260131000000Z",
+            b"260228000000Z",
+            b"260430000000Z",
+            b"261231235959Z",
+        ] {
             utc(good).unwrap();
         }
-        for good in [&b"20000229000000Z"[..], b"20240229000000Z", b"20261130000000Z"] {
+        for good in [
+            &b"20000229000000Z"[..],
+            b"20240229000000Z",
+            b"20261130000000Z",
+        ] {
             gen(good).unwrap();
         }
-        assert_eq!(utc(b"240229000000Z").unwrap() + 86400, utc(b"240301000000Z").unwrap());
+        assert_eq!(
+            utc(b"240229000000Z").unwrap() + 86400,
+            utc(b"240301000000Z").unwrap()
+        );
     }
 
     #[test]
     fn a_minute_has_no_second_sixty() {
         // Go (time.Parse) and OpenSSL (ASN1_TIME_check) both refuse :60, and the ASN.1 of RFC 5280 certificates
         // has no leap seconds; read as the next minute it would move a validity bound by a second
-        let utc = |s: &'static [u8]| parse_time(&Tlv { tag: TAG_UTC_TIME, content: s, raw: &[] });
-        let gen = |s: &'static [u8]| parse_time(&Tlv { tag: TAG_GENERALIZED_TIME, content: s, raw: &[] });
-        for bad in [&b"260101000060Z"[..], b"261231235960Z", b"260101000061Z", b"260101000099Z"] {
+        let utc = |s: &'static [u8]| {
+            parse_time(&Tlv {
+                tag: TAG_UTC_TIME,
+                content: s,
+                raw: &[],
+            })
+        };
+        let gen = |s: &'static [u8]| {
+            parse_time(&Tlv {
+                tag: TAG_GENERALIZED_TIME,
+                content: s,
+                raw: &[],
+            })
+        };
+        for bad in [
+            &b"260101000060Z"[..],
+            b"261231235960Z",
+            b"260101000061Z",
+            b"260101000099Z",
+        ] {
             assert!(utc(bad).is_err(), "{}", String::from_utf8_lossy(bad));
         }
         for bad in [&b"20260101000060Z"[..], b"20261231235960Z"] {
             assert!(gen(bad).is_err(), "{}", String::from_utf8_lossy(bad));
         }
         // :59 is the last second, and the one after it is the first of the next minute
-        assert_eq!(utc(b"260101000059Z").unwrap() + 1, utc(b"260101000100Z").unwrap());
-        assert_eq!(gen(b"20261231235959Z").unwrap() + 1, gen(b"20270101000000Z").unwrap());
+        assert_eq!(
+            utc(b"260101000059Z").unwrap() + 1,
+            utc(b"260101000100Z").unwrap()
+        );
+        assert_eq!(
+            gen(b"20261231235959Z").unwrap() + 1,
+            gen(b"20270101000000Z").unwrap()
+        );
         // the year in which UTCTime turns over: 49 is 2049 and 50 is 1950
-        assert_eq!(utc(b"491231235959Z").unwrap(), gen(b"20491231235959Z").unwrap());
-        assert_eq!(utc(b"500101000000Z").unwrap(), gen(b"19500101000000Z").unwrap());
+        assert_eq!(
+            utc(b"491231235959Z").unwrap(),
+            gen(b"20491231235959Z").unwrap()
+        );
+        assert_eq!(
+            utc(b"500101000000Z").unwrap(),
+            gen(b"19500101000000Z").unwrap()
+        );
         assert_eq!(utc(b"500101000000Z").unwrap(), -631_152_000);
     }
 
@@ -522,17 +683,25 @@ mod tests {
         for bad in [
             &b"260101000\xc3\xa90Z"[..], // multi-byte character straddling a field boundary (panicked before)
             b"\xc3\xa9\xc3\xa9010100000Z",
-            b"+60101000000Z",             // a sign is not a digit
+            b"+60101000000Z", // a sign is not a digit
             b" 60101000000Z",
             b"260101000000X",
-            b"261301000000Z",             // month 13
-            b"260101240000Z",             // hour 24
-            b"260101000000",              // too short
+            b"261301000000Z", // month 13
+            b"260101240000Z", // hour 24
+            b"260101000000",  // too short
         ] {
-            let t = Tlv { tag: TAG_UTC_TIME, content: bad, raw: &[] };
+            let t = Tlv {
+                tag: TAG_UTC_TIME,
+                content: bad,
+                raw: &[],
+            };
             assert!(parse_time(&t).is_err(), "{:?}", bad);
         }
-        let t = Tlv { tag: TAG_GENERALIZED_TIME, content: "2026010100000\u{e9}Z".as_bytes(), raw: &[] };
+        let t = Tlv {
+            tag: TAG_GENERALIZED_TIME,
+            content: "2026010100000\u{e9}Z".as_bytes(),
+            raw: &[],
+        };
         assert!(parse_time(&t).is_err());
     }
 }

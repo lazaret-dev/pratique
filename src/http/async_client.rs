@@ -21,19 +21,23 @@
 //! connector that does the same says so with [`Connect::enforces_timeouts`]. `Expect: 100-continue` waits for the go-ahead
 //! as the blocking client does.
 
+use super::connect::Establish;
 use super::decode::{self, BodyDecoder, Next, RequestOpts};
 use super::idle::{IdlePool, Key, Policy};
 use super::parser::{keep_alive_timeout, Head, ResponseParser};
+use super::schedule::{Batch, Running};
 use super::stream::{is_peer_close, Failure};
 use super::wire::{self, Limits};
-use super::connect::Establish;
-use super::schedule::{Batch, Running};
 use super::{
-    check_connect_response, is_replayable, no_slot, pool_key, slot_key, tcp_connect, Client, ConnectOptions, Hop, InFlight, Proxy, Response, Url,
-    CONNECT_HEAD_LIMIT, REDIRECT_BODY_LIMIT, SMALL_BODY,
+    check_connect_response, is_replayable, no_slot, pool_key, slot_key, tcp_connect, Client,
+    ConnectOptions, Hop, InFlight, Proxy, Response, Url, CONNECT_HEAD_LIMIT, REDIRECT_BODY_LIMIT,
+    SMALL_BODY,
 };
 use crate::asyncio::slots::{Permit, Slots};
-use crate::asyncio::{timeout_at, AsyncRead, AsyncReadExt, AsyncTlsStream, AsyncWrite, AsyncWriteExt, Pool, ThreadedStream, Timed};
+use crate::asyncio::{
+    timeout_at, AsyncRead, AsyncReadExt, AsyncTlsStream, AsyncWrite, AsyncWriteExt, Pool,
+    ThreadedStream, Timed,
+};
 use crate::error::{Error, Result};
 use crate::inflate::{Format, Limits as InflateLimits};
 use std::future::{poll_fn, Future};
@@ -99,7 +103,10 @@ pub struct ThreadConnector {
 impl ThreadConnector {
     /// A connector with a resolver of its own (one made by [`Client::into_async`] shares the client's).
     pub fn new(pool: Pool) -> ThreadConnector {
-        ThreadConnector { pool, establish: Establish::default() }
+        ThreadConnector {
+            pool,
+            establish: Establish::default(),
+        }
     }
 }
 
@@ -115,12 +122,17 @@ impl Connect for ThreadConnector {
         let host = host.to_string();
         let pool = self.pool.clone();
         let establish = self.establish.clone();
-        let task = self.pool.spawn_blocking(move || tcp_connect(&host, port, opts, &establish, None));
+        let task = self
+            .pool
+            .spawn_blocking(move || tcp_connect(&host, port, opts, &establish, None));
         Box::pin(async move {
-            let io = task.await.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?.map_err(|e| match e {
-                Error::Io(e) => e,
-                other => io::Error::new(io::ErrorKind::Other, other.to_string()),
-            })?;
+            let io = task
+                .await
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+                .map_err(|e| match e {
+                    Error::Io(e) => e,
+                    other => io::Error::new(io::ErrorKind::Other, other.to_string()),
+                })?;
             Ok(ThreadedStream::from_io(io, pool))
         })
     }
@@ -153,7 +165,11 @@ pub struct AsyncClient<C: Connect = ThreadConnector> {
 
 impl<C: Connect> Clone for AsyncClient<C> {
     fn clone(&self) -> AsyncClient<C> {
-        AsyncClient { client: self.client.clone(), connector: self.connector.clone(), idle: self.idle.clone() }
+        AsyncClient {
+            client: self.client.clone(),
+            connector: self.connector.clone(),
+            idle: self.idle.clone(),
+        }
     }
 }
 
@@ -161,7 +177,10 @@ impl Client {
     /// An async client with this client's settings, connecting through [`ThreadConnector`] on
     /// this client's pool (see [`Client::pool`]).
     pub fn into_async(self) -> AsyncClient {
-        let connector = ThreadConnector { pool: self.pool.clone().unwrap_or_else(Pool::global), establish: self.establish.clone() };
+        let connector = ThreadConnector {
+            pool: self.pool.clone().unwrap_or_else(Pool::global),
+            establish: self.establish.clone(),
+        };
         AsyncClient::with_connector(self, connector)
     }
 }
@@ -172,7 +191,11 @@ impl<C: Connect> AsyncClient<C> {
         // a per-host connection limit counts this client's connections, apart from the blocking client's (whose idle
         // connections it could not close to make room)
         client.conn_limit = client.conn_limit.as_ref().map(|s| Slots::new(s.max()));
-        AsyncClient { client, connector: Arc::new(connector), idle: Arc::new(IdlePool::new()) }
+        AsyncClient {
+            client,
+            connector: Arc::new(connector),
+            idle: Arc::new(IdlePool::new()),
+        }
     }
 
     pub async fn get(&self, url: &str) -> Result<Response> {
@@ -193,7 +216,14 @@ impl<C: Connect> AsyncClient<C> {
     }
 
     pub fn request(&self, method: &str, url: &str) -> AsyncRequestBuilder<'_, C> {
-        AsyncRequestBuilder { client: self, method: method.to_string(), url: url.to_string(), headers: Vec::new(), body: Vec::new(), opts: RequestOpts::default() }
+        AsyncRequestBuilder {
+            client: self,
+            method: method.to_string(),
+            url: url.to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            opts: RequestOpts::default(),
+        }
     }
 
     /// Closes every idle connection this client (and its clones) is holding.
@@ -207,8 +237,18 @@ impl<C: Connect> AsyncClient<C> {
     }
 
     /// The whole request under its batch's control (see [`execute_stream_controlled`](Self::execute_stream_controlled)).
-    async fn execute_controlled(&self, method: String, url: &str, headers: Vec<(String, String)>, body: Vec<u8>, opts: RequestOpts) -> Result<Response> {
-        self.execute_stream_controlled(method, url, headers, body, opts).await?.into_response().await
+    async fn execute_controlled(
+        &self,
+        method: String,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        opts: RequestOpts,
+    ) -> Result<Response> {
+        self.execute_stream_controlled(method, url, headers, body, opts)
+            .await?
+            .into_response()
+            .await
     }
 
     /// The request, under its batch's control: a cancel wakes the task, which drops what it was doing (and the connection
@@ -223,12 +263,19 @@ impl<C: Connect> AsyncClient<C> {
     ) -> Result<AsyncResponseStream<C::Stream>> {
         let mut opts = opts;
         if let Some(client) = self.client.narrowed(&mut opts) {
-            let narrowed = AsyncClient { client, connector: self.connector.clone(), idle: self.idle.clone() };
-            return Box::pin(narrowed.execute_stream_controlled(method, url, headers, body, opts)).await;
+            let narrowed = AsyncClient {
+                client,
+                connector: self.connector.clone(),
+                idle: self.idle.clone(),
+            };
+            return Box::pin(narrowed.execute_stream_controlled(method, url, headers, body, opts))
+                .await;
         }
         let membership = self.client.membership(&opts)?;
         let Some(running) = membership.as_ref().map(|m| m.running.clone()) else {
-            return self.execute_stream(method, url, headers, body, opts, None).await;
+            return self
+                .execute_stream(method, url, headers, body, opts, None)
+                .await;
         };
         let request = self.execute_stream(method, url, headers, body, opts, membership);
         let mut request = std::pin::pin!(request);
@@ -256,25 +303,42 @@ impl<C: Connect> AsyncClient<C> {
         hop.decode = self.client.decode_for(&opts);
         hop.min_tls = opts.min_tls;
         let deadline = self.client.request_deadline(membership.as_ref());
-        let limits = Limits { max_body_bytes: opts.max_body.unwrap_or(self.client.limits.max_body_bytes), ..self.client.limits };
+        let limits = Limits {
+            max_body_bytes: opts.max_body.unwrap_or(self.client.limits.max_body_bytes),
+            ..self.client.limits
+        };
         let mut ticket = match &self.client.scheduler {
-            Some(s) => Some(s.admit_async(&slot_key(&hop.url), opts.expected.unwrap_or(0), deadline, running.as_ref()).await?),
+            Some(s) => Some(
+                s.admit_async(
+                    &slot_key(&hop.url),
+                    opts.expected.unwrap_or(0),
+                    deadline,
+                    running.as_ref(),
+                )
+                .await?,
+            ),
             None => None,
         };
         let mut hops = 0;
         loop {
             if let Some(t) = ticket.as_mut() {
-                t.move_to_async(&slot_key(&hop.url), deadline, running.as_ref()).await?;
+                t.move_to_async(&slot_key(&hop.url), deadline, running.as_ref())
+                    .await?;
             }
             let mut resp = self.once(&hop, deadline, limits).await?;
             if let Some(jar) = &self.client.cookies {
                 jar.store_from(&hop.url, resp.headers_named("set-cookie"));
             }
-            if !self.client.follow(&mut hop, resp.status, &resp.headers, &mut hops)? {
+            if !self
+                .client
+                .follow(&mut hop, resp.status, &resp.headers, &mut hops)?
+            {
                 // (the final response, and the only one whose body the caller gets)
                 let resp = match &hop.decode {
                     Some(d) => match decode::coding_of(&hop.method, resp.status, &resp.headers) {
-                        Some(format) => resp.with_decoder(format, d.for_body(limits.max_body_bytes)),
+                        Some(format) => {
+                            resp.with_decoder(format, d.for_body(limits.max_body_bytes))
+                        }
                         None => resp,
                     },
                     None => resp,
@@ -283,7 +347,10 @@ impl<C: Connect> AsyncClient<C> {
                 return Ok(resp.in_flight(InFlight::new(ticket, membership)));
             }
             // what is left of the redirect's body, if it is small, so that its connection can be used again
-            if resp.content_length.map_or(true, |n| n <= REDIRECT_BODY_LIMIT) {
+            if resp
+                .content_length
+                .map_or(true, |n| n <= REDIRECT_BODY_LIMIT)
+            {
                 resp.discard(REDIRECT_BODY_LIMIT).await;
             }
         }
@@ -291,34 +358,59 @@ impl<C: Connect> AsyncClient<C> {
 
     /// One request on one connection (a pooled one if there is a good one, else a new one), up to the
     /// arrival of the response headers.
-    async fn once(&self, hop: &Hop, deadline: Option<Instant>, limits: Limits) -> Result<AsyncResponseStream<C::Stream>> {
+    async fn once(
+        &self,
+        hop: &Hop,
+        deadline: Option<Instant>,
+        limits: Limits,
+    ) -> Result<AsyncResponseStream<C::Stream>> {
         let mut headers = self.client.request_headers(hop)?;
         let (method, url, body) = (hop.method.as_str(), &hop.url, hop.body.as_slice());
         let proxy = self.client.proxy_for(url, hop.index)?;
         let key = pool_key(url, proxy.as_ref(), self.client.min_tls_for(hop));
         let mut head = wire::write_request_head(method, &url.path_and_query, &headers);
         // a body that waits for the server's go-ahead
-        let mut expect = (!body.is_empty() && super::expects_continue(&headers)).then_some(self.client.expect_timeout);
+        let mut expect = (!body.is_empty() && super::expects_continue(&headers))
+            .then_some(self.client.expect_timeout);
         let limit = |t: &mut Timed<C::Stream>, opts: ConnectOptions| self.apply_limits(t, opts);
         let opts = self.client.connect_options(deadline);
         let policy = self.client.policy;
         let mut retry_allowed = policy.parks() && is_replayable(method, &hop.headers);
         let mut pooled_allowed = true;
         loop {
-            let reused = if pooled_allowed { self.checkout(&key, deadline) } else { None };
+            let reused = if pooled_allowed {
+                self.checkout(&key, deadline)
+            } else {
+                None
+            };
             let mut was_reused = reused.is_some();
             let conn = match reused {
                 Some(c) => c,
-                None => match self.room(url, pooled_allowed.then_some(&key), deadline).await? {
+                None => match self
+                    .room(url, pooled_allowed.then_some(&key), deadline)
+                    .await?
+                {
                     AsyncRoom::Parked(c) => {
                         was_reused = true;
                         c
                     }
-                    AsyncRoom::Slot(permit) => self.connect(url, proxy.as_ref(), deadline, key.min_tls, permit).await?,
+                    AsyncRoom::Slot(permit) => {
+                        self.connect(url, proxy.as_ref(), deadline, key.min_tls, permit)
+                            .await?
+                    }
                 },
             };
-            let home = policy.parks().then(|| AsyncHome { pool: self.idle.clone(), key: key.clone(), policy, slots: self.client.conn_limit.clone() });
-            let wait = expect.map(|wait| ExpectWait { wait, opts, limit: &limit });
+            let home = policy.parks().then(|| AsyncHome {
+                pool: self.idle.clone(),
+                key: key.clone(),
+                policy,
+                slots: self.client.conn_limit.clone(),
+            });
+            let wait = expect.map(|wait| ExpectWait {
+                wait,
+                opts,
+                limit: &limit,
+            });
             match exchange(conn, method, url, &head, body, limits, home, wait).await {
                 // a server that does not do expectations says so (RFC 9110, 15.5.18): the request, which it has not acted on,
                 // goes once more without one, and with its body
@@ -342,8 +434,15 @@ impl<C: Connect> AsyncClient<C> {
 
     /// A slot for a new connection to `url`'s host under the per-host limit (none without one), or, if `reuse` names the
     /// request's key, a connection for it that came back to the pool while this waited; as the blocking client's.
-    async fn room(&self, url: &Url, reuse: Option<&Key>, deadline: Option<Instant>) -> Result<AsyncRoom<C::Stream>> {
-        let Some(slots) = &self.client.conn_limit else { return Ok(AsyncRoom::Slot(None)) };
+    async fn room(
+        &self,
+        url: &Url,
+        reuse: Option<&Key>,
+        deadline: Option<Instant>,
+    ) -> Result<AsyncRoom<C::Stream>> {
+        let Some(slots) = &self.client.conn_limit else {
+            return Ok(AsyncRoom::Slot(None));
+        };
         let key = slot_key(url);
         let started = Instant::now();
         let until = deadline.unwrap_or_else(|| started + self.client.timeout);
@@ -376,7 +475,8 @@ impl<C: Connect> AsyncClient<C> {
             if self.connector.reuse(conn.transport_mut().get_mut(), opts) {
                 // the limits of this request, not of the one the connection was made for
                 let limits = self.timed_limits(opts);
-                conn.transport_mut().set_limits(limits.0, limits.0, limits.1);
+                conn.transport_mut()
+                    .set_limits(limits.0, limits.0, limits.1);
                 return Some(conn);
             }
         }
@@ -404,7 +504,13 @@ impl<C: Connect> AsyncClient<C> {
 
     /// A transport connection from the connector, within the connect timeout (or, for a connector that enforces that
     /// itself, within the deadline), with the client's limits on it.
-    async fn open(&self, host: &str, port: u16, opts: ConnectOptions, permit: Option<Permit>) -> Result<Timed<C::Stream>> {
+    async fn open(
+        &self,
+        host: &str,
+        port: u16,
+        opts: ConnectOptions,
+        permit: Option<Permit>,
+    ) -> Result<Timed<C::Stream>> {
         let by = if self.connector.enforces_timeouts() {
             opts.deadline
         } else {
@@ -418,8 +524,18 @@ impl<C: Connect> AsyncClient<C> {
         let stream = match by {
             Some(by) => match timeout_at(by, connecting).await {
                 Ok(r) => r?,
-                Err(_) if opts.deadline.is_some_and(|d| by >= d) => return Err(Error::Io(crate::asyncio::net::deadline_error())),
-                Err(_) => return Err(Error::Io(io::Error::new(io::ErrorKind::TimedOut, format!("connecting to {host}:{port} took longer than {:?}", opts.connect_timeout)))),
+                Err(_) if opts.deadline.is_some_and(|d| by >= d) => {
+                    return Err(Error::Io(crate::asyncio::net::deadline_error()))
+                }
+                Err(_) => {
+                    return Err(Error::Io(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!(
+                            "connecting to {host}:{port} took longer than {:?}",
+                            opts.connect_timeout
+                        ),
+                    )))
+                }
             },
             None => connecting.await?,
         };
@@ -430,15 +546,29 @@ impl<C: Connect> AsyncClient<C> {
         Ok(timed)
     }
 
-    async fn connect(&self, url: &Url, proxy: Option<&Proxy>, deadline: Option<Instant>, min_tls: crate::tls::TlsVersion, permit: Option<Permit>) -> Result<AsyncConn<C::Stream>> {
+    async fn connect(
+        &self,
+        url: &Url,
+        proxy: Option<&Proxy>,
+        deadline: Option<Instant>,
+        min_tls: crate::tls::TlsVersion,
+        permit: Option<Permit>,
+    ) -> Result<AsyncConn<C::Stream>> {
         let opts = self.client.connect_options(deadline);
         if !url.is_https() {
-            return Ok(AsyncConn::Plain(self.open(&url.host, url.port, opts, permit).await?));
+            return Ok(AsyncConn::Plain(
+                self.open(&url.host, url.port, opts, permit).await?,
+            ));
         }
         let stream = match proxy {
             Some(proxy) => {
                 let mut s = self.open(&proxy.host, proxy.port, opts, permit).await?;
-                s.write_all(self.client.connect_request(proxy, &url.host, url.port).as_bytes()).await?;
+                s.write_all(
+                    self.client
+                        .connect_request(proxy, &url.host, url.port)
+                        .as_bytes(),
+                )
+                .await?;
                 s.flush().await?;
                 // one byte at a time, so no tunnel data is consumed
                 let mut head = Vec::new();
@@ -448,7 +578,9 @@ impl<C: Connect> AsyncClient<C> {
                         return Err(Error::Http("proxy response headers too large".into()));
                     }
                     if s.read(&mut byte).await? == 0 {
-                        return Err(Error::Http("proxy closed the connection during CONNECT".into()));
+                        return Err(Error::Http(
+                            "proxy closed the connection during CONNECT".into(),
+                        ));
                     }
                     head.push(byte[0]);
                 }
@@ -472,19 +604,27 @@ impl<C: Connect> AsyncClient<C> {
             let mut tls = AsyncTlsStream::connect(stream, &url.host, &deferring).await?;
             // (a handshake that left the check for later always hands it out; without it the connection is not used)
             let Some(unchecked) = tls.take_unchecked() else {
-                return Err(Error::Tls("internal: the revocation check that the handshake left for later is missing".into()));
+                return Err(Error::Tls(
+                    "internal: the revocation check that the handshake left for later is missing"
+                        .into(),
+                ));
             };
             let revocation = config.revocation.clone();
             let now = config.time_override.unwrap_or_else(crate::sys::now_unix);
             let pool = self.client.pool.clone().unwrap_or_else(Pool::global);
-            match pool.spawn_blocking(move || unchecked.check(&revocation, now)).await {
+            match pool
+                .spawn_blocking(move || unchecked.check(&revocation, now))
+                .await
+            {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => return Err(e.into()),
                 Err(e) => return Err(Error::Io(io::Error::new(io::ErrorKind::Other, e))),
             }
             return Ok(AsyncConn::Tls(Box::new(tls)));
         }
-        Ok(AsyncConn::Tls(Box::new(AsyncTlsStream::connect(stream, &url.host, config).await?)))
+        Ok(AsyncConn::Tls(Box::new(
+            AsyncTlsStream::connect(stream, &url.host, config).await?,
+        )))
     }
 }
 
@@ -516,11 +656,20 @@ async fn exchange<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
     };
     let mut reader = AsyncBody::new(conn, method, limits, home);
     match expect {
-        Some(wait) => reader.send_request_expecting_continue(head, body, &wait).await?,
+        Some(wait) => {
+            reader
+                .send_request_expecting_continue(head, body, &wait)
+                .await?
+        }
         None => reader.send_request(head, body).await?,
     }
     let response_head = reader.receive_head().await?;
-    Ok(AsyncResponseStream::new(response_head, url.clone(), reader, tls_version))
+    Ok(AsyncResponseStream::new(
+        response_head,
+        url.clone(),
+        reader,
+        tls_version,
+    ))
 }
 
 /// A request being built; see [`AsyncClient::request`].
@@ -617,14 +766,18 @@ impl<'a, C: Connect> AsyncRequestBuilder<'a, C> {
     }
 
     pub async fn send(self) -> Result<Response> {
-        self.client.execute_controlled(self.method, &self.url, self.headers, self.body, self.opts).await
+        self.client
+            .execute_controlled(self.method, &self.url, self.headers, self.body, self.opts)
+            .await
     }
 
     /// Sends the request and returns as soon as the response headers are in; the body is read from
     /// the [`AsyncResponseStream`] as it arrives. Redirects are followed first; the stream is the
     /// final response.
     pub async fn send_stream(self) -> Result<AsyncResponseStream<C::Stream>> {
-        self.client.execute_stream_controlled(self.method, &self.url, self.headers, self.body, self.opts).await
+        self.client
+            .execute_stream_controlled(self.method, &self.url, self.headers, self.body, self.opts)
+            .await
     }
 }
 
@@ -655,7 +808,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncConn<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for AsyncConn<S> {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         match &mut *self {
             AsyncConn::Plain(s) => Pin::new(s).poll_read(cx, buf),
             AsyncConn::Tls(s) => Pin::new(&mut **s).poll_read(cx, buf),
@@ -664,7 +821,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for AsyncConn<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for AsyncConn<S> {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         match &mut *self {
             AsyncConn::Plain(s) => Pin::new(s).poll_write(cx, buf),
             AsyncConn::Tls(s) => Pin::new(&mut **s).poll_write(cx, buf),
@@ -722,8 +883,21 @@ struct AsyncBody<S> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
-    fn new(conn: AsyncConn<S>, method: &str, limits: Limits, home: Option<AsyncHome<S>>) -> AsyncBody<S> {
-        AsyncBody { conn: Some(conn), parser: ResponseParser::new(method, limits), home, pending: Vec::new(), pos: 0, scratch: Vec::new(), failed: false }
+    fn new(
+        conn: AsyncConn<S>,
+        method: &str,
+        limits: Limits,
+        home: Option<AsyncHome<S>>,
+    ) -> AsyncBody<S> {
+        AsyncBody {
+            conn: Some(conn),
+            parser: ResponseParser::new(method, limits),
+            home,
+            pending: Vec::new(),
+            pos: 0,
+            scratch: Vec::new(),
+            failed: false,
+        }
     }
 
     async fn send_request(&mut self, head: &[u8], body: &[u8]) -> std::result::Result<(), Failure> {
@@ -743,7 +917,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
         };
         sent.await.map_err(|e| {
             let error = Error::Io(e);
-            Failure { peer_closed: is_peer_close(&error), error }
+            Failure {
+                peer_closed: is_peer_close(&error),
+                error,
+            }
         })
     }
 
@@ -751,18 +928,34 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
     /// unless an answer came first: then the body is never sent and the connection is not used again (the server may still be
     /// waiting for it). The wait is a shorter read timeout on the stream for as long as it lasts, never past the request's
     /// deadline, as in the blocking client, so that no read is left waiting when the body goes.
-    async fn send_request_expecting_continue(&mut self, head: &[u8], body: &[u8], expect: &ExpectWait<'_, S>) -> std::result::Result<(), Failure> {
+    async fn send_request_expecting_continue(
+        &mut self,
+        head: &[u8],
+        body: &[u8],
+        expect: &ExpectWait<'_, S>,
+    ) -> std::result::Result<(), Failure> {
         fn failure(e: io::Error) -> Failure {
             let error = Error::Io(e);
-            Failure { peer_closed: is_peer_close(&error), error }
+            Failure {
+                peer_closed: is_peer_close(&error),
+                error,
+            }
         }
         {
             let conn = self.conn.as_mut().expect("a connection");
             conn.write_all(head).await.map_err(failure)?;
             conn.flush().await.map_err(failure)?;
             let deadline = expect.opts.deadline;
-            let left = deadline.map_or(expect.wait, |d| expect.wait.min(d.saturating_duration_since(Instant::now())));
-            (expect.limit)(conn.transport_mut(), ConnectOptions { timeout: left.max(Duration::from_millis(1)), ..expect.opts });
+            let left = deadline.map_or(expect.wait, |d| {
+                expect.wait.min(d.saturating_duration_since(Instant::now()))
+            });
+            (expect.limit)(
+                conn.transport_mut(),
+                ConnectOptions {
+                    timeout: left.max(Duration::from_millis(1)),
+                    ..expect.opts
+                },
+            );
         }
         let heard = poll_fn(|cx| self.poll_word(cx, expect.opts.deadline)).await;
         if let Some(conn) = self.conn.as_mut() {
@@ -781,7 +974,11 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
 
     /// Reads during the wait for a go-ahead: until a `100 Continue`, the head of an answer, or a read that times out before
     /// the request's deadline (the end of the wait, which is not an error).
-    fn poll_word(&mut self, cx: &mut Context<'_>, deadline: Option<Instant>) -> Poll<std::result::Result<(), Failure>> {
+    fn poll_word(
+        &mut self,
+        cx: &mut Context<'_>,
+        deadline: Option<Instant>,
+    ) -> Poll<std::result::Result<(), Failure>> {
         if self.scratch.is_empty() {
             self.scratch = vec![0u8; SCRATCH];
         }
@@ -792,12 +989,19 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(0)) => match self.parser.finish_eof(&mut self.pending) {
                     Err(e) => Err(e),
-                    Ok(()) => Err(Error::Http("the connection was closed before the response".into())),
+                    Ok(()) => Err(Error::Http(
+                        "the connection was closed before the response".into(),
+                    )),
                 },
                 Poll::Ready(Ok(n)) => self.parser.feed(&self.scratch[..n], &mut self.pending),
                 Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::Interrupted => Ok(()),
                 // no word in time (and the request's own time is not up): the body goes
-                Poll::Ready(Err(e)) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) && !deadline.is_some_and(|d| Instant::now() >= d) => {
+                Poll::Ready(Err(e))
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) && !deadline.is_some_and(|d| Instant::now() >= d) =>
+                {
                     return Poll::Ready(Ok(()));
                 }
                 Poll::Ready(Err(e)) => Err(Error::Io(e)),
@@ -828,7 +1032,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(0)) => match self.parser.finish_eof(&mut self.pending) {
                     Err(e) => Err(e),
-                    Ok(()) => Err(Error::Http("the response ended before its headers were complete".into())),
+                    Ok(()) => Err(Error::Http(
+                        "the response ended before its headers were complete".into(),
+                    )),
                 },
                 Poll::Ready(Ok(n)) => self.parser.feed(&self.scratch[..n], &mut self.pending),
                 Poll::Ready(Err(e)) if e.kind() == io::ErrorKind::Interrupted => Ok(()),
@@ -858,7 +1064,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
     /// The message has been read to its end: the connection goes back to the pool if it can be used
     /// again and is closed otherwise. Pending only while the TLS layer has something to send first.
     fn poll_complete(&mut self, cx: &mut Context<'_>) -> Poll<()> {
-        let Some(conn) = self.conn.as_mut() else { return Poll::Ready(()) };
+        let Some(conn) = self.conn.as_mut() else {
+            return Poll::Ready(());
+        };
         let keep = match &self.home {
             Some(home) => self.parser.reusable() && home.policy.parks(),
             None => false,
@@ -868,7 +1076,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(true) => {
                     if let (Some(conn), Some(home)) = (self.conn.take(), self.home.take()) {
-                        home.pool.put(home.key, conn, home.policy.idle_timeout, &home.policy, Instant::now());
+                        home.pool.put(
+                            home.key,
+                            conn,
+                            home.policy.idle_timeout,
+                            &home.policy,
+                            Instant::now(),
+                        );
                         if let Some(slots) = &home.slots {
                             slots.poke();
                         }
@@ -899,7 +1113,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
             return Poll::Ready(Ok(0));
         }
         if self.failed {
-            return Poll::Ready(Err(Error::Http("the response failed earlier and cannot be read further".into())));
+            return Poll::Ready(Err(Error::Http(
+                "the response failed earlier and cannot be read further".into(),
+            )));
         }
         loop {
             if self.pos < self.pending.len() {
@@ -915,7 +1131,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncBody<S> {
                 return Poll::Ready(Ok(0));
             }
             let window = self.parser.direct_window();
-            let Some(conn) = self.conn.as_mut() else { return Poll::Ready(Ok(0)) };
+            let Some(conn) = self.conn.as_mut() else {
+                return Poll::Ready(Ok(0));
+            };
             if window > 0 {
                 // body bytes that need no parsing go straight to the caller
                 let want = window.min(out.len());
@@ -1019,7 +1237,12 @@ pub struct AsyncResponseStream<S = ThreadedStream> {
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncResponseStream<S> {
-    fn new(head: Head, url: Url, body: AsyncBody<S>, tls_version: Option<crate::tls::TlsVersion>) -> AsyncResponseStream<S> {
+    fn new(
+        head: Head,
+        url: Url,
+        body: AsyncBody<S>,
+        tls_version: Option<crate::tls::TlsVersion>,
+    ) -> AsyncResponseStream<S> {
         AsyncResponseStream {
             status: head.status,
             reason: head.reason,
@@ -1057,7 +1280,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncResponseStream<S> 
 
     /// Reads up to `out.len()` bytes of the body as the caller gets it (decoded, if it is): 0 is the end.
     fn poll_read_some(&mut self, cx: &mut Context<'_>, out: &mut [u8]) -> Poll<Result<usize>> {
-        let Some(f) = self.in_flight.as_mut() else { return self.poll_read_plain(cx, out) };
+        let Some(f) = self.in_flight.as_mut() else {
+            return self.poll_read_plain(cx, out);
+        };
         if f.cancelled() {
             self.in_flight = None;
             return Poll::Ready(Err(Error::Cancelled));
@@ -1086,7 +1311,9 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncResponseStream<S> 
     }
 
     fn poll_read_plain(&mut self, cx: &mut Context<'_>, out: &mut [u8]) -> Poll<Result<usize>> {
-        let Some(decoder) = self.decoder.as_mut() else { return self.body.poll_read_body(cx, out) };
+        let Some(decoder) = self.decoder.as_mut() else {
+            return self.body.poll_read_body(cx, out);
+        };
         loop {
             match decoder.next(out).map_err(Error::Decode)? {
                 Next::Data(n) => return Poll::Ready(Ok(n)),
@@ -1105,12 +1332,18 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncResponseStream<S> 
 
     /// First header with this (case-insensitive) name.
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     /// All headers with this (case-insensitive) name.
     pub fn headers_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
-        self.headers.iter().filter(move |(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .filter(move |(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn is_success(&self) -> bool {
@@ -1140,7 +1373,16 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncResponseStream<S> 
                 Err(e) => return Err(e),
             }
         }
-        Ok(Response { status: self.status, reason: self.reason, version: self.version, headers: self.headers, body, url: self.url, tls_version: self.tls_version, uncompressed: self.uncompressed })
+        Ok(Response {
+            status: self.status,
+            reason: self.reason,
+            version: self.version,
+            headers: self.headers,
+            body,
+            url: self.url,
+            tls_version: self.tls_version,
+            uncompressed: self.uncompressed,
+        })
     }
 
     /// Reads the rest of the body into `sink`; returns how many bytes it was.
@@ -1164,13 +1406,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncResponseStream<S> 
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin + Send + 'static> AsyncRead for AsyncResponseStream<S> {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         self.poll_read_some(cx, buf).map_err(to_io)
     }
 }
 
 impl<S> std::fmt::Debug for AsyncResponseStream<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AsyncResponseStream").field("status", &self.status).field("url", &self.url.to_string()).field("content_length", &self.content_length).finish_non_exhaustive()
+        f.debug_struct("AsyncResponseStream")
+            .field("status", &self.status)
+            .field("url", &self.url.to_string())
+            .field("content_length", &self.content_length)
+            .finish_non_exhaustive()
     }
 }

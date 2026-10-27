@@ -84,10 +84,22 @@ fn a_sleep_polled_with_a_new_waker_wakes_the_new_one_and_can_be_moved() {
     let first = Arc::new(Counter(AtomicUsize::new(0)));
     let second = Arc::new(Counter(AtomicUsize::new(0)));
     let mut s = Box::pin(sleep(Duration::from_millis(40)));
-    assert!(s.as_mut().poll(&mut Context::from_waker(&Waker::from(first.clone()))).is_pending());
-    assert!(s.as_mut().poll(&mut Context::from_waker(&Waker::from(second.clone()))).is_pending());
+    assert!(s
+        .as_mut()
+        .poll(&mut Context::from_waker(&Waker::from(first.clone())))
+        .is_pending());
+    assert!(s
+        .as_mut()
+        .poll(&mut Context::from_waker(&Waker::from(second.clone())))
+        .is_pending());
     thread::sleep(Duration::from_millis(40) + SLACK);
-    assert_eq!((first.0.load(Ordering::SeqCst), second.0.load(Ordering::SeqCst)), (0, 1));
+    assert_eq!(
+        (
+            first.0.load(Ordering::SeqCst),
+            second.0.load(Ordering::SeqCst)
+        ),
+        (0, 1)
+    );
     // moved later, then sooner
     let mut s = Box::pin(sleep(Duration::from_secs(60)));
     let w = Waker::from(first.clone());
@@ -100,18 +112,36 @@ fn a_sleep_polled_with_a_new_waker_wakes_the_new_one_and_can_be_moved() {
 
 #[test]
 fn timeout_gives_the_output_or_elapsed() {
-    assert_eq!(block_on(timeout(Duration::from_secs(5), async { 7 })), Ok(7));
+    assert_eq!(
+        block_on(timeout(Duration::from_secs(5), async { 7 })),
+        Ok(7)
+    );
     let t0 = Instant::now();
-    assert_eq!(block_on(timeout(Duration::from_millis(60), std::future::pending::<()>())), Err(Elapsed(())));
+    assert_eq!(
+        block_on(timeout(
+            Duration::from_millis(60),
+            std::future::pending::<()>()
+        )),
+        Err(Elapsed(()))
+    );
     let took = t0.elapsed();
-    assert!(took >= Duration::from_millis(60) && took < Duration::from_millis(60) + SLACK, "{took:?}");
+    assert!(
+        took >= Duration::from_millis(60) && took < Duration::from_millis(60) + SLACK,
+        "{took:?}"
+    );
     // a future that finishes before the limit wins, even a slow one
     let r = block_on(timeout(Duration::from_millis(500), async {
         sleep(Duration::from_millis(50)).await;
         "done"
     }));
     assert_eq!(r, Ok("done"));
-    assert_eq!(block_on(timeout_at(Instant::now() + Duration::from_millis(30), sleep(Duration::from_secs(60)))), Err(Elapsed(())));
+    assert_eq!(
+        block_on(timeout_at(
+            Instant::now() + Duration::from_millis(30),
+            sleep(Duration::from_secs(60))
+        )),
+        Err(Elapsed(()))
+    );
     let e: io::Error = Elapsed(()).into();
     assert_eq!(e.kind(), io::ErrorKind::TimedOut);
 }
@@ -163,7 +193,11 @@ impl Slow {
 }
 
 impl AsyncRead for Slow {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         match self.poll_tick(cx) {
             Poll::Ready(()) => {
                 buf[0] = b'x';
@@ -175,7 +209,11 @@ impl AsyncRead for Slow {
 }
 
 impl AsyncWrite for Slow {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         match self.poll_tick(cx) {
             Poll::Ready(()) => {
                 self.written += buf.len();
@@ -193,7 +231,12 @@ impl AsyncWrite for Slow {
 }
 
 fn slow(every_ms: u64, stuck: bool) -> Slow {
-    Slow { every: Duration::from_millis(every_ms), stuck, timer: None, written: 0 }
+    Slow {
+        every: Duration::from_millis(every_ms),
+        stuck,
+        timer: None,
+        written: 0,
+    }
 }
 
 #[test]
@@ -203,7 +246,10 @@ fn a_read_that_waits_too_long_times_out_and_one_that_keeps_moving_does_not() {
     let e = block_on(s.read(&mut [0u8; 4])).unwrap_err();
     assert_eq!(e.kind(), io::ErrorKind::TimedOut);
     assert!(e.to_string().contains("read"), "{e}");
-    assert!(t0.elapsed() >= Duration::from_millis(80) && t0.elapsed() < Duration::from_millis(80) + SLACK);
+    assert!(
+        t0.elapsed() >= Duration::from_millis(80)
+            && t0.elapsed() < Duration::from_millis(80) + SLACK
+    );
     // a byte every 20 ms for 400 ms: each read waits far less than the limit, so the whole goes through
     let mut s = Timed::new(slow(20, false)).with_read_timeout(Duration::from_millis(150));
     let mut got = Vec::new();
@@ -218,7 +264,9 @@ fn a_read_that_waits_too_long_times_out_and_one_that_keeps_moving_does_not() {
 
 #[test]
 fn the_deadline_ends_a_stream_that_keeps_moving() {
-    let mut s = Timed::new(slow(20, false)).with_read_timeout(Duration::from_secs(10)).with_deadline(Instant::now() + Duration::from_millis(200));
+    let mut s = Timed::new(slow(20, false))
+        .with_read_timeout(Duration::from_secs(10))
+        .with_deadline(Instant::now() + Duration::from_millis(200));
     let t0 = Instant::now();
     let e = block_on(async {
         let mut b = [0u8; 1];
@@ -231,14 +279,24 @@ fn the_deadline_ends_a_stream_that_keeps_moving() {
     .unwrap_err();
     assert_eq!(e.kind(), io::ErrorKind::TimedOut);
     assert!(e.to_string().contains("total time limit"), "{e}");
-    assert!(t0.elapsed() >= Duration::from_millis(180) && t0.elapsed() < Duration::from_millis(200) + SLACK, "{:?}", t0.elapsed());
+    assert!(
+        t0.elapsed() >= Duration::from_millis(180)
+            && t0.elapsed() < Duration::from_millis(200) + SLACK,
+        "{:?}",
+        t0.elapsed()
+    );
     // and past it nothing starts
-    assert_eq!(block_on(s.read(&mut [0u8; 1])).unwrap_err().kind(), io::ErrorKind::TimedOut);
+    assert_eq!(
+        block_on(s.read(&mut [0u8; 1])).unwrap_err().kind(),
+        io::ErrorKind::TimedOut
+    );
 }
 
 #[test]
 fn writes_flushes_and_closes_have_their_own_limit() {
-    let mut s = Timed::new(slow(0, true)).with_write_timeout(Duration::from_millis(60)).with_read_timeout(Duration::from_secs(60));
+    let mut s = Timed::new(slow(0, true))
+        .with_write_timeout(Duration::from_millis(60))
+        .with_read_timeout(Duration::from_secs(60));
     let e = block_on(s.write_all(b"hello")).unwrap_err();
     assert_eq!(e.kind(), io::ErrorKind::TimedOut);
     assert!(e.to_string().contains("write"), "{e}");
@@ -260,7 +318,13 @@ fn without_limits_it_is_the_stream_as_it_is_and_limits_can_be_changed() {
     assert_eq!(block_on(s.read(&mut b)).unwrap(), 1);
     // a stuck stream with no limit is still waiting after a while; with a limit set, it fails
     let mut s = Timed::new(slow(0, true));
-    assert!(block_on(timeout(Duration::from_millis(100), s.read(&mut b))).is_err(), "no limit, no error: the outer timeout ends it");
+    assert!(
+        block_on(timeout(Duration::from_millis(100), s.read(&mut b))).is_err(),
+        "no limit, no error: the outer timeout ends it"
+    );
     s.set_limits(Some(Duration::from_millis(50)), None, None);
-    assert_eq!(block_on(s.read(&mut b)).unwrap_err().kind(), io::ErrorKind::TimedOut);
+    assert_eq!(
+        block_on(s.read(&mut b)).unwrap_err().kind(),
+        io::ErrorKind::TimedOut
+    );
 }

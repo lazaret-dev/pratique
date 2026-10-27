@@ -86,8 +86,13 @@ fn parse_item(item: &str) -> Option<Alternative> {
     let (host, port) = split_authority(&unquote(authority)?)?;
     let mut max_age = DEFAULT_MAX_AGE;
     for p in parts {
-        let Some((name, val)) = p.trim_matches(|c| c == ' ' || c == '\t').split_once('=') else { continue };
-        if name.trim_matches(|c| c == ' ' || c == '\t').eq_ignore_ascii_case("ma") {
+        let Some((name, val)) = p.trim_matches(|c| c == ' ' || c == '\t').split_once('=') else {
+            continue;
+        };
+        if name
+            .trim_matches(|c| c == ' ' || c == '\t')
+            .eq_ignore_ascii_case("ma")
+        {
             let val = unquote(val.trim_matches(|c| c == ' ' || c == '\t'))?;
             // (a number of seconds and nothing else: a value that is not is a value that is wrong)
             if val.is_empty() || !val.bytes().all(|c| c.is_ascii_digit()) {
@@ -96,7 +101,11 @@ fn parse_item(item: &str) -> Option<Alternative> {
             max_age = val.parse::<u64>().unwrap_or(u64::MAX).min(MAX_AGE_LIMIT);
         }
     }
-    Some(Alternative { host, port, max_age: Duration::from_secs(max_age) })
+    Some(Alternative {
+        host,
+        port,
+        max_age: Duration::from_secs(max_age),
+    })
 }
 
 /// The text of a quoted string without its quotes, or of a token as it is.
@@ -135,7 +144,13 @@ fn split_authority(a: &str) -> Option<(Option<String>, u16)> {
         }
         None => {
             // a name or an IPv4 address: letters, digits, hyphens and dots
-            if host.len() > 253 || !host.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'.' || c == b'_') || host.starts_with('.') || host.ends_with("..") {
+            if host.len() > 253
+                || !host
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'.' || c == b'_')
+                || host.starts_with('.')
+                || host.ends_with("..")
+            {
                 return None;
             }
             host.to_ascii_lowercase()
@@ -176,7 +191,9 @@ fn percent_decode(s: &str) -> Option<Vec<u8>> {
 pub(crate) fn check(value: &str) {
     let p = parse(value);
     match &p {
-        Parsed::Clear => assert!(value.trim_matches(|c| c == ' ' || c == '\t').eq_ignore_ascii_case("clear")),
+        Parsed::Clear => assert!(value
+            .trim_matches(|c| c == ' ' || c == '\t')
+            .eq_ignore_ascii_case("clear")),
         Parsed::H3(None) => {}
         Parsed::H3(Some(a)) => {
             assert!(a.port != 0);
@@ -184,8 +201,17 @@ pub(crate) fn check(value: &str) {
             let host = match &a.host {
                 Some(h) => {
                     assert!(!h.is_empty() && h.len() <= 253, "{h:?}");
-                    assert!(h.bytes().all(|c| c.is_ascii_alphanumeric() || b"-._:".contains(&c)) && *h == h.to_ascii_lowercase(), "{h:?}");
-                    if h.contains(':') { format!("[{h}]") } else { h.clone() }
+                    assert!(
+                        h.bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b"-._:".contains(&c))
+                            && *h == h.to_ascii_lowercase(),
+                        "{h:?}"
+                    );
+                    if h.contains(':') {
+                        format!("[{h}]")
+                    } else {
+                        h.clone()
+                    }
                 }
                 None => String::new(),
             };
@@ -194,7 +220,11 @@ pub(crate) fn check(value: &str) {
         }
     }
     if p != Parsed::Clear {
-        assert_eq!(parse(&format!("x=\"y\", {value}")), p, "something of another protocol in front changed the reading of {value:?}");
+        assert_eq!(
+            parse(&format!("x=\"y\", {value}")),
+            p,
+            "something of another protocol in front changed the reading of {value:?}"
+        );
     }
 }
 
@@ -203,21 +233,37 @@ mod tests {
     use super::*;
 
     fn h3(host: Option<&str>, port: u16, secs: u64) -> Parsed {
-        Parsed::H3(Some(Alternative { host: host.map(str::to_string), port, max_age: Duration::from_secs(secs) }))
+        Parsed::H3(Some(Alternative {
+            host: host.map(str::to_string),
+            port,
+            max_age: Duration::from_secs(secs),
+        }))
     }
 
     #[test]
     fn the_usual_forms() {
         assert_eq!(parse(r#"h3=":443"; ma=2592000"#), h3(None, 443, 2592000));
         assert_eq!(parse(r#"h3=":443""#), h3(None, 443, DEFAULT_MAX_AGE));
-        assert_eq!(parse(r#"h3-29=":443"; ma=86400, h3=":8443"; ma=60; persist=1"#), h3(None, 8443, 60));
-        assert_eq!(parse(r#"h3="alt.Example.com:8443";ma=10"#), h3(Some("alt.example.com"), 8443, 10));
-        assert_eq!(parse(r#"h3="[2001:db8::1]:443""#), h3(Some("2001:db8::1"), 443, DEFAULT_MAX_AGE));
+        assert_eq!(
+            parse(r#"h3-29=":443"; ma=86400, h3=":8443"; ma=60; persist=1"#),
+            h3(None, 8443, 60)
+        );
+        assert_eq!(
+            parse(r#"h3="alt.Example.com:8443";ma=10"#),
+            h3(Some("alt.example.com"), 8443, 10)
+        );
+        assert_eq!(
+            parse(r#"h3="[2001:db8::1]:443""#),
+            h3(Some("2001:db8::1"), 443, DEFAULT_MAX_AGE)
+        );
         assert_eq!(parse(r#"  h3=":443"  ;  MA=5 "#), h3(None, 443, 5));
         // (a protocol id is case-sensitive, like the ALPN id it is)
         assert_eq!(parse(r#"H3=":443""#), Parsed::H3(None));
         // (what the big sites say)
-        assert_eq!(parse(r#"h3=":443"; ma=2592000,h3-29=":443"; ma=2592000,h3-Q050=":443"; ma=2592000"#), h3(None, 443, 2592000));
+        assert_eq!(
+            parse(r#"h3=":443"; ma=2592000,h3-29=":443"; ma=2592000,h3-Q050=":443"; ma=2592000"#),
+            h3(None, 443, 2592000)
+        );
     }
 
     #[test]
@@ -237,14 +283,26 @@ mod tests {
     fn a_lifetime_is_a_number_and_is_bounded() {
         assert_eq!(parse(r#"h3=":443"; ma=0"#), h3(None, 443, 0));
         assert_eq!(parse(r#"h3=":443"; ma="120""#), h3(None, 443, 120));
-        assert_eq!(parse(r#"h3=":443"; ma=99999999999999999999999"#), h3(None, 443, MAX_AGE_LIMIT));
-        assert_eq!(parse(r#"h3=":443"; ma=31536000"#), h3(None, 443, MAX_AGE_LIMIT));
+        assert_eq!(
+            parse(r#"h3=":443"; ma=99999999999999999999999"#),
+            h3(None, 443, MAX_AGE_LIMIT)
+        );
+        assert_eq!(
+            parse(r#"h3=":443"; ma=31536000"#),
+            h3(None, 443, MAX_AGE_LIMIT)
+        );
         // a lifetime that is not a number spoils the alternative, and the next one is looked at
-        assert_eq!(parse(r#"h3=":443"; ma=-1, h3=":444""#), h3(None, 444, DEFAULT_MAX_AGE));
+        assert_eq!(
+            parse(r#"h3=":443"; ma=-1, h3=":444""#),
+            h3(None, 444, DEFAULT_MAX_AGE)
+        );
         assert_eq!(parse(r#"h3=":443"; ma=1.5"#), Parsed::H3(None));
         assert_eq!(parse(r#"h3=":443"; ma="#), Parsed::H3(None));
         // other parameters are no business of ours
-        assert_eq!(parse(r#"h3=":443"; foo; bar=baz; ma=7; persist=1"#), h3(None, 443, 7));
+        assert_eq!(
+            parse(r#"h3=":443"; foo; bar=baz; ma=7; persist=1"#),
+            h3(None, 443, 7)
+        );
     }
 
     #[test]
@@ -271,23 +329,44 @@ mod tests {
             assert_eq!(parse(bad), Parsed::H3(None), "{bad}");
         }
         // (and the next one that is good is the one)
-        assert_eq!(parse(r#"h3="a/b:443", h3=":444""#), h3(None, 444, DEFAULT_MAX_AGE));
+        assert_eq!(
+            parse(r#"h3="a/b:443", h3=":444""#),
+            h3(None, 444, DEFAULT_MAX_AGE)
+        );
     }
 
     #[test]
     fn an_address_in_brackets_is_one_and_is_written_in_lower_case() {
         // (found by the fuzzer: the case was kept, and anything of hexadecimal digits and colons was taken for an address)
-        assert_eq!(parse(r#"h3="[2001:DB8::1]:443""#), h3(Some("2001:db8::1"), 443, DEFAULT_MAX_AGE));
-        assert_eq!(parse(r#"h3="[2001:0db8:0:0:0:0:0:1]:443""#), h3(Some("2001:db8::1"), 443, DEFAULT_MAX_AGE));
-        assert_eq!(parse(r#"h3="[::ffff:1.2.3.4]:443""#), h3(Some("::ffff:1.2.3.4"), 443, DEFAULT_MAX_AGE));
-        for bad in [r#"h3="[B0:12d18:3b]:443""#, r#"h3="[2001:db8:::1]:443""#, r#"h3="[1:2:3:4:5:6:7:8:9]:443""#, r#"h3="[fe80::1%eth0]:443""#, r#"h3="[::1]]:443""#] {
+        assert_eq!(
+            parse(r#"h3="[2001:DB8::1]:443""#),
+            h3(Some("2001:db8::1"), 443, DEFAULT_MAX_AGE)
+        );
+        assert_eq!(
+            parse(r#"h3="[2001:0db8:0:0:0:0:0:1]:443""#),
+            h3(Some("2001:db8::1"), 443, DEFAULT_MAX_AGE)
+        );
+        assert_eq!(
+            parse(r#"h3="[::ffff:1.2.3.4]:443""#),
+            h3(Some("::ffff:1.2.3.4"), 443, DEFAULT_MAX_AGE)
+        );
+        for bad in [
+            r#"h3="[B0:12d18:3b]:443""#,
+            r#"h3="[2001:db8:::1]:443""#,
+            r#"h3="[1:2:3:4:5:6:7:8:9]:443""#,
+            r#"h3="[fe80::1%eth0]:443""#,
+            r#"h3="[::1]]:443""#,
+        ] {
             assert_eq!(parse(bad), Parsed::H3(None), "{bad}");
         }
     }
 
     #[test]
     fn commas_and_semicolons_in_a_quoted_string_are_part_of_it() {
-        assert_eq!(parse(r#"h3="a,b:443", h3=":9""#), h3(None, 9, DEFAULT_MAX_AGE));
+        assert_eq!(
+            parse(r#"h3="a,b:443", h3=":9""#),
+            h3(None, 9, DEFAULT_MAX_AGE)
+        );
         assert_eq!(parse(r#"h3="a;b:443"; ma=3"#), Parsed::H3(None));
         assert_eq!(parse(r#"h3=":1\5"; ma=3"#), h3(None, 15, 3));
         assert_eq!(parse(r#"h3="\:443"; ma=3"#), h3(None, 443, 3));

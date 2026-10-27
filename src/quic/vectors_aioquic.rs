@@ -4,7 +4,16 @@
 
 /// (cipher suite id, traffic secret, the packet before protection without its tag, where the packet number is, its length, the
 /// packet number, the packet as aioquic protected it, the same under the next generation of keys)
-pub type AioquicVector = (u16, &'static str, &'static str, usize, usize, u64, &'static str, &'static str);
+pub type AioquicVector = (
+    u16,
+    &'static str,
+    &'static str,
+    usize,
+    usize,
+    u64,
+    &'static str,
+    &'static str,
+);
 
 pub const AIOQUIC: &[AioquicVector] = &[
     (0x1301, "8d97cc4f300b2e399391e2d3c274044cbbcfbc96c08c974d1b6f50859fff7607", "60d8a4b97d5884200a", 5, 1, 253901656, "75d8a4b97db6c2c1c846b079c310970fe43a53e0a1b73ddfb1", "7bd8a4b97da34e5bdc3471288b91dc271a35a98a3ffac1ee75"),

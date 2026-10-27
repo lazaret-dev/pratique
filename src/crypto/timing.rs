@@ -52,11 +52,11 @@
 //! it runs on. (The table-based AES this library used to have, backlog B-20, was such a case on
 //! some machines and flagged reproducibly on others; its replacement has no tables at all.)
 
+use super::aes::Backend;
 use super::chacha20poly1305::ChaCha20Poly1305;
 use super::dit::{held_off, Dit};
 use super::ecdh;
 use super::ecdsa::Curve;
-use super::aes::Backend;
 use super::gcm::AesGcm;
 use super::ghash::GhashKey;
 use super::hmac::Hmac;
@@ -115,13 +115,19 @@ impl Report {
     fn label(&self, index: usize) -> String {
         match index {
             0 => "uncropped".to_string(),
-            i => self.crops.get(i - 1).map_or("?".to_string(), |(p, _)| format!("p{:.1}", p * 100.0)),
+            i => self
+                .crops
+                .get(i - 1)
+                .map_or("?".to_string(), |(p, _)| format!("p{:.1}", p * 100.0)),
         }
     }
 
     /// The difference per call and its standard error at the crop level that keeps `p` of the samples (1.0: uncropped).
     fn per_call_at(&self, p: f64) -> (f64, f64) {
-        self.per_call.iter().find(|c| (c.0 - p).abs() < 1e-9).map_or((f64::NAN, f64::NAN), |c| (c.1, c.2))
+        self.per_call
+            .iter()
+            .find(|c| (c.0 - p).abs() < 1e-9)
+            .map_or((f64::NAN, f64::NAN), |c| (c.1, c.2))
     }
 
     fn verdict(&self) -> &'static str {
@@ -134,7 +140,11 @@ impl Report {
         }
     }
     fn print(&self) {
-        let batch = if self.reps > 1 { format!(" x{}", self.reps) } else { String::new() };
+        let batch = if self.reps > 1 {
+            format!(" x{}", self.reps)
+        } else {
+            String::new()
+        };
         println!(
             "{:<58} n={:>7}{:<5} median {:>7} ns  |t| uncropped {:>6.1}  max {:>6.1}  {}",
             self.name,
@@ -146,7 +156,11 @@ impl Report {
             self.verdict()
         );
         if self.max_t > SUSPICIOUS_T {
-            let crops: Vec<String> = self.crops.iter().map(|(p, t)| format!("p{:.1}:{:.1}", p * 100.0, t)).collect();
+            let crops: Vec<String> = self
+                .crops
+                .iter()
+                .map(|(p, t)| format!("p{:.1}:{:.1}", p * 100.0, t))
+                .collect();
             println!("    t by crop level: {}", crops.join("  "));
         }
     }
@@ -240,9 +254,16 @@ impl Clock {
     fn new() -> Clock {
         let tick = TICK_OVERRIDE
             .with(|t| t.get())
-            .or_else(|| std::env::var("PRATIQUE_TIMING_TICK_NS").ok().and_then(|v| v.trim().parse::<u64>().ok()))
+            .or_else(|| {
+                std::env::var("PRATIQUE_TIMING_TICK_NS")
+                    .ok()
+                    .and_then(|v| v.trim().parse::<u64>().ok())
+            })
             .unwrap_or(0);
-        Clock { epoch: Instant::now(), tick }
+        Clock {
+            epoch: Instant::now(),
+            tick,
+        }
     }
 
     #[inline]
@@ -296,7 +317,11 @@ fn reps_for(cost_ns: f64, tick_ns: u64) -> usize {
     if tick_ns <= 1 {
         return 1;
     }
-    let ticks: f64 = std::env::var("PRATIQUE_TIMING_TICKS").ok().and_then(|v| v.trim().parse().ok()).filter(|&t: &f64| t >= 1.0).unwrap_or(TICKS_PER_SAMPLE);
+    let ticks: f64 = std::env::var("PRATIQUE_TIMING_TICKS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .filter(|&t: &f64| t >= 1.0)
+        .unwrap_or(TICKS_PER_SAMPLE);
     let want = ticks * tick_ns as f64 / cost_ns.max(1.0);
     (want.ceil() as usize).clamp(1, 4096)
 }
@@ -304,7 +329,9 @@ fn reps_for(cost_ns: f64, tick_ns: u64) -> usize {
 /// The time budget from the text of `PRATIQUE_TIMING_SECS` (`None` if it is not set): seconds, 0 or more
 /// (0 is the shortest run, one measured batch). Anything else is an `Err` saying so.
 fn parse_budget(value: Option<&str>) -> Result<Duration, String> {
-    let Some(text) = value else { return Ok(Duration::from_secs_f64(DEFAULT_SECS)) };
+    let Some(text) = value else {
+        return Ok(Duration::from_secs_f64(DEFAULT_SECS));
+    };
     text.trim()
         .parse::<f64>()
         .ok()
@@ -325,7 +352,12 @@ fn budget() -> Duration {
 
 /// Times `op` on inputs from `gen(rng, class)` for `budget` and returns the statistics.
 /// `gen` runs outside the timed region; `op`'s result is passed through `black_box`.
-pub(crate) fn measure<I, R>(name: &str, budget: Duration, gen: impl FnMut(&mut Rng, bool) -> I, op: impl Fn(&I) -> R) -> Report {
+pub(crate) fn measure<I, R>(
+    name: &str,
+    budget: Duration,
+    gen: impl FnMut(&mut Rng, bool) -> I,
+    op: impl Fn(&I) -> R,
+) -> Report {
     measure_seeded(name, budget, 0, gen, op)
 }
 
@@ -338,11 +370,19 @@ fn measure_seeded<I, R>(
     op: impl Fn(&I) -> R,
 ) -> Report {
     const BATCH_BLOCKS: usize = 64;
-    let mut rng = Rng::new(0xd0de_c7 ^ name.len() as u64 ^ seed.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+    let mut rng =
+        Rng::new(0xd0de_c7 ^ name.len() as u64 ^ seed.wrapping_mul(0x9e37_79b9_7f4a_7c15));
     let clock = Clock::new();
-    let forced: Option<usize> = std::env::var("PRATIQUE_TIMING_REPS").ok().and_then(|v| v.trim().parse().ok()).filter(|&n| n >= 1);
+    let forced: Option<usize> = std::env::var("PRATIQUE_TIMING_REPS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .filter(|&n| n >= 1);
     // on a coarse clock, several calls of one class make a sample; how many is found by timing a few calls together
-    let reps = match if forced.is_some() { None } else { clock.coarse_tick() } {
+    let reps = match if forced.is_some() {
+        None
+    } else {
+        clock.coarse_tick()
+    } {
         None => forced.unwrap_or(1),
         Some(tick) => {
             let probe: Vec<I> = (0..64).map(|i| gen(&mut rng, i % 2 == 0)).collect();
@@ -380,7 +420,10 @@ fn measure_seeded<I, R>(
             classes.extend(block);
         }
         // `reps` inputs of the class of each sample
-        let inputs: Vec<Vec<I>> = classes.iter().map(|&c| (0..reps).map(|_| gen(&mut rng, c)).collect()).collect();
+        let inputs: Vec<Vec<I>> = classes
+            .iter()
+            .map(|&c| (0..reps).map(|_| gen(&mut rng, c)).collect())
+            .collect();
         for (&class, group) in classes.iter().zip(&inputs) {
             let t0 = clock.now();
             for input in group {
@@ -396,7 +439,13 @@ fn measure_seeded<I, R>(
     }
     let mut sorted: Vec<u32> = samples.iter().map(|s| s.0).collect();
     sorted.sort_unstable();
-    let pct = |p: f64| if sorted.is_empty() { 0 } else { sorted[(((sorted.len() - 1) as f64) * p) as usize] };
+    let pct = |p: f64| {
+        if sorted.is_empty() {
+            0
+        } else {
+            sorted[(((sorted.len() - 1) as f64) * p) as usize]
+        }
+    };
     let uncropped_t = paired_t(&samples, u32::MAX);
     // dudect also crops the slow tail: interrupts and preemption add large, class-independent noise
     let mut max_t = uncropped_t.abs();
@@ -413,7 +462,16 @@ fn measure_seeded<I, R>(
             (p, m / reps as f64, se / reps as f64)
         })
         .collect();
-    Report { name: name.to_string(), samples: samples.len(), reps, uncropped_t, max_t, median_ns: pct(0.5) / reps as u32, crops, per_call }
+    Report {
+        name: name.to_string(),
+        samples: samples.len(),
+        reps,
+        uncropped_t,
+        max_t,
+        median_ns: pct(0.5) / reps as u32,
+        crops,
+        per_call,
+    }
 }
 
 thread_local! {
@@ -435,7 +493,10 @@ thread_local! {
 /// its sign is a coin toss. A real difference in running time keeps its direction and its size.
 fn judge(first: &Report, again: &Report) -> Option<String> {
     if first.max_t > LEAK_T && again.max_t > LEAK_T {
-        return Some(format!("{}: |t| = {:.1} and {:.1} on two runs", first.name, first.max_t, again.max_t));
+        return Some(format!(
+            "{}: |t| = {:.1} and {:.1} on two runs",
+            first.name, first.max_t, again.max_t
+        ));
     }
     let (at, t) = first.peak();
     if t.abs() <= SUSPICIOUS_T {
@@ -443,7 +504,13 @@ fn judge(first: &Report, again: &Report) -> Option<String> {
     }
     let repeat = again.statistics().nth(at)?;
     (repeat.abs() > SUSPICIOUS_T && repeat.signum() == t.signum()).then(|| {
-        format!("{}: t = {:+.1} at {} and {:+.1} at the same statistic on a repeat with fresh inputs", first.name, t, first.label(at), repeat)
+        format!(
+            "{}: t = {:+.1} at {} and {:+.1} at the same statistic on a repeat with fresh inputs",
+            first.name,
+            t,
+            first.label(at),
+            repeat
+        )
     })
 }
 
@@ -454,13 +521,20 @@ fn judge(first: &Report, again: &Report) -> Option<String> {
 /// does reach a t value above [`SUSPICIOUS_T`] its sign is as likely to be one as the other. The first
 /// flagged run is printed too, so nothing is hidden. A failure does not stop the remaining rows from
 /// running; call [`finish`] at the end of the test to fail it.
-fn expect_constant_time<I, R>(name: &str, mut gen: impl FnMut(&mut Rng, bool) -> I, op: impl Fn(&I) -> R) {
+fn expect_constant_time<I, R>(
+    name: &str,
+    mut gen: impl FnMut(&mut Rng, bool) -> I,
+    op: impl Fn(&I) -> R,
+) {
     let r = measure(name, budget(), &mut gen, &op);
     r.print();
     if r.max_t <= SUSPICIOUS_T {
         return;
     }
-    println!("    above {SUSPICIOUS_T}; measuring {:?} again with fresh inputs", name);
+    println!(
+        "    above {SUSPICIOUS_T}; measuring {:?} again with fresh inputs",
+        name
+    );
     let again = measure_seeded(name, budget(), 1, &mut gen, &op);
     again.print();
     match judge(&r, &again) {
@@ -468,18 +542,29 @@ fn expect_constant_time<I, R>(name: &str, mut gen: impl FnMut(&mut Rng, bool) ->
             println!("    came back: recorded as a failure");
             FAILED.with(|f| f.borrow_mut().push(why));
         }
-        None => println!("    did not come back at the same statistic with the same sign: noise, not recorded"),
+        None => println!(
+            "    did not come back at the same statistic with the same sign: noise, not recorded"
+        ),
     }
 }
 
 /// Fails the test if any comparison since the last call stayed flagged on its repeat run.
 fn finish() {
     let failed = FAILED.with(|f| std::mem::take(&mut *f.borrow_mut()));
-    assert!(failed.is_empty(), "timing depends on the input:\n  {}", failed.join("\n  "));
+    assert!(
+        failed.is_empty(),
+        "timing depends on the input:\n  {}",
+        failed.join("\n  ")
+    );
 }
 
 /// Reports and requires that the leak WAS found (a positive control for the harness itself).
-fn expect_leak<I, R>(name: &str, budget: Duration, gen: impl FnMut(&mut Rng, bool) -> I, op: impl Fn(&I) -> R) {
+fn expect_leak<I, R>(
+    name: &str,
+    budget: Duration,
+    gen: impl FnMut(&mut Rng, bool) -> I,
+    op: impl Fn(&I) -> R,
+) {
     let r = measure(name, budget, gen, op);
     r.print();
     assert!(
@@ -530,10 +615,17 @@ fn eq_pair(rng: &mut Rng, class: bool) -> (Vec<u8>, Vec<u8>) {
 #[test]
 #[ignore = "statistical timing run; see the module documentation"]
 fn harness_flags_an_early_exit_comparison_and_passes_ct_eq() {
-    expect_leak("control: early-exit comparison (must be flagged)", Duration::from_secs(2), eq_pair, |(a, b)| {
-        leaky_eq(black_box(a), black_box(b))
-    });
-    expect_constant_time("util::ct_eq, mismatch at first vs last byte", eq_pair, |(a, b)| ct_eq(a, b));
+    expect_leak(
+        "control: early-exit comparison (must be flagged)",
+        Duration::from_secs(2),
+        eq_pair,
+        |(a, b)| leaky_eq(black_box(a), black_box(b)),
+    );
+    expect_constant_time(
+        "util::ct_eq, mismatch at first vs last byte",
+        eq_pair,
+        |(a, b)| ct_eq(a, b),
+    );
     finish();
 }
 
@@ -542,11 +634,17 @@ fn harness_flags_an_early_exit_comparison_and_passes_ct_eq() {
 fn harness_flags_a_ladder_that_works_harder_for_set_scalar_bits() {
     // zero scalar (after clamping, almost no set bits) against random scalars
     let gen = |rng: &mut Rng, class: bool| -> ([u8; 32], [u8; 32]) {
-        (if class { rand32(rng) } else { [0u8; 32] }, x25519::BASE_POINT)
+        (
+            if class { rand32(rng) } else { [0u8; 32] },
+            x25519::BASE_POINT,
+        )
     };
-    expect_leak("control: x25519 with extra work per set bit (must be flagged)", Duration::from_secs(4), gen, |(k, u)| {
-        x25519::x25519_leaky_control(k, u)
-    });
+    expect_leak(
+        "control: x25519 with extra work per set bit (must be flagged)",
+        Duration::from_secs(4),
+        gen,
+        |(k, u)| x25519::x25519_leaky_control(k, u),
+    );
 }
 
 // ----------------------------------------------------------------------------- the real code
@@ -601,8 +699,16 @@ fn x25519_is_constant_time() {
 #[ignore = "statistical timing run; see the module documentation"]
 fn x25519_key_generation_is_constant_time() {
     let op = |k: &[u8; 32]| x25519::public_key(k);
-    expect_constant_time("x25519 key generation: scalar all zero vs random", |rng, c| if c { rand32(rng) } else { [0u8; 32] }, op);
-    expect_constant_time("x25519 key generation: scalar all ones vs all zeros", |_, c| if c { [0xffu8; 32] } else { [0u8; 32] }, op);
+    expect_constant_time(
+        "x25519 key generation: scalar all zero vs random",
+        |rng, c| if c { rand32(rng) } else { [0u8; 32] },
+        op,
+    );
+    expect_constant_time(
+        "x25519 key generation: scalar all ones vs all zeros",
+        |_, c| if c { [0xffu8; 32] } else { [0u8; 32] },
+        op,
+    );
     expect_constant_time(
         "x25519 key generation: digits +1 vs about -7 (first entries vs last, negated)",
         |_, c| if c { [0x88u8; 32] } else { [0x11u8; 32] },
@@ -639,7 +745,12 @@ fn ecdh_on_p256_and_p384_is_constant_time() {
         let (pool_a, small_a, rs) = (pool.clone(), small.clone(), random_scalar.clone());
         expect_constant_time(
             &format!("ecdh {label} scalar: 3 vs random"),
-            move |rng, c| (if c { rs(rng) } else { small_a.clone() }, pool_a[rng.below(32)].clone()),
+            move |rng, c| {
+                (
+                    if c { rs(rng) } else { small_a.clone() },
+                    pool_a[rng.below(32)].clone(),
+                )
+            },
             op,
         );
         // a run of set bits against a run of zero bits (both in range)
@@ -663,7 +774,16 @@ fn ecdh_on_p256_and_p384_is_constant_time() {
         let generator_c = generator.clone();
         expect_constant_time(
             &format!("ecdh {label} peer: generator vs random point"),
-            move |rng, c| (fixed.clone(), if c { pool_c[rng.below(32)].clone() } else { generator_c.clone() }),
+            move |rng, c| {
+                (
+                    fixed.clone(),
+                    if c {
+                        pool_c[rng.below(32)].clone()
+                    } else {
+                        generator_c.clone()
+                    },
+                )
+            },
             op,
         );
         // the public key of a secret scalar is also computed from it, by the generator's table (B-115): few digits
@@ -742,11 +862,19 @@ fn ecdsa_signing_is_constant_time() {
         );
         // the key, through whole (hedged) signatures: 1 against random keys, all made before the timed region
         let one = EcdsaSigningKey::from_scalar(curve, &[1]).unwrap();
-        let pool: Vec<EcdsaSigningKey> = (0..16).map(|_| EcdsaSigningKey::generate(curve).unwrap()).collect();
+        let pool: Vec<EcdsaSigningKey> = (0..16)
+            .map(|_| EcdsaSigningKey::generate(curve).unwrap())
+            .collect();
         let d3 = digest.clone();
         expect_constant_time(
             &format!("ecdsa {label} key: 1 vs random (whole signature)"),
-            move |rng, c| if c { pool[rng.below(16)].clone() } else { one.clone() },
+            move |rng, c| {
+                if c {
+                    pool[rng.below(16)].clone()
+                } else {
+                    one.clone()
+                }
+            },
             move |k: &EcdsaSigningKey| k.sign_prehashed(alg, &d3),
         );
     }
@@ -765,21 +893,44 @@ fn ed25519_signing_is_constant_time() {
     };
     let prefix = [0x5au8; 32];
     // the scalar, chosen (the message and the prefix fixed, so the nonce is the same in both classes)
-    let pool: Vec<Ed25519SigningKey> = (0..16).map(|i| Ed25519SigningKey::from_expanded(clamp(rand32(&mut Rng::new(900 + i))), prefix)).collect();
+    let pool: Vec<Ed25519SigningKey> = (0..16)
+        .map(|i| Ed25519SigningKey::from_expanded(clamp(rand32(&mut Rng::new(900 + i))), prefix))
+        .collect();
     let lowest = Ed25519SigningKey::from_expanded(clamp([0u8; 32]), prefix);
     let pool_a = pool.clone();
     expect_constant_time(
         "ed25519 scalar: 2^254 vs random",
-        move |rng, c| if c { pool_a[rng.below(16)].clone() } else { lowest.clone() },
+        move |rng, c| {
+            if c {
+                pool_a[rng.below(16)].clone()
+            } else {
+                lowest.clone()
+            }
+        },
         |k: &Ed25519SigningKey| k.sign(b"a message to sign"),
     );
-    let (eights, ones) = (Ed25519SigningKey::from_expanded(clamp([0x88u8; 32]), prefix), Ed25519SigningKey::from_expanded(clamp([0x11u8; 32]), prefix));
-    expect_constant_time("ed25519 scalar: digits 8 vs digits 1", move |_, c| if c { eights.clone() } else { ones.clone() }, |k: &Ed25519SigningKey| k.sign(b"a message to sign"));
+    let (eights, ones) = (
+        Ed25519SigningKey::from_expanded(clamp([0x88u8; 32]), prefix),
+        Ed25519SigningKey::from_expanded(clamp([0x11u8; 32]), prefix),
+    );
+    expect_constant_time(
+        "ed25519 scalar: digits 8 vs digits 1",
+        move |_, c| if c { eights.clone() } else { ones.clone() },
+        |k: &Ed25519SigningKey| k.sign(b"a message to sign"),
+    );
     // the nonce, through the message: all zeros vs random (fixed key)
     let key = pool[0].clone();
-    expect_constant_time("ed25519 message (and so nonce): zeros vs random", |rng, c| fixed_or_random(rng, c, 64, 0), move |m: &Vec<u8>| key.sign(m));
+    expect_constant_time(
+        "ed25519 message (and so nonce): zeros vs random",
+        |rng, c| fixed_or_random(rng, c, 64, 0),
+        move |m: &Vec<u8>| key.sign(m),
+    );
     // making a key from a seed: all zero vs random
-    expect_constant_time("ed25519 key from seed: zero vs random", |rng, c| fixed_or_random(rng, c, 32, 0), |s: &Vec<u8>| Ed25519SigningKey::from_seed(&s[..].try_into().unwrap()));
+    expect_constant_time(
+        "ed25519 key from seed: zero vs random",
+        |rng, c| fixed_or_random(rng, c, 32, 0),
+        |s: &Vec<u8>| Ed25519SigningKey::from_seed(&s[..].try_into().unwrap()),
+    );
     finish();
 }
 
@@ -817,7 +968,11 @@ fn rsa_power_is_constant_time<const N: usize>(label: &str) {
         move |e: &[u64; N]| pow_for_timing(&m, &base, e),
     );
     let exp = limbs(&mut Rng::new(2), true, 0);
-    expect_constant_time(&format!("{label} power: base 0 vs random"), move |rng, c| limbs(rng, c, 0), move |b: &[u64; N]| pow_for_timing(&m, b, &exp));
+    expect_constant_time(
+        &format!("{label} power: base 0 vs random"),
+        move |rng, c| limbs(rng, c, 0),
+        move |b: &[u64; N]| pow_for_timing(&m, b, &exp),
+    );
 }
 
 #[test]
@@ -829,8 +984,12 @@ fn rsa_signing_is_constant_time() {
     rsa_power_is_constant_time::<16>("rsa-2048");
     rsa_power_is_constant_time::<32>("rsa-4096");
     // whole signatures with a real key: the message (so the encoded value) all zeros vs random
-    let line = include_str!("../../tests/data/rsa_signing_keys.txt").lines().find(|l| l.starts_with("2048 ")).unwrap();
-    let key = RsaSigningKey::from_pkcs1_der(&crate::util::unhex(line.split(' ').nth(1).unwrap())).unwrap();
+    let line = include_str!("../../tests/data/rsa_signing_keys.txt")
+        .lines()
+        .find(|l| l.starts_with("2048 "))
+        .unwrap();
+    let key = RsaSigningKey::from_pkcs1_der(&crate::util::unhex(line.split(' ').nth(1).unwrap()))
+        .unwrap();
     expect_constant_time(
         "rsa-2048 pkcs1 signature: message zeros vs random",
         |rng, c| fixed_or_random(rng, c, 64, 0),
@@ -857,14 +1016,38 @@ fn ghash_multiplication_is_constant_time() {
     let rand128 = |rng: &mut Rng| rng.bytes(16);
     for backend in backends() {
         let fixed_h = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128.to_be_bytes();
-        let blocks = |rng: &mut Rng, c: bool, fill: u8| -> Vec<u8> { fixed_or_random(rng, c, 128, fill) };
-        let by_data = |(h, data): &([u8; 16], Vec<u8>)| GhashKey::new(h, backend).hash(b"aad", data);
-        expect_constant_time(&format!("ghash [{backend:?}] data blocks: 0 vs random (fixed H)"), |rng, c| (fixed_h, blocks(rng, c, 0)), by_data);
-        expect_constant_time(&format!("ghash [{backend:?}] data blocks: all ones vs random (fixed H)"), |rng, c| (fixed_h, blocks(rng, c, 0xff)), by_data);
+        let blocks =
+            |rng: &mut Rng, c: bool, fill: u8| -> Vec<u8> { fixed_or_random(rng, c, 128, fill) };
+        let by_data =
+            |(h, data): &([u8; 16], Vec<u8>)| GhashKey::new(h, backend).hash(b"aad", data);
+        expect_constant_time(
+            &format!("ghash [{backend:?}] data blocks: 0 vs random (fixed H)"),
+            |rng, c| (fixed_h, blocks(rng, c, 0)),
+            by_data,
+        );
+        expect_constant_time(
+            &format!("ghash [{backend:?}] data blocks: all ones vs random (fixed H)"),
+            |rng, c| (fixed_h, blocks(rng, c, 0xff)),
+            by_data,
+        );
         let data = vec![0x5au8; 128];
-        let key = |rng: &mut Rng, c: bool, fill: u8| -> [u8; 16] { if c { rand128(rng).try_into().unwrap() } else { [fill; 16] } };
-        expect_constant_time(&format!("ghash [{backend:?}] hash key H: 0 vs random"), |rng, c| (key(rng, c, 0), data.clone()), by_data);
-        expect_constant_time(&format!("ghash [{backend:?}] hash key H: all ones vs random"), |rng, c| (key(rng, c, 0xff), data.clone()), by_data);
+        let key = |rng: &mut Rng, c: bool, fill: u8| -> [u8; 16] {
+            if c {
+                rand128(rng).try_into().unwrap()
+            } else {
+                [fill; 16]
+            }
+        };
+        expect_constant_time(
+            &format!("ghash [{backend:?}] hash key H: 0 vs random"),
+            |rng, c| (key(rng, c, 0), data.clone()),
+            by_data,
+        );
+        expect_constant_time(
+            &format!("ghash [{backend:?}] hash key H: all ones vs random"),
+            |rng, c| (key(rng, c, 0xff), data.clone()),
+            by_data,
+        );
     }
     finish();
 }
@@ -898,8 +1081,16 @@ fn poly1305_is_constant_time() {
     let _dit = Dit::on();
     // (4 KiB for `blocks`, which takes the AVX2 path only from 2 KiB)
     let backends = [
-        ("radix64 (2 x 64-bit)", run64 as fn(&[u8; 32], &[u8]) -> [u8; 16], 1024),
-        ("radix64 blocks, 4 KiB (AVX2 where there is)", run64_blocks, 4096),
+        (
+            "radix64 (2 x 64-bit)",
+            run64 as fn(&[u8; 32], &[u8]) -> [u8; 16],
+            1024,
+        ),
+        (
+            "radix64 blocks, 4 KiB (AVX2 where there is)",
+            run64_blocks,
+            4096,
+        ),
         ("limbs32 (5 x 26-bit)", run32, 1024),
     ];
     for (label, run, len) in backends {
@@ -911,7 +1102,12 @@ fn poly1305_is_constant_time() {
         );
         expect_constant_time(
             &format!("poly1305 {} key: all ones vs random", label),
-            |rng, c| (if c { rand32(rng) } else { [0xffu8; 32] }, fixed_msg.clone()),
+            |rng, c| {
+                (
+                    if c { rand32(rng) } else { [0xffu8; 32] },
+                    fixed_msg.clone(),
+                )
+            },
             |(k, m)| run(k, m),
         );
         expect_constant_time(
@@ -952,38 +1148,62 @@ fn aead_and_mac_primitives_are_constant_time_in_their_data() {
         std::cell::RefCell::new(buf)
     };
     let sealed = |c: bool, rng: &mut Rng| sealed_n(1024, c, rng);
-    expect_constant_time("chacha20-poly1305 seal 1 KiB: zeros vs random", |rng, c| sealed(c, rng), |cell| {
-        let mut b = cell.borrow_mut();
-        cc.seal_in_place(&nonce, b"aad", &mut b);
-        b[b.len() - 1]
-    });
-    expect_constant_time("chacha20-poly1305 key setup + seal 64 B: zero key vs random", |rng, c| fixed_or_random(rng, c, 32, 0), |key| {
-        let c = ChaCha20Poly1305::new(key);
-        let mut b = vec![0u8; 64 + 16];
-        c.seal_in_place(&nonce, b"", &mut b);
-        b
-    });
+    expect_constant_time(
+        "chacha20-poly1305 seal 1 KiB: zeros vs random",
+        |rng, c| sealed(c, rng),
+        |cell| {
+            let mut b = cell.borrow_mut();
+            cc.seal_in_place(&nonce, b"aad", &mut b);
+            b[b.len() - 1]
+        },
+    );
+    expect_constant_time(
+        "chacha20-poly1305 key setup + seal 64 B: zero key vs random",
+        |rng, c| fixed_or_random(rng, c, 32, 0),
+        |key| {
+            let c = ChaCha20Poly1305::new(key);
+            let mut b = vec![0u8; 64 + 16];
+            c.seal_in_place(&nonce, b"", &mut b);
+            b
+        },
+    );
     let gcm = AesGcm::new(&[0x42u8; 16]);
-    expect_constant_time("aes-128-gcm seal 1 KiB: zeros vs random", |rng, c| sealed(c, rng), |cell| {
-        let mut b = cell.borrow_mut();
-        gcm.seal_in_place(&nonce, b"aad", &mut b);
-        b[b.len() - 1]
-    });
+    expect_constant_time(
+        "aes-128-gcm seal 1 KiB: zeros vs random",
+        |rng, c| sealed(c, rng),
+        |cell| {
+            let mut b = cell.borrow_mut();
+            gcm.seal_in_place(&nonce, b"aad", &mut b);
+            b[b.len() - 1]
+        },
+    );
     // 100 bytes: six whole blocks and a partial one, the path of a message's last 127 bytes or fewer (B-103)
-    expect_constant_time("aes-128-gcm seal 100 B: zeros vs random", |rng, c| sealed_n(100, c, rng), |cell| {
-        let mut b = cell.borrow_mut();
-        gcm.seal_in_place(&nonce, b"aad", &mut b);
-        b[b.len() - 1]
-    });
+    expect_constant_time(
+        "aes-128-gcm seal 100 B: zeros vs random",
+        |rng, c| sealed_n(100, c, rng),
+        |cell| {
+            let mut b = cell.borrow_mut();
+            gcm.seal_in_place(&nonce, b"aad", &mut b);
+            b[b.len() - 1]
+        },
+    );
     // HMAC-SHA-256 and SHA-256: key / message bytes
-    expect_constant_time("hmac-sha256 key: zero vs random (1 KiB message)", |rng, c| fixed_or_random(rng, c, 32, 0), |key| {
-        let mut h = Hmac::<Sha256>::new(key);
-        h.update(&[0x5au8; 1024]);
-        h.finalize()
-    });
+    expect_constant_time(
+        "hmac-sha256 key: zero vs random (1 KiB message)",
+        |rng, c| fixed_or_random(rng, c, 32, 0),
+        |key| {
+            let mut h = Hmac::<Sha256>::new(key);
+            h.update(&[0x5au8; 1024]);
+            h.finalize()
+        },
+    );
     // SHA-256 over secret bytes, as the library does it: as HMAC's message (HKDF-Extract's input keying material is one).
     // Bare SHA-256, which the library uses on public data only, is in `dit_on_and_off`.
-    expect_constant_time("hmac-sha256 message: zeros vs random (1 KiB)", |rng, c| fixed_or_random(rng, c, 1024, 0), |m| Hmac::<Sha256>::mac(&[0x5au8; 32], m));
+    expect_constant_time(
+        "hmac-sha256 message: zeros vs random (1 KiB)",
+        |rng, c| fixed_or_random(rng, c, 1024, 0),
+        |m| Hmac::<Sha256>::mac(&[0x5au8; 32], m),
+    );
     finish();
 }
 
@@ -1009,13 +1229,15 @@ fn aes_gcm_seal_parts() {
     let gcm = AesGcm::new(&[0x42u8; 16]);
     println!("\nAES-GCM backend: {:?}; each row twice, t > 0 means the random class is slower (report only)", gcm.backend());
     // n bytes of `fill` (or random ones), and 16 bytes of room for the tag
-    let made = |n: usize, fill: u8| move |rng: &mut Rng, c: bool| -> Vec<u8> {
-        let mut buf = rng.bytes(n);
-        if !c {
-            buf.fill(fill);
+    let made = |n: usize, fill: u8| {
+        move |rng: &mut Rng, c: bool| -> Vec<u8> {
+            let mut buf = rng.bytes(n);
+            if !c {
+                buf.fill(fill);
+            }
+            buf.extend_from_slice(&[0u8; 16]);
+            buf
         }
-        buf.extend_from_slice(&[0u8; 16]);
-        buf
     };
     let in_cell = |n: usize| move |rng: &mut Rng, c: bool| RefCell::new(made(n, 0)(rng, c));
     let reused = RefCell::new(vec![0u8; 16 * 1024 + 16]);
@@ -1036,98 +1258,179 @@ fn aes_gcm_seal_parts() {
             .collect();
         table.push((name, runs));
     };
-    row("1 KiB: new buffer, copy, seal, free (the old aead row)", &mut |name, seed| {
-        measure_seeded(name, budget(), seed, made(1024, 0), |buf: &Vec<u8>| {
-            let mut b = buf.clone();
-            gcm.seal_in_place(&nonce, b"aad", &mut b);
-            b
-        })
-    });
-    row("1 KiB: new buffer, copy, free (no seal)", &mut |name, seed| measure_seeded(name, budget(), seed, made(1024, 0), |buf: &Vec<u8>| buf.clone()));
-    row("1 KiB: copy into a reused buffer (no seal)", &mut |name, seed| measure_seeded(name, budget(), seed, made(1024, 0), copy_into_reused));
+    row(
+        "1 KiB: new buffer, copy, seal, free (the old aead row)",
+        &mut |name, seed| {
+            measure_seeded(name, budget(), seed, made(1024, 0), |buf: &Vec<u8>| {
+                let mut b = buf.clone();
+                gcm.seal_in_place(&nonce, b"aad", &mut b);
+                b
+            })
+        },
+    );
+    row(
+        "1 KiB: new buffer, copy, free (no seal)",
+        &mut |name, seed| {
+            measure_seeded(name, budget(), seed, made(1024, 0), |buf: &Vec<u8>| {
+                buf.clone()
+            })
+        },
+    );
+    row(
+        "1 KiB: copy into a reused buffer (no seal)",
+        &mut |name, seed| measure_seeded(name, budget(), seed, made(1024, 0), copy_into_reused),
+    );
     // the seal and nothing else: each input is sealed where it was made, once (the inputs are made before the clock starts)
     row("1 KiB: seal only", &mut |name, seed| {
-        measure_seeded(name, budget(), seed, in_cell(1024), |cell: &RefCell<Vec<u8>>| {
-            let mut b = cell.borrow_mut();
-            gcm.seal_in_place(&nonce, b"aad", &mut b);
-            b[b.len() - 1]
-        })
-    });
-    // the same seal by other code: the two steps the hardware path took before B-85 (CTR, then GHASH), and another AEAD
-    row("1 KiB: seal only, two passes (the code before B-85)", &mut |name, seed| {
-        measure_seeded(name, budget(), seed, in_cell(1024), |cell: &RefCell<Vec<u8>>| {
-            let mut b = cell.borrow_mut();
-            gcm.seal_in_place_two_passes(&nonce, b"aad", &mut b);
-            b[b.len() - 1]
-        })
-    });
-    let chacha = ChaCha20Poly1305::new(&[0x42u8; 32]);
-    row("1 KiB: ChaCha20-Poly1305 seal only", &mut |name, seed| {
-        measure_seeded(name, budget(), seed, in_cell(1024), |cell: &RefCell<Vec<u8>>| {
-            let mut b = cell.borrow_mut();
-            chacha.seal_in_place(&nonce, b"aad", &mut b);
-            b[b.len() - 1]
-        })
-    });
-    row("16 KiB: seal only", &mut |name, seed| {
-        measure_seeded(name, budget(), seed, in_cell(16 * 1024), |cell: &RefCell<Vec<u8>>| {
-            let mut b = cell.borrow_mut();
-            gcm.seal_in_place(&nonce, b"aad", &mut b);
-            b[b.len() - 1]
-        })
-    });
-    // what kind of effect the copy's is
-    row("16 KiB: copy into a reused buffer (no seal)", &mut |name, seed| measure_seeded(name, budget(), seed, made(16 * 1024, 0), copy_into_reused));
-    row("1 KiB: read only (XOR of its words)", &mut |name, seed| {
-        measure_seeded(name, budget(), seed, made(1024, 0), |buf: &Vec<u8>| {
-            buf.chunks_exact(8).fold(0u64, |a, w| a ^ u64::from_le_bytes(w.try_into().unwrap()))
-        })
-    });
-    row("1 KiB: copy, a fixed pattern (0x5a) vs random", &mut |name, seed| measure_seeded(name, budget(), seed, made(1024, 0x5a), copy_into_reused));
-    // the writes the seal makes over its input, with no cipher: fixed bytes written over it, and an XOR in place with a fixed
-    // key stream (read it, change it, write it back, as CTR does)
-    let stream: Vec<u8> = Rng::new(0x5eed).bytes(1024);
-    row("1 KiB: fixed bytes written over it (no cipher)", &mut |name, seed| {
-        measure_seeded(name, budget(), seed, in_cell(1024), |cell: &RefCell<Vec<u8>>| {
-            let mut b = cell.borrow_mut();
-            b[..1024].copy_from_slice(&stream);
-            b[0]
-        })
-    });
-    row("1 KiB: XOR in place with a fixed stream (no cipher)", &mut |name, seed| {
-        measure_seeded(name, budget(), seed, in_cell(1024), |cell: &RefCell<Vec<u8>>| {
-            let mut b = cell.borrow_mut();
-            for (d, k) in b[..1024].iter_mut().zip(&stream) {
-                *d ^= k;
-            }
-            b[0]
-        })
-    });
-    // the other direction: each input is sealed before the clock starts and opened in place, which writes zeros or random
-    // plaintext over random ciphertext
-    row("1 KiB: open only (zeros or random come out)", &mut |name, seed| {
         measure_seeded(
             name,
             budget(),
             seed,
-            |rng: &mut Rng, c: bool| {
-                let mut b = made(1024, 0)(rng, c);
-                gcm.seal_in_place(&nonce, b"aad", &mut b);
-                RefCell::new(b)
-            },
+            in_cell(1024),
             |cell: &RefCell<Vec<u8>>| {
                 let mut b = cell.borrow_mut();
-                gcm.open_in_place(&nonce, b"aad", &mut b)
+                gcm.seal_in_place(&nonce, b"aad", &mut b);
+                b[b.len() - 1]
             },
         )
     });
+    // the same seal by other code: the two steps the hardware path took before B-85 (CTR, then GHASH), and another AEAD
+    row(
+        "1 KiB: seal only, two passes (the code before B-85)",
+        &mut |name, seed| {
+            measure_seeded(
+                name,
+                budget(),
+                seed,
+                in_cell(1024),
+                |cell: &RefCell<Vec<u8>>| {
+                    let mut b = cell.borrow_mut();
+                    gcm.seal_in_place_two_passes(&nonce, b"aad", &mut b);
+                    b[b.len() - 1]
+                },
+            )
+        },
+    );
+    let chacha = ChaCha20Poly1305::new(&[0x42u8; 32]);
+    row("1 KiB: ChaCha20-Poly1305 seal only", &mut |name, seed| {
+        measure_seeded(
+            name,
+            budget(),
+            seed,
+            in_cell(1024),
+            |cell: &RefCell<Vec<u8>>| {
+                let mut b = cell.borrow_mut();
+                chacha.seal_in_place(&nonce, b"aad", &mut b);
+                b[b.len() - 1]
+            },
+        )
+    });
+    row("16 KiB: seal only", &mut |name, seed| {
+        measure_seeded(
+            name,
+            budget(),
+            seed,
+            in_cell(16 * 1024),
+            |cell: &RefCell<Vec<u8>>| {
+                let mut b = cell.borrow_mut();
+                gcm.seal_in_place(&nonce, b"aad", &mut b);
+                b[b.len() - 1]
+            },
+        )
+    });
+    // what kind of effect the copy's is
+    row(
+        "16 KiB: copy into a reused buffer (no seal)",
+        &mut |name, seed| {
+            measure_seeded(name, budget(), seed, made(16 * 1024, 0), copy_into_reused)
+        },
+    );
+    row("1 KiB: read only (XOR of its words)", &mut |name, seed| {
+        measure_seeded(name, budget(), seed, made(1024, 0), |buf: &Vec<u8>| {
+            buf.chunks_exact(8)
+                .fold(0u64, |a, w| a ^ u64::from_le_bytes(w.try_into().unwrap()))
+        })
+    });
+    row(
+        "1 KiB: copy, a fixed pattern (0x5a) vs random",
+        &mut |name, seed| measure_seeded(name, budget(), seed, made(1024, 0x5a), copy_into_reused),
+    );
+    // the writes the seal makes over its input, with no cipher: fixed bytes written over it, and an XOR in place with a fixed
+    // key stream (read it, change it, write it back, as CTR does)
+    let stream: Vec<u8> = Rng::new(0x5eed).bytes(1024);
+    row(
+        "1 KiB: fixed bytes written over it (no cipher)",
+        &mut |name, seed| {
+            measure_seeded(
+                name,
+                budget(),
+                seed,
+                in_cell(1024),
+                |cell: &RefCell<Vec<u8>>| {
+                    let mut b = cell.borrow_mut();
+                    b[..1024].copy_from_slice(&stream);
+                    b[0]
+                },
+            )
+        },
+    );
+    row(
+        "1 KiB: XOR in place with a fixed stream (no cipher)",
+        &mut |name, seed| {
+            measure_seeded(
+                name,
+                budget(),
+                seed,
+                in_cell(1024),
+                |cell: &RefCell<Vec<u8>>| {
+                    let mut b = cell.borrow_mut();
+                    for (d, k) in b[..1024].iter_mut().zip(&stream) {
+                        *d ^= k;
+                    }
+                    b[0]
+                },
+            )
+        },
+    );
+    // the other direction: each input is sealed before the clock starts and opened in place, which writes zeros or random
+    // plaintext over random ciphertext
+    row(
+        "1 KiB: open only (zeros or random come out)",
+        &mut |name, seed| {
+            measure_seeded(
+                name,
+                budget(),
+                seed,
+                |rng: &mut Rng, c: bool| {
+                    let mut b = made(1024, 0)(rng, c);
+                    gcm.seal_in_place(&nonce, b"aad", &mut b);
+                    RefCell::new(b)
+                },
+                |cell: &RefCell<Vec<u8>>| {
+                    let mut b = cell.borrow_mut();
+                    gcm.open_in_place(&nonce, b"aad", &mut b)
+                },
+            )
+        },
+    );
     println!("\nt at p50 / p90 / p99 and the largest |t|, two runs each (|t| above {SUSPICIOUS_T} is suspicious, above {LEAK_T} reads as a leak):");
     for (name, runs) in &table {
         let cells: Vec<String> = runs
             .iter()
             .map(|r| {
-                let at = |p: f64| r.crops.iter().find(|(q, _)| (q - p).abs() < 1e-9).map_or(f64::NAN, |c| c.1);
-                format!("{:+5.1} {:+5.1} {:+5.1} |{:4.1}|", at(0.5), at(0.9), at(0.99), r.max_t)
+                let at = |p: f64| {
+                    r.crops
+                        .iter()
+                        .find(|(q, _)| (q - p).abs() < 1e-9)
+                        .map_or(f64::NAN, |c| c.1)
+                };
+                format!(
+                    "{:+5.1} {:+5.1} {:+5.1} |{:4.1}|",
+                    at(0.5),
+                    at(0.9),
+                    at(0.99),
+                    r.max_t
+                )
             })
             .collect();
         println!("  {name:<54} {}", cells.join("   "));
@@ -1163,7 +1466,11 @@ fn aes_gcm_one_pass_against_two_passes() {
         buf.extend_from_slice(&[0u8; 16]);
         RefCell::new(buf)
     };
-    const NAMES: [&str; 3] = ["1 KiB seal, one pass, registers (now)", "1 KiB seal, one pass, read back (B-85)", "1 KiB seal, two passes (before B-85)"];
+    const NAMES: [&str; 3] = [
+        "1 KiB seal, one pass, registers (now)",
+        "1 KiB seal, one pass, read back (B-85)",
+        "1 KiB seal, two passes (before B-85)",
+    ];
     let mut runs: [Vec<Report>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     for round in 0..ROUNDS {
         for (i, name) in NAMES.iter().enumerate() {
@@ -1186,7 +1493,10 @@ fn aes_gcm_one_pass_against_two_passes() {
             };
             r.print();
             let (m, se) = r.per_call_at(0.99);
-            println!("    per call at p99: {m:+.3} ns +/- {:.3} (two standard errors)", 2.0 * se);
+            println!(
+                "    per call at p99: {m:+.3} ns +/- {:.3} (two standard errors)",
+                2.0 * se
+            );
             runs[i].push(r);
         }
     }
@@ -1207,7 +1517,10 @@ fn aes_gcm_one_pass_against_two_passes() {
         }
     };
     println!("\npooled over {ROUNDS} rounds, per call in ns, random minus zeros, +/- two standard errors (and the median time of a call):");
-    println!("  {:<40} {:>27} {:>27} {:>27} {:>8}", "", "uncropped", "p99", "p90", "median");
+    println!(
+        "  {:<40} {:>27} {:>27} {:>27} {:>8}",
+        "", "uncropped", "p99", "p90", "median"
+    );
     for (i, name) in NAMES.iter().enumerate() {
         let cell = |p: f64| {
             let (m, se) = pooled(&runs[i], p);
@@ -1215,7 +1528,13 @@ fn aes_gcm_one_pass_against_two_passes() {
         };
         let mut medians: Vec<u32> = runs[i].iter().map(|r| r.median_ns).collect();
         medians.sort_unstable();
-        println!("  {name:<40} {:>27} {:>27} {:>27} {:>5} ns", cell(1.0), cell(0.99), cell(0.9), medians[medians.len() / 2]);
+        println!(
+            "  {name:<40} {:>27} {:>27} {:>27} {:>5} ns",
+            cell(1.0),
+            cell(0.99),
+            cell(0.9),
+            medians[medians.len() / 2]
+        );
     }
 }
 
@@ -1245,17 +1564,22 @@ fn one_percent_control() {
         x
     }
     let key = [0x33u8; 32];
-    expect_leak("control: poly1305 1 KiB, one class ~1.3% slower", Duration::from_secs(3), |rng, c| (c, rng.bytes(1024)), |(c, m)| {
-        let mut p = radix64::Poly1305::new(&key);
-        for ch in m.chunks_exact(16) {
-            p.block(ch.try_into().unwrap(), true);
-        }
-        let tag = p.finish();
-        if *c {
-            black_box(delay(10));
-        }
-        tag
-    });
+    expect_leak(
+        "control: poly1305 1 KiB, one class ~1.3% slower",
+        Duration::from_secs(3),
+        |rng, c| (c, rng.bytes(1024)),
+        |(c, m)| {
+            let mut p = radix64::Poly1305::new(&key);
+            for ch in m.chunks_exact(16) {
+                p.block(ch.try_into().unwrap(), true);
+            }
+            let tag = p.finish();
+            if *c {
+                black_box(delay(10));
+            }
+            tag
+        },
+    );
 }
 
 #[test]
@@ -1277,7 +1601,10 @@ fn aes_is_constant_time() {
         for key_len in [16usize, 32] {
             for (what, fill) in [("zero", 0u8), ("all-ones", 0xff)] {
                 expect_constant_time(
-                    &format!("aes-{}-gcm [{backend:?}] key setup + seal 64 B: {what} key vs random", key_len * 8),
+                    &format!(
+                        "aes-{}-gcm [{backend:?}] key setup + seal 64 B: {what} key vs random",
+                        key_len * 8
+                    ),
                     |rng, c| fixed_or_random(rng, c, key_len, fill),
                     |key| {
                         let g = AesGcm::with_backend(key, backend);
@@ -1290,17 +1617,25 @@ fn aes_is_constant_time() {
         }
         // a message of at most 48 bytes, which the portable cipher encrypts with J0 in one pass: the key, and the plaintext
         let short_key = AesGcm::with_backend(&[0x6bu8; 16], backend);
-        expect_constant_time(&format!("aes-128-gcm [{backend:?}] key setup + seal 32 B: zero key vs random"), |rng, c| fixed_or_random(rng, c, 16, 0), |key| {
-            let g = AesGcm::with_backend(key, backend);
-            let mut b = vec![0u8; 32 + 16];
-            g.seal_in_place(&nonce, b"", &mut b);
-            b
-        });
-        expect_constant_time(&format!("aes-128-gcm [{backend:?}] seal 32 B: zeros vs random"), |rng, c| fixed_or_random(rng, c, 48, 0), |buf| {
-            let mut b = buf.clone();
-            short_key.seal_in_place(&nonce, b"", &mut b);
-            b
-        });
+        expect_constant_time(
+            &format!("aes-128-gcm [{backend:?}] key setup + seal 32 B: zero key vs random"),
+            |rng, c| fixed_or_random(rng, c, 16, 0),
+            |key| {
+                let g = AesGcm::with_backend(key, backend);
+                let mut b = vec![0u8; 32 + 16];
+                g.seal_in_place(&nonce, b"", &mut b);
+                b
+            },
+        );
+        expect_constant_time(
+            &format!("aes-128-gcm [{backend:?}] seal 32 B: zeros vs random"),
+            |rng, c| fixed_or_random(rng, c, 48, 0),
+            |buf| {
+                let mut b = buf.clone();
+                short_key.seal_in_place(&nonce, b"", &mut b);
+                b
+            },
+        );
         // a fixed key, secret plaintext of 1 KiB (CTR keystream and GHASH over the ciphertext).
         // Both classes are built the same way and only then overwritten: filling one class with
         // `vec![0; n]` (a calloc) and the other by pushing bytes puts the buffers at different
@@ -1343,14 +1678,26 @@ fn a_difference_with_no_spread_is_the_strongest_evidence_not_none() {
     // class 1 is exactly 1 ns slower in every block: the old code answered 0 ("no leak detected")
     let t = paired_t(&blocks_of(200, 100, |_| 101), u32::MAX);
     assert_eq!(t, f64::INFINITY);
-    assert_eq!(paired_t(&blocks_of(200, 101, |_| 100), u32::MAX), f64::NEG_INFINITY);
+    assert_eq!(
+        paired_t(&blocks_of(200, 101, |_| 100), u32::MAX),
+        f64::NEG_INFINITY
+    );
     // no difference and no spread is no evidence
     assert_eq!(paired_t(&blocks_of(200, 100, |_| 100), u32::MAX), 0.0);
     // the same offset with some spread was always found
     let t = paired_t(&blocks_of(200, 100, |k| 101 + (k % 3) as u32), u32::MAX);
     assert!(t.is_finite() && t > 10.0, "{t}");
     // and a report built on an infinite t says LEAK, in both signs
-    let r = Report { name: "x".into(), samples: 0, reps: 1, uncropped_t: f64::INFINITY, max_t: f64::INFINITY, median_ns: 0, crops: vec![], per_call: vec![] };
+    let r = Report {
+        name: "x".into(),
+        samples: 0,
+        reps: 1,
+        uncropped_t: f64::INFINITY,
+        max_t: f64::INFINITY,
+        median_ns: 0,
+        crops: vec![],
+        per_call: vec![],
+    };
     assert_eq!(r.verdict(), "LEAK");
     r.print();
 }
@@ -1371,16 +1718,34 @@ fn the_time_budget_is_read_with_care() {
 #[test]
 fn a_budget_of_zero_still_measures_something() {
     // it used to be one batch, the warm-up one, which is thrown away, and then an empty sample set to index into
-    let r = measure("zero budget", Duration::ZERO, |rng, _| rng.next_u64(), |x| x.wrapping_mul(3));
+    let r = measure(
+        "zero budget",
+        Duration::ZERO,
+        |rng, _| rng.next_u64(),
+        |x| x.wrapping_mul(3),
+    );
     assert!(r.samples >= BLOCK, "{}", r.samples);
     assert!(r.max_t.is_finite() || r.max_t.is_infinite());
 }
 
 /// A report holding the given signed t values (the uncropped one, then one per crop level), as `measure_seeded` builds it.
 fn report(ts: [f64; 7]) -> Report {
-    let crops: Vec<(f64, f64)> = CROP_LEVELS.iter().copied().zip(ts[1..].iter().copied()).collect();
+    let crops: Vec<(f64, f64)> = CROP_LEVELS
+        .iter()
+        .copied()
+        .zip(ts[1..].iter().copied())
+        .collect();
     let max_t = ts.iter().fold(0f64, |m, t| m.max(t.abs()));
-    Report { name: "row".into(), samples: 1000, reps: 1, uncropped_t: ts[0], max_t, median_ns: 100, crops, per_call: vec![] }
+    Report {
+        name: "row".into(),
+        samples: 1000,
+        reps: 1,
+        uncropped_t: ts[0],
+        max_t,
+        median_ns: 100,
+        crops,
+        per_call: vec![],
+    }
 }
 
 const QUIET: [f64; 7] = [0.5, -1.0, 0.3, 0.8, -0.2, 1.1, 0.4];
@@ -1404,7 +1769,10 @@ fn a_flagged_row_fails_when_its_statistic_comes_back_with_the_same_sign() {
 
     // the same statistic, the same direction, above 4.5 again: a real difference
     let why = judge(&first, &report(with(3, 5.0))).expect("a difference that came back");
-    assert!(why.contains("p95.0") && why.contains("+6.0") && why.contains("+5.0"), "{why}");
+    assert!(
+        why.contains("p95.0") && why.contains("+6.0") && why.contains("+5.0"),
+        "{why}"
+    );
     // the other direction (class 1 faster this time) is what noise does half of the time
     assert_eq!(judge(&first, &report(with(3, -5.5))), None);
     assert_eq!(judge(&first, &report(with(3, -50.0))), None);
@@ -1442,7 +1810,16 @@ fn the_old_rule_still_holds_and_the_new_one_only_adds_to_it() {
 
 #[test]
 fn a_report_with_fewer_statistics_than_expected_is_judged_not_crashed_on() {
-    let bare = |t: f64| Report { name: "bare".into(), samples: 0, reps: 1, uncropped_t: t, max_t: t.abs(), median_ns: 0, crops: vec![], per_call: vec![] };
+    let bare = |t: f64| Report {
+        name: "bare".into(),
+        samples: 0,
+        reps: 1,
+        uncropped_t: t,
+        max_t: t.abs(),
+        median_ns: 0,
+        crops: vec![],
+        per_call: vec![],
+    };
     assert_eq!(bare(6.0).peak(), (0, 6.0));
     assert_eq!(bare(6.0).label(0), "uncropped");
     assert_eq!(bare(6.0).label(3), "?");
@@ -1479,7 +1856,12 @@ struct Tally {
 
 /// Measures `pairs` first runs and repeats of a comparison whose two classes are the same kind of input,
 /// so that every difference the harness finds is noise, and counts what each rule would have done.
-fn false_alarms<I, R>(name: &str, pairs: usize, mut gen: impl FnMut(&mut Rng, bool) -> I, op: impl Fn(&I) -> R) -> Tally {
+fn false_alarms<I, R>(
+    name: &str,
+    pairs: usize,
+    mut gen: impl FnMut(&mut Rng, bool) -> I,
+    op: impl Fn(&I) -> R,
+) -> Tally {
     let mut tally = Tally::default();
     for k in 0..pairs {
         let first = measure_seeded(name, null_budget(), 2 * k as u64, &mut gen, &op);
@@ -1503,7 +1885,10 @@ fn false_alarms<I, R>(name: &str, pairs: usize, mut gen: impl FnMut(&mut Rng, bo
 #[test]
 #[ignore = "statistical timing run; see the module documentation"]
 fn harness_does_not_fail_comparisons_of_identical_classes() {
-    let pairs: usize = std::env::var("PRATIQUE_NULL_PAIRS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(10);
+    let pairs: usize = std::env::var("PRATIQUE_NULL_PAIRS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(10);
     let mut new_rule_failures = 0;
     let mut report_row = |what: &str, c: Tally| {
         println!(
@@ -1512,10 +1897,40 @@ fn harness_does_not_fail_comparisons_of_identical_classes() {
         );
         new_rule_failures += c.new_rule;
     };
-    report_row("x25519, random scalar (about 100 us)", false_alarms("null x25519", pairs, |rng, _| (rand32(rng), x25519::BASE_POINT), |(k, u)| x25519::x25519(k, u)));
-    report_row("sha256, 1 KiB of random bytes (a few us)", false_alarms("null sha256", pairs, |rng, _| rng.bytes(1024), |m| Sha256::digest(m)));
-    report_row("ct_eq, 32 equal random bytes (tens of ns)", false_alarms("null ct_eq", pairs, |rng, _| { let a = rng.bytes(32); (a.clone(), a) }, |(a, b)| ct_eq(a, b)));
-    assert_eq!(new_rule_failures, 0, "the repeat rule failed comparisons of identical classes");
+    report_row(
+        "x25519, random scalar (about 100 us)",
+        false_alarms(
+            "null x25519",
+            pairs,
+            |rng, _| (rand32(rng), x25519::BASE_POINT),
+            |(k, u)| x25519::x25519(k, u),
+        ),
+    );
+    report_row(
+        "sha256, 1 KiB of random bytes (a few us)",
+        false_alarms(
+            "null sha256",
+            pairs,
+            |rng, _| rng.bytes(1024),
+            |m| Sha256::digest(m),
+        ),
+    );
+    report_row(
+        "ct_eq, 32 equal random bytes (tens of ns)",
+        false_alarms(
+            "null ct_eq",
+            pairs,
+            |rng, _| {
+                let a = rng.bytes(32);
+                (a.clone(), a)
+            },
+            |(a, b)| ct_eq(a, b),
+        ),
+    );
+    assert_eq!(
+        new_rule_failures, 0,
+        "the repeat rule failed comparisons of identical classes"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------- coarse clocks
@@ -1596,10 +2011,25 @@ fn a_clock_that_ticks_coarsely_is_recognised_and_its_tick_measured() {
 #[test]
 fn a_coarse_clock_makes_the_harness_time_several_calls_together() {
     let tick = test_tick();
-    let r = with_tick(tick, || measure("batching", Duration::from_millis(100), |rng, _| rng.next_u64(), |x| x.wrapping_mul(0x9e37_79b9)));
+    let r = with_tick(tick, || {
+        measure(
+            "batching",
+            Duration::from_millis(100),
+            |rng, _| rng.next_u64(),
+            |x| x.wrapping_mul(0x9e37_79b9),
+        )
+    });
     // a multiplication is far below the tick: many calls to a sample, and a median per call that is far below it too
-    assert!(r.reps > 100, "calls per sample: {} (tick {tick} ns)", r.reps);
-    assert!((r.median_ns as u64) < tick, "median per call: {} ns (tick {tick} ns)", r.median_ns);
+    assert!(
+        r.reps > 100,
+        "calls per sample: {} (tick {tick} ns)",
+        r.reps
+    );
+    assert!(
+        (r.median_ns as u64) < tick,
+        "median per call: {} ns (tick {tick} ns)",
+        r.median_ns
+    );
     // a call that takes about a tick gets just enough company to make a sample span about twenty ticks (not one call per sample,
     // which a sample of a tick would be, nor thousands)
     // (the speed of a step is measured before the run it sizes, and the other tests running beside this one can change it in
@@ -1609,19 +2039,47 @@ fn a_coarse_clock_makes_the_harness_time_several_calls_together() {
         tries += 1;
         let per_step = ns_per_step();
         let few = (tick as f64 / per_step) as u32;
-        let r = with_tick(tick, || measure("a tick", Duration::from_millis(100), |rng, _| rng.next_u64(), chain(few)));
+        let r = with_tick(tick, || {
+            measure(
+                "a tick",
+                Duration::from_millis(100),
+                |rng, _| rng.next_u64(),
+                chain(few),
+            )
+        });
         let span = r.reps as u64 * r.median_ns as u64;
         let fits = (5..=80).contains(&r.reps) && (10 * tick..=45 * tick).contains(&span);
         if fits || tries == 3 {
-            assert!((5..=80).contains(&r.reps), "reps {} median {} ns (tick {tick} ns, {per_step:.2} ns a step)", r.reps, r.median_ns);
-            assert!((10 * tick..=45 * tick).contains(&span), "a sample spans {span} ns ({} calls of {} ns; tick {tick} ns)", r.reps, r.median_ns);
+            assert!(
+                (5..=80).contains(&r.reps),
+                "reps {} median {} ns (tick {tick} ns, {per_step:.2} ns a step)",
+                r.reps,
+                r.median_ns
+            );
+            assert!(
+                (10 * tick..=45 * tick).contains(&span),
+                "a sample spans {span} ns ({} calls of {} ns; tick {tick} ns)",
+                r.reps,
+                r.median_ns
+            );
             break per_step;
         }
     };
     // a call that takes many more than twenty ticks is timed on its own
     let long = (300.0 * tick as f64 / per_step).min(5_000_000.0) as u32;
-    let r = with_tick(tick, || measure("long", Duration::from_millis(100), |rng, _| rng.next_u64(), chain(long)));
-    assert_eq!(r.reps, 1, "median {} ns (tick {tick} ns, {per_step:.2} ns a step, {long} steps)", r.median_ns);
+    let r = with_tick(tick, || {
+        measure(
+            "long",
+            Duration::from_millis(100),
+            |rng, _| rng.next_u64(),
+            chain(long),
+        )
+    });
+    assert_eq!(
+        r.reps, 1,
+        "median {} ns (tick {tick} ns, {per_step:.2} ns a step, {long} steps)",
+        r.median_ns
+    );
 }
 
 /// The negative control on a coarse clock, where the cheap operations are most exposed: the repeat rule must not fail
@@ -1629,13 +2087,43 @@ fn a_coarse_clock_makes_the_harness_time_several_calls_together() {
 #[test]
 #[ignore = "statistical timing run; see the module documentation"]
 fn harness_does_not_fail_identical_classes_on_a_coarse_clock() {
-    let pairs: usize = std::env::var("PRATIQUE_NULL_PAIRS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(10);
+    let pairs: usize = std::env::var("PRATIQUE_NULL_PAIRS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(10);
     let mut failures = 0;
     with_tick(test_tick(), || {
         for (what, tally) in [
-            ("ct_eq, 32 equal random bytes", false_alarms("null ct_eq", pairs, |rng, _| { let a = rng.bytes(32); (a.clone(), a) }, |(a, b)| ct_eq(a, b))),
-            ("sha256, 1 KiB of random bytes", false_alarms("null sha256", pairs, |rng, _| rng.bytes(1024), |m| Sha256::digest(m))),
-            ("a 64-bit multiply", false_alarms("null mul", pairs, |rng, _| rng.next_u64(), |x| x.wrapping_mul(0x9e37_79b9_7f4a_7c15))),
+            (
+                "ct_eq, 32 equal random bytes",
+                false_alarms(
+                    "null ct_eq",
+                    pairs,
+                    |rng, _| {
+                        let a = rng.bytes(32);
+                        (a.clone(), a)
+                    },
+                    |(a, b)| ct_eq(a, b),
+                ),
+            ),
+            (
+                "sha256, 1 KiB of random bytes",
+                false_alarms(
+                    "null sha256",
+                    pairs,
+                    |rng, _| rng.bytes(1024),
+                    |m| Sha256::digest(m),
+                ),
+            ),
+            (
+                "a 64-bit multiply",
+                false_alarms(
+                    "null mul",
+                    pairs,
+                    |rng, _| rng.next_u64(),
+                    |x| x.wrapping_mul(0x9e37_79b9_7f4a_7c15),
+                ),
+            ),
         ] {
             println!(
                 "{what:<34} {pairs} pairs: first run above {SUSPICIOUS_T}: {:>2}, above {LEAK_T}: {:>2}; failed by the new rule: {:>2}; largest |t| {:.1}",
@@ -1644,7 +2132,10 @@ fn harness_does_not_fail_identical_classes_on_a_coarse_clock() {
             failures += tally.new_rule;
         }
     });
-    assert_eq!(failures, 0, "the repeat rule failed comparisons of identical classes on a coarse clock");
+    assert_eq!(
+        failures, 0,
+        "the repeat rule failed comparisons of identical classes on a coarse clock"
+    );
 }
 
 // -------------------------------------------------------------------------------------------------- operand probe
@@ -1666,15 +2157,34 @@ fn operand_probe() {
         ("zeros", |_, _, _| 0),
         ("small (below 2^16)", |r, _, _| r.next_u64() & 0xffff),
         ("all ones", |_, _, _| u64::MAX),
-        ("below 2^47 (could be addresses)", |r, _, _| (r.next_u64() & ((1 << 47) - 1)) | (1 << 32)),
-        ("addresses of its own words", |r, _, base| base as u64 + 8 * (r.below(N) as u64)),
+        ("below 2^47 (could be addresses)", |r, _, _| {
+            (r.next_u64() & ((1 << 47) - 1)) | (1 << 32)
+        }),
+        ("addresses of its own words", |r, _, base| {
+            base as u64 + 8 * (r.below(N) as u64)
+        }),
     ];
     type Op = (&'static str, fn(&[u64]) -> u64);
     let ops: [Op; 4] = [
-        ("64-bit multiply, summed", |d| d.chunks_exact(2).fold(0u64, |a, c| a.wrapping_add(c[0].wrapping_mul(c[1])))),
-        ("128-bit multiply (high half), summed", |d| d.chunks_exact(2).fold(0u64, |a, c| a.wrapping_add(((c[0] as u128 * c[1] as u128) >> 64) as u64))),
-        ("add, rotate, xor (no multiply)", |d| d.iter().fold(0u64, |a, &x| (a.rotate_left(5) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15))),
-        ("loads, the index taken from the data", |d| (0..d.len()).fold(0u64, |a, i| a.wrapping_add(d[((a as usize) ^ i) & (d.len() - 1)]))),
+        ("64-bit multiply, summed", |d| {
+            d.chunks_exact(2)
+                .fold(0u64, |a, c| a.wrapping_add(c[0].wrapping_mul(c[1])))
+        }),
+        ("128-bit multiply (high half), summed", |d| {
+            d.chunks_exact(2).fold(0u64, |a, c| {
+                a.wrapping_add(((c[0] as u128 * c[1] as u128) >> 64) as u64)
+            })
+        }),
+        ("add, rotate, xor (no multiply)", |d| {
+            d.iter().fold(0u64, |a, &x| {
+                (a.rotate_left(5) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15)
+            })
+        }),
+        ("loads, the index taken from the data", |d| {
+            (0..d.len()).fold(0u64, |a, i| {
+                a.wrapping_add(d[((a as usize) ^ i) & (d.len() - 1)])
+            })
+        }),
     ];
     let all_rows = |suffix: &str| {
         for (op_name, op) in ops {
@@ -1687,7 +2197,11 @@ fn operand_probe() {
                         let mut v = vec![0u64; N];
                         let base = v.as_ptr();
                         for w in v.iter_mut() {
-                            *w = if random { rng.next_u64() } else { kind(rng, N, base) };
+                            *w = if random {
+                                rng.next_u64()
+                            } else {
+                                kind(rng, N, base)
+                            };
                         }
                         v
                     },
@@ -1753,54 +2267,127 @@ fn dit_on_and_off() {
         small[size - 1] = 3;
         let (p, k3) = (pool.clone(), small.clone());
         both(format!("ecdh {label} scalar: 3 vs random"), &mut |name| {
-            measure(name, budget(), |rng, c| (if c { random_scalar(rng) } else { k3.clone() }, p[rng.below(32)].clone()), |(k, pt): &(Vec<u8>, Vec<u8>)| {
-                ecdh::shared_secret(curve, k, pt)
-            })
+            measure(
+                name,
+                budget(),
+                |rng, c| {
+                    (
+                        if c { random_scalar(rng) } else { k3.clone() },
+                        p[rng.below(32)].clone(),
+                    )
+                },
+                |(k, pt): &(Vec<u8>, Vec<u8>)| ecdh::shared_secret(curve, k, pt),
+            )
         });
         let k3 = small.clone();
-        both(format!("ecdh {label} public key: scalar 3 vs random"), &mut |name| {
-            measure(name, budget(), |rng, c| if c { random_scalar(rng) } else { k3.clone() }, |k: &Vec<u8>| ecdh::public_key(curve, k))
-        });
+        both(
+            format!("ecdh {label} public key: scalar 3 vs random"),
+            &mut |name| {
+                measure(
+                    name,
+                    budget(),
+                    |rng, c| if c { random_scalar(rng) } else { k3.clone() },
+                    |k: &Vec<u8>| ecdh::public_key(curve, k),
+                )
+            },
+        );
     }
-    both("sha256 message: zeros vs random (1 KiB)".into(), &mut |name| measure(name, budget(), |rng, c| fixed_or_random(rng, c, 1024, 0), |m| Sha256::digest(m)));
-    both("poly1305 limbs32 (5 x 26-bit) message: zeros vs random".into(), &mut |name| {
-        measure(name, budget(), |rng, c| fixed_or_random(rng, c, 1024, 0), |m: &Vec<u8>| {
-            let mut p = limbs32::Poly1305::new(&[0x33u8; 32]);
-            for c in m.chunks_exact(16) {
-                p.block(c.try_into().unwrap(), true);
-            }
-            p.finish()
-        })
-    });
+    both(
+        "sha256 message: zeros vs random (1 KiB)".into(),
+        &mut |name| {
+            measure(
+                name,
+                budget(),
+                |rng, c| fixed_or_random(rng, c, 1024, 0),
+                |m| Sha256::digest(m),
+            )
+        },
+    );
+    both(
+        "poly1305 limbs32 (5 x 26-bit) message: zeros vs random".into(),
+        &mut |name| {
+            measure(
+                name,
+                budget(),
+                |rng, c| fixed_or_random(rng, c, 1024, 0),
+                |m: &Vec<u8>| {
+                    let mut p = limbs32::Poly1305::new(&[0x33u8; 32]);
+                    for c in m.chunks_exact(16) {
+                        p.block(c.try_into().unwrap(), true);
+                    }
+                    p.finish()
+                },
+            )
+        },
+    );
     let h = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128.to_be_bytes();
-    both("ghash [Portable] data blocks: 0 vs random (fixed H)".into(), &mut |name| {
-        measure(name, budget(), |rng, c| fixed_or_random(rng, c, 128, 0), |d: &Vec<u8>| GhashKey::new(&h, Backend::Portable).hash(b"aad", d))
-    });
+    both(
+        "ghash [Portable] data blocks: 0 vs random (fixed H)".into(),
+        &mut |name| {
+            measure(
+                name,
+                budget(),
+                |rng, c| fixed_or_random(rng, c, 128, 0),
+                |d: &Vec<u8>| GhashKey::new(&h, Backend::Portable).hash(b"aad", d),
+            )
+        },
+    );
     // the AES rows the M5's second run flagged: key setup with a zero key, and the hardware path sealing 32 zero bytes
     let nonce = [9u8; 12];
     for backend in backends() {
         for key_len in [16usize, 32] {
-            both(format!("aes-{}-gcm [{backend:?}] key setup + seal 64 B: zero key vs random", key_len * 8), &mut |name| {
-                measure(name, budget(), |rng, c| fixed_or_random(rng, c, key_len, 0), |key: &Vec<u8>| {
-                    let g = AesGcm::with_backend(key, backend);
-                    let mut b = vec![0u8; 64 + 16];
-                    g.seal_in_place(&nonce, b"", &mut b);
-                    b
-                })
-            });
+            both(
+                format!(
+                    "aes-{}-gcm [{backend:?}] key setup + seal 64 B: zero key vs random",
+                    key_len * 8
+                ),
+                &mut |name| {
+                    measure(
+                        name,
+                        budget(),
+                        |rng, c| fixed_or_random(rng, c, key_len, 0),
+                        |key: &Vec<u8>| {
+                            let g = AesGcm::with_backend(key, backend);
+                            let mut b = vec![0u8; 64 + 16];
+                            g.seal_in_place(&nonce, b"", &mut b);
+                            b
+                        },
+                    )
+                },
+            );
         }
         let short_key = AesGcm::with_backend(&[0x6bu8; 16], backend);
-        both(format!("aes-128-gcm [{backend:?}] seal 32 B: zeros vs random"), &mut |name| {
-            measure(name, budget(), |rng, c| fixed_or_random(rng, c, 48, 0), |buf: &Vec<u8>| {
-                let mut b = buf.clone();
-                short_key.seal_in_place(&nonce, b"", &mut b);
-                b
-            })
-        });
+        both(
+            format!("aes-128-gcm [{backend:?}] seal 32 B: zeros vs random"),
+            &mut |name| {
+                measure(
+                    name,
+                    budget(),
+                    |rng, c| fixed_or_random(rng, c, 48, 0),
+                    |buf: &Vec<u8>| {
+                        let mut b = buf.clone();
+                        short_key.seal_in_place(&nonce, b"", &mut b);
+                        b
+                    },
+                )
+            },
+        );
     }
     println!("\nlargest |t| of each comparison, DIT off and on:");
     for (name, off, on) in &table {
-        let mark = |t: f64| if t > LEAK_T { "LEAK" } else if t > SUSPICIOUS_T { "suspicious" } else { "ok" };
-        println!("  {name:<56} DIT off {off:>6.1} {:<10}  DIT on {on:>6.1} {}", mark(*off), mark(*on));
+        let mark = |t: f64| {
+            if t > LEAK_T {
+                "LEAK"
+            } else if t > SUSPICIOUS_T {
+                "suspicious"
+            } else {
+                "ok"
+            }
+        };
+        println!(
+            "  {name:<56} DIT off {off:>6.1} {:<10}  DIT on {on:>6.1} {}",
+            mark(*off),
+            mark(*on)
+        );
     }
 }

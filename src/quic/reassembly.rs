@@ -66,7 +66,12 @@ impl Reassembler {
 
     /// The offset just after the last byte that has come (the highest end of a range that is held, or what was read).
     pub fn end_offset(&self) -> u64 {
-        self.pieces.iter().next_back().map(|(&at, p)| at + p.data().len() as u64).unwrap_or(self.read).max(self.read)
+        self.pieces
+            .iter()
+            .next_back()
+            .map(|(&at, p)| at + p.data().len() as u64)
+            .unwrap_or(self.read)
+            .max(self.read)
     }
 
     /// How many bytes can be read now: those from the read offset to the first hole.
@@ -81,14 +86,20 @@ impl Reassembler {
     /// beyond `read_offset() + window` is refused. A range that was read already is dropped (it is a repeat), a part of one that
     /// was read already is dropped, and what overlaps what is held must say the same.
     pub fn insert(&mut self, offset: u64, data: &[u8], window: u64) -> Result<(), Error> {
-        let end = offset.checked_add(data.len() as u64).ok_or(Error::Exceeded)?;
+        let end = offset
+            .checked_add(data.len() as u64)
+            .ok_or(Error::Exceeded)?;
         if end > self.read.saturating_add(window) {
             return Err(Error::Exceeded);
         }
         if end <= self.read {
             return Ok(());
         }
-        let (mut start, mut data) = if offset < self.read { (self.read, &data[(self.read - offset) as usize..]) } else { (offset, data) };
+        let (mut start, mut data) = if offset < self.read {
+            (self.read, &data[(self.read - offset) as usize..])
+        } else {
+            (offset, data)
+        };
         // the piece that begins before `start`, if it reaches it: what it has of the new range has to be the same, and then the new
         // range begins where it ends
         if let Some((&at, piece)) = self.pieces.range(..=start).next_back() {
@@ -108,7 +119,11 @@ impl Reassembler {
         let mut new: Vec<(u64, &[u8])> = Vec::new();
         let mut cursor = start;
         let mut rest = data;
-        let inside: Vec<(u64, usize)> = self.pieces.range(start..start + rest.len() as u64).map(|(&at, p)| (at, p.data().len())).collect();
+        let inside: Vec<(u64, usize)> = self
+            .pieces
+            .range(start..start + rest.len() as u64)
+            .map(|(&at, p)| (at, p.data().len()))
+            .collect();
         for (at, len) in inside {
             if at > cursor {
                 new.push((cursor, &rest[..(at - cursor) as usize]));
@@ -128,9 +143,19 @@ impl Reassembler {
         // it touches both
         let mut pieces = self.pieces.len() as isize;
         for (at, bytes) in &new {
-            let left = self.pieces.range(..*at).next_back().is_some_and(|(&b, p)| b + p.data().len() as u64 == *at);
+            let left = self
+                .pieces
+                .range(..*at)
+                .next_back()
+                .is_some_and(|(&b, p)| b + p.data().len() as u64 == *at);
             let right = self.pieces.contains_key(&(*at + bytes.len() as u64));
-            pieces += if left && right { -1 } else if left || right { 0 } else { 1 };
+            pieces += if left && right {
+                -1
+            } else if left || right {
+                0
+            } else {
+                1
+            };
         }
         if pieces > MAX_PIECES as isize {
             return Err(Error::Exceeded);
@@ -145,10 +170,21 @@ impl Reassembler {
     fn add(&mut self, at: u64, bytes: &[u8]) {
         self.held += bytes.len();
         let end = at + bytes.len() as u64;
-        let before = self.pieces.range(..at).next_back().filter(|(&b, p)| b + p.data().len() as u64 == at).map(|(&b, _)| b);
+        let before = self
+            .pieces
+            .range(..at)
+            .next_back()
+            .filter(|(&b, p)| b + p.data().len() as u64 == at)
+            .map(|(&b, _)| b);
         let (key, mut joined) = match before.and_then(|b| self.pieces.remove(&b).map(|p| (b, p))) {
             Some(found) => found,
-            None => (at, Piece { bytes: Vec::with_capacity(bytes.len()), pos: 0 }),
+            None => (
+                at,
+                Piece {
+                    bytes: Vec::with_capacity(bytes.len()),
+                    pos: 0,
+                },
+            ),
         };
         // what was read from the front of a piece that goes on growing is given back once it is as much as what is left
         if joined.pos > 0 && joined.pos >= joined.data().len() {
@@ -164,7 +200,9 @@ impl Reassembler {
 
     /// Reads bytes from the front into `buf`; returns how many (nothing if there is a hole at the read offset).
     pub fn read(&mut self, buf: &mut [u8]) -> usize {
-        let Some(mut entry) = self.pieces.first_entry() else { return 0 };
+        let Some(mut entry) = self.pieces.first_entry() else {
+            return 0;
+        };
         if *entry.key() != self.read {
             return 0;
         }
@@ -187,7 +225,9 @@ impl Reassembler {
 
     /// Throws away what can be read now, without copying it out (a stream that nobody wants any more); returns how many bytes.
     pub fn discard(&mut self) -> usize {
-        let Some(entry) = self.pieces.first_entry() else { return 0 };
+        let Some(entry) = self.pieces.first_entry() else {
+            return 0;
+        };
         if *entry.key() != self.read {
             return 0;
         }
@@ -266,7 +306,11 @@ mod tests {
             // wrong in the part that overlaps what is held
             let overlap_at = (offset.max(5) - offset) as usize;
             other[overlap_at] ^= 0x55;
-            assert_eq!(r.insert(offset, &other, 100), Err(Error::Inconsistent), "{offset}+{len}");
+            assert_eq!(
+                r.insert(offset, &other, 100),
+                Err(Error::Inconsistent),
+                "{offset}+{len}"
+            );
             // and nothing of it was kept
             assert_eq!(r.buffered(), 10);
             assert_eq!(r.end_offset(), 15);
@@ -286,7 +330,10 @@ mod tests {
     #[test]
     fn nothing_is_held_beyond_the_window() {
         let mut r = Reassembler::new();
-        assert_eq!(r.insert(4090, &bytes(4090, 4097), 4096), Err(Error::Exceeded));
+        assert_eq!(
+            r.insert(4090, &bytes(4090, 4097), 4096),
+            Err(Error::Exceeded)
+        );
         assert_eq!(r.buffered(), 0);
         r.insert(4090, &bytes(4090, 4096), 4096).unwrap();
         assert_eq!(r.insert(0, &bytes(0, 5000), 4096), Err(Error::Exceeded));
@@ -294,9 +341,15 @@ mod tests {
         r.insert(0, &bytes(0, 4090), 4096).unwrap();
         assert_eq!(r.take(), bytes(0, 4096));
         r.insert(4096, &bytes(4096, 8192), 4096).unwrap();
-        assert_eq!(r.insert(8192, &bytes(8192, 8193), 4096), Err(Error::Exceeded));
+        assert_eq!(
+            r.insert(8192, &bytes(8192, 8193), 4096),
+            Err(Error::Exceeded)
+        );
         // an offset so large that it overflows is refused, not wrapped
-        assert_eq!(r.insert(u64::MAX - 2, &[0; 5], u64::MAX), Err(Error::Exceeded));
+        assert_eq!(
+            r.insert(u64::MAX - 2, &[0; 5], u64::MAX),
+            Err(Error::Exceeded)
+        );
         // an empty range at the edge is fine, and past it is not
         r.insert(8192, &[], 4096).unwrap();
         assert_eq!(r.insert(8193, &[], 4096), Err(Error::Exceeded));
@@ -310,7 +363,10 @@ mod tests {
             r.insert(2 * i + 1, &[1], u64::MAX).unwrap();
         }
         assert_eq!(r.buffered(), MAX_PIECES);
-        assert_eq!(r.insert(2 * MAX_PIECES as u64 + 1, &[1], u64::MAX), Err(Error::Exceeded));
+        assert_eq!(
+            r.insert(2 * MAX_PIECES as u64 + 1, &[1], u64::MAX),
+            Err(Error::Exceeded)
+        );
         // a byte that joins two pieces is not a new one
         r.insert(0, &[9], u64::MAX).unwrap();
         r.insert(2, &[1], u64::MAX).unwrap();
@@ -363,7 +419,11 @@ mod tests {
                 let len = next(60);
                 let end = (offset + len).min(total);
                 if end > r.read_offset() + window {
-                    assert_eq!(r.insert(offset, &bytes(offset, end), window), Err(Error::Exceeded), "round {round}");
+                    assert_eq!(
+                        r.insert(offset, &bytes(offset, end), window),
+                        Err(Error::Exceeded),
+                        "round {round}"
+                    );
                     continue;
                 }
                 r.insert(offset, &bytes(offset, end), window).unwrap();

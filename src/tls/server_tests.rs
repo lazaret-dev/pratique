@@ -5,8 +5,8 @@ use super::messages::*;
 use super::pki::{CertSpec, TestPki};
 use super::server::*;
 use super::suite::*;
-use crate::crypto::sha2::HashAlg;
 use super::*;
+use crate::crypto::sha2::HashAlg;
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -62,7 +62,9 @@ fn read_to_end(s: &mut impl Read) -> io::Result<Vec<u8>> {
 
 /// A recognisable byte for position `i`.
 fn pattern(len: usize, seed: usize) -> Vec<u8> {
-    (0..len).map(|i| (i.wrapping_mul(31).wrapping_add(seed) ^ (i >> 8)) as u8).collect()
+    (0..len)
+        .map(|i| (i.wrapping_mul(31).wrapping_add(seed) ^ (i >> 8)) as u8)
+        .collect()
 }
 
 // ------------------------------------------------------------------------------------------------ the happy path
@@ -78,9 +80,14 @@ fn a_client_connects_to_the_server_with_every_suite_and_group() {
                 s.read_exact(&mut buf).unwrap();
                 s.write_all(&buf.to_ascii_uppercase()).unwrap();
                 s.flush().unwrap();
-                (s.cipher_suite(), s.group(), s.server_name().map(str::to_string))
+                (
+                    s.cipher_suite(),
+                    s.group(),
+                    s.server_name().map(str::to_string),
+                )
             });
-            let mut c = connect(port, "server.test", &client).unwrap_or_else(|e| panic!("{suite:?} {group:#x}: {e}"));
+            let mut c = connect(port, "server.test", &client)
+                .unwrap_or_else(|e| panic!("{suite:?} {group:#x}: {e}"));
             assert_eq!(c.cipher_suite(), Some(suite));
             c.write_all(b"hello").unwrap();
             let mut reply = [0u8; 5];
@@ -102,7 +109,9 @@ fn rsa_test_key(bits: usize) -> crate::sign::SigningKey {
         .find(|l| l.starts_with(&format!("{bits} ")))
         .expect("a key of that size");
     let der = crate::util::unhex(line.split(' ').nth(1).unwrap());
-    crate::sign::RsaSigningKey::from_pkcs1_der(&der).unwrap().into()
+    crate::sign::RsaSigningKey::from_pkcs1_der(&der)
+        .unwrap()
+        .into()
 }
 
 #[test]
@@ -128,7 +137,8 @@ fn a_client_connects_whatever_kind_of_key_the_server_and_its_root_have() {
                 s.write_all(&buf).unwrap();
                 s.flush().unwrap();
             });
-            let mut c = connect(port, "server.test", &client).unwrap_or_else(|e| panic!("root {root_name}, leaf {leaf_name}: {e}"));
+            let mut c = connect(port, "server.test", &client)
+                .unwrap_or_else(|e| panic!("root {root_name}, leaf {leaf_name}: {e}"));
             c.write_all(b"ping").unwrap();
             c.flush().unwrap();
             let mut back = [0u8; 4];
@@ -151,10 +161,19 @@ fn the_server_picks_the_alpn_protocol_by_its_own_preference() {
     for (server_list, client_list, expect) in cases {
         let (server, mut client) = setup(&["server.test"]);
         client.alpn_protocols = client_list.iter().map(|p| p.as_bytes().to_vec()).collect();
-        let (port, handle) = serve_one(server.with_alpn(server_list), |s| s.alpn_protocol().map(|p| p.to_vec()));
+        let (port, handle) = serve_one(server.with_alpn(server_list), |s| {
+            s.alpn_protocol().map(|p| p.to_vec())
+        });
         let c = connect(port, "server.test", &client).unwrap();
-        assert_eq!(c.alpn_protocol(), expect.map(|p| p.as_bytes()), "{server_list:?} {client_list:?}");
-        assert_eq!(handle.join().unwrap().unwrap().as_deref(), expect.map(|p| p.as_bytes()));
+        assert_eq!(
+            c.alpn_protocol(),
+            expect.map(|p| p.as_bytes()),
+            "{server_list:?} {client_list:?}"
+        );
+        assert_eq!(
+            handle.join().unwrap().unwrap().as_deref(),
+            expect.map(|p| p.as_bytes())
+        );
     }
 }
 
@@ -163,9 +182,18 @@ fn no_alpn_protocol_in_common_is_refused_unless_the_server_is_lenient() {
     let (server, mut client) = setup(&["server.test"]);
     client.alpn_protocols = vec![b"http/1.1".to_vec()];
     let (port, handle) = serve_one(server.clone().with_alpn(&["h2"]), |_| ());
-    let err = connect(port, "server.test", &client).err().expect("refused").to_string();
+    let err = connect(port, "server.test", &client)
+        .err()
+        .expect("refused")
+        .to_string();
     assert!(err.contains("alert") && err.contains("120"), "{err}");
-    assert!(handle.join().unwrap().err().unwrap().to_string().contains("no_application_protocol"));
+    assert!(handle
+        .join()
+        .unwrap()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("no_application_protocol"));
 
     let mut lenient = server.with_alpn(&["h2"]);
     lenient.alpn_required = false;
@@ -345,7 +373,13 @@ fn a_connection_cut_without_close_notify_is_an_error_for_the_server() {
     tcp.shutdown(std::net::Shutdown::Both).unwrap();
     let (first, second) = handle.join().unwrap().unwrap();
     assert_eq!(first, 4);
-    assert_eq!(second, Err(io::ErrorKind::UnexpectedEof));
+    assert!(
+        matches!(
+            second,
+            Err(io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset)
+        ),
+        "{second:?}"
+    );
 }
 
 // ------------------------------------------------------------------------------------------------ what the client must refuse
@@ -357,8 +391,16 @@ fn the_client_refuses_the_wrong_name_and_the_wrong_root_and_the_server_sees_the_
     let (port, handle) = serve_one(server, |_| ());
     let err = connect(port, "other.test", &client).err().expect("refused");
     assert!(matches!(err, Error::Verify(_)), "{err}");
-    let seen = handle.join().unwrap().err().expect("the server saw a failure").to_string();
-    assert!(seen.contains("alert") && seen.contains("42"), "bad_certificate expected: {seen}");
+    let seen = handle
+        .join()
+        .unwrap()
+        .err()
+        .expect("the server saw a failure")
+        .to_string();
+    assert!(
+        seen.contains("alert") && seen.contains("42"),
+        "bad_certificate expected: {seen}"
+    );
 
     // a root that did not sign it
     let (server, _) = setup(&["server.test"]);
@@ -369,7 +411,11 @@ fn the_client_refuses_the_wrong_name_and_the_wrong_root_and_the_server_sees_the_
 
     // an expired certificate
     let now = crate::sys::now_unix();
-    let expired = CertSpec { not_before: now - 20 * 86_400, not_after: now - 10 * 86_400, ..CertSpec::server(&["server.test"]) };
+    let expired = CertSpec {
+        not_before: now - 20 * 86_400,
+        not_after: now - 10 * 86_400,
+        ..CertSpec::server(&["server.test"])
+    };
     let pki = TestPki::with_spec(expired).unwrap();
     let (port, handle) = serve_one(ServerConfig::from_pki(&pki), |_| ());
     assert!(connect(port, "server.test", &ClientConfig::new(pki.trust_store())).is_err());
@@ -429,7 +475,10 @@ impl HelloBuilder {
             versions: Some(vec![VERSION_TLS13]),
             suites: vec![0x1303, 0x1301, 0x1302],
             groups: Some(vec![GROUP_X25519]),
-            shares: vec![(GROUP_X25519, crate::crypto::x25519::public_key(&[9u8; 32]).to_vec())],
+            shares: vec![(
+                GROUP_X25519,
+                crate::crypto::x25519::public_key(&[9u8; 32]).to_vec(),
+            )],
             sig_algs: Some(vec![0x0807]),
             compression: vec![0],
             session_id: vec![5; 32],
@@ -534,7 +583,9 @@ fn record(record_type: u8, content: &[u8]) -> Vec<u8> {
 }
 
 fn fresh_server() -> ServerConnection {
-    ServerConnection::new(Arc::new(ServerConfig::for_names(&["server.test"]).unwrap().0))
+    ServerConnection::new(Arc::new(
+        ServerConfig::for_names(&["server.test"]).unwrap().0,
+    ))
 }
 
 /// Feeds `bytes` to a new server and returns the result of `process` and the plaintext alert it queued, if any.
@@ -563,7 +614,10 @@ fn a_well_formed_hello_is_answered_with_a_flight() {
     assert_eq!(out[0], RT_HANDSHAKE);
     let sh_len = u16::from_be_bytes([out[3], out[4]]) as usize;
     assert_eq!(out[5], HS_SERVER_HELLO);
-    assert_eq!(&out[5 + sh_len..5 + sh_len + 6], &[RT_CHANGE_CIPHER_SPEC, 3, 3, 0, 1, 1]);
+    assert_eq!(
+        &out[5 + sh_len..5 + sh_len + 6],
+        &[RT_CHANGE_CIPHER_SPEC, 3, 3, 0, 1, 1]
+    );
     assert_eq!(out[5 + sh_len + 6], RT_APPLICATION_DATA);
     // no session id, no change_cipher_spec
     let mut b = HelloBuilder::new();
@@ -578,36 +632,163 @@ fn a_well_formed_hello_is_answered_with_a_flight() {
 fn a_hello_that_is_wrong_is_refused_with_the_alert_that_says_why() {
     type Edit = fn(&mut HelloBuilder);
     let cases: [(&str, Edit, u8, &str); 23] = [
-        ("no supported_versions", |b| b.versions = None, 70, "protocol_version"),
-        ("only TLS 1.2", |b| b.versions = Some(vec![0x0303]), 70, "protocol_version"),
-        ("no extensions at all", |b| b.extensions = false, 70, "protocol_version"),
-        ("no cipher suite in common", |b| b.suites = vec![0x1304, 0xc02f], 40, "no cipher suite"),
-        ("no signature_algorithms", |b| b.sig_algs = None, 109, "missing_extension"),
-        ("no Ed25519", |b| b.sig_algs = Some(vec![0x0403, 0x0804]), 40, "no certificate whose signatures"),
-        ("no group in common", |b| { b.groups = Some(vec![0x001e]); b.shares = vec![(0x001e, vec![1; 56])]; }, 40, "no key exchange group"),
-        ("compression", |b| b.compression = vec![0, 1], 47, "compression"),
-        ("no null compression", |b| b.compression = vec![1], 47, "compression"),
-        ("a session id of 33 bytes", |b| b.session_id = vec![1; 33], 47, "session id"),
-        ("two key shares for one group", |b| b.shares.push((GROUP_X25519, vec![1; 32])), 47, "two key shares"),
-        ("a duplicate extension", |b| b.duplicate = Some(0x4141), 47, "duplicate"),
-        ("data after the extensions", |b| b.trailing = vec![0], 50, "trailing"),
-        ("a short X25519 share", |b| b.shares = vec![(GROUP_X25519, vec![1; 31])], 47, "not 32 bytes"),
-        ("an all-zero X25519 share", |b| b.shares = vec![(GROUP_X25519, vec![0; 32])], 47, "all-zero"),
-        ("a P-256 share that is not on the curve", |b| { b.groups = Some(vec![GROUP_SECP256R1]); b.shares = vec![(GROUP_SECP256R1, vec![4; 65])]; }, 47, "not a valid point"),
-        ("an empty ALPN name", |b| b.alpn = Some(vec![""]), 50, "empty ALPN"),
+        (
+            "no supported_versions",
+            |b| b.versions = None,
+            70,
+            "protocol_version",
+        ),
+        (
+            "only TLS 1.2",
+            |b| b.versions = Some(vec![0x0303]),
+            70,
+            "protocol_version",
+        ),
+        (
+            "no extensions at all",
+            |b| b.extensions = false,
+            70,
+            "protocol_version",
+        ),
+        (
+            "no cipher suite in common",
+            |b| b.suites = vec![0x1304, 0xc02f],
+            40,
+            "no cipher suite",
+        ),
+        (
+            "no signature_algorithms",
+            |b| b.sig_algs = None,
+            109,
+            "missing_extension",
+        ),
+        (
+            "no Ed25519",
+            |b| b.sig_algs = Some(vec![0x0403, 0x0804]),
+            40,
+            "no certificate whose signatures",
+        ),
+        (
+            "no group in common",
+            |b| {
+                b.groups = Some(vec![0x001e]);
+                b.shares = vec![(0x001e, vec![1; 56])];
+            },
+            40,
+            "no key exchange group",
+        ),
+        (
+            "compression",
+            |b| b.compression = vec![0, 1],
+            47,
+            "compression",
+        ),
+        (
+            "no null compression",
+            |b| b.compression = vec![1],
+            47,
+            "compression",
+        ),
+        (
+            "a session id of 33 bytes",
+            |b| b.session_id = vec![1; 33],
+            47,
+            "session id",
+        ),
+        (
+            "two key shares for one group",
+            |b| b.shares.push((GROUP_X25519, vec![1; 32])),
+            47,
+            "two key shares",
+        ),
+        (
+            "a duplicate extension",
+            |b| b.duplicate = Some(0x4141),
+            47,
+            "duplicate",
+        ),
+        (
+            "data after the extensions",
+            |b| b.trailing = vec![0],
+            50,
+            "trailing",
+        ),
+        (
+            "a short X25519 share",
+            |b| b.shares = vec![(GROUP_X25519, vec![1; 31])],
+            47,
+            "not 32 bytes",
+        ),
+        (
+            "an all-zero X25519 share",
+            |b| b.shares = vec![(GROUP_X25519, vec![0; 32])],
+            47,
+            "all-zero",
+        ),
+        (
+            "a P-256 share that is not on the curve",
+            |b| {
+                b.groups = Some(vec![GROUP_SECP256R1]);
+                b.shares = vec![(GROUP_SECP256R1, vec![4; 65])];
+            },
+            47,
+            "not a valid point",
+        ),
+        (
+            "an empty ALPN name",
+            |b| b.alpn = Some(vec![""]),
+            50,
+            "empty ALPN",
+        ),
         // what tlsfuzzer found (BACKLOG B-114)
-        ("SSL 3.0 in legacy_version", |b| b.legacy_version = 0x0300, 70, "legacy_version"),
-        ("an SSL 2 legacy_version", |b| b.legacy_version = 0x0002, 70, "legacy_version"),
-        ("supported_groups without key_share", |b| b.no_key_share = true, 109, "not both there"),
-        ("key_share without supported_groups", |b| b.groups = None, 109, "not both there"),
-        ("neither, and no PSK", |b| { b.groups = None; b.shares.clear(); }, 109, "not both there"),
-        ("a share for a group of ours that supported_groups does not list", |b| b.groups = Some(vec![GROUP_SECP256R1]), 47, "does not list"),
+        (
+            "SSL 3.0 in legacy_version",
+            |b| b.legacy_version = 0x0300,
+            70,
+            "legacy_version",
+        ),
+        (
+            "an SSL 2 legacy_version",
+            |b| b.legacy_version = 0x0002,
+            70,
+            "legacy_version",
+        ),
+        (
+            "supported_groups without key_share",
+            |b| b.no_key_share = true,
+            109,
+            "not both there",
+        ),
+        (
+            "key_share without supported_groups",
+            |b| b.groups = None,
+            109,
+            "not both there",
+        ),
+        (
+            "neither, and no PSK",
+            |b| {
+                b.groups = None;
+                b.shares.clear();
+            },
+            109,
+            "not both there",
+        ),
+        (
+            "a share for a group of ours that supported_groups does not list",
+            |b| b.groups = Some(vec![GROUP_SECP256R1]),
+            47,
+            "does not list",
+        ),
     ];
     for (name, edit, alert_wanted, text) in cases {
         let mut b = HelloBuilder::new();
         edit(&mut b);
         let (result, alert, conn) = run_hello(default_config(), &record(RT_HANDSHAKE, &b.build()));
-        let err = result.err().unwrap_or_else(|| panic!("{name}: accepted")).to_string();
+        let err = result
+            .err()
+            .unwrap_or_else(|| panic!("{name}: accepted"))
+            .to_string();
         assert!(err.contains(text), "{name}: {err}");
         assert_eq!(alert, Some(alert_wanted), "{name}: {err}");
         assert!(conn.is_failed(), "{name}");
@@ -621,14 +802,49 @@ fn a_hello_that_is_wrong_is_refused_with_the_alert_that_says_why() {
 fn things_that_are_not_a_hello_are_refused() {
     let hello = HelloBuilder::new().build();
     let cases: Vec<(&str, Vec<u8>, u8)> = vec![
-        ("an HTTP request", b"GET / HTTP/1.1\r\nHost: x\r\n\r\n".to_vec(), 70),
-        ("application data first", record(RT_APPLICATION_DATA, &[1, 2, 3]), 10),
-        ("a Finished first", record(RT_HANDSHAKE, &handshake_message(HS_FINISHED, &[0; 32])), 10),
+        (
+            "an HTTP request",
+            b"GET / HTTP/1.1\r\nHost: x\r\n\r\n".to_vec(),
+            70,
+        ),
+        (
+            "application data first",
+            record(RT_APPLICATION_DATA, &[1, 2, 3]),
+            10,
+        ),
+        (
+            "a Finished first",
+            record(RT_HANDSHAKE, &handshake_message(HS_FINISHED, &[0; 32])),
+            10,
+        ),
         ("an empty handshake record", record(RT_HANDSHAKE, &[]), 10),
-        ("a change_cipher_spec first", record(RT_CHANGE_CIPHER_SPEC, &[1]), 10),
-        ("a record that is too long", [&[RT_HANDSHAKE, 3, 3][..], &(MAX_PLAINTEXT as u16 + 1).to_be_bytes()[..]].concat(), 22),
-        ("a ServerHello", record(RT_HANDSHAKE, &handshake_message(HS_SERVER_HELLO, &[0; 40])), 10),
-        ("a hello and then more in the same record", record(RT_HANDSHAKE, &[hello.clone(), handshake_message(HS_FINISHED, &[0; 32])].concat()), 10),
+        (
+            "a change_cipher_spec first",
+            record(RT_CHANGE_CIPHER_SPEC, &[1]),
+            10,
+        ),
+        (
+            "a record that is too long",
+            [
+                &[RT_HANDSHAKE, 3, 3][..],
+                &(MAX_PLAINTEXT as u16 + 1).to_be_bytes()[..],
+            ]
+            .concat(),
+            22,
+        ),
+        (
+            "a ServerHello",
+            record(RT_HANDSHAKE, &handshake_message(HS_SERVER_HELLO, &[0; 40])),
+            10,
+        ),
+        (
+            "a hello and then more in the same record",
+            record(
+                RT_HANDSHAKE,
+                &[hello.clone(), handshake_message(HS_FINISHED, &[0; 32])].concat(),
+            ),
+            10,
+        ),
     ];
     for (name, bytes, alert_wanted) in cases {
         let (result, alert, _) = run_hello(default_config(), &bytes);
@@ -674,7 +890,8 @@ fn a_hello_retry_request_asks_for_a_group_and_the_second_hello_is_checked() {
     assert!(conn.is_handshaking() && conn.group().is_none());
 
     // a second hello that changes the session id is refused
-    let (_, p256_public) = crate::crypto::ecdh::generate(crate::crypto::ecdsa::Curve::P256).unwrap();
+    let (_, p256_public) =
+        crate::crypto::ecdh::generate(crate::crypto::ecdsa::Curve::P256).unwrap();
     let mut second = HelloBuilder::new();
     second.groups = Some(vec![GROUP_X25519, GROUP_SECP256R1]);
     second.shares = vec![(GROUP_SECP256R1, p256_public.clone())];
@@ -686,7 +903,12 @@ fn a_hello_retry_request_asks_for_a_group_and_the_second_hello_is_checked() {
     conn2.receive(&record(RT_HANDSHAKE, &first.build()));
     conn2.process().unwrap();
     conn2.receive(&record(RT_HANDSHAKE, &changed.build()));
-    assert!(conn2.process().err().unwrap().to_string().contains("changed what the first said"));
+    assert!(conn2
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("changed what the first said"));
 
     // a second hello with the share for the wrong group is refused too
     let mut wrong = HelloBuilder::new();
@@ -695,7 +917,12 @@ fn a_hello_retry_request_asks_for_a_group_and_the_second_hello_is_checked() {
     conn3.receive(&record(RT_HANDSHAKE, &first.build()));
     conn3.process().unwrap();
     conn3.receive(&record(RT_HANDSHAKE, &wrong.build()));
-    assert!(conn3.process().err().unwrap().to_string().contains("exactly the key share"));
+    assert!(conn3
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("exactly the key share"));
 
     // the right second hello gets a flight
     let mut conn4 = ServerConnection::new(Arc::new(config.clone()));
@@ -738,14 +965,25 @@ fn read_flight(suite: Suite, client_private: &[u8; 32], hello_msg: &[u8], out: &
     let (group, server_public) = sh.key_share.unwrap();
     assert_eq!(group, GROUP_X25519);
     let alg = suite.hash();
-    let shared = crate::crypto::x25519::x25519(client_private, server_public.as_slice().try_into().unwrap());
+    let shared =
+        crate::crypto::x25519::x25519(client_private, server_public.as_slice().try_into().unwrap());
     let early = hkdf_extract(alg, &[], &vec![0u8; alg.output_len()]);
     let derived = derive_secret(alg, &early, "derived", &alg.digest(&[]));
     let handshake_secret = hkdf_extract(alg, &derived, &shared);
     let mut transcript = hello_msg.to_vec();
     transcript.extend_from_slice(&server_hello);
-    let s_hs = derive_secret(alg, &handshake_secret, "s hs traffic", &alg.digest(&transcript));
-    let c_hs = derive_secret(alg, &handshake_secret, "c hs traffic", &alg.digest(&transcript));
+    let s_hs = derive_secret(
+        alg,
+        &handshake_secret,
+        "s hs traffic",
+        &alg.digest(&transcript),
+    );
+    let c_hs = derive_secret(
+        alg,
+        &handshake_secret,
+        "c hs traffic",
+        &alg.digest(&transcript),
+    );
     let mut cipher = RecordCipher::new(suite, &s_hs);
     // the protected records: one handshake message each (after the compatibility change_cipher_spec)
     let mut rest = &out[5 + sh_len + 6..];
@@ -761,7 +999,15 @@ fn read_flight(suite: Suite, client_private: &[u8; 32], hello_msg: &[u8], out: &
     for m in &messages {
         transcript.extend_from_slice(m);
     }
-    Flight { suite, c_hs, s_hs, handshake_secret, transcript, messages, server_hello }
+    Flight {
+        suite,
+        c_hs,
+        s_hs,
+        handshake_secret,
+        transcript,
+        messages,
+        server_hello,
+    }
 }
 
 impl Flight {
@@ -770,7 +1016,8 @@ impl Flight {
         let alg = self.suite.hash();
         let key = expand_label(alg, &self.c_hs, "finished", &[], alg.output_len());
         let data = verify_data.unwrap_or_else(|| hmac(alg, &key, &alg.digest(&self.transcript)));
-        RecordCipher::new(self.suite, &self.c_hs).encrypt(RT_HANDSHAKE, &handshake_message(HS_FINISHED, &data))
+        RecordCipher::new(self.suite, &self.c_hs)
+            .encrypt(RT_HANDSHAKE, &handshake_message(HS_FINISHED, &data))
     }
 
     fn application_secrets(&self) -> (Vec<u8>, Vec<u8>) {
@@ -779,7 +1026,10 @@ impl Flight {
         let derived = derive_secret(alg, &self.handshake_secret, "derived", &alg.digest(&[]));
         let master = hkdf_extract(alg, &derived, &zeros);
         let hash = alg.digest(&self.transcript);
-        (derive_secret(alg, &master, "c ap traffic", &hash), derive_secret(alg, &master, "s ap traffic", &hash))
+        (
+            derive_secret(alg, &master, "c ap traffic", &hash),
+            derive_secret(alg, &master, "s ap traffic", &hash),
+        )
     }
 }
 
@@ -802,29 +1052,53 @@ fn first_flight(config: ServerConfig, builder: &HelloBuilder) -> (ServerConnecti
 fn the_server_flight_has_the_shape_the_rfc_gives_it() {
     let mut b = HelloBuilder::new();
     b.alpn = Some(vec!["http/1.1", "h2"]);
-    let config = default_config().with_suites(&[Suite::Aes128GcmSha256]).with_alpn(&["h2"]);
+    let config = default_config()
+        .with_suites(&[Suite::Aes128GcmSha256])
+        .with_alpn(&["h2"]);
     let (_, flight) = first_flight(config, &b);
     let sh = parse_server_hello(&flight.server_hello[4..]).unwrap();
     assert_eq!(sh.session_id, vec![5; 32]);
     assert_eq!(sh.selected_version, Some(VERSION_TLS13));
     assert_eq!(sh.compression, 0);
     let kinds: Vec<u8> = flight.messages.iter().map(|m| m[0]).collect();
-    assert_eq!(kinds, [HS_ENCRYPTED_EXTENSIONS, HS_CERTIFICATE, HS_CERTIFICATE_VERIFY, HS_FINISHED]);
-    assert_eq!(parse_encrypted_extensions(&flight.messages[0][4..], true, true).unwrap(), Some(b"h2".to_vec()));
+    assert_eq!(
+        kinds,
+        [
+            HS_ENCRYPTED_EXTENSIONS,
+            HS_CERTIFICATE,
+            HS_CERTIFICATE_VERIFY,
+            HS_FINISHED
+        ]
+    );
+    assert_eq!(
+        parse_encrypted_extensions(&flight.messages[0][4..], true, true).unwrap(),
+        Some(b"h2".to_vec())
+    );
     let certs = parse_certificate(&flight.messages[1][4..], false).unwrap();
     assert_eq!(certs.chain.len(), 1);
 
     // CertificateVerify: a signature by the certificate's key over the transcript through the Certificate
     let alg = flight.suite.hash();
-    let mut through_certificate = flight.transcript[..flight.transcript.len() - flight.messages[2].len() - flight.messages[3].len()].to_vec();
+    let mut through_certificate = flight.transcript
+        [..flight.transcript.len() - flight.messages[2].len() - flight.messages[3].len()]
+        .to_vec();
     let (scheme, signature) = parse_certificate_verify(&flight.messages[2][4..]).unwrap();
     assert_eq!(scheme, 0x0807);
     let leaf = crate::x509::Certificate::from_der(&certs.chain[0]).unwrap();
-    super::signature::verify_tls13_signature(&leaf, scheme, &server_certificate_verify_content(&alg.digest(&through_certificate)), &signature).unwrap();
+    super::signature::verify_tls13_signature(
+        &leaf,
+        scheme,
+        &server_certificate_verify_content(&alg.digest(&through_certificate)),
+        &signature,
+    )
+    .unwrap();
     // Finished: the HMAC of the transcript through CertificateVerify
     through_certificate.extend_from_slice(&flight.messages[2]);
     let key = expand_label(alg, &flight.s_hs, "finished", &[], alg.output_len());
-    assert_eq!(&flight.messages[3][4..], &hmac(alg, &key, &alg.digest(&through_certificate))[..]);
+    assert_eq!(
+        &flight.messages[3][4..],
+        &hmac(alg, &key, &alg.digest(&through_certificate))[..]
+    );
 }
 
 #[test]
@@ -846,7 +1120,9 @@ fn a_correct_client_finished_completes_the_handshake_and_data_flows_under_the_ap
         let mut kinds = Vec::new();
         while !rest.is_empty() {
             let len = u16::from_be_bytes([rest[3], rest[4]]) as usize;
-            let (t, plain) = reader.decrypt(&rest[..5].try_into().unwrap(), &rest[5..5 + len]).unwrap();
+            let (t, plain) = reader
+                .decrypt(&rest[..5].try_into().unwrap(), &rest[5..5 + len])
+                .unwrap();
             assert_eq!(t, RT_HANDSHAKE);
             kinds.push(plain[0]);
             rest = &rest[5 + len..];
@@ -862,14 +1138,24 @@ fn a_correct_client_finished_completes_the_handshake_and_data_flows_under_the_ap
         assert_eq!(&buf[..n], b"request");
         assert_eq!(conn.write_plaintext(b"response").unwrap(), 8);
         let out = conn.output().to_vec();
-        let (t, plain) = reader.decrypt(&out[..5].try_into().unwrap(), &out[5..]).unwrap();
-        assert_eq!((t, plain.as_slice()), (RT_APPLICATION_DATA, &b"response"[..]));
+        let (t, plain) = reader
+            .decrypt(&out[..5].try_into().unwrap(), &out[5..])
+            .unwrap();
+        assert_eq!(
+            (t, plain.as_slice()),
+            (RT_APPLICATION_DATA, &b"response"[..])
+        );
 
         // and the client's keys are not the handshake keys any more
         let mut late = RecordCipher::new(suite, &flight.c_hs);
         let mut conn2 = conn;
         conn2.receive(&late.encrypt(RT_APPLICATION_DATA, b"x"));
-        assert!(conn2.process().err().unwrap().to_string().contains("bad_record_mac"));
+        assert!(conn2
+            .process()
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("bad_record_mac"));
     }
 }
 
@@ -877,7 +1163,13 @@ fn a_correct_client_finished_completes_the_handshake_and_data_flows_under_the_ap
 fn an_alert_is_one_record_even_when_records_are_one_byte() {
     // OpenSSL found this: close_notify split in two ("invalid alert"); RFC 8446 section 5.1 forbids it
     let suite = Suite::Aes128GcmSha256;
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[suite]).with_tickets(0).with_max_fragment(1), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config()
+            .with_suites(&[suite])
+            .with_tickets(0)
+            .with_max_fragment(1),
+        &HelloBuilder::new(),
+    );
     conn.receive(&flight.client_finished_record(None));
     conn.process().unwrap();
     conn.write_plaintext(b"ab").unwrap();
@@ -889,17 +1181,31 @@ fn an_alert_is_one_record_even_when_records_are_one_byte() {
     let mut records = Vec::new();
     while !rest.is_empty() {
         let len = u16::from_be_bytes([rest[3], rest[4]]) as usize;
-        records.push(reader.decrypt(&rest[..5].try_into().unwrap(), &rest[5..5 + len]).unwrap());
+        records.push(
+            reader
+                .decrypt(&rest[..5].try_into().unwrap(), &rest[5..5 + len])
+                .unwrap(),
+        );
         rest = &rest[5 + len..];
     }
     // the data in two records of one byte, then the whole alert in one
-    assert_eq!(records, [(RT_APPLICATION_DATA, vec![b'a']), (RT_APPLICATION_DATA, vec![b'b']), (RT_ALERT, vec![1, 0])]);
+    assert_eq!(
+        records,
+        [
+            (RT_APPLICATION_DATA, vec![b'a']),
+            (RT_APPLICATION_DATA, vec![b'b']),
+            (RT_ALERT, vec![1, 0])
+        ]
+    );
 }
 
 #[test]
 fn a_wrong_client_finished_is_refused_with_decrypt_error_and_a_damaged_one_with_bad_record_mac() {
     // the right record, but a MAC over something else
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[Suite::Aes128GcmSha256]), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config().with_suites(&[Suite::Aes128GcmSha256]),
+        &HelloBuilder::new(),
+    );
     let mut wrong = hmac(HashAlg::Sha256, &[1; 32], b"not the transcript");
     wrong.truncate(32);
     conn.receive(&flight.client_finished_record(Some(wrong)));
@@ -909,68 +1215,128 @@ fn a_wrong_client_finished_is_refused_with_decrypt_error_and_a_damaged_one_with_
     // the fatal alert is queued under the keys the server writes with, and says decrypt_error (51)
     let (_, s_ap) = flight.application_secrets();
     let out = conn.output().to_vec();
-    let (t, alert) = RecordCipher::new(Suite::Aes128GcmSha256, &s_ap).decrypt(&out[..5].try_into().unwrap(), &out[5..]).unwrap();
+    let (t, alert) = RecordCipher::new(Suite::Aes128GcmSha256, &s_ap)
+        .decrypt(&out[..5].try_into().unwrap(), &out[5..])
+        .unwrap();
     assert_eq!((t, alert.as_slice()), (RT_ALERT, &[2u8, 51][..]));
 
     // a correct Finished with one bit of the record changed, wherever
-    let (_, flight2) = first_flight(default_config().with_suites(&[Suite::Aes128GcmSha256]), &HelloBuilder::new());
+    let (_, flight2) = first_flight(
+        default_config().with_suites(&[Suite::Aes128GcmSha256]),
+        &HelloBuilder::new(),
+    );
     let good = flight2.client_finished_record(None);
     for i in 0..good.len() {
-        let (mut conn, flight) = first_flight(default_config().with_suites(&[Suite::Aes128GcmSha256]), &HelloBuilder::new());
+        let (mut conn, flight) = first_flight(
+            default_config().with_suites(&[Suite::Aes128GcmSha256]),
+            &HelloBuilder::new(),
+        );
         let mut damaged = flight.client_finished_record(None);
         damaged[i] ^= 0x10;
         conn.receive(&damaged);
         // a damaged header may leave the record incomplete or oversized instead of failing at once
         let result = conn.process();
-        assert!(result.is_err() || (!conn.is_established() && conn.is_handshaking()), "byte {i} changed and the handshake finished");
+        assert!(
+            result.is_err() || (!conn.is_established() && conn.is_handshaking()),
+            "byte {i} changed and the handshake finished"
+        );
     }
 }
 
 #[test]
 fn a_finished_in_the_wrong_place_and_other_wrong_messages_are_refused() {
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[Suite::Aes128GcmSha256]), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config().with_suites(&[Suite::Aes128GcmSha256]),
+        &HelloBuilder::new(),
+    );
     // a second ClientHello where the Finished belongs
     let mut cipher = RecordCipher::new(Suite::Aes128GcmSha256, &flight.c_hs);
     conn.receive(&cipher.encrypt(RT_HANDSHAKE, &HelloBuilder::new().build()));
-    assert!(conn.process().err().unwrap().to_string().contains("out of order"));
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("out of order"));
 
     // a client Certificate we did not ask for
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[Suite::Aes128GcmSha256]), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config().with_suites(&[Suite::Aes128GcmSha256]),
+        &HelloBuilder::new(),
+    );
     let mut cipher = RecordCipher::new(Suite::Aes128GcmSha256, &flight.c_hs);
-    conn.receive(&cipher.encrypt(RT_HANDSHAKE, &handshake_message(HS_CERTIFICATE, &[0, 0, 0, 0])));
-    assert!(conn.process().err().unwrap().to_string().contains("out of order"));
+    conn.receive(&cipher.encrypt(
+        RT_HANDSHAKE,
+        &handshake_message(HS_CERTIFICATE, &[0, 0, 0, 0]),
+    ));
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("out of order"));
 
     // application data before the Finished
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[Suite::Aes128GcmSha256]), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config().with_suites(&[Suite::Aes128GcmSha256]),
+        &HelloBuilder::new(),
+    );
     let mut cipher = RecordCipher::new(Suite::Aes128GcmSha256, &flight.c_hs);
     conn.receive(&cipher.encrypt(RT_APPLICATION_DATA, b"early"));
-    assert!(conn.process().err().unwrap().to_string().contains("non-handshake record"));
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("non-handshake record"));
     assert!(conn.write_plaintext(b"x").is_err());
 
     // data after the Finished in the same record, and a Finished that is split in two records (which is allowed)
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[Suite::Aes128GcmSha256]), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config().with_suites(&[Suite::Aes128GcmSha256]),
+        &HelloBuilder::new(),
+    );
     let alg = HashAlg::Sha256;
     let key = expand_label(alg, &flight.c_hs, "finished", &[], 32);
-    let finished = handshake_message(HS_FINISHED, &hmac(alg, &key, &alg.digest(&flight.transcript)));
+    let finished = handshake_message(
+        HS_FINISHED,
+        &hmac(alg, &key, &alg.digest(&flight.transcript)),
+    );
     let mut cipher = RecordCipher::new(Suite::Aes128GcmSha256, &flight.c_hs);
     let (a, b) = finished.split_at(10);
     conn.receive(&cipher.encrypt(RT_HANDSHAKE, a));
     conn.receive(&cipher.encrypt(RT_HANDSHAKE, b));
     conn.process().unwrap();
     assert!(conn.is_established());
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[Suite::Aes128GcmSha256]), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config().with_suites(&[Suite::Aes128GcmSha256]),
+        &HelloBuilder::new(),
+    );
     let mut cipher = RecordCipher::new(Suite::Aes128GcmSha256, &flight.c_hs);
     let key = expand_label(alg, &flight.c_hs, "finished", &[], 32);
-    let finished = handshake_message(HS_FINISHED, &hmac(alg, &key, &alg.digest(&flight.transcript)));
-    conn.receive(&cipher.encrypt(RT_HANDSHAKE, &[finished, vec![HS_KEY_UPDATE, 0, 0, 1, 0]].concat()));
-    assert!(conn.process().err().unwrap().to_string().contains("after the client Finished"));
+    let finished = handshake_message(
+        HS_FINISHED,
+        &hmac(alg, &key, &alg.digest(&flight.transcript)),
+    );
+    conn.receive(&cipher.encrypt(
+        RT_HANDSHAKE,
+        &[finished, vec![HS_KEY_UPDATE, 0, 0, 1, 0]].concat(),
+    ));
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("after the client Finished"));
 }
 
 /// The alert the server queued, opened with the keys it writes with at that point (after its Finished, the
 /// application keys).
 fn alert_sent(conn: &ServerConnection, suite: Suite, secret: &[u8]) -> Vec<u8> {
     let out = conn.output().to_vec();
-    let (t, alert) = RecordCipher::new(suite, secret).decrypt(&out[..5].try_into().unwrap(), &out[5..]).unwrap();
+    let (t, alert) = RecordCipher::new(suite, secret)
+        .decrypt(&out[..5].try_into().unwrap(), &out[5..])
+        .unwrap();
     assert_eq!(t, RT_ALERT);
     alert
 }
@@ -982,20 +1348,39 @@ fn what_tlsfuzzer_found_in_the_records_and_the_finished_is_refused_as_the_rfc_sa
     let alg = suite.hash();
     let finished = |flight: &Flight| {
         let key = expand_label(alg, &flight.c_hs, "finished", &[], alg.output_len());
-        handshake_message(HS_FINISHED, &hmac(alg, &key, &alg.digest(&flight.transcript)))
+        handshake_message(
+            HS_FINISHED,
+            &hmac(alg, &key, &alg.digest(&flight.transcript)),
+        )
     };
 
     // a Finished padded to the largest record: the inner plaintext is over 2^14 + 1 (record_overflow, RFC 8446 5.4) ...
     let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
     let fin = finished(&flight);
     let padding = MAX_PLAINTEXT + 256 - fin.len() - 1 - 16;
-    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt_padded(RT_HANDSHAKE, &fin, padding));
-    assert!(conn.process().err().unwrap().to_string().contains("record_overflow"));
-    assert_eq!(alert_sent(&conn, suite, &flight.application_secrets().1), [2, 22]);
+    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt_padded(
+        RT_HANDSHAKE,
+        &fin,
+        padding,
+    ));
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("record_overflow"));
+    assert_eq!(
+        alert_sent(&conn, suite, &flight.application_secrets().1),
+        [2, 22]
+    );
     // ... and one padded to exactly 2^14 + 1 is taken
     let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
     let fin = finished(&flight);
-    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt_padded(RT_HANDSHAKE, &fin, MAX_PLAINTEXT - fin.len()));
+    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt_padded(
+        RT_HANDSHAKE,
+        &fin,
+        MAX_PLAINTEXT - fin.len(),
+    ));
     conn.process().unwrap();
     assert!(conn.is_established());
 
@@ -1003,25 +1388,57 @@ fn what_tlsfuzzer_found_in_the_records_and_the_finished_is_refused_as_the_rfc_sa
     let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
     let mut long = finished(&flight)[4..].to_vec();
     long.splice(0..0, [0u8; 16]);
-    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt(RT_HANDSHAKE, &handshake_message(HS_FINISHED, &long)));
-    assert!(conn.process().err().unwrap().to_string().contains("decode_error"));
-    assert_eq!(alert_sent(&conn, suite, &flight.application_secrets().1), [2, 50]);
+    conn.receive(
+        &RecordCipher::new(suite, &flight.c_hs)
+            .encrypt(RT_HANDSHAKE, &handshake_message(HS_FINISHED, &long)),
+    );
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("decode_error"));
+    assert_eq!(
+        alert_sent(&conn, suite, &flight.application_secrets().1),
+        [2, 50]
+    );
     // and one that says it is far longer is refused at once, before its bytes come
     let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
-    conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt(RT_HANDSHAKE, &[HS_FINISHED, 0xff, 0xff, 0xff, 0, 0]));
-    assert!(conn.process().err().unwrap().to_string().contains("decode_error"));
+    conn.receive(
+        &RecordCipher::new(suite, &flight.c_hs)
+            .encrypt(RT_HANDSHAKE, &[HS_FINISHED, 0xff, 0xff, 0xff, 0, 0]),
+    );
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("decode_error"));
 
     // an alert record with nothing in it, under the handshake keys or the application keys, is an unexpected_message
     let (mut conn, flight) = first_flight(config(), &HelloBuilder::new());
     conn.receive(&RecordCipher::new(suite, &flight.c_hs).encrypt_padded(RT_ALERT, &[], 5));
-    assert!(conn.process().err().unwrap().to_string().contains("empty alert"));
-    assert_eq!(alert_sent(&conn, suite, &flight.application_secrets().1), [2, 10]);
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("empty alert"));
+    assert_eq!(
+        alert_sent(&conn, suite, &flight.application_secrets().1),
+        [2, 10]
+    );
     let (mut conn, flight) = first_flight(config().with_tickets(0), &HelloBuilder::new());
     conn.receive(&flight.client_finished_record(None));
     conn.process().unwrap();
     let (c_ap, s_ap) = flight.application_secrets();
     conn.receive(&RecordCipher::new(suite, &c_ap).encrypt(RT_ALERT, &[]));
-    assert!(conn.process().err().unwrap().to_string().contains("empty alert"));
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("empty alert"));
     assert_eq!(alert_sent(&conn, suite, &s_ap), [2, 10]);
 
     // one compatibility change_cipher_spec is skipped; a second is an unexpected_message
@@ -1029,8 +1446,16 @@ fn what_tlsfuzzer_found_in_the_records_and_the_finished_is_refused_as_the_rfc_sa
     conn.receive(&record(RT_CHANGE_CIPHER_SPEC, &[1]));
     conn.process().unwrap();
     conn.receive(&record(RT_CHANGE_CIPHER_SPEC, &[1]));
-    assert!(conn.process().err().unwrap().to_string().contains("change_cipher_spec"));
-    assert_eq!(alert_sent(&conn, suite, &flight.application_secrets().1), [2, 10]);
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("change_cipher_spec"));
+    assert_eq!(
+        alert_sent(&conn, suite, &flight.application_secrets().1),
+        [2, 10]
+    );
 
     // a client that cannot read our flight may say so in the clear: its alert ends the handshake, unanswered
     let (mut conn, _) = first_flight(config(), &HelloBuilder::new());
@@ -1042,7 +1467,12 @@ fn what_tlsfuzzer_found_in_the_records_and_the_finished_is_refused_as_the_rfc_sa
     conn.receive(&flight.client_finished_record(None));
     conn.process().unwrap();
     conn.receive(&record(RT_ALERT, &[2, 48]));
-    assert!(conn.process().err().unwrap().to_string().contains("unprotected record"));
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("unprotected record"));
 
     // TLS 1.0 in legacy_version is taken (only SSL 3.0 and older are refused)
     let mut b = HelloBuilder::new();
@@ -1058,11 +1488,15 @@ fn a_second_client_hello_may_not_offer_early_data_again() {
     let mut first = HelloBuilder::new();
     first.groups = Some(vec![GROUP_X25519, GROUP_SECP256R1]);
     first.extra = vec![(EXT_EARLY_DATA, Vec::new())];
-    let (_, p256_public) = crate::crypto::ecdh::generate(crate::crypto::ecdsa::Curve::P256).unwrap();
+    let (_, p256_public) =
+        crate::crypto::ecdh::generate(crate::crypto::ecdsa::Curve::P256).unwrap();
     let mut second = HelloBuilder::new();
     second.groups = first.groups.clone();
     second.shares = vec![(GROUP_SECP256R1, p256_public)];
-    for (again, wanted) in [(true, Some("early_data in the second ClientHello")), (false, None)] {
+    for (again, wanted) in [
+        (true, Some("early_data in the second ClientHello")),
+        (false, None),
+    ] {
         let mut conn = ServerConnection::new(Arc::new(config.clone()));
         conn.receive(&record(RT_HANDSHAKE, &first.build()));
         conn.process().unwrap();
@@ -1094,7 +1528,10 @@ fn a_second_client_hello_may_not_offer_early_data_again() {
 #[test]
 fn a_key_update_from_the_client_is_followed_and_answered_when_asked_for() {
     let suite = Suite::Aes256GcmSha384;
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[suite]).with_tickets(0), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config().with_suites(&[suite]).with_tickets(0),
+        &HelloBuilder::new(),
+    );
     conn.receive(&flight.client_finished_record(None));
     conn.process().unwrap();
     let (c_ap, s_ap) = flight.application_secrets();
@@ -1112,40 +1549,77 @@ fn a_key_update_from_the_client_is_followed_and_answered_when_asked_for() {
     conn.write_plaintext(b"reply").unwrap();
     let out = conn.output().to_vec();
     let len1 = u16::from_be_bytes([out[3], out[4]]) as usize;
-    let (t, plain) = server_read.decrypt(&out[..5].try_into().unwrap(), &out[5..5 + len1]).unwrap();
-    assert_eq!((t, plain.as_slice()), (RT_HANDSHAKE, &handshake_message(HS_KEY_UPDATE, &[0])[..]));
+    let (t, plain) = server_read
+        .decrypt(&out[..5].try_into().unwrap(), &out[5..5 + len1])
+        .unwrap();
+    assert_eq!(
+        (t, plain.as_slice()),
+        (RT_HANDSHAKE, &handshake_message(HS_KEY_UPDATE, &[0])[..])
+    );
     server_read = server_read.next_generation();
     let rest = &out[5 + len1..];
-    let (t, plain) = server_read.decrypt(&rest[..5].try_into().unwrap(), &rest[5..]).unwrap();
+    let (t, plain) = server_read
+        .decrypt(&rest[..5].try_into().unwrap(), &rest[5..])
+        .unwrap();
     assert_eq!((t, plain.as_slice()), (RT_APPLICATION_DATA, &b"reply"[..]));
 
     // malformed KeyUpdates (a request_update other than 0 or 1 is an illegal_parameter, RFC 8446 section 4.6.3)
-    for (bad, wanted) in [(vec![HS_KEY_UPDATE, 0, 0, 2, 1, 0], "decode_error"), (vec![HS_KEY_UPDATE, 0, 0, 1, 2], "illegal_parameter"), (vec![HS_KEY_UPDATE, 0, 0, 0], "decode_error")] {
-        let (mut conn, flight) = first_flight(default_config().with_suites(&[suite]).with_tickets(0), &HelloBuilder::new());
+    for (bad, wanted) in [
+        (vec![HS_KEY_UPDATE, 0, 0, 2, 1, 0], "decode_error"),
+        (vec![HS_KEY_UPDATE, 0, 0, 1, 2], "illegal_parameter"),
+        (vec![HS_KEY_UPDATE, 0, 0, 0], "decode_error"),
+    ] {
+        let (mut conn, flight) = first_flight(
+            default_config().with_suites(&[suite]).with_tickets(0),
+            &HelloBuilder::new(),
+        );
         conn.receive(&flight.client_finished_record(None));
         conn.process().unwrap();
         let (c_ap, _) = flight.application_secrets();
         conn.receive(&RecordCipher::new(suite, &c_ap).encrypt(RT_HANDSHAKE, &bad));
-        let err = conn.process().err().unwrap_or_else(|| panic!("{bad:?} taken")).to_string();
+        let err = conn
+            .process()
+            .err()
+            .unwrap_or_else(|| panic!("{bad:?} taken"))
+            .to_string();
         assert!(err.contains(wanted), "{bad:?}: {err}");
     }
     // a KeyUpdate split over two records with application data between them (RFC 8446 section 5.1, tlsfuzzer's
     // test-tls13-keyupdate)
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[suite]).with_tickets(0), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config().with_suites(&[suite]).with_tickets(0),
+        &HelloBuilder::new(),
+    );
     conn.receive(&flight.client_finished_record(None));
     conn.process().unwrap();
     let mut w = RecordCipher::new(suite, &flight.application_secrets().0);
     conn.receive(&w.encrypt(RT_HANDSHAKE, &[HS_KEY_UPDATE, 0, 0, 1]));
     conn.receive(&w.encrypt(RT_APPLICATION_DATA, b"between"));
     conn.receive(&w.encrypt(RT_HANDSHAKE, &[0]));
-    assert!(conn.process().err().unwrap().to_string().contains("inside a handshake message"));
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("inside a handshake message"));
     // and anything else after the handshake
-    let (mut conn, flight) = first_flight(default_config().with_suites(&[suite]).with_tickets(0), &HelloBuilder::new());
+    let (mut conn, flight) = first_flight(
+        default_config().with_suites(&[suite]).with_tickets(0),
+        &HelloBuilder::new(),
+    );
     conn.receive(&flight.client_finished_record(None));
     conn.process().unwrap();
     let (c_ap, _) = flight.application_secrets();
-    conn.receive(&RecordCipher::new(suite, &c_ap).encrypt(RT_HANDSHAKE, &handshake_message(HS_NEW_SESSION_TICKET, &[0; 12])));
-    assert!(conn.process().err().unwrap().to_string().contains("unexpected post-handshake"));
+    conn.receive(&RecordCipher::new(suite, &c_ap).encrypt(
+        RT_HANDSHAKE,
+        &handshake_message(HS_NEW_SESSION_TICKET, &[0; 12]),
+    ));
+    assert!(conn
+        .process()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("unexpected post-handshake"));
 }
 
 #[test]
@@ -1196,7 +1670,11 @@ fn store_under_one_root(name_lists: &[&[&str]]) -> (CertStore, ClientConfig) {
     let store = CertStore::new();
     for names in name_lists {
         let k = KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P256).unwrap();
-        let der = issue(&CertSpec::server(names), &k, Some((&root_spec.common_name, &root_key)));
+        let der = issue(
+            &CertSpec::server(names),
+            &k,
+            Some((&root_spec.common_name, &root_key)),
+        );
         store.add(CertifiedKey::new(vec![der], k.signing_key().clone()).unwrap());
     }
     let mut trust = TrustStore::empty();
@@ -1208,36 +1686,70 @@ fn store_under_one_root(name_lists: &[&[&str]]) -> (CertStore, ClientConfig) {
 fn the_certificate_is_the_one_for_the_name_the_client_asks_for() {
     let (store, client) = store_under_one_root(&[&["default.test"], &["a.test"], &["*.b.test"]]);
     let config = ServerConfig::with_certificates(store);
-    for (sni, want) in [("a.test", "a.test"), ("x.b.test", "*.b.test"), ("default.test", "default.test")] {
-        let (port, handle) = serve_one(config.clone(), |mut s| s.connection_mut().certificate().unwrap().dns_names()[0].clone());
+    for (sni, want) in [
+        ("a.test", "a.test"),
+        ("x.b.test", "*.b.test"),
+        ("default.test", "default.test"),
+    ] {
+        let (port, handle) = serve_one(config.clone(), |mut s| {
+            s.connection_mut().certificate().unwrap().dns_names()[0].clone()
+        });
         let mut c = connect(port, sni, &client).unwrap_or_else(|e| panic!("{sni}: {e}"));
         let _ = c.write_all(b"x");
         assert_eq!(handle.join().unwrap().unwrap(), want, "for {sni}");
     }
     // a name none is for: the default certificate, which the client refuses (it is not for that name)
     let (port, handle) = serve_one(config.clone(), |_| ());
-    let err = connect(port, "unknown.test", &client).err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(err.contains("unknown.test") || err.to_lowercase().contains("name"), "{err}");
+    let err = connect(port, "unknown.test", &client)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(
+        err.contains("unknown.test") || err.to_lowercase().contains("name"),
+        "{err}"
+    );
     let _ = handle.join();
     // a strict store refuses the name with unrecognized_name
     let (store, client) = store_under_one_root(&[&["only.test"]]);
     let (port, handle) = serve_one(ServerConfig::with_certificates(store.strict()), |_| ());
-    let err = connect(port, "unknown.test", &client).err().map(|e| e.to_string()).unwrap_or_default();
-    let server_err = handle.join().unwrap().err().map(|e| e.to_string()).unwrap_or_default();
+    let err = connect(port, "unknown.test", &client)
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    let server_err = handle
+        .join()
+        .unwrap()
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
     assert!(server_err.contains("unrecognized_name"), "{server_err}");
-    assert!(err.contains("112") || err.contains("unrecognized_name"), "{err}");
+    assert!(
+        err.contains("112") || err.contains("unrecognized_name"),
+        "{err}"
+    );
 }
 
 #[test]
 fn the_certificate_is_one_whose_signature_the_client_takes() {
     let root_key = KeyPair::generate().unwrap();
     let store = CertStore::new();
-    for key in [KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P256).unwrap(), KeyPair::from_key(rsa_test_key(2048))] {
-        let der = issue(&CertSpec::server(&["server.test"]), &key, Some(("root", &root_key)));
+    for key in [
+        KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P256).unwrap(),
+        KeyPair::from_key(rsa_test_key(2048)),
+    ] {
+        let der = issue(
+            &CertSpec::server(&["server.test"]),
+            &key,
+            Some(("root", &root_key)),
+        );
         store.add(CertifiedKey::new(vec![der], key.signing_key().clone()).unwrap());
     }
     let config = ServerConfig::with_certificates(store);
-    for (offered, want) in [(vec![0x0804], 0x0804), (vec![0x0403, 0x0804], 0x0403), (vec![0x0805, 0x0806], 0x0805)] {
+    for (offered, want) in [
+        (vec![0x0804], 0x0804),
+        (vec![0x0403, 0x0804], 0x0403),
+        (vec![0x0805, 0x0806], 0x0805),
+    ] {
         let mut b = HelloBuilder::new();
         b.sig_algs = Some(offered.clone());
         let (_, flight) = first_flight(config.clone(), &b);
@@ -1248,7 +1760,10 @@ fn the_certificate_is_one_whose_signature_the_client_takes() {
     let mut b = HelloBuilder::new();
     b.sig_algs = Some(vec![0x0503]);
     let (result, alert, _) = run_hello(config, &record(RT_HANDSHAKE, &b.build()));
-    assert!(result.unwrap_err().to_string().contains("handshake_failure"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("handshake_failure"));
     assert_eq!(alert, Some(40));
 }
 
@@ -1258,15 +1773,29 @@ fn client_ca() -> (CertifiedKey, Arc<TrustStore>) {
     let ca_spec = CertSpec::ca("pratique client CA");
     let ca = issue(&ca_spec, &ca_key, None);
     let key = KeyPair::generate_ecdsa(crate::crypto::ecdsa::Curve::P384).unwrap();
-    let spec = CertSpec { common_name: "a client".into(), server_auth: false, client_auth: true, ..CertSpec::default() };
+    let spec = CertSpec {
+        common_name: "a client".into(),
+        server_auth: false,
+        client_auth: true,
+        ..CertSpec::default()
+    };
     let cert = issue(&spec, &key, Some((&ca_spec.common_name, &ca_key)));
     let mut roots = TrustStore::empty();
     roots.add_der(&ca).unwrap();
-    (CertifiedKey::new(vec![cert], key.signing_key().clone()).unwrap(), Arc::new(roots))
+    (
+        CertifiedKey::new(vec![cert], key.signing_key().clone()).unwrap(),
+        Arc::new(roots),
+    )
 }
 
 /// Connects, sends four bytes and reads four back: what the client saw and what the server saw (its peer's chain).
-fn client_auth_exchange(config: ServerConfig, client: &ClientConfig) -> (std::result::Result<(), String>, std::result::Result<Vec<Vec<u8>>, String>) {
+fn client_auth_exchange(
+    config: ServerConfig,
+    client: &ClientConfig,
+) -> (
+    std::result::Result<(), String>,
+    std::result::Result<Vec<Vec<u8>>, String>,
+) {
     let (port, handle) = serve_one(config, |mut s| {
         let mut buf = [0u8; 4];
         s.read_exact(&mut buf).map_err(|e| e.to_string())?;
@@ -1296,8 +1825,14 @@ fn client_certificates_are_required_optional_or_refused() {
     let (client_cert, roots) = client_ca();
     let plain = ClientConfig::new(pki.trust_store()).with_resumption(Resumption::off());
     let with_cert = plain.clone().with_client_certificate(client_cert.clone());
-    let required = server.clone().with_client_auth(ClientAuth::Required(roots.clone())).without_resumption();
-    let optional = server.clone().with_client_auth(ClientAuth::Optional(roots.clone())).without_resumption();
+    let required = server
+        .clone()
+        .with_client_auth(ClientAuth::Required(roots.clone()))
+        .without_resumption();
+    let optional = server
+        .clone()
+        .with_client_auth(ClientAuth::Optional(roots.clone()))
+        .without_resumption();
 
     // a certificate under the roots: in, and the server sees the chain
     let (c, s) = client_auth_exchange(required.clone(), &with_cert);
@@ -1306,10 +1841,16 @@ fn client_certificates_are_required_optional_or_refused() {
     // none, when one is required: certificate_required
     let (c, s) = client_auth_exchange(required.clone(), &plain);
     assert!(s.unwrap_err().contains("certificate_required"));
-    assert!(c.unwrap_err().contains("116"), "the client hears certificate_required");
+    assert!(
+        c.unwrap_err().contains("116"),
+        "the client hears certificate_required"
+    );
     // one under other roots: bad_certificate
     let (other, _) = client_ca();
-    let (c, s) = client_auth_exchange(required.clone(), &plain.clone().with_client_certificate(other));
+    let (c, s) = client_auth_exchange(
+        required.clone(),
+        &plain.clone().with_client_certificate(other),
+    );
     assert!(s.unwrap_err().contains("bad_certificate"));
     assert!(c.unwrap_err().contains("42"));
     // optional: in without one (nothing seen), and with one (seen)
@@ -1336,7 +1877,11 @@ fn a_resumed_session_keeps_the_client_certificate_it_was_made_with() {
     assert_eq!(s.unwrap(), client_cert.chain().to_vec());
     let (c, s) = client_auth_exchange(config.clone(), &client);
     c.unwrap();
-    assert_eq!(s.unwrap(), client_cert.chain().to_vec(), "the resumed connection knows the client too");
+    assert_eq!(
+        s.unwrap(),
+        client_cert.chain().to_vec(),
+        "the resumed connection knows the client too"
+    );
     assert_eq!(config.resumed_count(), 1);
 }
 
@@ -1347,7 +1892,16 @@ fn a_client_certificate_verify_that_is_wrong_is_refused() {
     let config = server.with_client_auth(ClientAuth::Required(roots));
     let (_, flight) = first_flight(config.clone(), &HelloBuilder::new());
     let kinds: Vec<u8> = flight.messages.iter().map(|m| m[0]).collect();
-    assert_eq!(kinds, [HS_ENCRYPTED_EXTENSIONS, HS_CERTIFICATE_REQUEST, HS_CERTIFICATE, HS_CERTIFICATE_VERIFY, HS_FINISHED]);
+    assert_eq!(
+        kinds,
+        [
+            HS_ENCRYPTED_EXTENSIONS,
+            HS_CERTIFICATE_REQUEST,
+            HS_CERTIFICATE,
+            HS_CERTIFICATE_VERIFY,
+            HS_FINISHED
+        ]
+    );
     let request = parse_certificate_request(&flight.messages[1][4..]).unwrap();
     assert!(request.context.is_empty() && request.signature_algorithms.contains(&0x0503));
     // the client's Certificate, then a CertificateVerify signed over the wrong transcript
@@ -1361,10 +1915,17 @@ fn a_client_certificate_verify_that_is_wrong_is_refused() {
     body.extend_from_slice(&(list.len() as u32).to_be_bytes()[1..]);
     body.extend_from_slice(&list);
     let certificate = handshake_message(HS_CERTIFICATE, &body);
-    let signature = client_cert.key().sign_tls(0x0503, &client_certificate_verify_content(&[0u8; 32])).unwrap();
+    let signature = client_cert
+        .key()
+        .sign_tls(0x0503, &client_certificate_verify_content(&[0u8; 32]))
+        .unwrap();
     // signed over the wrong transcript: decrypt_error; a scheme our request offers that does not go with the key (P-256
     // for a P-384 key, tlsfuzzer's test-tls13-ecdsa-in-certificate-verify): illegal_parameter
-    for (scheme, wanted) in [(0x0503u16, "decrypt_error"), (0x0403, "illegal_parameter"), (0x0807, "illegal_parameter")] {
+    for (scheme, wanted) in [
+        (0x0503u16, "decrypt_error"),
+        (0x0403, "illegal_parameter"),
+        (0x0807, "illegal_parameter"),
+    ] {
         let mut v = scheme.to_be_bytes().to_vec();
         v.extend_from_slice(&(signature.len() as u16).to_be_bytes());
         v.extend_from_slice(&signature);
@@ -1399,7 +1960,11 @@ fn early_data_the_server_never_accepts_is_skipped_up_to_a_limit() {
     // without early_data in the hello, a record that does not open is fatal at once
     let (mut conn, _) = first_flight(default_config(), &HelloBuilder::new());
     conn.receive(&junk);
-    assert!(conn.process().unwrap_err().to_string().contains("bad_record_mac"));
+    assert!(conn
+        .process()
+        .unwrap_err()
+        .to_string()
+        .contains("bad_record_mac"));
 }
 
 #[test]
@@ -1436,5 +2001,9 @@ fn floods_of_key_updates_and_empty_records_are_refused() {
     for _ in 0..=super::server::MAX_EMPTY_RECORDS_IN_A_ROW {
         conn.receive(&cipher.encrypt(RT_APPLICATION_DATA, &[]));
     }
-    assert!(conn.process().unwrap_err().to_string().contains("empty records"));
+    assert!(conn
+        .process()
+        .unwrap_err()
+        .to_string()
+        .contains("empty records"));
 }

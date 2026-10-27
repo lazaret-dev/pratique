@@ -82,7 +82,9 @@ impl SendBuf {
     /// Whether there is anything that [`next_chunk`](SendBuf::next_chunk) could give for new data up to `limit` (as the flow control
     /// allows): lost data, or new data below the limit, or the end if all of the data has been sent.
     pub fn has_pending_within(&self, limit: u64) -> bool {
-        !self.lost.is_empty() || self.next < self.written().min(limit) || (self.fin && self.next == self.written())
+        !self.lost.is_empty()
+            || self.next < self.written().min(limit)
+            || (self.fin && self.next == self.written())
     }
 
     /// Everything is acknowledged, the end too: nothing more will be sent.
@@ -109,7 +111,11 @@ impl SendBuf {
     pub fn peek_len(&self, limit: u64) -> usize {
         let written = self.written();
         if let Some(r) = self.lost.first() {
-            return if r.start < written { (r.end.min(written) - r.start) as usize } else { 0 };
+            return if r.start < written {
+                (r.end.min(written) - r.start) as usize
+            } else {
+                0
+            };
         }
         written.min(limit).saturating_sub(self.next) as usize
     }
@@ -122,7 +128,11 @@ impl SendBuf {
             let written = self.written();
             let mut end_of_data = first.min(written);
             let len = if first < written {
-                let (s, e) = self.lost.first().map(|r| (r.start, r.end)).expect("a lost range");
+                let (s, e) = self
+                    .lost
+                    .first()
+                    .map(|r| (r.start, r.end))
+                    .expect("a lost range");
                 end_of_data = e.min(written).min(s + max_len as u64);
                 (end_of_data - s) as usize
             } else {
@@ -137,7 +147,12 @@ impl SendBuf {
                 return None;
             }
             self.lost.remove(first..first + len as u64);
-            return Some(Chunk { offset: first, len, fin, new: 0 });
+            return Some(Chunk {
+                offset: first,
+                len,
+                fin,
+                new: 0,
+            });
         }
         let written = self.written();
         let offset = self.next;
@@ -148,7 +163,12 @@ impl SendBuf {
             return None;
         }
         self.next = offset + len + u64::from(fin);
-        Some(Chunk { offset, len: len as usize, fin, new: len })
+        Some(Chunk {
+            offset,
+            len: len as usize,
+            fin,
+            new: len,
+        })
     }
 
     /// Appends the `len` bytes at `offset` to `out` (for a chunk that was given out and is not acknowledged).
@@ -156,7 +176,10 @@ impl SendBuf {
         if len == 0 {
             return;
         }
-        assert!(offset >= self.base && offset + len as u64 <= self.written(), "copying what is not held");
+        assert!(
+            offset >= self.base && offset + len as u64 <= self.written(),
+            "copying what is not held"
+        );
         let from = (offset - self.base) as usize;
         let (a, b) = self.data.as_slices();
         if from < a.len() {
@@ -211,7 +234,11 @@ impl SendBuf {
 
     /// Drops everything: nothing more is to be sent (the stream was reset, or its encryption level is discarded).
     pub fn clear(&mut self) {
-        *self = SendBuf { base: self.written(), next: self.written(), ..SendBuf::default() };
+        *self = SendBuf {
+            base: self.written(),
+            next: self.written(),
+            ..SendBuf::default()
+        };
     }
 
     /// The offset of the first byte not acknowledged in sequence: where the buffer starts.
@@ -245,14 +272,26 @@ mod tests {
     fn new_data_goes_out_in_order_in_pieces() {
         let mut b = SendBuf::new();
         b.write(&pattern(25));
-        assert_eq!(chunk(&mut b, 10, u64::MAX), Some((0, pattern(25)[..10].to_vec(), false, 10)));
-        assert_eq!(chunk(&mut b, 10, u64::MAX), Some((10, pattern(25)[10..20].to_vec(), false, 10)));
-        assert_eq!(chunk(&mut b, 10, u64::MAX), Some((20, pattern(25)[20..].to_vec(), false, 5)));
+        assert_eq!(
+            chunk(&mut b, 10, u64::MAX),
+            Some((0, pattern(25)[..10].to_vec(), false, 10))
+        );
+        assert_eq!(
+            chunk(&mut b, 10, u64::MAX),
+            Some((10, pattern(25)[10..20].to_vec(), false, 10))
+        );
+        assert_eq!(
+            chunk(&mut b, 10, u64::MAX),
+            Some((20, pattern(25)[20..].to_vec(), false, 5))
+        );
         assert_eq!(chunk(&mut b, 10, u64::MAX), None);
         assert!(!b.has_pending());
         b.write(&pattern(3));
         assert!(b.has_pending());
-        assert_eq!(chunk(&mut b, 10, u64::MAX), Some((25, pattern(3), false, 3)));
+        assert_eq!(
+            chunk(&mut b, 10, u64::MAX),
+            Some((25, pattern(3), false, 3))
+        );
     }
 
     #[test]
@@ -265,7 +304,10 @@ mod tests {
         // a stream that ends with the data all sent
         let mut b = SendBuf::new();
         b.write(&pattern(5));
-        assert_eq!(chunk(&mut b, 100, u64::MAX), Some((0, pattern(5), false, 5)));
+        assert_eq!(
+            chunk(&mut b, 100, u64::MAX),
+            Some((0, pattern(5), false, 5))
+        );
         b.finish();
         assert!(b.has_pending());
         assert_eq!(chunk(&mut b, 100, u64::MAX), Some((5, vec![], true, 0)));
@@ -281,23 +323,38 @@ mod tests {
         let mut b = SendBuf::new();
         b.write(&pattern(10));
         b.finish();
-        assert_eq!(chunk(&mut b, 4, u64::MAX), Some((0, pattern(10)[..4].to_vec(), false, 4)));
-        assert_eq!(chunk(&mut b, 6, u64::MAX), Some((4, pattern(10)[4..].to_vec(), true, 6)));
+        assert_eq!(
+            chunk(&mut b, 4, u64::MAX),
+            Some((0, pattern(10)[..4].to_vec(), false, 4))
+        );
+        assert_eq!(
+            chunk(&mut b, 6, u64::MAX),
+            Some((4, pattern(10)[4..].to_vec(), true, 6))
+        );
     }
 
     #[test]
     fn new_data_stops_at_the_flow_control_limit_but_the_end_does_not() {
         let mut b = SendBuf::new();
         b.write(&pattern(10));
-        assert_eq!(chunk(&mut b, 100, 6), Some((0, pattern(10)[..6].to_vec(), false, 6)));
+        assert_eq!(
+            chunk(&mut b, 100, 6),
+            Some((0, pattern(10)[..6].to_vec(), false, 6))
+        );
         assert_eq!(chunk(&mut b, 100, 6), None);
         assert!(!b.has_pending_within(6));
         assert!(b.has_pending());
         assert!(b.has_pending_within(7));
-        assert_eq!(chunk(&mut b, 100, 8), Some((6, pattern(10)[6..8].to_vec(), false, 2)));
+        assert_eq!(
+            chunk(&mut b, 100, 8),
+            Some((6, pattern(10)[6..8].to_vec(), false, 2))
+        );
         // the limit is the length of the stream: the end goes
         b.finish();
-        assert_eq!(chunk(&mut b, 100, 10), Some((8, pattern(10)[8..].to_vec(), true, 2)));
+        assert_eq!(
+            chunk(&mut b, 100, 10),
+            Some((8, pattern(10)[8..].to_vec(), true, 2))
+        );
         let mut b = SendBuf::new();
         b.write(&pattern(4));
         b.finish();
@@ -315,10 +372,23 @@ mod tests {
         b.on_lost(10, 10, false);
         b.on_lost(0, 5, false);
         assert_eq!(b.next_offset(), Some(0));
-        assert_eq!(chunk(&mut b, 3, u64::MAX), Some((0, pattern(30)[..3].to_vec(), false, 0)));
-        assert_eq!(chunk(&mut b, 100, u64::MAX), Some((3, pattern(30)[3..5].to_vec(), false, 0)));
-        assert_eq!(chunk(&mut b, 100, 0), Some((10, pattern(30)[10..20].to_vec(), false, 0)), "a resend needs no credit");
-        assert_eq!(chunk(&mut b, 100, u64::MAX), Some((30, pattern(10), false, 10)));
+        assert_eq!(
+            chunk(&mut b, 3, u64::MAX),
+            Some((0, pattern(30)[..3].to_vec(), false, 0))
+        );
+        assert_eq!(
+            chunk(&mut b, 100, u64::MAX),
+            Some((3, pattern(30)[3..5].to_vec(), false, 0))
+        );
+        assert_eq!(
+            chunk(&mut b, 100, 0),
+            Some((10, pattern(30)[10..20].to_vec(), false, 0)),
+            "a resend needs no credit"
+        );
+        assert_eq!(
+            chunk(&mut b, 100, u64::MAX),
+            Some((30, pattern(10), false, 10))
+        );
     }
 
     #[test]
@@ -334,7 +404,11 @@ mod tests {
         // acknowledged after it was declared lost (the loss was not one)
         b.on_acked(0, 10, false);
         assert_eq!(b.lost_ranges(), vec![20..30]);
-        assert_eq!(b.base(), 20, "what is acknowledged from the start is forgotten");
+        assert_eq!(
+            b.base(),
+            20,
+            "what is acknowledged from the start is forgotten"
+        );
         assert_eq!(b.buffered(), 10);
         b.on_acked(20, 10, false);
         assert!(b.lost_ranges().is_empty());
@@ -349,7 +423,10 @@ mod tests {
         let c = b.next_chunk(100, u64::MAX).unwrap();
         assert!(c.fin);
         b.on_lost(c.offset, c.len, c.fin);
-        assert_eq!(chunk(&mut b, 100, u64::MAX), Some((0, pattern(10), true, 0)));
+        assert_eq!(
+            chunk(&mut b, 100, u64::MAX),
+            Some((0, pattern(10), true, 0))
+        );
         // the data was acknowledged, only the end was lost
         b.on_lost(0, 10, true);
         b.on_acked(0, 10, false);
@@ -368,8 +445,14 @@ mod tests {
         b.finish();
         b.next_chunk(100, u64::MAX).unwrap();
         b.on_lost(0, 10, true);
-        assert_eq!(chunk(&mut b, 4, u64::MAX), Some((0, pattern(10)[..4].to_vec(), false, 0)));
-        assert_eq!(chunk(&mut b, 100, u64::MAX), Some((4, pattern(10)[4..].to_vec(), true, 0)));
+        assert_eq!(
+            chunk(&mut b, 4, u64::MAX),
+            Some((0, pattern(10)[..4].to_vec(), false, 0))
+        );
+        assert_eq!(
+            chunk(&mut b, 100, u64::MAX),
+            Some((4, pattern(10)[4..].to_vec(), true, 0))
+        );
     }
 
     #[test]
@@ -381,7 +464,10 @@ mod tests {
         b.on_acked(5, 5, false);
         b.mark_all_lost();
         assert_eq!(b.lost_ranges(), vec![0..5, 10..20]);
-        assert_eq!(chunk(&mut b, 100, u64::MAX), Some((0, pattern(30)[..5].to_vec(), false, 0)));
+        assert_eq!(
+            chunk(&mut b, 100, u64::MAX),
+            Some((0, pattern(30)[..5].to_vec(), false, 0))
+        );
     }
 
     #[test]
@@ -396,13 +482,23 @@ mod tests {
             }
             b.write(&pattern(240)[120..]);
             assert_eq!(b.written(), 240);
-            for (from, len) in [(forgotten, 240 - forgotten), (forgotten, 1), (200, 40), (119, 2), (120, 1)] {
+            for (from, len) in [
+                (forgotten, 240 - forgotten),
+                (forgotten, 1),
+                (200, 40),
+                (119, 2),
+                (120, 1),
+            ] {
                 if from < b.base() || from + len > 240 || len == 0 {
                     continue;
                 }
                 let mut v = Vec::new();
                 b.copy(from, len as usize, &mut v);
-                assert_eq!(v, pattern(240)[from as usize..(from + len) as usize], "forgotten {forgotten} from {from} len {len}");
+                assert_eq!(
+                    v,
+                    pattern(240)[from as usize..(from + len) as usize],
+                    "forgotten {forgotten} from {from} len {len}"
+                );
             }
         }
     }
@@ -448,7 +544,10 @@ mod tests {
                 // send
                 if next(2) == 0 {
                     if let Some(c) = b.next_chunk(1 + next(200) as usize, limit) {
-                        assert!(c.offset + c.len as u64 <= limit || c.new == 0, "round {round}: new data past the limit");
+                        assert!(
+                            c.offset + c.len as u64 <= limit || c.new == 0,
+                            "round {round}: new data past the limit"
+                        );
                         in_flight.push(c);
                     }
                 }
@@ -513,7 +612,11 @@ mod tests {
         e.finish();
         let c = e.next_chunk(5, u64::MAX).unwrap();
         assert!(c.fin);
-        assert_eq!((e.sent(), e.peek_len(u64::MAX)), (5, 0), "the end counts for no byte of flow control");
+        assert_eq!(
+            (e.sent(), e.peek_len(u64::MAX)),
+            (5, 0),
+            "the end counts for no byte of flow control"
+        );
         e.on_lost(c.offset, c.len, true);
         assert_eq!(e.peek_len(0), 5);
     }

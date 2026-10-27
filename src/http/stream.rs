@@ -37,7 +37,10 @@ thread_local! {
 
 /// A buffer of `SCRATCH` bytes: the spare one, if this thread has it.
 fn scratch_buffer() -> Vec<u8> {
-    SPARE_SCRATCH.with(Cell::take).filter(|b| b.len() == SCRATCH).unwrap_or_else(|| vec![0u8; SCRATCH])
+    SPARE_SCRATCH
+        .with(Cell::take)
+        .filter(|b| b.len() == SCRATCH)
+        .unwrap_or_else(|| vec![0u8; SCRATCH])
 }
 
 /// Where this thread's spare buffer is, if it has one (tests).
@@ -160,11 +163,24 @@ impl Drop for BodyReader {
 
 impl BodyReader {
     pub(super) fn new(conn: Conn, method: &str, limits: Limits, home: Option<Home>) -> BodyReader {
-        BodyReader { conn: Some(conn), parser: ResponseParser::new(method, limits), home, pending: Vec::new(), pos: 0, scratch: Vec::new(), failed: false }
+        BodyReader {
+            conn: Some(conn),
+            parser: ResponseParser::new(method, limits),
+            home,
+            pending: Vec::new(),
+            pos: 0,
+            scratch: Vec::new(),
+            failed: false,
+        }
     }
 
     /// Sends the request on the connection and waits for the head of the response.
-    pub(super) fn send_request(&mut self, head: &[u8], body: &[u8], small: bool) -> std::result::Result<(), Failure> {
+    pub(super) fn send_request(
+        &mut self,
+        head: &[u8],
+        body: &[u8],
+        small: bool,
+    ) -> std::result::Result<(), Failure> {
         let conn = self.conn.as_mut().expect("a connection");
         let sent = if small {
             let mut one = Vec::with_capacity(head.len() + body.len());
@@ -177,7 +193,10 @@ impl BodyReader {
         };
         sent.and_then(|_| conn.flush()).map_err(|e| {
             let error = Error::Io(e);
-            Failure { peer_closed: is_peer_close(&error), error }
+            Failure {
+                peer_closed: is_peer_close(&error),
+                error,
+            }
         })
     }
 
@@ -185,19 +204,31 @@ impl BodyReader {
     /// body. A `100 Continue` ends the wait at once; so does the final response, if the server answers before the body (a refusal, a
     /// redirect, a demand for credentials, a 417), and then the body is never sent and the connection, on which the server may
     /// still be expecting it, is not used again. A server that says nothing in time gets the body all the same (RFC 9110, 10.1.1).
-    pub(super) fn send_request_expecting_continue(&mut self, head: &[u8], body: &[u8], wait: Duration) -> std::result::Result<(), Failure> {
+    pub(super) fn send_request_expecting_continue(
+        &mut self,
+        head: &[u8],
+        body: &[u8],
+        wait: Duration,
+    ) -> std::result::Result<(), Failure> {
         fn failure(e: io::Error) -> Failure {
             let error = Error::Io(e);
-            Failure { peer_closed: is_peer_close(&error), error }
+            Failure {
+                peer_closed: is_peer_close(&error),
+                error,
+            }
         }
         if self.scratch.is_empty() {
             self.scratch = scratch_buffer();
         }
         let conn = self.conn.as_mut().expect("a connection");
-        conn.write_all(head).and_then(|_| conn.flush()).map_err(failure)?;
+        conn.write_all(head)
+            .and_then(|_| conn.flush())
+            .map_err(failure)?;
         // the wait: a shorter timeout on the socket for as long as it lasts (never past the request's deadline)
         let (timeout, deadline) = (conn.io_mut().timeout, conn.io_mut().deadline);
-        let left = deadline.map_or(wait, |d| wait.min(d.saturating_duration_since(Instant::now())));
+        let left = deadline.map_or(wait, |d| {
+            wait.min(d.saturating_duration_since(Instant::now()))
+        });
         let short = left.max(Duration::from_millis(1));
         conn.io_mut().rearm(short, deadline).map_err(failure)?;
         let mut outcome = Ok(());
@@ -206,16 +237,28 @@ impl BodyReader {
             let read = match conn.read(&mut self.scratch[..want]) {
                 Ok(0) => match self.parser.finish_eof(&mut self.pending) {
                     Err(e) => Err(e),
-                    Ok(()) => Err(Error::Http("the connection was closed before the response".into())),
+                    Ok(()) => Err(Error::Http(
+                        "the connection was closed before the response".into(),
+                    )),
                 },
                 Ok(n) => self.parser.feed(&self.scratch[..n], &mut self.pending),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => Ok(()),
                 // no word in time (and the request's own time is not up): the body goes
-                Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) && !deadline.is_some_and(|d| Instant::now() >= d) => break,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) && !deadline.is_some_and(|d| Instant::now() >= d) =>
+                {
+                    break
+                }
                 Err(e) => Err(Error::Io(e)),
             };
             if let Err(error) = read {
-                outcome = Err(Failure { peer_closed: !self.parser.started() && is_peer_close(&error), error });
+                outcome = Err(Failure {
+                    peer_closed: !self.parser.started() && is_peer_close(&error),
+                    error,
+                });
                 break;
             }
         }
@@ -231,7 +274,9 @@ impl BodyReader {
             self.home = None;
             return Ok(());
         }
-        conn.write_all(body).and_then(|_| conn.flush()).map_err(failure)
+        conn.write_all(body)
+            .and_then(|_| conn.flush())
+            .map_err(failure)
     }
 
     /// Reads until the headers of the final response are complete and returns them. The pool
@@ -246,7 +291,9 @@ impl BodyReader {
             let outcome = match conn.read(&mut self.scratch[..want]) {
                 Ok(0) => match self.parser.finish_eof(&mut self.pending) {
                     Err(e) => Err(e),
-                    Ok(()) => Err(Error::Http("the response ended before its headers were complete".into())),
+                    Ok(()) => Err(Error::Http(
+                        "the response ended before its headers were complete".into(),
+                    )),
                 },
                 Ok(n) => self.parser.feed(&self.scratch[..n], &mut self.pending),
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => Ok(()),
@@ -275,9 +322,17 @@ impl BodyReader {
     /// The message has been read to its end: the connection goes back to the pool if it can be used
     /// again and is closed otherwise.
     fn complete(&mut self) {
-        let (Some(mut conn), Some(home)) = (self.conn.take(), self.home.take()) else { return };
+        let (Some(mut conn), Some(home)) = (self.conn.take(), self.home.take()) else {
+            return;
+        };
         if self.parser.reusable() && home.policy.parks() && conn.settle() {
-            home.pool.put(home.key, conn, home.policy.idle_timeout, &home.policy, Instant::now());
+            home.pool.put(
+                home.key,
+                conn,
+                home.policy.idle_timeout,
+                &home.policy,
+                Instant::now(),
+            );
             if let Some(slots) = &home.slots {
                 slots.poke();
             }
@@ -298,7 +353,9 @@ impl BodyReader {
             return Ok(0);
         }
         if self.failed {
-            return Err(Error::Http("the response failed earlier and cannot be read further".into()));
+            return Err(Error::Http(
+                "the response failed earlier and cannot be read further".into(),
+            ));
         }
         loop {
             if self.pos < self.pending.len() {
@@ -313,7 +370,9 @@ impl BodyReader {
                 self.complete();
                 return Ok(0);
             }
-            let Some(conn) = self.conn.as_mut() else { return Ok(0) };
+            let Some(conn) = self.conn.as_mut() else {
+                return Ok(0);
+            };
             let window = self.parser.direct_window();
             if window > 0 {
                 // body bytes that need no parsing go straight to the caller
@@ -420,17 +479,44 @@ pub(super) struct MuxBody {
 
 impl MuxBody {
     pub(super) fn new(stream: H2Stream, waits: Waits, limits: Limits) -> MuxBody {
-        MuxBody { stream: Some(MuxStream::H2(stream)), waits, max: limits.max_body_bytes, seen: 0, ended: false, failed: false, whole: Vec::new(), whole_pos: 0 }
+        MuxBody {
+            stream: Some(MuxStream::H2(stream)),
+            waits,
+            max: limits.max_body_bytes,
+            seen: 0,
+            ended: false,
+            failed: false,
+            whole: Vec::new(),
+            whole_pos: 0,
+        }
     }
 
     /// The body of a response that came over HTTP/3.
     pub(super) fn new_h3(stream: H3Stream, waits: Waits, limits: Limits) -> MuxBody {
-        MuxBody { stream: Some(MuxStream::H3(stream)), waits, max: limits.max_body_bytes, seen: 0, ended: false, failed: false, whole: Vec::new(), whole_pos: 0 }
+        MuxBody {
+            stream: Some(MuxStream::H3(stream)),
+            waits,
+            max: limits.max_body_bytes,
+            seen: 0,
+            ended: false,
+            failed: false,
+            whole: Vec::new(),
+            whole_pos: 0,
+        }
     }
 
     /// A body that is all here already.
     pub(super) fn complete(body: Vec<u8>, waits: Waits, limits: Limits) -> MuxBody {
-        MuxBody { stream: None, waits, max: limits.max_body_bytes, seen: 0, ended: false, failed: false, whole: body, whole_pos: 0 }
+        MuxBody {
+            stream: None,
+            waits,
+            max: limits.max_body_bytes,
+            seen: 0,
+            ended: false,
+            failed: false,
+            whole: body,
+            whole_pos: 0,
+        }
     }
 
     fn limit(&self) -> u64 {
@@ -442,7 +528,9 @@ impl MuxBody {
             return Ok(0);
         }
         if self.failed {
-            return Err(Error::Http("the response failed earlier and cannot be read further".into()));
+            return Err(Error::Http(
+                "the response failed earlier and cannot be read further".into(),
+            ));
         }
         if self.whole_pos < self.whole.len() {
             let n = (self.whole.len() - self.whole_pos).min(out.len());
@@ -451,7 +539,9 @@ impl MuxBody {
             self.seen += n as u64;
             return Ok(n);
         }
-        let Some(stream) = self.stream.as_mut() else { return Ok(0) };
+        let Some(stream) = self.stream.as_mut() else {
+            return Ok(0);
+        };
         match stream.read(out, self.waits) {
             Ok(0) => {
                 self.ended = true;
@@ -463,7 +553,9 @@ impl MuxBody {
                 if self.seen > self.max {
                     self.failed = true;
                     self.stream = None;
-                    return Err(Error::Http("response body exceeds the configured size limit".into()));
+                    return Err(Error::Http(
+                        "response body exceeds the configured size limit".into(),
+                    ));
                 }
                 Ok(n)
             }
@@ -482,7 +574,9 @@ impl MuxBody {
             return Ok(Vec::new());
         }
         if self.failed {
-            return Err(Error::Http("the response failed earlier and cannot be read further".into()));
+            return Err(Error::Http(
+                "the response failed earlier and cannot be read further".into(),
+            ));
         }
         if !self.whole.is_empty() || self.stream.is_none() {
             // it is all here (the part of it that was not read)
@@ -492,7 +586,9 @@ impl MuxBody {
             self.ended = true;
             return Ok(body);
         }
-        let Some(stream) = self.stream.as_mut() else { return Ok(Vec::new()) };
+        let Some(stream) = self.stream.as_mut() else {
+            return Ok(Vec::new());
+        };
         match stream.collect(self.max, self.waits) {
             Ok(body) => {
                 self.seen += body.len() as u64;
@@ -591,7 +687,12 @@ pub struct ResponseStream {
 }
 
 impl ResponseStream {
-    pub(super) fn new(head: Head, url: Url, body: BodyReader, tls_version: Option<TlsVersion>) -> ResponseStream {
+    pub(super) fn new(
+        head: Head,
+        url: Url,
+        body: BodyReader,
+        tls_version: Option<TlsVersion>,
+    ) -> ResponseStream {
         ResponseStream {
             status: head.status,
             reason: head.reason,
@@ -622,7 +723,9 @@ impl ResponseStream {
     /// What became of a read, for what the request holds in flight: given back at the end of the body or on an error
     /// (which is a cancel if its batch was cancelled).
     fn account(&mut self, r: Result<usize>) -> Result<usize> {
-        let Some(f) = self.in_flight.as_mut() else { return r };
+        let Some(f) = self.in_flight.as_mut() else {
+            return r;
+        };
         match r {
             Ok(0) => {
                 self.in_flight = None;
@@ -662,7 +765,9 @@ impl ResponseStream {
     }
 
     fn read_plain(&mut self, out: &mut [u8]) -> Result<usize> {
-        let Some(decoder) = self.decoder.as_mut() else { return self.body.read_body(out) };
+        let Some(decoder) = self.decoder.as_mut() else {
+            return self.body.read_body(out);
+        };
         loop {
             match decoder.next(out).map_err(Error::Decode)? {
                 Next::Data(n) => return Ok(n),
@@ -678,31 +783,91 @@ impl ResponseStream {
     /// A response that came over HTTP/2: there is no reason phrase, and the length is the Content-Length field's.
     /// A body that is declared larger than the limit fails the request, as it does over HTTP/1.1 (unless there is
     /// no body: a response to HEAD, a 204 or a 304).
-    pub(super) fn from_h2(status: u16, headers: Vec<(String, String)>, url: Url, body: MuxBody, bodiless: bool, tls_version: Option<TlsVersion>) -> Result<ResponseStream> {
-        ResponseStream::from_mux(HttpVersion::Http2, status, headers, url, body, bodiless, tls_version)
+    pub(super) fn from_h2(
+        status: u16,
+        headers: Vec<(String, String)>,
+        url: Url,
+        body: MuxBody,
+        bodiless: bool,
+        tls_version: Option<TlsVersion>,
+    ) -> Result<ResponseStream> {
+        ResponseStream::from_mux(
+            HttpVersion::Http2,
+            status,
+            headers,
+            url,
+            body,
+            bodiless,
+            tls_version,
+        )
     }
 
     /// A response that came over HTTP/3 (the same as one over HTTP/2 but for the protocol it says it came over).
-    pub(super) fn from_h3(status: u16, headers: Vec<(String, String)>, url: Url, body: MuxBody, bodiless: bool) -> Result<ResponseStream> {
-        ResponseStream::from_mux(HttpVersion::Http3, status, headers, url, body, bodiless, Some(TlsVersion::Tls13))
+    pub(super) fn from_h3(
+        status: u16,
+        headers: Vec<(String, String)>,
+        url: Url,
+        body: MuxBody,
+        bodiless: bool,
+    ) -> Result<ResponseStream> {
+        ResponseStream::from_mux(
+            HttpVersion::Http3,
+            status,
+            headers,
+            url,
+            body,
+            bodiless,
+            Some(TlsVersion::Tls13),
+        )
     }
 
-    fn from_mux(version: HttpVersion, status: u16, headers: Vec<(String, String)>, url: Url, body: MuxBody, bodiless: bool, tls_version: Option<TlsVersion>) -> Result<ResponseStream> {
-        let content_length = headers.iter().find(|(n, _)| n == "content-length").and_then(|(_, v)| v.parse::<u64>().ok());
+    fn from_mux(
+        version: HttpVersion,
+        status: u16,
+        headers: Vec<(String, String)>,
+        url: Url,
+        body: MuxBody,
+        bodiless: bool,
+        tls_version: Option<TlsVersion>,
+    ) -> Result<ResponseStream> {
+        let content_length = headers
+            .iter()
+            .find(|(n, _)| n == "content-length")
+            .and_then(|(_, v)| v.parse::<u64>().ok());
         if !bodiless && content_length.is_some_and(|n| n > body.limit()) {
-            return Err(Error::Http("response body exceeds the configured size limit".into()));
+            return Err(Error::Http(
+                "response body exceeds the configured size limit".into(),
+            ));
         }
-        Ok(ResponseStream { status, reason: String::new(), version, headers, url, content_length, tls_version, uncompressed: false, body: Body::Mux(body), decoder: None, in_flight: None })
+        Ok(ResponseStream {
+            status,
+            reason: String::new(),
+            version,
+            headers,
+            url,
+            content_length,
+            tls_version,
+            uncompressed: false,
+            body: Body::Mux(body),
+            decoder: None,
+            in_flight: None,
+        })
     }
 
     /// First header with this (case-insensitive) name.
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     /// All headers with this (case-insensitive) name.
     pub fn headers_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
-        self.headers.iter().filter(move |(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .filter(move |(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn is_success(&self) -> bool {
@@ -718,7 +883,16 @@ impl ResponseStream {
                 Some(f) if collected.is_err() && f.cancelled() => return Err(Error::Cancelled),
                 _ => collected?,
             };
-            return Ok(Response { status: self.status, reason: self.reason, version: self.version, headers: self.headers, body, url: self.url, tls_version: self.tls_version, uncompressed: false });
+            return Ok(Response {
+                status: self.status,
+                reason: self.reason,
+                version: self.version,
+                headers: self.headers,
+                body,
+                url: self.url,
+                tls_version: self.tls_version,
+                uncompressed: false,
+            });
         }
         // `body[..filled]` is what has been read; the rest of `body` is zeros waiting to be read into (the safe way to
         // hand out a `&mut [u8]`).
@@ -754,7 +928,11 @@ impl ResponseStream {
                 body.resize(body.len() + more, 0);
                 presized = false;
             }
-            let room = if presized { body.len() - filled } else { (body.len() - filled).min(offer) };
+            let room = if presized {
+                body.len() - filled
+            } else {
+                (body.len() - filled).min(offer)
+            };
             match self.read_some(&mut body[filled..filled + room]) {
                 Ok(0) => break,
                 Ok(n) => {
@@ -769,7 +947,16 @@ impl ResponseStream {
         if body.capacity() > filled + filled / 4 + 4096 {
             body.shrink_to_fit();
         }
-        Ok(Response { status: self.status, reason: self.reason, version: self.version, headers: self.headers, body, url: self.url, tls_version: self.tls_version, uncompressed: self.uncompressed })
+        Ok(Response {
+            status: self.status,
+            reason: self.reason,
+            version: self.version,
+            headers: self.headers,
+            body,
+            url: self.url,
+            tls_version: self.tls_version,
+            uncompressed: self.uncompressed,
+        })
     }
 
     /// Reads the rest of the body into `sink`; returns how many bytes it was.
@@ -801,6 +988,10 @@ impl Read for ResponseStream {
 
 impl std::fmt::Debug for ResponseStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ResponseStream").field("status", &self.status).field("url", &self.url.to_string()).field("content_length", &self.content_length).finish_non_exhaustive()
+        f.debug_struct("ResponseStream")
+            .field("status", &self.status)
+            .field("url", &self.url.to_string())
+            .field("content_length", &self.content_length)
+            .finish_non_exhaustive()
     }
 }

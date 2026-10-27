@@ -54,18 +54,18 @@
 //! writes `real_revocation/` (`fixtures.tsv`, `certs/`, `ocsp/`, `crl/`, lists over `--max-crl-kib`, default 256, left
 //! out): the candidates from which `tests/data/real_revocation/` keeps a selection for `tests/real_revocation.rs`.
 
-use std::collections::BTreeMap;
-use std::io::Read;
-use std::net::{TcpStream, ToSocketAddrs};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, Instant};
 use pratique::error::Error;
 use pratique::http::{HttpCrlSource, HttpOcspSource};
 use pratique::revocation::{self, ChainEvidence, Crl, Revocation};
 use pratique::tls::{ClientConfig, Resumption, TlsStream};
 use pratique::x509::{Certificate, PublicKey, TrustStore, VerifyOptions};
 use pratique::{asn1, pem, sys, Client};
+use std::collections::BTreeMap;
+use std::io::Read;
+use std::net::{TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -84,7 +84,10 @@ fn main() {
 }
 
 fn option(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
 }
 
 fn flag(args: &[String], name: &str) -> bool {
@@ -97,7 +100,9 @@ fn load_trust(cacert: &Option<String>) -> Result<TrustStore, Error> {
         #[cfg(feature = "mozilla-roots")]
         Some("mozilla") => Ok(pratique::mozilla_roots::trust_store()),
         #[cfg(not(feature = "mozilla-roots"))]
-        Some("mozilla") => Err(Error::Tls("--cacert mozilla needs the example built with --features mozilla-roots".into())),
+        Some("mozilla") => Err(Error::Tls(
+            "--cacert mozilla needs the example built with --features mozilla-roots".into(),
+        )),
         // the operating system's own store (BACKLOG B-101): the Keychain trust settings on macOS, the certificate stores on
         // Windows
         Some("native") => sys::native_trust_store(),
@@ -108,7 +113,9 @@ fn load_trust(cacert: &Option<String>) -> Result<TrustStore, Error> {
 
 /// One line of a tab-separated file: no tab or line break may be left in a field.
 fn field(s: &str) -> String {
-    s.chars().map(|c| if c.is_control() { ' ' } else { c }).collect()
+    s.chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
 }
 
 fn key_name(key: &PublicKey) -> String {
@@ -132,8 +139,14 @@ fn pem_encode(der: &[u8]) -> String {
 }
 
 fn read_chain(path: &Path) -> Vec<Vec<u8>> {
-    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
-    pem::parse(&text).into_iter().filter(|b| b.label == "CERTIFICATE").map(|b| b.data).collect()
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    pem::parse(&text)
+        .into_iter()
+        .filter(|b| b.label == "CERTIFICATE")
+        .map(|b| b.data)
+        .collect()
 }
 
 /// The part of a name that is the host: `host:port` without the port.
@@ -186,7 +199,9 @@ fn parse_hosts(text: &str) -> Vec<Site> {
             continue;
         }
         let mut words = line.split_whitespace();
-        let (Some(group), Some(target)) = (words.next(), words.next()) else { continue };
+        let (Some(group), Some(target)) = (words.next(), words.next()) else {
+            continue;
+        };
         // a third word `no-ems`: the server does TLS 1.2 without the extended master secret, so the smoke test expects the
         // handshake to be refused for that (the group still says what `mac_field_check.sh capture` expects of the chain)
         let no_ems = match words.next() {
@@ -239,7 +254,14 @@ fn class_of(e: &Error) -> &'static str {
     match e {
         Error::Verify(_) => "cert",
         Error::Tls(_) | Error::Alert(..) => "tls",
-        Error::Io(io) if matches!(io.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) => "timeout",
+        Error::Io(io)
+            if matches!(
+                io.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            ) =>
+        {
+            "timeout"
+        }
         Error::Io(_) => "io",
         Error::Http(_) => "http",
         Error::Refused(_) => "refused",
@@ -250,7 +272,9 @@ fn class_of(e: &Error) -> &'static str {
 }
 
 fn connect(host: &str, port: u16, timeout: Duration) -> Result<TcpStream, String> {
-    let addrs = (host, port).to_socket_addrs().map_err(|e| format!("no address: {e}"))?;
+    let addrs = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("no address: {e}"))?;
     let mut last = "no address".to_string();
     for addr in addrs {
         match TcpStream::connect_timeout(&addr, timeout) {
@@ -283,16 +307,30 @@ fn handshake_direct(site: &Site, config: &ClientConfig, timeout: Duration) -> (A
     let now = sys::now_unix();
     // (a resumed handshake reports the chain of the full handshake its session came from, which must still verify)
     let chain = tls.peer_certificates();
-    let verified = match config.trust_store.verify_chain(chain, &VerifyOptions::tls_server(&site.host, now)) {
+    let verified = match config
+        .trust_store
+        .verify_chain(chain, &VerifyOptions::tls_server(&site.host, now))
+    {
         Ok(v) => v,
-        Err(e) => return (Attempt::Bug(format!("the handshake accepted the chain but verify_chain refuses it: {e}")), resumed),
+        Err(e) => {
+            return (
+                Attempt::Bug(format!(
+                    "the handshake accepted the chain but verify_chain refuses it: {e}"
+                )),
+                resumed,
+            )
+        }
     };
-    let anchor = Certificate::from_der(verified.anchor()).map(|c| c.subject_summary()).unwrap_or_else(|_| "?".to_string());
+    let anchor = Certificate::from_der(verified.anchor())
+        .map(|c| c.subject_summary())
+        .unwrap_or_else(|_| "?".to_string());
     let attempt = Attempt::Accepted(format!(
         "{} {} alpn={} sent={} path={} leaf={} issuer=[{}] anchor=[{}] expires_in={}d",
-        tls.protocol_version().map_or("?".to_string(), |v| v.to_string()),
+        tls.protocol_version()
+            .map_or("?".to_string(), |v| v.to_string()),
         tls.cipher_suite_name().unwrap_or("?"),
-        tls.alpn_protocol().map_or("-".to_string(), |p| String::from_utf8_lossy(p).into_owned()),
+        tls.alpn_protocol()
+            .map_or("-".to_string(), |p| String::from_utf8_lossy(p).into_owned()),
         chain.len(),
         verified.path.len(),
         key_name(&verified.leaf.public_key),
@@ -345,10 +383,19 @@ fn attempt_resume(site: &Site, config: &ClientConfig, timeout: Duration) -> Resu
     let offered = config.resumption.sessions() < before;
     match attempt {
         Attempt::Unreachable(m) => Resume::Unreachable(m),
-        Attempt::Rejected(c, m) if offered => Resume::Failed(c.to_string(), format!("the handshake that offered a session ticket was refused: {m}")),
-        Attempt::Rejected(c, m) => Resume::Failed(c.to_string(), format!("the handshake again (no ticket offered) was refused: {m}")),
+        Attempt::Rejected(c, m) if offered => Resume::Failed(
+            c.to_string(),
+            format!("the handshake that offered a session ticket was refused: {m}"),
+        ),
+        Attempt::Rejected(c, m) => Resume::Failed(
+            c.to_string(),
+            format!("the handshake again (no ticket offered) was refused: {m}"),
+        ),
         Attempt::Bug(m) => Resume::Failed("inconsistent".to_string(), m),
-        Attempt::Accepted(_) if resumed && !offered => Resume::Failed("inconsistent".to_string(), "resumed without a ticket being taken from the store".to_string()),
+        Attempt::Accepted(_) if resumed && !offered => Resume::Failed(
+            "inconsistent".to_string(),
+            "resumed without a ticket being taken from the store".to_string(),
+        ),
         Attempt::Accepted(s) if resumed => Resume::Resumed(s),
         Attempt::Accepted(s) if offered => Resume::Declined(s),
         Attempt::Accepted(_) => Resume::OtherName,
@@ -367,7 +414,11 @@ fn attempt_http(site: &Site, config: &ClientConfig, via_proxy: bool, timeout: Du
     if via_proxy {
         client = client.proxy_from_env();
     }
-    let url = if site.port == 443 { format!("https://{}/", site.host) } else { format!("https://{}:{}/", site.host, site.port) };
+    let url = if site.port == 443 {
+        format!("https://{}/", site.host)
+    } else {
+        format!("https://{}:{}/", site.host, site.port)
+    };
     let started = Instant::now();
     let mut stream = match client.get_stream(&url) {
         Ok(s) => s,
@@ -379,11 +430,27 @@ fn attempt_http(site: &Site, config: &ClientConfig, via_proxy: bool, timeout: Du
         match stream.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => total += n,
-            Err(e) => return Attempt::Rejected("io", format!("reading the body of {} after {} bytes: {e}", stream.status, total)),
+            Err(e) => {
+                return Attempt::Rejected(
+                    "io",
+                    format!(
+                        "reading the body of {} after {} bytes: {e}",
+                        stream.status, total
+                    ),
+                )
+            }
         }
     }
-    let tls = stream.tls_version.map_or("no TLS".to_string(), |v| v.to_string());
-    Attempt::Accepted(format!("{} {} over {tls}, {} bytes read, {} ms", stream.version, stream.status, total, started.elapsed().as_millis()))
+    let tls = stream
+        .tls_version
+        .map_or("no TLS".to_string(), |v| v.to_string());
+    Attempt::Accepted(format!(
+        "{} {} over {tls}, {} bytes read, {} ms",
+        stream.version,
+        stream.status,
+        total,
+        started.elapsed().as_millis()
+    ))
 }
 
 /// (verdict, class, detail) for one site.
@@ -428,7 +495,11 @@ fn smoke(args: &[String]) -> i32 {
     let via_proxy = flag(args, "--proxy");
     let tls_only = flag(args, "--tls-only");
     let resume = !flag(args, "--no-resume");
-    let timeout = Duration::from_secs(option(args, "--timeout").and_then(|s| s.parse().ok()).unwrap_or(15));
+    let timeout = Duration::from_secs(
+        option(args, "--timeout")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(15),
+    );
     let text = match std::fs::read_to_string(hosts_path) {
         Ok(t) => t,
         Err(e) => {
@@ -452,40 +523,56 @@ fn smoke(args: &[String]) -> i32 {
         "smoke test: {} hosts, {} trust anchors, {}, timeout {} s{}",
         sites.len(),
         trust.len(),
-        if via_proxy { "through the proxy of the environment (a test of the mechanics, not of B-06)" } else { "direct" },
+        if via_proxy {
+            "through the proxy of the environment (a test of the mechanics, not of B-06)"
+        } else {
+            "direct"
+        },
         timeout.as_secs(),
         if tls_only { ", handshakes only" } else { "" }
     );
     let config = ClientConfig::new(trust);
     // for the revoked group: hard-fail, and the responders and distribution points the certificates name are asked
     let mut checking = config.clone();
-    checking.revocation =
-        Revocation::hard_fail().with_ocsp_source(Arc::new(HttpOcspSource::new())).with_crl_source(Arc::new(HttpCrlSource::new()));
+    checking.revocation = Revocation::hard_fail()
+        .with_ocsp_source(Arc::new(HttpOcspSource::new()))
+        .with_crl_source(Arc::new(HttpCrlSource::new()));
 
     let mut rows: Vec<(Group, String, &'static str, String, u128, String, Resume)> = Vec::new();
     for site in &sites {
         let started = Instant::now();
         // a store of sessions of its own for each host, so that what the GET kept is this host's
         let fresh = config.clone().with_resumption(Resumption::new());
-        let config = if site.group == Group::Revoked { &checking } else { &fresh };
+        let config = if site.group == Group::Revoked {
+            &checking
+        } else {
+            &fresh
+        };
         let (first, second) = if via_proxy {
             // through a proxy there is no handshake of ours to look at on its own: the request is the attempt
             (attempt_http(site, config, true, timeout), None)
         } else {
             let first = attempt_direct(site, config, timeout);
-            let second = if site.group == Group::Ok && !tls_only && matches!(first, Attempt::Accepted(_)) {
-                Some(attempt_http(site, config, false, timeout))
-            } else {
-                None
-            };
+            let second =
+                if site.group == Group::Ok && !tls_only && matches!(first, Attempt::Accepted(_)) {
+                    Some(attempt_http(site, config, false, timeout))
+                } else {
+                    None
+                };
             (first, second)
         };
         let answered = matches!(second, Some(Attempt::Accepted(_)));
         let (mut verdict, mut class, mut detail) = judge(site.group, first, second);
         let ms = started.elapsed().as_millis();
-        let again = if resume && answered && verdict == "PASS" { attempt_resume(site, config, timeout) } else { Resume::NotTried };
+        let again = if resume && answered && verdict == "PASS" {
+            attempt_resume(site, config, timeout)
+        } else {
+            Resume::NotTried
+        };
         match &again {
-            Resume::Resumed(s) | Resume::Declined(s) => detail = format!("{detail}; again: {} {s}", again.name()),
+            Resume::Resumed(s) | Resume::Declined(s) => {
+                detail = format!("{detail}; again: {} {s}", again.name())
+            }
             Resume::Unreachable(m) => detail = format!("{detail}; again: could not connect: {m}"),
             Resume::Failed(c, m) => {
                 (verdict, class) = ("FAIL", format!("resumption/{c}"));
@@ -493,7 +580,11 @@ fn smoke(args: &[String]) -> i32 {
             }
             Resume::NotTried | Resume::NoTicket | Resume::OtherName => {}
         }
-        let name = if site.port == 443 { site.host.clone() } else { format!("{}:{}", site.host, site.port) };
+        let name = if site.port == 443 {
+            site.host.clone()
+        } else {
+            format!("{}:{}", site.host, site.port)
+        };
         let group = site.group.name();
         let r = again.name();
         println!("{verdict:<5} {group:<6} {name:<48} {ms:>5} ms  {class:<12} {r:<11} {detail}");
@@ -504,7 +595,11 @@ fn smoke(args: &[String]) -> i32 {
         let mut out = String::from("group\thost\tverdict\tclass\tms\tdetail\tresumption\n");
         for (group, name, verdict, class, ms, detail, again) in &rows {
             let g = group.name();
-            out.push_str(&format!("{g}\t{name}\t{verdict}\t{class}\t{ms}\t{}\t{}\n", field(detail), again.name()));
+            out.push_str(&format!(
+                "{g}\t{name}\t{verdict}\t{class}\t{ms}\t{}\t{}\n",
+                field(detail),
+                again.name()
+            ));
         }
         if let Err(e) = std::fs::write(&path, out) {
             eprintln!("cannot write {path}: {e}");
@@ -512,13 +607,27 @@ fn smoke(args: &[String]) -> i32 {
     }
 
     let count = |v: &str| rows.iter().filter(|r| r.2 == v).count();
-    let ok_passed = rows.iter().filter(|r| r.0 == Group::Ok && r.2 == "PASS").count();
+    let ok_passed = rows
+        .iter()
+        .filter(|r| r.0 == Group::Ok && r.2 == "PASS")
+        .count();
     let ok_total = rows.iter().filter(|r| r.0 == Group::Ok).count();
-    let refuse_passed = rows.iter().filter(|r| r.0 == Group::Refuse && r.2 == "PASS").count();
+    let refuse_passed = rows
+        .iter()
+        .filter(|r| r.0 == Group::Refuse && r.2 == "PASS")
+        .count();
     let refuse_total = rows.iter().filter(|r| r.0 == Group::Refuse).count();
-    let no_ems_passed = rows.iter().filter(|r| r.0 == Group::NoEms && r.2 == "PASS").count();
+    let no_ems_passed = rows
+        .iter()
+        .filter(|r| r.0 == Group::NoEms && r.2 == "PASS")
+        .count();
     let no_ems_total = rows.iter().filter(|r| r.0 == Group::NoEms).count();
-    let passed_of = |g: Group| (rows.iter().filter(|r| r.0 == g && r.2 == "PASS").count(), rows.iter().filter(|r| r.0 == g).count());
+    let passed_of = |g: Group| {
+        (
+            rows.iter().filter(|r| r.0 == g && r.2 == "PASS").count(),
+            rows.iter().filter(|r| r.0 == g).count(),
+        )
+    };
     let (handshake_passed, handshake_total) = passed_of(Group::RefuseHandshake);
     let (revoked_passed, revoked_total) = passed_of(Group::Revoked);
     println!();
@@ -542,7 +651,10 @@ fn smoke(args: &[String]) -> i32 {
     );
     if resume && !via_proxy && !tls_only {
         let n = |k: &str| rows.iter().filter(|r| r.6.name() == k).count();
-        let tried = rows.iter().filter(|r| !matches!(r.6, Resume::NotTried)).count();
+        let tried = rows
+            .iter()
+            .filter(|r| !matches!(r.6, Resume::NotTried))
+            .count();
         println!(
             "TLS 1.3 session resumption (B-35), the handshake again after the GET: resumed {}, declined by the server {}, no ticket sent {}, tickets only for a redirect's host {}, failed {}, unreachable {} (of {tried})",
             n("resumed"),
@@ -553,7 +665,9 @@ fn smoke(args: &[String]) -> i32 {
             n("unreachable")
         );
     }
-    for (_, name, verdict, class, _, detail, _) in rows.iter().filter(|r| r.2 == "FAIL" || r.2 == "WEAK") {
+    for (_, name, verdict, class, _, detail, _) in
+        rows.iter().filter(|r| r.2 == "FAIL" || r.2 == "WEAK")
+    {
         println!("  {verdict} {name} [{class}]: {detail}");
     }
     let mut code = 0;
@@ -583,7 +697,8 @@ struct Entry {
 
 fn read_manifest(dir: &Path) -> Result<Vec<Entry>, String> {
     let path = dir.join("manifest.tsv");
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let mut entries = Vec::new();
     for line in text.lines() {
         if line.trim().is_empty() || line.starts_with('#') {
@@ -591,12 +706,17 @@ fn read_manifest(dir: &Path) -> Result<Vec<Entry>, String> {
         }
         let cols: Vec<&str> = line.split('\t').collect();
         if cols.len() < 5 {
-            return Err(format!("{}: a line with fewer than 5 columns: {line}", path.display()));
+            return Err(format!(
+                "{}: a line with fewer than 5 columns: {line}",
+                path.display()
+            ));
         }
         entries.push(Entry {
             name: cols[0].to_string(),
             host: cols[1].to_string(),
-            time: cols[2].parse().map_err(|_| format!("{}: bad time in: {line}", path.display()))?,
+            time: cols[2]
+                .parse()
+                .map_err(|_| format!("{}: bad time in: {line}", path.display()))?,
             group: cols[3].to_string(),
             openssl: cols[4].trim().parse().ok(),
         });
@@ -606,21 +726,54 @@ fn read_manifest(dir: &Path) -> Result<Vec<Entry>, String> {
 
 /// A name the leaf is valid for, with a wildcard replaced by a label: what a client would have asked for.
 fn a_name_of(leaf: &Certificate) -> Option<String> {
-    leaf.dns_names.first().map(|n| n.strip_prefix("*.").map_or(n.clone(), |rest| format!("www.{rest}")))
+    leaf.dns_names.first().map(|n| {
+        n.strip_prefix("*.")
+            .map_or(n.clone(), |rest| format!("www.{rest}"))
+    })
 }
 
 /// The ways of altering a chain that verified, none of which may be accepted. Returns those that were.
-fn accepted_alterations(trust: &TrustStore, chain: &[Vec<u8>], host: &str, time: i64, leaf: &Certificate) -> Vec<String> {
+fn accepted_alterations(
+    trust: &TrustStore,
+    chain: &[Vec<u8>],
+    host: &str,
+    time: i64,
+    leaf: &Certificate,
+) -> Vec<String> {
     let mut accepted = Vec::new();
     let mut try_it = |what: String, chain: &[Vec<u8>], host: &str, time: i64| {
-        if trust.verify_chain(chain, &VerifyOptions::tls_server(host, time)).is_ok() {
+        if trust
+            .verify_chain(chain, &VerifyOptions::tls_server(host, time))
+            .is_ok()
+        {
             accepted.push(what);
         }
     };
-    try_it("another host name".to_string(), chain, &format!("{host}.invalid"), time);
-    try_it("one second after the leaf expires".to_string(), chain, host, leaf.not_after + 1);
-    try_it("one second before the leaf is valid".to_string(), chain, host, leaf.not_before - 1);
-    for (what, at) in [("the last byte of the leaf (the signature)", chain[0].len() - 1), ("a byte in the middle of the leaf", chain[0].len() / 2)] {
+    try_it(
+        "another host name".to_string(),
+        chain,
+        &format!("{host}.invalid"),
+        time,
+    );
+    try_it(
+        "one second after the leaf expires".to_string(),
+        chain,
+        host,
+        leaf.not_after + 1,
+    );
+    try_it(
+        "one second before the leaf is valid".to_string(),
+        chain,
+        host,
+        leaf.not_before - 1,
+    );
+    for (what, at) in [
+        (
+            "the last byte of the leaf (the signature)",
+            chain[0].len() - 1,
+        ),
+        ("a byte in the middle of the leaf", chain[0].len() / 2),
+    ] {
         let mut altered = chain.to_vec();
         altered[0][at] ^= 0x01;
         try_it(format!("a flipped bit in {what}"), &altered, host, time);
@@ -653,7 +806,11 @@ fn verify(args: &[String]) -> i32 {
             return 2;
         }
     }
-    println!("verify: {} captured chains, {} trust anchors", entries.len(), trust.len());
+    println!(
+        "verify: {} captured chains, {} trust anchors",
+        entries.len(),
+        trust.len()
+    );
 
     let mut fixtures = String::from("# name\thost\ttime\texpect\tanchor\n");
     let mut table = String::from("name\thost\ttime\tverdict\tdetail\n");
@@ -671,33 +828,63 @@ fn verify(args: &[String]) -> i32 {
                 break 'entry ("SKIP", None, "no certificate was captured".to_string());
             }
             let Ok(leaf) = Certificate::from_der(&chain[0]) else {
-                break 'entry ("WEAK", None, "the library cannot parse the leaf".to_string());
+                break 'entry (
+                    "WEAK",
+                    None,
+                    "the library cannot parse the leaf".to_string(),
+                );
             };
             let ours = trust.verify_chain(&chain, &VerifyOptions::tls_server(&host, e.time));
             if e.group == "refuse" {
                 match ours {
-                    Ok(_) => break 'entry ("FAIL", None, "a chain that must be refused was accepted".to_string()),
+                    Ok(_) => {
+                        break 'entry (
+                            "FAIL",
+                            None,
+                            "a chain that must be refused was accepted".to_string(),
+                        )
+                    }
                     Err(err) => {
                         // why: the same chain in the middle of its validity, or for a name it is valid for, or neither
                         let middle = (leaf.not_before + leaf.not_after) / 2;
-                        if let Ok(v) = trust.verify_chain(&chain, &VerifyOptions::tls_server(&host, middle)) {
+                        if let Ok(v) =
+                            trust.verify_chain(&chain, &VerifyOptions::tls_server(&host, middle))
+                        {
                             anchor_der = Some(v.anchor().to_vec());
-                            break 'entry ("PASS", Some("refuse-time".to_string()), format!("refused ({err}); accepted in the middle of its validity"));
+                            break 'entry (
+                                "PASS",
+                                Some("refuse-time".to_string()),
+                                format!("refused ({err}); accepted in the middle of its validity"),
+                            );
                         }
                         if let Some(name) = a_name_of(&leaf) {
-                            if let Ok(v) = trust.verify_chain(&chain, &VerifyOptions::tls_server(&name, e.time)) {
+                            if let Ok(v) = trust
+                                .verify_chain(&chain, &VerifyOptions::tls_server(&name, e.time))
+                            {
                                 anchor_der = Some(v.anchor().to_vec());
-                                break 'entry ("PASS", Some("refuse-host".to_string()), format!("refused ({err}); accepted for {name}"));
+                                break 'entry (
+                                    "PASS",
+                                    Some("refuse-host".to_string()),
+                                    format!("refused ({err}); accepted for {name}"),
+                                );
                             }
                         }
-                        break 'entry ("PASS", Some("refuse-path".to_string()), format!("refused ({err})"));
+                        break 'entry (
+                            "PASS",
+                            Some("refuse-path".to_string()),
+                            format!("refused ({err})"),
+                        );
                     }
                 }
             }
             match ours {
                 Err(err) => {
                     if e.openssl == Some(0) {
-                        ("FAIL", None, format!("the library refuses a chain that OpenSSL accepted: {err}"))
+                        (
+                            "FAIL",
+                            None,
+                            format!("the library refuses a chain that OpenSSL accepted: {err}"),
+                        )
                     } else {
                         ("WEAK", None, format!("both refuse (OpenSSL code {:?}); does this network re-sign TLS? {err}", e.openssl))
                     }
@@ -706,14 +893,28 @@ fn verify(args: &[String]) -> i32 {
                     let wrongly = accepted_alterations(&trust, &chain, &host, e.time, &leaf);
                     anchor_der = Some(v.anchor().to_vec());
                     *keys.entry(key_name(&leaf.public_key)).or_insert(0) += 1;
-                    let anchor_name = Certificate::from_der(v.anchor()).map(|c| c.subject_summary()).unwrap_or_default();
+                    let anchor_name = Certificate::from_der(v.anchor())
+                        .map(|c| c.subject_summary())
+                        .unwrap_or_default();
                     *anchors.entry(anchor_name.clone()).or_insert(0) += 1;
                     if !wrongly.is_empty() {
-                        ("FAIL", None, format!("accepted an altered chain: {}", wrongly.join("; ")))
+                        (
+                            "FAIL",
+                            None,
+                            format!("accepted an altered chain: {}", wrongly.join("; ")),
+                        )
                     } else if e.openssl.is_some_and(|c| c != 0) {
                         ("WEAK", Some("ok".to_string()), format!("verified (path of {}, anchor [{anchor_name}]), but OpenSSL refused it (code {:?})", v.path.len(), e.openssl))
                     } else {
-                        ("PASS", Some("ok".to_string()), format!("{} path of {} to [{anchor_name}]; every alteration refused", key_name(&leaf.public_key), v.path.len()))
+                        (
+                            "PASS",
+                            Some("ok".to_string()),
+                            format!(
+                                "{} path of {} to [{anchor_name}]; every alteration refused",
+                                key_name(&leaf.public_key),
+                                v.path.len()
+                            ),
+                        )
                     }
                 }
             }
@@ -725,20 +926,35 @@ fn verify(args: &[String]) -> i32 {
             _ => skip += 1,
         }
         println!("{verdict:<5} {:<48} {}", e.name, detail);
-        table.push_str(&format!("{}\t{}\t{}\t{verdict}\t{}\n", e.name, e.host, e.time, field(&detail)));
+        table.push_str(&format!(
+            "{}\t{}\t{}\t{verdict}\t{}\n",
+            e.name,
+            e.host,
+            e.time,
+            field(&detail)
+        ));
 
         // A fixture is kept for a chain whose verdict the library and the world agree on, and nothing else.
         if let (Some(expect), true) = (expect, verdict != "FAIL") {
             let anchor_file = match &anchor_der {
                 Some(der) => {
-                    let _ = std::fs::write(out.join("anchors").join(format!("{}.pem", e.name)), pem_encode(der));
+                    let _ = std::fs::write(
+                        out.join("anchors").join(format!("{}.pem", e.name)),
+                        pem_encode(der),
+                    );
                     format!("anchors/{}.pem", e.name)
                 }
                 None => "-".to_string(),
             };
             let chain_pem: String = chain.iter().map(|c| pem_encode(c)).collect();
-            let _ = std::fs::write(out.join("chains").join(format!("{}.pem", e.name)), chain_pem);
-            fixtures.push_str(&format!("{}\t{}\t{}\t{}\t{}\n", e.name, host, e.time, expect, anchor_file));
+            let _ = std::fs::write(
+                out.join("chains").join(format!("{}.pem", e.name)),
+                chain_pem,
+            );
+            fixtures.push_str(&format!(
+                "{}\t{}\t{}\t{}\t{}\n",
+                e.name, host, e.time, expect, anchor_file
+            ));
             if expect == "ok" {
                 ok_fixtures += 1;
             } else {
@@ -752,7 +968,14 @@ fn verify(args: &[String]) -> i32 {
     println!();
     println!("PASS {pass}  FAIL {fail}  WEAK {weak}  SKIP {skip}");
     println!("fixtures kept: {ok_fixtures} chains that verify, {refusal_fixtures} that must be refused; leaf keys: {keys:?}");
-    println!("trust anchors reached: {}", anchors.iter().map(|(k, v)| format!("[{k}] x{v}")).collect::<Vec<_>>().join(", "));
+    println!(
+        "trust anchors reached: {}",
+        anchors
+            .iter()
+            .map(|(k, v)| format!("[{k}] x{v}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     println!("written to {}", out.display());
     let mut code = 0;
     if fail > 0 {
@@ -788,8 +1011,15 @@ struct RevEntry {
 
 fn read_revocation_manifest(dir: &Path) -> Result<Vec<RevEntry>, String> {
     let path = dir.join("revocation").join("manifest.tsv");
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let dash = |s: &str| if s.trim() == "-" || s.trim().is_empty() { None } else { Some(s.trim().to_string()) };
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let dash = |s: &str| {
+        if s.trim() == "-" || s.trim().is_empty() {
+            None
+        } else {
+            Some(s.trim().to_string())
+        }
+    };
     let mut out = Vec::new();
     for line in text.lines() {
         if line.trim().is_empty() || line.starts_with('#') {
@@ -797,12 +1027,17 @@ fn read_revocation_manifest(dir: &Path) -> Result<Vec<RevEntry>, String> {
         }
         let c: Vec<&str> = line.split('\t').collect();
         if c.len() < 6 {
-            return Err(format!("{}: a line with fewer than 6 columns: {line}", path.display()));
+            return Err(format!(
+                "{}: a line with fewer than 6 columns: {line}",
+                path.display()
+            ));
         }
         out.push(RevEntry {
             name: c[0].to_string(),
             group: c.get(6).map_or("ok", |g| g.trim()).to_string(),
-            time: c[1].parse().map_err(|_| format!("{}: bad time in: {line}", path.display()))?,
+            time: c[1]
+                .parse()
+                .map_err(|_| format!("{}: bad time in: {line}", path.display()))?,
             ocsp_url: dash(c[2]),
             ocsp_file: dash(c[3]),
             crl_url: dash(c[4]),
@@ -814,7 +1049,10 @@ fn read_revocation_manifest(dir: &Path) -> Result<Vec<RevEntry>, String> {
 
 /// A signature algorithm's name, from the content of its AlgorithmIdentifier.
 fn sig_alg_name(alg: &[u8]) -> String {
-    let oid = asn1::Der::new(alg).expect(asn1::TAG_OID).map(|t| asn1::oid_to_string(t.content)).unwrap_or_default();
+    let oid = asn1::Der::new(alg)
+        .expect(asn1::TAG_OID)
+        .map(|t| asn1::oid_to_string(t.content))
+        .unwrap_or_default();
     match oid.as_str() {
         "1.2.840.113549.1.1.11" => "RSA-SHA256".into(),
         "1.2.840.113549.1.1.12" => "RSA-SHA384".into(),
@@ -848,7 +1086,9 @@ fn ocsp_shape(der: &[u8]) -> Option<OcspShape> {
     let bytes = resp.expect(0xa0).ok()?;
     let mut rb = Der::new(bytes.content).sequence().ok()?;
     rb.expect(TAG_OID).ok()?;
-    let mut basic = Der::new(rb.expect(TAG_OCTET_STRING).ok()?.content).sequence().ok()?;
+    let mut basic = Der::new(rb.expect(TAG_OCTET_STRING).ok()?.content)
+        .sequence()
+        .ok()?;
     let tbs = basic.expect(TAG_SEQUENCE).ok()?;
     let alg = basic.expect(TAG_SEQUENCE).ok()?;
     basic.expect(TAG_BIT_STRING).ok()?;
@@ -859,7 +1099,12 @@ fn ocsp_shape(der: &[u8]) -> Option<OcspShape> {
     data.next().ok()?; // producedAt
     let mut sr = data.sequence().ok()?.sequence().ok()?;
     let mut id = Der::new(sr.expect(TAG_SEQUENCE).ok()?.content);
-    let hash = asn1::oid_to_string(Der::new(id.expect(TAG_SEQUENCE).ok()?.content).expect(TAG_OID).ok()?.content);
+    let hash = asn1::oid_to_string(
+        Der::new(id.expect(TAG_SEQUENCE).ok()?.content)
+            .expect(TAG_OID)
+            .ok()?
+            .content,
+    );
     id.expect(TAG_OCTET_STRING).ok()?;
     let issuer_key_hash = id.expect(TAG_OCTET_STRING).ok()?.content;
     let status = match sr.next().ok()?.tag {
@@ -881,7 +1126,14 @@ fn ocsp_shape(der: &[u8]) -> Option<OcspShape> {
         _ => "?",
     };
     // A responder named by the hash of its key is the CA when that is the issuer key hash of a SHA-1 certificate ID.
-    let by_key = (rid.tag == 0xa2).then(|| Der::new(rid.content).expect(TAG_OCTET_STRING).ok().map(|t| t.content)).flatten();
+    let by_key = (rid.tag == 0xa2)
+        .then(|| {
+            Der::new(rid.content)
+                .expect(TAG_OCTET_STRING)
+                .ok()
+                .map(|t| t.content)
+        })
+        .flatten();
     let signer = match by_key {
         Some(h) if id_hash == "SHA-1" => {
             if h == issuer_key_hash {
@@ -893,7 +1145,14 @@ fn ocsp_shape(der: &[u8]) -> Option<OcspShape> {
         _ if certs => "delegated?",
         _ => "issuer?",
     };
-    Some(OcspShape { signer, id_hash, sig: sig_alg_name(alg.content), status, this_update, next_update })
+    Some(OcspShape {
+        signer,
+        id_hash,
+        sig: sig_alg_name(alg.content),
+        status,
+        this_update,
+        next_update,
+    })
 }
 
 /// A CRL's signature algorithm and whether it has an issuingDistributionPoint, read without verifying anything.
@@ -920,7 +1179,17 @@ fn crl_shape(der: &[u8]) -> Option<(String, bool)> {
 /// A file name for a CRL from its URL: the host and path with `_` for anything but letters, digits, `-` and `.`, or the
 /// host and the last part of the path where that is too long.
 fn crl_file_name(url: &str) -> String {
-    let safe = |s: &str| -> String { s.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '.' { c } else { '_' }).collect() };
+    let safe = |s: &str| -> String {
+        s.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    };
     let tail = url.trim_start_matches("http://").trim_end_matches(".crl");
     let mut name = safe(tail);
     if name.len() > 80 {
@@ -953,7 +1222,13 @@ impl Outcome {
 }
 
 /// Hard-fail revocation checking of `leaf` (issued by `issuer`) at `now` with `ocsp` (stapled) or `crl` (supplied).
-fn rev_check(leaf: &[u8], issuer: &[u8], ocsp: Option<&[u8]>, crl: Option<&[u8]>, now: i64) -> Outcome {
+fn rev_check(
+    leaf: &[u8],
+    issuer: &[u8],
+    ocsp: Option<&[u8]>,
+    crl: Option<&[u8]>,
+    now: i64,
+) -> Outcome {
     let mut cfg = Revocation::hard_fail();
     if let Some(der) = crl {
         match Crl::from_der(der) {
@@ -963,7 +1238,15 @@ fn rev_check(leaf: &[u8], issuer: &[u8], ocsp: Option<&[u8]>, crl: Option<&[u8]>
     }
     let path = vec![leaf.to_vec(), issuer.to_vec()];
     let staples = vec![ocsp.map(|o| o.to_vec())];
-    match revocation::check_path(&cfg, &path, &ChainEvidence { sent: &path[..1], staples: &staples }, now) {
+    match revocation::check_path(
+        &cfg,
+        &path,
+        &ChainEvidence {
+            sent: &path[..1],
+            staples: &staples,
+        },
+        now,
+    ) {
         Ok(()) => Outcome::Good,
         Err(e) if e.to_string().contains("certificate_revoked") => Outcome::Revoked,
         Err(e) => Outcome::Unsettled(e.to_string()),
@@ -972,15 +1255,40 @@ fn rev_check(leaf: &[u8], issuer: &[u8], ocsp: Option<&[u8]>, crl: Option<&[u8]>
 
 /// The alterations of a piece of evidence that settled a certificate (as `expected`), none of which may still settle it:
 /// returns those that did. `ocsp` says which kind it is.
-fn accepted_rev_alterations(leaf: &[u8], issuer: &[u8], evidence: &[u8], ocsp: bool, expected: &Outcome, this_update: i64, until: i64, time: i64) -> Vec<String> {
-    let check = |issuer: &[u8], der: &[u8], at: i64| if ocsp { rev_check(leaf, issuer, Some(der), None, at) } else { rev_check(leaf, issuer, None, Some(der), at) };
+fn accepted_rev_alterations(
+    leaf: &[u8],
+    issuer: &[u8],
+    evidence: &[u8],
+    ocsp: bool,
+    expected: &Outcome,
+    this_update: i64,
+    until: i64,
+    time: i64,
+) -> Vec<String> {
+    let check = |issuer: &[u8], der: &[u8], at: i64| {
+        if ocsp {
+            rev_check(leaf, issuer, Some(der), None, at)
+        } else {
+            rev_check(leaf, issuer, None, Some(der), at)
+        }
+    };
     let mut accepted = Vec::new();
-    for (what, at) in [("one second after its window", until + 1), ("more than five minutes before its thisUpdate", this_update - 301)] {
+    for (what, at) in [
+        ("one second after its window", until + 1),
+        (
+            "more than five minutes before its thisUpdate",
+            this_update - 301,
+        ),
+    ] {
         if check(issuer, evidence, at) == *expected {
             accepted.push(what.to_string());
         }
     }
-    for (what, at) in [("its last byte (the signature)", evidence.len() - 1), ("a byte in the middle", evidence.len() / 2), ("a byte near the start", 12.min(evidence.len() - 1))] {
+    for (what, at) in [
+        ("its last byte (the signature)", evidence.len() - 1),
+        ("a byte in the middle", evidence.len() / 2),
+        ("a byte near the start", 12.min(evidence.len() - 1)),
+    ] {
         let mut altered = evidence.to_vec();
         altered[at] ^= 0x01;
         if check(issuer, &altered, time) == *expected {
@@ -995,7 +1303,10 @@ fn accepted_rev_alterations(leaf: &[u8], issuer: &[u8], evidence: &[u8], ocsp: b
 
 fn revocation_mode(args: &[String]) -> i32 {
     let dir = PathBuf::from(&args[0]);
-    let max_crl = option(args, "--max-crl-kib").and_then(|s| s.parse::<usize>().ok()).unwrap_or(256) << 10;
+    let max_crl = option(args, "--max-crl-kib")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(256)
+        << 10;
     let entries = match read_revocation_manifest(&dir) {
         Ok(e) => e,
         Err(e) => {
@@ -1012,7 +1323,9 @@ fn revocation_mode(args: &[String]) -> i32 {
         }
     }
     println!("revocation: {} hosts", entries.len());
-    let mut fixtures = String::from("# kind\tname\ttime\tevidence\tcerts\turl\tthis_update\tvalid_until\tshape\texpect\n");
+    let mut fixtures = String::from(
+        "# kind\tname\ttime\tevidence\tcerts\turl\tthis_update\tvalid_until\tshape\texpect\n",
+    );
     let (mut pass, mut fail, mut weak, mut skip) = (0, 0, 0, 0);
     let mut shapes: BTreeMap<String, usize> = BTreeMap::new();
     let mut crls_seen: BTreeMap<String, String> = BTreeMap::new();
@@ -1021,7 +1334,10 @@ fn revocation_mode(args: &[String]) -> i32 {
 
     for e in &entries {
         let host_dir = dir.join("revocation").join(&e.name);
-        let certs: Vec<Vec<u8>> = ["cert1.pem", "cert2.pem"].iter().flat_map(|f| read_chain(&host_dir.join(f))).collect();
+        let certs: Vec<Vec<u8>> = ["cert1.pem", "cert2.pem"]
+            .iter()
+            .flat_map(|f| read_chain(&host_dir.join(f)))
+            .collect();
         let mut kept_certs = false;
         let mut keep_certs = |out: &Path| {
             if !kept_certs {
@@ -1031,13 +1347,19 @@ fn revocation_mode(args: &[String]) -> i32 {
             }
         };
         if certs.len() < 2 {
-            println!("SKIP  {:<34} the leaf and its issuer were not both captured", e.name);
+            println!(
+                "SKIP  {:<34} the leaf and its issuer were not both captured",
+                e.name
+            );
             skip += 1;
             continue;
         }
         let (leaf, issuer) = (&certs[0], &certs[1]);
         if Certificate::from_der(leaf).is_err() || Certificate::from_der(issuer).is_err() {
-            println!("WEAK  {:<34} the library cannot parse the leaf or its issuer", e.name);
+            println!(
+                "WEAK  {:<34} the library cannot parse the leaf or its issuer",
+                e.name
+            );
             weak += 1;
             continue;
         }
@@ -1053,12 +1375,20 @@ fn revocation_mode(args: &[String]) -> i32 {
                 .lines()
                 .find_map(|l| {
                     let l = l.trim_end();
-                    ["good", "revoked", "unknown"].into_iter().find(|w| l.ends_with(&format!(": {w}")))
+                    ["good", "revoked", "unknown"]
+                        .into_iter()
+                        .find(|w| l.ends_with(&format!(": {w}")))
                 })
                 .unwrap_or("?");
             let (verdict, detail) = match ocsp_shape(&der) {
                 _ if der.is_empty() => ("SKIP", "no response was captured".to_string()),
-                None => ("WEAK", format!("{} bytes that are not a successful basic OCSP response", der.len())),
+                None => (
+                    "WEAK",
+                    format!(
+                        "{} bytes that are not a successful basic OCSP response",
+                        der.len()
+                    ),
+                ),
                 Some(s) => {
                     let until = s.next_update.unwrap_or(s.this_update + 7 * 86_400);
                     let shape = format!("{} {}-id {}", s.signer, s.id_hash, s.sig);
@@ -1070,20 +1400,53 @@ fn revocation_mode(args: &[String]) -> i32 {
                     let got = rev_check(leaf, issuer, Some(&der), None, e.time);
                     match expected {
                         None => ("PASS", format!("{shape}: {}: {}", s.status, got.name())),
-                        Some(want) if got != want => ("FAIL", format!("{shape}: a {} response, but the library says {got:?}", s.status)),
+                        Some(want) if got != want => (
+                            "FAIL",
+                            format!(
+                                "{shape}: a {} response, but the library says {got:?}",
+                                s.status
+                            ),
+                        ),
                         Some(want) => {
-                            let wrongly = accepted_rev_alterations(leaf, issuer, &der, true, &want, s.this_update, until, e.time);
+                            let wrongly = accepted_rev_alterations(
+                                leaf,
+                                issuer,
+                                &der,
+                                true,
+                                &want,
+                                s.this_update,
+                                until,
+                                e.time,
+                            );
                             if !wrongly.is_empty() {
-                                ("FAIL", format!("{shape}: still {} when altered: {}", s.status, wrongly.join("; ")))
+                                (
+                                    "FAIL",
+                                    format!(
+                                        "{shape}: still {} when altered: {}",
+                                        s.status,
+                                        wrongly.join("; ")
+                                    ),
+                                )
                             } else if libressl != s.status {
-                                ("WEAK", format!("{shape}: {}, but LibreSSL said {libressl}", s.status))
+                                (
+                                    "WEAK",
+                                    format!("{shape}: {}, but LibreSSL said {libressl}", s.status),
+                                )
                             } else {
                                 if want == Outcome::Revoked {
-                                    revoked_hosts.entry(e.name.clone()).or_default().push("OCSP");
+                                    revoked_hosts
+                                        .entry(e.name.clone())
+                                        .or_default()
+                                        .push("OCSP");
                                 }
-                                *shapes.entry(format!("OCSP {} {shape}", s.status)).or_insert(0) += 1;
+                                *shapes
+                                    .entry(format!("OCSP {} {shape}", s.status))
+                                    .or_insert(0) += 1;
                                 keep_certs(&out);
-                                let _ = std::fs::write(out.join("ocsp").join(format!("{}.der", e.name)), &der);
+                                let _ = std::fs::write(
+                                    out.join("ocsp").join(format!("{}.der", e.name)),
+                                    &der,
+                                );
                                 fixtures.push_str(&format!(
                                     "ocsp\t{}\t{}\tocsp/{}.der\tcerts/{}.pem\t{url}\t{}\t{until}\t{shape}\t{}\n",
                                     e.name, e.time, e.name, e.name, s.this_update, s.status
@@ -1106,7 +1469,11 @@ fn revocation_mode(args: &[String]) -> i32 {
         // CRL: a host of the revoked group must be on it, any other must not
         if let (Some(url), Some(file)) = (&e.crl_url, &e.crl_file) {
             let der = std::fs::read(dir.join(file)).unwrap_or_default();
-            let want = if e.group == "revoked" { Outcome::Revoked } else { Outcome::Good };
+            let want = if e.group == "revoked" {
+                Outcome::Revoked
+            } else {
+                Outcome::Good
+            };
             let t0 = Instant::now();
             let parsed = Crl::from_der(&der);
             let got = rev_check(leaf, issuer, None, Some(&der), e.time);
@@ -1173,8 +1540,15 @@ fn revocation_mode(args: &[String]) -> i32 {
             println!("  revoked, according to: {host}: {}", by.join(" and "));
         }
     }
-    println!("slowest list to parse and check: {:.1} ms, {}", slowest.0, slowest.1);
-    println!("written to {} (lists over {} KiB left out)", out.display(), max_crl >> 10);
+    println!(
+        "slowest list to parse and check: {:.1} ms, {}",
+        slowest.0, slowest.1
+    );
+    println!(
+        "written to {} (lists over {} KiB left out)",
+        out.display(),
+        max_crl >> 10
+    );
     if fail > 0 {
         println!("RESULT: FAIL. Each FAIL above is a new backlog item.");
         return 1;

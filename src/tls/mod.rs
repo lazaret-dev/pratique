@@ -23,45 +23,45 @@ mod conn;
 pub(crate) mod session;
 mod split;
 // The split tests drive the stream over `UnixStream::pair`, so they are built on Unix only.
-#[cfg(all(test, unix))]
-mod split_tests;
-pub(crate) mod handshake;
-pub(crate) mod messages;
-mod signature;
-pub(crate) mod suite;
-pub mod tls12;
 pub mod certs;
-#[cfg(any(test, feature = "server"))]
-pub mod pki;
-#[cfg(any(test, feature = "server"))]
-pub mod server;
-#[cfg(any(test, feature = "server"))]
-pub mod server_split;
-#[cfg(any(test, feature = "server"))]
-pub mod tickets;
-#[cfg(test)]
-mod server_tests;
-#[cfg(any(test, pratique_fuzzing))]
-mod scripted;
 #[cfg(test)]
 mod fake_server;
-#[cfg(test)]
-mod resumption_tests;
-#[cfg(test)]
-mod hello_retry;
 #[cfg(pratique_fuzzing)]
 #[doc(hidden)]
 pub mod fuzz_hooks;
+pub(crate) mod handshake;
+#[cfg(test)]
+mod hello_retry;
+pub(crate) mod messages;
+#[cfg(any(test, feature = "server"))]
+pub mod pki;
+#[cfg(test)]
+mod resumption_tests;
+#[cfg(test)]
+mod rfc8448;
+#[cfg(any(test, pratique_fuzzing))]
+mod scripted;
+#[cfg(any(test, feature = "server"))]
+pub mod server;
 #[cfg(all(pratique_fuzzing, feature = "server"))]
 #[doc(hidden)]
 pub mod server_fuzz;
+#[cfg(any(test, feature = "server"))]
+pub mod server_split;
 #[cfg(test)]
-mod rfc8448;
+mod server_tests;
+mod signature;
+#[cfg(all(test, unix))]
+mod split_tests;
+pub(crate) mod suite;
+#[cfg(any(test, feature = "server"))]
+pub mod tickets;
+pub mod tls12;
 
 pub use conn::ClientConnection;
+pub(crate) use conn::RecvBuf;
 pub use session::Resumption;
 pub use split::{Duplex, TlsReadHalf, TlsWriteHalf};
-pub(crate) use conn::RecvBuf;
 pub use suite::Suite;
 
 use crate::error::{Error, Result};
@@ -196,7 +196,11 @@ fn to_io(e: Error) -> io::Error {
 /// Performs the TLS 1.3 handshake over `io`, blocking, and returns the established connection (the sans-IO
 /// state, which has our Finished queued: it goes out with the first write). On failure the fatal alert the
 /// protocol error called for, if any, is sent before the error is returned.
-pub(crate) fn handshake<S: Read + Write>(io: &mut S, server_name: &str, config: &ClientConfig) -> Result<ClientConnection> {
+pub(crate) fn handshake<S: Read + Write>(
+    io: &mut S,
+    server_name: &str,
+    config: &ClientConfig,
+) -> Result<ClientConnection> {
     fn send<S: Write>(io: &mut S, conn: &mut ClientConnection) -> io::Result<()> {
         if !conn.wants_write() {
             return Ok(());

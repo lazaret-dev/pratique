@@ -154,41 +154,42 @@ mod cookie;
 mod crl_source;
 mod ocsp_source;
 // TUF over HTTPS, and Sigstore's trusted root and npm's keys through it (BACKLOG B-82)
-pub mod tuf_source;
+#[cfg(test)]
+mod async_timeout_tests;
+#[cfg(test)]
+mod cookie_tests;
 mod decode;
 #[cfg(test)]
 mod decode_tests;
 #[cfg(test)]
 mod expect_tests;
-#[cfg(test)]
-mod async_timeout_tests;
+mod hostrules;
 #[cfg(test)]
 mod revocation_fetch_tests;
-#[cfg(test)]
-mod cookie_tests;
-mod hostrules;
 pub mod schedule;
+pub mod tuf_source;
 // the HTTP/2 protocol layers (sans-IO) and the blocking client's transport on top of them
 mod h2;
 // HTTP/3: QPACK now, then the frames and the connection over `quic`
-mod h3;
 mod h2_transport;
+mod h3;
 // the blocking client's transport over HTTP/3: a UDP socket, reader and timer threads, the Alt-Svc cache
 mod h3_transport;
 // a small HTTP/2 server for tests and tools: the same opt-in as `tls::server`
 #[cfg(any(test, feature = "server"))]
 pub mod h2_server;
-#[cfg(any(test, feature = "server"))]
-pub mod server;
 mod idle;
 pub(crate) mod parser;
+#[cfg(any(test, feature = "server"))]
+pub mod server;
 mod stream;
 // the proxy the operating system is set to use (macOS, Windows)
-mod system_proxy;
-#[cfg(test)]
-mod egress_tests;
 #[cfg(pratique_fuzzing)]
 mod egress_fuzz;
+#[cfg(test)]
+mod egress_tests;
+#[cfg(test)]
+mod establish_tests;
 #[cfg(test)]
 mod h2_client_tests;
 #[cfg(test)]
@@ -200,23 +201,24 @@ mod pool_tests;
 #[cfg(test)]
 mod proxy_tests;
 #[cfg(test)]
-mod establish_tests;
-#[cfg(test)]
 mod schedule_tests;
+mod system_proxy;
 #[cfg(test)]
 mod testserver;
 pub mod url;
 pub(crate) mod wire;
 
-pub use async_client::{AsyncClient, AsyncRequestBuilder, AsyncResponseStream, Connect, ThreadConnector};
+pub use async_client::{
+    AsyncClient, AsyncRequestBuilder, AsyncResponseStream, Connect, ThreadConnector,
+};
 pub use cookie::CookieJar;
 pub use crl_source::HttpCrlSource;
-pub use ocsp_source::HttpOcspSource;
-pub use tuf_source::TufSource;
 pub use hostrules::HostRules;
+pub use ocsp_source::HttpOcspSource;
 pub use schedule::{Batch, Scheduler};
 pub use stream::ResponseStream;
 pub use system_proxy::{SettingsSource, SystemProxy};
+pub use tuf_source::TufSource;
 pub use url::{Url, UrlLimits};
 
 /// Entry points for the coverage-guided fuzzer in `fuzz/`; compiled only with
@@ -228,10 +230,24 @@ pub mod fuzz_hooks {
     use super::wire::Limits;
 
     // the HTTP/2 layers: header blocks, frames, the client's connection and the server's
-    pub use super::h3::fuzz_hooks::{qpack_decoder as h3_qpack_decoder, qpack_encoder as h3_qpack_encoder, qpack_example_decoder_scripts as h3_qpack_example_decoder_scripts, qpack_example_encoder_scripts as h3_qpack_example_encoder_scripts, qpack_example_exchange_scripts as h3_qpack_example_exchange_scripts, qpack_exchange as h3_qpack_exchange, frames as h3_frames, frame_example_streams as h3_frame_example_streams, connection_exchange as h3_connection_exchange, connection_example_scripts as h3_connection_example_scripts};
+    pub use super::h3::fuzz_hooks::{
+        connection_example_scripts as h3_connection_example_scripts,
+        connection_exchange as h3_connection_exchange,
+        frame_example_streams as h3_frame_example_streams, frames as h3_frames,
+        qpack_decoder as h3_qpack_decoder, qpack_encoder as h3_qpack_encoder,
+        qpack_example_decoder_scripts as h3_qpack_example_decoder_scripts,
+        qpack_example_encoder_scripts as h3_qpack_example_encoder_scripts,
+        qpack_example_exchange_scripts as h3_qpack_example_exchange_scripts,
+        qpack_exchange as h3_qpack_exchange,
+    };
     // what a client with a rule about hosts, limits on a URL and a hook for each hop decides about a request and its redirects
     pub use super::egress_fuzz::{egress, example_inputs as egress_example_inputs};
-    pub use super::h2::fuzz_hooks::{client as h2_client, example_client_flights as h2_example_client_flights, example_header_blocks as h2_example_header_blocks, example_server_flights as h2_example_server_flights, frames as h2_frames, hpack as h2_hpack};
+    pub use super::h2::fuzz_hooks::{
+        client as h2_client, example_client_flights as h2_example_client_flights,
+        example_header_blocks as h2_example_header_blocks,
+        example_server_flights as h2_example_server_flights, frames as h2_frames,
+        hpack as h2_hpack,
+    };
 
     /// The value of an `Alt-Svc` field (`data` read as text): see `altsvc.rs`.
     pub fn alt_svc(data: &[u8]) {
@@ -263,7 +279,10 @@ pub mod fuzz_hooks {
             return None;
         }
         let method = ["GET", "HEAD", "POST", "CONNECT"][(data[0] % 4) as usize];
-        let limits = Limits { max_header_bytes: 64 + data[1] as usize * 16, max_body_bytes: data[2] as u64 * 16 };
+        let limits = Limits {
+            max_header_bytes: 64 + data[1] as usize * 16,
+            max_body_bytes: data[2] as u64 * 16,
+        };
         let piece = 1 + (data[3] as usize % 97);
         let mut parser = Buffered::new(method, limits);
         let mut rest = &data[4..];
@@ -284,7 +303,10 @@ pub mod fuzz_hooks {
             return None;
         }
         let r = parser.into_response();
-        assert!(r.body.len() as u64 <= limits.max_body_bytes, "a body longer than the limit was accepted");
+        assert!(
+            r.body.len() as u64 <= limits.max_body_bytes,
+            "a body longer than the limit was accepted"
+        );
         Some((r.status, r.body.len()))
     }
 }
@@ -302,22 +324,22 @@ pub mod fuzz_hooks_server {
 
 use crate::asyncio::net::{deadline_error, Io};
 use crate::asyncio::slots::{Permit, Slots};
-use schedule::{Interrupt, Membership, Running, Ticket};
 use crate::asyncio::{BlockingTask, Pool};
 use crate::error::{Error, Refused, RefusedBy, Result};
 use crate::pem::base64_encode;
 use crate::tls::{ClientConfig, TlsStream, TlsVersion};
+use connect::Establish;
+use decode::{DecodeLimits, RequestOpts};
 use h2_transport::{Acquired, Registry, StartError, Waits};
 use h3_transport::{DialOptions, Registry as H3Registry};
 use idle::{IdlePool, Key, Policy};
+use schedule::{Interrupt, Membership, Running, Ticket};
 use std::future::Future;
 use std::io::{self, Read, Write};
-use connect::Establish;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
-use decode::{DecodeLimits, RequestOpts};
 use stream::{BodyReader, Conn, Failure, Home, MuxBody};
 use wire::Limits;
 
@@ -343,7 +365,12 @@ pub(crate) const REDIRECT_BODY_LIMIT: u64 = 64 * 1024;
 /// anything came back: the methods RFC 9110 calls idempotent, or any request that carries an
 /// `Idempotency-Key`.
 pub(crate) fn is_replayable(method: &str, headers: &[(String, String)]) -> bool {
-    matches!(method, "GET" | "HEAD" | "OPTIONS" | "TRACE" | "PUT" | "DELETE") || headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("idempotency-key"))
+    matches!(
+        method,
+        "GET" | "HEAD" | "OPTIONS" | "TRACE" | "PUT" | "DELETE"
+    ) || headers
+        .iter()
+        .any(|(n, _)| n.eq_ignore_ascii_case("idempotency-key"))
 }
 
 /// The protocol a response came over.
@@ -386,12 +413,18 @@ pub struct Response {
 impl Response {
     /// First header with this (case-insensitive) name.
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     /// All headers with this (case-insensitive) name.
     pub fn headers_named<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
-        self.headers.iter().filter(move |(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .filter(move |(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn is_success(&self) -> bool {
@@ -420,17 +453,35 @@ impl Proxy {
     /// Parses `http://[user:pass@]host:port` (or just `host:port`).
     pub fn parse(s: &str) -> Result<Proxy> {
         let s = s.trim();
-        let with_scheme = if s.contains("://") { s.to_string() } else { format!("http://{}", s) };
+        let with_scheme = if s.contains("://") {
+            s.to_string()
+        } else {
+            format!("http://{}", s)
+        };
         if with_scheme.to_ascii_lowercase().starts_with("https://") {
-            return Err(Error::Http("proxies reached over TLS are not supported; use an http:// proxy URL".into()));
+            return Err(Error::Http(
+                "proxies reached over TLS are not supported; use an http:// proxy URL".into(),
+            ));
         }
         let u = Url::parse(&with_scheme)?;
         if u.scheme != "http" {
             return Err(Error::Http("unsupported proxy scheme".into()));
         }
-        let port = if with_scheme.rsplit('/').next().map_or(false, |h| h.contains(':') && !h.ends_with(']')) { u.port } else { DEFAULT_PROXY_PORT };
+        let port = if with_scheme
+            .rsplit('/')
+            .next()
+            .map_or(false, |h| h.contains(':') && !h.ends_with(']'))
+        {
+            u.port
+        } else {
+            DEFAULT_PROXY_PORT
+        };
         // the credentials as they are meant: `%40` is an `@` that the URL could not hold as it is
-        Ok(Proxy { host: u.host, port, auth: u.userinfo.map(|ui| percent_decoded(&ui)) })
+        Ok(Proxy {
+            host: u.host,
+            port,
+            auth: u.userinfo.map(|ui| percent_decoded(&ui)),
+        })
     }
 }
 
@@ -440,7 +491,10 @@ fn percent_decoded(s: &str) -> String {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        let hex = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok());
+        let hex = b
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
         match (b[i], hex) {
             (b'%', Some(v)) => {
                 out.push(v);
@@ -466,7 +520,16 @@ enum ProxySetting {
 
 /// The variables that make the environment the one that says which proxy is used when one of them is set (and not empty), as Python's
 /// `getproxies` has it: the operating system's settings are then not looked at.
-const PROXY_VARIABLES: [&str; 8] = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"];
+const PROXY_VARIABLES: [&str; 8] = [
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
 
 /// What the environment says about the proxy of an https request.
 #[derive(Debug, PartialEq, Eq)]
@@ -494,7 +557,13 @@ thread_local! {
 /// A variable of the process's environment, or of the one a test set for this thread ([`PROXY_ENV`]).
 #[cfg(test)]
 fn env_var(name: &str) -> Option<String> {
-    match PROXY_ENV.with(|e| e.borrow().as_ref().map(|vars| vars.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone()))) {
+    match PROXY_ENV.with(|e| {
+        e.borrow().as_ref().map(|vars| {
+            vars.iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, v)| v.clone())
+        })
+    }) {
         Some(set) => set,
         None => std::env::var(name).ok(),
     }
@@ -503,11 +572,18 @@ fn env_var(name: &str) -> Option<String> {
 /// What the environment `var` reads says about an https request to `host`: `HTTPS_PROXY` (else `https_proxy`), unless `NO_PROXY` (else
 /// `no_proxy`) names the host.
 fn env_proxy(var: &dyn Fn(&str) -> Option<String>, host: &str) -> Result<EnvProxy> {
-    if !PROXY_VARIABLES.iter().any(|n| var(n).is_some_and(|v| !v.trim().is_empty())) {
+    if !PROXY_VARIABLES
+        .iter()
+        .any(|n| var(n).is_some_and(|v| !v.trim().is_empty()))
+    {
         return Ok(EnvProxy::Silent);
     }
-    let https = var("HTTPS_PROXY").or_else(|| var("https_proxy")).unwrap_or_default();
-    let no_proxy = var("NO_PROXY").or_else(|| var("no_proxy")).unwrap_or_default();
+    let https = var("HTTPS_PROXY")
+        .or_else(|| var("https_proxy"))
+        .unwrap_or_default();
+    let no_proxy = var("NO_PROXY")
+        .or_else(|| var("no_proxy"))
+        .unwrap_or_default();
     if https.trim().is_empty() || no_proxy_matches(&no_proxy, host) {
         return Ok(EnvProxy::Direct);
     }
@@ -583,7 +659,8 @@ pub struct HopInfo<'a> {
 impl HopInfo<'_> {
     /// Whether this hop goes to another origin (scheme, host or port) than the one that redirected to it. False for the request itself.
     pub fn crosses_origin(&self) -> bool {
-        self.from.is_some_and(|from| from.origin() != self.url.origin())
+        self.from
+            .is_some_and(|from| from.origin() != self.url.origin())
     }
 }
 
@@ -675,7 +752,8 @@ impl Client {
     /// 8305, "Happy Eyeballs"; default [`connect::DEFAULT_ATTEMPT_DELAY`], 250 ms, kept between 10 ms and 2 s): what an
     /// address that does not answer costs (see [`connect`]).
     pub fn connection_attempt_delay(mut self, delay: Duration) -> Client {
-        self.establish.attempt_delay = delay.clamp(connect::MIN_ATTEMPT_DELAY, connect::MAX_ATTEMPT_DELAY);
+        self.establish.attempt_delay =
+            delay.clamp(connect::MIN_ATTEMPT_DELAY, connect::MAX_ATTEMPT_DELAY);
         self
     }
 
@@ -701,7 +779,10 @@ impl Client {
     /// A client whose every request belongs to `batch` (unless the request names another): they share its deadline and
     /// are cancelled with it. See [`Batch`].
     pub fn in_batch(&self, batch: &Batch) -> Client {
-        Client { batch: Some(batch.clone()), ..self.clone() }
+        Client {
+            batch: Some(batch.clone()),
+            ..self.clone()
+        }
     }
 
     /// Limit on the whole request, redirects included (default: none). The per-operation
@@ -865,7 +946,9 @@ impl Client {
 
     /// The number of idle connections waiting for another request.
     pub fn idle_connections(&self) -> usize {
-        self.idle.len() + self.h2.as_ref().map_or(0, |h2| h2.registry.idle()) + self.h3.as_ref().map_or(0, |h3| h3.registry.idle())
+        self.idle.len()
+            + self.h2.as_ref().map_or(0, |h2| h2.registry.idle())
+            + self.h3.as_ref().map_or(0, |h3| h3.registry.idle())
     }
 
     /// How many reads of the HTTP/2 sockets were made by callers waiting for their own responses, and how many by the
@@ -879,7 +962,9 @@ impl Client {
     /// streams' buffers (tests of the transport).
     #[cfg(test)]
     pub(crate) fn h2_body_bytes(&self) -> (usize, usize) {
-        self.h2.as_ref().map_or((0, 0), |h2| h2.registry.body_bytes())
+        self.h2
+            .as_ref()
+            .map_or((0, 0), |h2| h2.registry.body_bytes())
     }
 
     /// Speaks HTTP/2 to servers that choose it (off by default). The client then offers `h2` and `http/1.1` in
@@ -916,7 +1001,10 @@ impl Client {
             let mut tls = self.tls.clone();
             tls.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
             // the connections of an earlier setting are kept (and used) if it was on already
-            let registry = self.h2.as_ref().map_or_else(|| Arc::new(Registry::new()), |h| h.registry.clone());
+            let registry = self
+                .h2
+                .as_ref()
+                .map_or_else(|| Arc::new(Registry::new()), |h| h.registry.clone());
             H2Support { tls, registry }
         });
         self
@@ -951,7 +1039,10 @@ impl Client {
     pub fn http3(mut self, on: bool) -> Client {
         self.h3 = on.then(|| {
             // the connections of an earlier setting are kept (and used) if it was on already
-            let (registry, eager) = self.h3.as_ref().map_or_else(|| (Arc::new(H3Registry::new()), false), |h| (h.registry.clone(), h.eager));
+            let (registry, eager) = self.h3.as_ref().map_or_else(
+                || (Arc::new(H3Registry::new()), false),
+                |h| (h.registry.clone(), h.eager),
+            );
             H3Support { registry, eager }
         });
         self
@@ -1020,7 +1111,10 @@ impl Client {
 
     /// Whether the host rules allow `host` on `port`: the client's, and the request's if it has one.
     fn host_allowed(&self, host: &str, port: u16, default_port: u16) -> bool {
-        [&self.hosts, &self.request_hosts].into_iter().flatten().all(|rules| rules.allows(host, port, default_port))
+        [&self.hosts, &self.request_hosts]
+            .into_iter()
+            .flatten()
+            .all(|rules| rules.allows(host, port, default_port))
     }
 
     /// Sets what the URL of a request, and the URL of every redirect that is followed, may not be (nothing is refused by default): see
@@ -1082,19 +1176,33 @@ impl Client {
 
     /// What the hook gives for a hop that is about to be sent, checked: nothing if there is no hook.
     fn granted_for(&self, info: &HopInfo<'_>) -> Result<Vec<(String, String)>> {
-        let Some(hook) = &self.hop_hook else { return Ok(Vec::new()) };
+        let Some(hook) = &self.hop_hook else {
+            return Ok(Vec::new());
+        };
         let granted = hook(info).map_err(|e| match e {
             // (a hook that says no, as an error of its own or as one of ours, has refused the hop)
             Error::Refused(r) => Error::Refused(Refused { hop: info.hop, ..r }),
-            Error::Http(reason) => Error::Refused(Refused { hop: info.hop, by: RefusedBy::Hook, reason }),
-            other => Error::Refused(Refused { hop: info.hop, by: RefusedBy::Hook, reason: other.to_string() }),
+            Error::Http(reason) => Error::Refused(Refused {
+                hop: info.hop,
+                by: RefusedBy::Hook,
+                reason,
+            }),
+            other => Error::Refused(Refused {
+                hop: info.hop,
+                by: RefusedBy::Hook,
+                reason: other.to_string(),
+            }),
         })?;
         for (name, value) in &granted {
             if !wire::is_valid_header_name(name) || !wire::is_valid_header_value(value) {
-                return Err(Error::Http(format!("invalid header {name:?} from the hop hook")));
+                return Err(Error::Http(format!(
+                    "invalid header {name:?} from the hop hook"
+                )));
             }
             if OWN_HEADERS.iter().any(|own| name.eq_ignore_ascii_case(own)) {
-                return Err(Error::Http(format!("the hop hook may not give {name:?}: the client sets it")));
+                return Err(Error::Http(format!(
+                    "the hop hook may not give {name:?}: the client sets it"
+                )));
             }
         }
         Ok(granted)
@@ -1102,18 +1210,47 @@ impl Client {
 
     /// Refuses a URL (as the text it came in) that a limit refuses; the cheap check, made before the text is parsed.
     pub(crate) fn check_text(&self, text: &str, hop: usize) -> Result<()> {
-        self.url_limits.check_text(text).map_err(|reason| Error::Refused(Refused { hop, by: RefusedBy::UrlLimit, reason }))
+        self.url_limits.check_text(text).map_err(|reason| {
+            Error::Refused(Refused {
+                hop,
+                by: RefusedBy::UrlLimit,
+                reason,
+            })
+        })
     }
 
     /// Refuses a URL that a limit or a host rule (the client's, the request's) does not allow. Called for the first URL and for every
     /// redirect, before a connection.
     pub(crate) fn check_target(&self, url: &Url, hop: usize) -> Result<()> {
-        self.url_limits.check(url).map_err(|reason| Error::Refused(Refused { hop, by: RefusedBy::UrlLimit, reason }))?;
-        let refused = |whose: &str| Error::Refused(Refused { hop, by: RefusedBy::HostRule, reason: format!("host not allowed: {} is not in the {whose}", url.host_header()) });
-        if self.hosts.as_ref().is_some_and(|rules| !rules.allows_url(url)) {
+        self.url_limits.check(url).map_err(|reason| {
+            Error::Refused(Refused {
+                hop,
+                by: RefusedBy::UrlLimit,
+                reason,
+            })
+        })?;
+        let refused = |whose: &str| {
+            Error::Refused(Refused {
+                hop,
+                by: RefusedBy::HostRule,
+                reason: format!(
+                    "host not allowed: {} is not in the {whose}",
+                    url.host_header()
+                ),
+            })
+        };
+        if self
+            .hosts
+            .as_ref()
+            .is_some_and(|rules| !rules.allows_url(url))
+        {
             return Err(refused("allowed hosts"));
         }
-        if self.request_hosts.as_ref().is_some_and(|rules| !rules.allows_url(url)) {
+        if self
+            .request_hosts
+            .as_ref()
+            .is_some_and(|rules| !rules.allows_url(url))
+        {
             return Err(refused("request's allowed hosts"));
         }
         Ok(())
@@ -1185,7 +1322,14 @@ impl Client {
     }
 
     pub fn request(&self, method: &str, url: &str) -> RequestBuilder<'_> {
-        RequestBuilder { client: self, method: method.to_string(), url: url.to_string(), headers: Vec::new(), body: Vec::new(), opts: RequestOpts::default() }
+        RequestBuilder {
+            client: self,
+            method: method.to_string(),
+            url: url.to_string(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            opts: RequestOpts::default(),
+        }
     }
 
     /// [`get`](Client::get) as a future. The request runs on a worker thread (see [`Pool`]), so
@@ -1318,21 +1462,31 @@ impl<'a> RequestBuilder<'a> {
     /// that is refused costs its head and nothing more. The body is then sent again, whole, if a redirect is followed (307 and 308
     /// keep it) or if the server does not do expectations (417, after which the request goes once more without one).
     pub fn expect_continue(self) -> Self {
-        if self.headers.iter().any(|(n, v)| n.eq_ignore_ascii_case("expect") && v.trim().eq_ignore_ascii_case("100-continue")) {
+        if self.headers.iter().any(|(n, v)| {
+            n.eq_ignore_ascii_case("expect") && v.trim().eq_ignore_ascii_case("100-continue")
+        }) {
             return self;
         }
         self.header("Expect", "100-continue")
     }
 
     pub fn send(self) -> Result<Response> {
-        self.client.execute(self.method, &self.url, self.headers, self.body, self.opts)
+        self.client
+            .execute(self.method, &self.url, self.headers, self.body, self.opts)
     }
 
     /// Sends the request and returns as soon as the response headers are in; the body is read from
     /// the [`ResponseStream`] as it arrives. Redirects are followed first, as for
     /// [`send`](RequestBuilder::send); the stream is the final response.
     pub fn send_stream(self) -> Result<ResponseStream> {
-        self.client.execute_stream(self.method, &self.url, self.headers, self.body, self.opts, false)
+        self.client.execute_stream(
+            self.method,
+            &self.url,
+            self.headers,
+            self.body,
+            self.opts,
+            false,
+        )
     }
 
     /// Sends the request without blocking the caller: it runs on a worker thread and the
@@ -1340,8 +1494,11 @@ impl<'a> RequestBuilder<'a> {
     pub fn send_async(self) -> ResponseFuture {
         let client = self.client.clone();
         let pool = client.pool.clone().unwrap_or_else(Pool::global);
-        let (method, url, headers, body, opts) = (self.method, self.url, self.headers, self.body, self.opts);
-        ResponseFuture { task: pool.spawn_blocking(move || client.execute(method, &url, headers, body, opts)) }
+        let (method, url, headers, body, opts) =
+            (self.method, self.url, self.headers, self.body, self.opts);
+        ResponseFuture {
+            task: pool.spawn_blocking(move || client.execute(method, &url, headers, body, opts)),
+        }
     }
 }
 
@@ -1358,9 +1515,17 @@ pub struct ConnectOptions {
 
 /// Resolves `host` and connects, racing its addresses (see [`connect`](crate::http::connect)); the socket honours `opts`, and holds `permit`
 /// (the connection's slot under a per-host limit) for as long as it is open.
-pub(crate) fn tcp_connect(host: &str, port: u16, opts: ConnectOptions, est: &Establish, permit: Option<Permit>) -> Result<Io> {
+pub(crate) fn tcp_connect(
+    host: &str,
+    port: u16,
+    opts: ConnectOptions,
+    est: &Establish,
+    permit: Option<Permit>,
+) -> Result<Io> {
     let now = Instant::now();
-    let by_timeout = now.checked_add(opts.connect_timeout).unwrap_or(now + Duration::from_secs(365 * 86_400));
+    let by_timeout = now
+        .checked_add(opts.connect_timeout)
+        .unwrap_or(now + Duration::from_secs(365 * 86_400));
     let until = match opts.deadline {
         Some(d) if d <= now => return Err(Error::Io(deadline_error())),
         Some(d) => d.min(by_timeout),
@@ -1369,7 +1534,12 @@ pub(crate) fn tcp_connect(host: &str, port: u16, opts: ConnectOptions, est: &Est
     let tcp = match connect::connect(est, host, port, until) {
         Ok(tcp) => tcp,
         // (the time ran out because the whole request's did)
-        Err(e) if e.kind() == io::ErrorKind::TimedOut && opts.deadline.is_some_and(|d| d < by_timeout && Instant::now() >= d) => {
+        Err(e)
+            if e.kind() == io::ErrorKind::TimedOut
+                && opts
+                    .deadline
+                    .is_some_and(|d| d < by_timeout && Instant::now() >= d) =>
+        {
             return Err(Error::Io(deadline_error()))
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(Error::Http(e.to_string())),
@@ -1378,7 +1548,13 @@ pub(crate) fn tcp_connect(host: &str, port: u16, opts: ConnectOptions, est: &Est
     tcp.set_read_timeout(Some(opts.timeout))?;
     tcp.set_write_timeout(Some(opts.timeout))?;
     let _ = tcp.set_nodelay(true);
-    Ok(Io { tcp, timeout: opts.timeout, deadline: opts.deadline, permit, armed: crate::asyncio::net::Armed::both(opts.timeout) })
+    Ok(Io {
+        tcp,
+        timeout: opts.timeout,
+        deadline: opts.deadline,
+        permit,
+        armed: crate::asyncio::net::Armed::both(opts.timeout),
+    })
 }
 
 /// The key of a per-host connection limit: the host and port connected to (through a proxy, the origin's).
@@ -1414,7 +1590,11 @@ pub(crate) struct InFlight {
 
 impl InFlight {
     pub(crate) fn new(ticket: Option<Ticket>, membership: Option<Membership>) -> Option<InFlight> {
-        (ticket.is_some() || membership.is_some()).then_some(InFlight { ticket, membership, received: 0 })
+        (ticket.is_some() || membership.is_some()).then_some(InFlight {
+            ticket,
+            membership,
+            received: 0,
+        })
     }
 
     /// The length the response says its body has.
@@ -1434,7 +1614,9 @@ impl InFlight {
 
     /// Whether the request's batch was cancelled.
     pub(crate) fn cancelled(&self) -> bool {
-        self.membership.as_ref().is_some_and(|m| m.running.is_cancelled())
+        self.membership
+            .as_ref()
+            .is_some_and(|m| m.running.is_cancelled())
     }
 
     /// The request's control, if it belongs to a batch.
@@ -1453,7 +1635,9 @@ enum Room {
 
 /// Whether a request's headers say `Expect: 100-continue`.
 pub(crate) fn expects_continue(headers: &[(String, String)]) -> bool {
-    headers.iter().any(|(n, v)| n.eq_ignore_ascii_case("expect") && v.trim().eq_ignore_ascii_case("100-continue"))
+    headers.iter().any(|(n, v)| {
+        n.eq_ignore_ascii_case("expect") && v.trim().eq_ignore_ascii_case("100-continue")
+    })
 }
 
 fn is_redirect(status: u16) -> bool {
@@ -1462,10 +1646,13 @@ fn is_redirect(status: u16) -> bool {
 
 /// Whether `list` (the value of `NO_PROXY`) names `host`: `*`, the host, or a domain it is under.
 fn no_proxy_matches(list: &str, host: &str) -> bool {
-    list.split(',').map(str::trim).filter(|e| !e.is_empty()).any(|e| {
-        let e = e.trim_start_matches('.').to_ascii_lowercase();
-        e == "*" || host == e || host.ends_with(&format!(".{}", e))
-    })
+    list.split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .any(|e| {
+            let e = e.trim_start_matches('.').to_ascii_lowercase();
+            e == "*" || host == e || host.ends_with(&format!(".{}", e))
+        })
 }
 
 /// One request on its way: what is sent now, and what a redirect may change.
@@ -1490,7 +1677,10 @@ pub(crate) struct Hop {
 impl Hop {
     /// The names (lower case) of the headers that the hook gave for this hop: credentials, which a compression table must not keep.
     pub(crate) fn secret_names(&self) -> Vec<String> {
-        self.granted.iter().map(|(n, _)| n.to_ascii_lowercase()).collect()
+        self.granted
+            .iter()
+            .map(|(n, _)| n.to_ascii_lowercase())
+            .collect()
     }
 }
 
@@ -1540,27 +1730,45 @@ struct H3Tries {
 const H3_ATTEMPTS: usize = 4;
 
 impl Client {
-    fn execute(&self, method: String, url: &str, headers: Vec<(String, String)>, body: Vec<u8>, opts: RequestOpts) -> Result<Response> {
-        self.execute_stream(method, url, headers, body, opts, true)?.into_response()
+    fn execute(
+        &self,
+        method: String,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        opts: RequestOpts,
+    ) -> Result<Response> {
+        self.execute_stream(method, url, headers, body, opts, true)?
+            .into_response()
     }
 
     /// The oldest TLS version a request accepts: its own, else the client's.
     /// The oldest TLS version a hop accepts: the client's, or the request's when that is stricter. A request can keep itself to
     /// TLS 1.3 on a client that allows 1.2, and cannot allow 1.2 on a client that requires 1.3.
     pub(crate) fn min_tls_for(&self, hop: &Hop) -> TlsVersion {
-        hop.min_tls.map_or(self.tls.min_version, |v| v.max(self.tls.min_version))
+        hop.min_tls
+            .map_or(self.tls.min_version, |v| v.max(self.tls.min_version))
     }
 
     /// The limits of the decoding for a request with `opts`, or `None` if its response is not to be decoded.
     pub(crate) fn decode_for(&self, opts: &RequestOpts) -> Option<DecodeLimits> {
-        opts.decompress.unwrap_or(self.decompress).then(|| DecodeLimits { max_output: opts.max_decoded.or(self.decode.max_output), ..self.decode })
+        opts.decompress
+            .unwrap_or(self.decompress)
+            .then(|| DecodeLimits {
+                max_output: opts.max_decoded.or(self.decode.max_output),
+                ..self.decode
+            })
     }
 
     /// This client with what a request sets over its own settings, if it sets any: its timeouts, its redirect limit, its rule about hosts
     /// (which holds as well as the client's). The clone shares the connections, the pools and everything else, and the request is made with
     /// it; what it took is taken out of `opts`.
     pub(crate) fn narrowed(&self, opts: &mut RequestOpts) -> Option<Client> {
-        if opts.timeout.is_none() && opts.total_timeout.is_none() && opts.max_redirects.is_none() && opts.hosts.is_none() {
+        if opts.timeout.is_none()
+            && opts.total_timeout.is_none()
+            && opts.max_redirects.is_none()
+            && opts.hosts.is_none()
+        {
             return None;
         }
         let mut client = self.clone();
@@ -1581,7 +1789,15 @@ impl Client {
 
     /// Sends the request, follows redirects, and returns the final response as soon as its headers
     /// have arrived.
-    fn execute_stream(&self, method: String, url: &str, headers: Vec<(String, String)>, body: Vec<u8>, mut opts: RequestOpts, whole: bool) -> Result<ResponseStream> {
+    fn execute_stream(
+        &self,
+        method: String,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+        mut opts: RequestOpts,
+        whole: bool,
+    ) -> Result<ResponseStream> {
         if let Some(client) = self.narrowed(&mut opts) {
             return client.execute_stream(method, url, headers, body, opts, whole);
         }
@@ -1592,10 +1808,24 @@ impl Client {
         hop.min_tls = opts.min_tls;
         hop.running = running.clone();
         let deadline = self.request_deadline(membership.as_ref());
-        let limits = Limits { max_body_bytes: opts.max_body.unwrap_or(self.limits.max_body_bytes), ..self.limits };
-        let cancelled = |e: Error| if running.as_ref().is_some_and(Running::is_cancelled) { Error::Cancelled } else { e };
+        let limits = Limits {
+            max_body_bytes: opts.max_body.unwrap_or(self.limits.max_body_bytes),
+            ..self.limits
+        };
+        let cancelled = |e: Error| {
+            if running.as_ref().is_some_and(Running::is_cancelled) {
+                Error::Cancelled
+            } else {
+                e
+            }
+        };
         let mut ticket = match &self.scheduler {
-            Some(s) => Some(s.admit(&slot_key(&hop.url), opts.expected.unwrap_or(0), deadline, running.as_ref())?),
+            Some(s) => Some(s.admit(
+                &slot_key(&hop.url),
+                opts.expected.unwrap_or(0),
+                deadline,
+                running.as_ref(),
+            )?),
             None => None,
         };
         let mut hops = 0;
@@ -1603,7 +1833,9 @@ impl Client {
             if let Some(t) = ticket.as_mut() {
                 t.move_to(&slot_key(&hop.url), deadline, running.as_ref())?;
             }
-            let mut resp = self.once(&hop, deadline, limits, whole).map_err(cancelled)?;
+            let mut resp = self
+                .once(&hop, deadline, limits, whole)
+                .map_err(cancelled)?;
             self.learn_alternatives(&hop, &resp);
             if let Some(jar) = &self.cookies {
                 jar.store_from(&hop.url, resp.headers_named("set-cookie"));
@@ -1612,7 +1844,9 @@ impl Client {
                 // (the final response, and the only one whose body the caller gets)
                 let resp = match &hop.decode {
                     Some(d) => match decode::coding_of(&hop.method, resp.status, &resp.headers) {
-                        Some(format) => resp.with_decoder(format, d.for_body(limits.max_body_bytes)),
+                        Some(format) => {
+                            resp.with_decoder(format, d.for_body(limits.max_body_bytes))
+                        }
                         None => resp,
                     },
                     None => resp,
@@ -1621,7 +1855,10 @@ impl Client {
                 return Ok(resp.in_flight(InFlight::new(ticket, membership)));
             }
             // what is left of the redirect's body, if it is small, so that its connection can be used again
-            if resp.content_length.map_or(true, |n| n <= REDIRECT_BODY_LIMIT) {
+            if resp
+                .content_length
+                .map_or(true, |n| n <= REDIRECT_BODY_LIMIT)
+            {
                 resp.discard(REDIRECT_BODY_LIMIT);
             }
         }
@@ -1629,7 +1866,9 @@ impl Client {
 
     /// The request's place in its batch (its own, else the client's), if it has one; an error if the batch is cancelled.
     pub(crate) fn membership(&self, opts: &RequestOpts) -> Result<Option<Membership>> {
-        let Some(batch) = opts.batch.as_ref().or(self.batch.as_ref()) else { return Ok(None) };
+        let Some(batch) = opts.batch.as_ref().or(self.batch.as_ref()) else {
+            return Ok(None);
+        };
         let m = batch.join();
         m.running.check()?;
         Ok(Some(m))
@@ -1637,7 +1876,10 @@ impl Client {
 
     /// When a request must be over: the client's total timeout from now, or its batch's deadline, whichever comes first.
     pub(crate) fn request_deadline(&self, membership: Option<&Membership>) -> Option<Instant> {
-        match (self.deadline(), membership.and_then(|m| m.batch().deadline())) {
+        match (
+            self.deadline(),
+            membership.and_then(|m| m.batch().deadline()),
+        ) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         }
@@ -1654,15 +1896,25 @@ impl Client {
             Ok(None) => pool_key(&hop.url, None, self.min_tls_for(hop)),
             _ => return,
         };
-        h3.registry.learn(&key, resp.headers_named("alt-svc"), &|host, port| self.host_allowed(host, port, 443));
+        h3.registry
+            .learn(&key, resp.headers_named("alt-svc"), &|host, port| {
+                self.host_allowed(host, port, 443)
+            });
     }
 
     pub(crate) fn deadline(&self) -> Option<Instant> {
-        self.total_timeout.and_then(|t| Instant::now().checked_add(t))
+        self.total_timeout
+            .and_then(|t| Instant::now().checked_add(t))
     }
 
     /// Validates a request and parses its URL.
-    pub(crate) fn start(&self, method: String, url: &str, headers: Vec<(String, String)>, body: Vec<u8>) -> Result<Hop> {
+    pub(crate) fn start(
+        &self,
+        method: String,
+        url: &str,
+        headers: Vec<(String, String)>,
+        body: Vec<u8>,
+    ) -> Result<Hop> {
         for (n, v) in &headers {
             if !wire::is_valid_header_name(n) || !wire::is_valid_header_value(v) {
                 return Err(Error::Http(format!("invalid header {:?}", n)));
@@ -1675,20 +1927,53 @@ impl Client {
         let url = Url::parse(url)?;
         self.check_target(&url, 0)?;
         let method = method.to_ascii_uppercase();
-        let granted = self.granted_for(&HopInfo { url: &url, method: &method, hop: 0, from: None })?;
-        Ok(Hop { method, url, headers, body, granted, index: 0, decode: None, min_tls: None, running: None })
+        let granted = self.granted_for(&HopInfo {
+            url: &url,
+            method: &method,
+            hop: 0,
+            from: None,
+        })?;
+        Ok(Hop {
+            method,
+            url,
+            headers,
+            body,
+            granted,
+            index: 0,
+            decode: None,
+            min_tls: None,
+            running: None,
+        })
     }
 
     /// Decides what a response means for the request: `Ok(true)` if `hop` now describes the
     /// redirected request to send next, `Ok(false)` if `resp` is the final answer.
-    pub(crate) fn follow(&self, hop: &mut Hop, status: u16, headers: &[(String, String)], hops: &mut usize) -> Result<bool> {
+    pub(crate) fn follow(
+        &self,
+        hop: &mut Hop,
+        status: u16,
+        headers: &[(String, String)],
+        hops: &mut usize,
+    ) -> Result<bool> {
         if !self.follow_redirects {
             return Ok(false);
         }
-        let location = if is_redirect(status) { headers.iter().find(|(n, _)| n.eq_ignore_ascii_case("location")).map(|(_, v)| v.clone()) } else { None };
-        let Some(location) = location else { return Ok(false) };
+        let location = if is_redirect(status) {
+            headers
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case("location"))
+                .map(|(_, v)| v.clone())
+        } else {
+            None
+        };
+        let Some(location) = location else {
+            return Ok(false);
+        };
         if *hops >= self.max_redirects {
-            return Err(Error::Http(format!("too many redirects (limit {})", self.max_redirects)));
+            return Err(Error::Http(format!(
+                "too many redirects (limit {})",
+                self.max_redirects
+            )));
         }
         *hops += 1;
         // (what the server said, and what it comes to: both before anything is sent there)
@@ -1696,20 +1981,39 @@ impl Client {
         let next = hop.url.join(&location)?;
         self.check_text(&next.to_string(), *hops)?;
         if hop.url.is_https() && !next.is_https() {
-            return Err(Error::Refused(Refused { hop: *hops, by: RefusedBy::Scheme, reason: "refusing redirect from https to plain http".into() }));
+            return Err(Error::Refused(Refused {
+                hop: *hops,
+                by: RefusedBy::Scheme,
+                reason: "refusing redirect from https to plain http".into(),
+            }));
         }
         self.check_target(&next, *hops)?;
-        let drop_body = status == 303 && hop.method != "HEAD" || (status == 301 || status == 302) && hop.method == "POST";
+        let drop_body = status == 303 && hop.method != "HEAD"
+            || (status == 301 || status == 302) && hop.method == "POST";
         // (the hook is asked last, with the method the request will have; a hop that it refuses leaves the request as it was)
-        let method = if drop_body { "GET" } else { hop.method.as_str() };
-        let granted = self.granted_for(&HopInfo { url: &next, method, hop: *hops, from: Some(&hop.url) })?;
+        let method = if drop_body {
+            "GET"
+        } else {
+            hop.method.as_str()
+        };
+        let granted = self.granted_for(&HopInfo {
+            url: &next,
+            method,
+            hop: *hops,
+            from: Some(&hop.url),
+        })?;
         if drop_body {
             hop.method = "GET".to_string();
             hop.body.clear();
-            hop.headers.retain(|(n, _)| !n.to_ascii_lowercase().starts_with("content-"));
+            hop.headers
+                .retain(|(n, _)| !n.to_ascii_lowercase().starts_with("content-"));
         }
         if next.origin() != hop.url.origin() {
-            hop.headers.retain(|(n, _)| !["authorization", "cookie", "proxy-authorization"].iter().any(|s| n.eq_ignore_ascii_case(s)));
+            hop.headers.retain(|(n, _)| {
+                !["authorization", "cookie", "proxy-authorization"]
+                    .iter()
+                    .any(|s| n.eq_ignore_ascii_case(s))
+            });
         }
         hop.url = next;
         hop.granted = granted;
@@ -1724,7 +2028,9 @@ impl Client {
             return Err(Error::Refused(Refused {
                 hop: hop.index,
                 by: RefusedBy::Scheme,
-                reason: "plain http:// URLs are disabled; call allow_insecure_http(true) to permit them".into(),
+                reason:
+                    "plain http:// URLs are disabled; call allow_insecure_http(true) to permit them"
+                        .into(),
             }));
         }
         // the caller's headers, except those of a name that the hook gave for this hop, and then what the hook gave
@@ -1746,7 +2052,11 @@ impl Client {
         }
         if !has("accept-encoding") {
             // (not for a range of a body: it is a range of the encoded one, which nothing can decode in part)
-            let encodings = if hop.decode.is_some() && !has("range") { "gzip, deflate" } else { "identity" };
+            let encodings = if hop.decode.is_some() && !has("range") {
+                "gzip, deflate"
+            } else {
+                "identity"
+            };
             headers.push(("Accept-Encoding".into(), encodings.into()));
         }
         if !self.policy.keep_alive {
@@ -1758,32 +2068,52 @@ impl Client {
             }
         }
         if let (Some(ui), false) = (&url.userinfo, has("authorization")) {
-            headers.push(("Authorization".into(), format!("Basic {}", base64_encode(ui.as_bytes()))));
+            headers.push((
+                "Authorization".into(),
+                format!("Basic {}", base64_encode(ui.as_bytes())),
+            ));
         }
         if !body.is_empty() || matches!(method, "POST" | "PUT" | "PATCH") {
             headers.push(("Content-Length".into(), body.len().to_string()));
         }
-        headers.extend(extra.into_iter().filter(|(n, _)| !OWN_HEADERS.iter().any(|s| n.eq_ignore_ascii_case(s))));
+        headers.extend(
+            extra
+                .into_iter()
+                .filter(|(n, _)| !OWN_HEADERS.iter().any(|s| n.eq_ignore_ascii_case(s))),
+        );
         Ok(headers)
     }
 
     /// One request on one connection (a shared HTTP/2 one, a pooled HTTP/1.1 one if there is a good one, else a
     /// new one), up to the arrival of the response headers.
-    fn once(&self, hop: &Hop, deadline: Option<Instant>, limits: Limits, whole: bool) -> Result<ResponseStream> {
+    fn once(
+        &self,
+        hop: &Hop,
+        deadline: Option<Instant>,
+        limits: Limits,
+        whole: bool,
+    ) -> Result<ResponseStream> {
         let mut headers = self.request_headers(hop)?;
         let (method, url, body) = (hop.method.as_str(), &hop.url, hop.body.as_slice());
         let proxy = self.proxy_for(url, hop.index)?;
         let key = pool_key(url, proxy.as_ref(), self.min_tls_for(hop));
         let mut head = wire::write_request_head(method, &url.path_and_query, &headers);
         // a body that waits for the server's go-ahead (over HTTP/1.1)
-        let mut expect = (!body.is_empty() && expects_continue(&headers)).then_some(self.expect_timeout);
+        let mut expect =
+            (!body.is_empty() && expects_continue(&headers)).then_some(self.expect_timeout);
         let mut retry_allowed = self.policy.parks() && is_replayable(method, &hop.headers);
         let mut pooled_allowed = true;
         let h2_on = self.h2.is_some() && url.is_https() && self.policy.parks();
-        let mut h2_tries = H2Tries { attempts: 0, repeat_allowed: retry_allowed };
+        let mut h2_tries = H2Tries {
+            attempts: 0,
+            repeat_allowed: retry_allowed,
+        };
         // (QUIC is never used through a proxy: the proxies this client speaks to tunnel TCP)
         let h3_on = self.h3.is_some() && url.is_https() && proxy.is_none() && self.policy.parks();
-        let mut h3_tries = H3Tries { attempts: 0, repeat_allowed: retry_allowed };
+        let mut h3_tries = H3Tries {
+            attempts: 0,
+            repeat_allowed: retry_allowed,
+        };
         loop {
             if let Some(r) = &hop.running {
                 r.check()?;
@@ -1799,13 +2129,26 @@ impl Client {
             // HTTP/2 next: a shared connection, or the dial that finds out whether the server speaks it
             let mut fresh = None;
             if h2_on {
-                match self.h2_step(hop, &headers, &key, proxy.as_ref(), deadline, limits, whole, &mut h2_tries)? {
+                match self.h2_step(
+                    hop,
+                    &headers,
+                    &key,
+                    proxy.as_ref(),
+                    deadline,
+                    limits,
+                    whole,
+                    &mut h2_tries,
+                )? {
                     H2Step::Response(stream) => return Ok(stream),
                     H2Step::Again => continue,
                     H2Step::Http1(conn) => fresh = conn,
                 }
             }
-            let reused = if fresh.is_none() && pooled_allowed { self.checkout(&key, deadline) } else { None };
+            let reused = if fresh.is_none() && pooled_allowed {
+                self.checkout(&key, deadline)
+            } else {
+                None
+            };
             let mut was_reused = reused.is_some();
             let conn = match (fresh, reused) {
                 (Some(c), _) | (None, Some(c)) => c,
@@ -1814,7 +2157,9 @@ impl Client {
                         was_reused = true;
                         c
                     }
-                    Room::Slot(permit) => self.connect(url, proxy.as_ref(), deadline, key.min_tls, permit)?,
+                    Room::Slot(permit) => {
+                        self.connect(url, proxy.as_ref(), deadline, key.min_tls, permit)?
+                    }
                 },
             };
             let mut conn = conn;
@@ -1824,7 +2169,12 @@ impl Client {
                     r.set(Interrupt::Socket(socket));
                 }
             }
-            let home = self.policy.parks().then(|| Home { pool: self.idle.clone(), key: key.clone(), policy: self.policy, slots: self.conn_limit.clone() });
+            let home = self.policy.parks().then(|| Home {
+                pool: self.idle.clone(),
+                key: key.clone(),
+                policy: self.policy,
+                slots: self.conn_limit.clone(),
+            });
             match self.exchange(conn, method, url, &head, body, limits, home, expect) {
                 // a server that does not do expectations says so (RFC 9110, 15.5.18): the request, which it has not acted on, goes
                 // once more without one, and with its body
@@ -1850,31 +2200,64 @@ impl Client {
     /// or it was refused or cut off in a way that allows another try), or the news that the origin is an HTTP/1.1
     /// one (with the connection that was dialed to find out, if there was one).
     #[allow(clippy::too_many_arguments)]
-    fn h2_step(&self, hop: &Hop, headers: &[(String, String)], key: &Key, proxy: Option<&Proxy>, deadline: Option<Instant>, limits: Limits, whole: bool, tries: &mut H2Tries) -> Result<H2Step> {
+    fn h2_step(
+        &self,
+        hop: &Hop,
+        headers: &[(String, String)],
+        key: &Key,
+        proxy: Option<&Proxy>,
+        deadline: Option<Instant>,
+        limits: Limits,
+        whole: bool,
+        tries: &mut H2Tries,
+    ) -> Result<H2Step> {
         let support = self.h2.as_ref().expect("HTTP/2 is on");
         let opts = self.connect_options(deadline);
-        let waits = Waits { timeout: opts.timeout, deadline };
+        let waits = Waits {
+            timeout: opts.timeout,
+            deadline,
+        };
         tries.attempts += 1;
         if tries.attempts > H2_ATTEMPTS {
-            return Err(Error::Http("the request could not be started on an HTTP/2 connection".into()));
+            return Err(Error::Http(
+                "the request could not be started on an HTTP/2 connection".into(),
+            ));
         }
-        let (conn, reused) = match support.registry.acquire(key, waits, opts.connect_timeout + opts.timeout)? {
-            Acquired::Http1 => return Ok(H2Step::Http1(None)),
-            Acquired::Conn(conn) => (conn, true),
-            Acquired::Dial(ticket) => match self.dial(&hop.url, proxy, deadline, true, key.min_tls, self.slot(&hop.url, deadline)?)? {
-                Dialed::H2(conn) => {
-                    ticket.h2(conn.clone());
-                    (conn, false)
-                }
-                Dialed::Http1(conn) => {
-                    ticket.http1();
-                    return Ok(H2Step::Http1(Some(conn)));
-                }
-            },
-        };
+        let (conn, reused) =
+            match support
+                .registry
+                .acquire(key, waits, opts.connect_timeout + opts.timeout)?
+            {
+                Acquired::Http1 => return Ok(H2Step::Http1(None)),
+                Acquired::Conn(conn) => (conn, true),
+                Acquired::Dial(ticket) => match self.dial(
+                    &hop.url,
+                    proxy,
+                    deadline,
+                    true,
+                    key.min_tls,
+                    self.slot(&hop.url, deadline)?,
+                )? {
+                    Dialed::H2(conn) => {
+                        ticket.h2(conn.clone());
+                        (conn, false)
+                    }
+                    Dialed::Http1(conn) => {
+                        ticket.http1();
+                        return Ok(H2Step::Http1(Some(conn)));
+                    }
+                },
+            };
         let authority = hop.url.host_header();
         let secret = hop.secret_names();
-        let request = h2::connection::Request { method: &hop.method, scheme: "https", authority: &authority, path: &hop.url.path_and_query, headers, secret: &secret };
+        let request = h2::connection::Request {
+            method: &hop.method,
+            scheme: "https",
+            authority: &authority,
+            path: &hop.url.path_and_query,
+            headers,
+            secret: &secret,
+        };
         let started = conn.start(&request, &hop.body, waits);
         if let (Ok(stream), Some(r)) = (&started, &hop.running) {
             r.set(Interrupt::Call(Box::new(stream.canceller())));
@@ -1885,7 +2268,14 @@ impl Client {
                 Ok((head, bytes)) => {
                     let bodiless = hop.method == "HEAD" || matches!(head.status, 204 | 304);
                     let body = MuxBody::complete(bytes, waits, limits);
-                    return Ok(H2Step::Response(ResponseStream::from_h2(head.status, head.headers, hop.url.clone(), body, bodiless, conn.tls_version())?));
+                    return Ok(H2Step::Response(ResponseStream::from_h2(
+                        head.status,
+                        head.headers,
+                        hop.url.clone(),
+                        body,
+                        bodiless,
+                        conn.tls_version(),
+                    )?));
                 }
                 Err(f) => f,
             },
@@ -1893,7 +2283,14 @@ impl Client {
                 Ok(head) => {
                     let bodiless = hop.method == "HEAD" || matches!(head.status, 204 | 304);
                     let body = MuxBody::new(stream, waits, limits);
-                    return Ok(H2Step::Response(ResponseStream::from_h2(head.status, head.headers, hop.url.clone(), body, bodiless, conn.tls_version())?));
+                    return Ok(H2Step::Response(ResponseStream::from_h2(
+                        head.status,
+                        head.headers,
+                        hop.url.clone(),
+                        body,
+                        bodiless,
+                        conn.tls_version(),
+                    )?));
                 }
                 Err(f) => f,
             },
@@ -1915,32 +2312,69 @@ impl Client {
     /// The request over HTTP/3, if the caller asked for it and the origin offers it: a response, or `Again` (a connection could not
     /// take it, or it was refused or cut off in a way that allows another try), or `Skip`: go the TCP way.
     #[allow(clippy::too_many_arguments)]
-    fn h3_step(&self, hop: &Hop, headers: &[(String, String)], key: &Key, deadline: Option<Instant>, limits: Limits, whole: bool, tries: &mut H3Tries) -> Result<H3Step> {
+    fn h3_step(
+        &self,
+        hop: &Hop,
+        headers: &[(String, String)],
+        key: &Key,
+        deadline: Option<Instant>,
+        limits: Limits,
+        whole: bool,
+        tries: &mut H3Tries,
+    ) -> Result<H3Step> {
         let support = self.h3.as_ref().expect("HTTP/3 is on");
         let opts = self.connect_options(deadline);
-        let waits = Waits { timeout: opts.timeout, deadline };
+        let waits = Waits {
+            timeout: opts.timeout,
+            deadline,
+        };
         tries.attempts += 1;
         if tries.attempts > H3_ATTEMPTS {
             return Ok(H3Step::Skip);
         }
-        let (conn, reused) = match support.registry.acquire(key, &hop.url.host, hop.url.port, support.eager, waits, opts.connect_timeout + opts.timeout) {
+        let (conn, reused) = match support.registry.acquire(
+            key,
+            &hop.url.host,
+            hop.url.port,
+            support.eager,
+            waits,
+            opts.connect_timeout + opts.timeout,
+        ) {
             h3_transport::Acquired::Skip => return Ok(H3Step::Skip),
             // (the alternatives are shared by the clones, which may have rules of their own, and by requests that have one: a connection to an
             // alternative that this request's rules do not allow is not used for it, and nor is one dialed; the request goes over TCP)
-            h3_transport::Acquired::Conn(conn) if !self.host_allowed(conn.endpoint().0, conn.endpoint().1, 443) => return Ok(H3Step::Skip),
+            h3_transport::Acquired::Conn(conn)
+                if !self.host_allowed(conn.endpoint().0, conn.endpoint().1, 443) =>
+            {
+                return Ok(H3Step::Skip)
+            }
             h3_transport::Acquired::Conn(conn) => (conn, true),
-            h3_transport::Acquired::Dial(_, host, port) if !self.host_allowed(&host, port, 443) => return Ok(H3Step::Skip),
+            h3_transport::Acquired::Dial(_, host, port) if !self.host_allowed(&host, port, 443) => {
+                return Ok(H3Step::Skip)
+            }
             h3_transport::Acquired::Dial(ticket, host, port) => {
                 // an origin that merely said it offers QUIC is not waited for long; one that the caller said speaks it is
-                let handshake_timeout = if support.eager { self.connect_timeout } else { self.connect_timeout.min(h3_transport::ALT_HANDSHAKE_TIMEOUT) };
-                let dial = DialOptions { handshake_timeout, idle_timeout: self.policy.idle_timeout, deadline, resolver: self.establish.resolver.clone() };
+                let handshake_timeout = if support.eager {
+                    self.connect_timeout
+                } else {
+                    self.connect_timeout
+                        .min(h3_transport::ALT_HANDSHAKE_TIMEOUT)
+                };
+                let dial = DialOptions {
+                    handshake_timeout,
+                    idle_timeout: self.policy.idle_timeout,
+                    deadline,
+                    resolver: self.establish.resolver.clone(),
+                };
                 match h3_transport::dial(&host, port, &hop.url.host, &self.tls, dial) {
                     Ok(conn) => {
                         ticket.connected(conn.clone());
                         (conn, false)
                     }
                     // (the time the whole request was given ran out: that says nothing of the origin)
-                    Err(_) if deadline.is_some_and(|d| Instant::now() >= d) => return Ok(H3Step::Skip),
+                    Err(_) if deadline.is_some_and(|d| Instant::now() >= d) => {
+                        return Ok(H3Step::Skip)
+                    }
                     Err(_) => {
                         ticket.failed();
                         return Ok(H3Step::Skip);
@@ -1950,7 +2384,14 @@ impl Client {
         };
         let authority = hop.url.host_header();
         let secret = hop.secret_names();
-        let request = h2::connection::Request { method: &hop.method, scheme: "https", authority: &authority, path: &hop.url.path_and_query, headers, secret: &secret };
+        let request = h2::connection::Request {
+            method: &hop.method,
+            scheme: "https",
+            authority: &authority,
+            path: &hop.url.path_and_query,
+            headers,
+            secret: &secret,
+        };
         let failure = match conn.start(&request, &hop.body, waits) {
             Ok(mut stream) => match stream.head(waits) {
                 Ok(head) => {
@@ -1961,13 +2402,25 @@ impl Client {
                         match stream.collect(limits.max_body_bytes, waits) {
                             Ok(bytes) => {
                                 let body = MuxBody::complete(bytes, waits, limits);
-                                return Ok(H3Step::Response(ResponseStream::from_h3(status, headers, hop.url.clone(), body, bodiless)?));
+                                return Ok(H3Step::Response(ResponseStream::from_h3(
+                                    status,
+                                    headers,
+                                    hop.url.clone(),
+                                    body,
+                                    bodiless,
+                                )?));
                             }
                             Err(f) => f,
                         }
                     } else {
                         let body = MuxBody::new_h3(stream, waits, limits);
-                        return Ok(H3Step::Response(ResponseStream::from_h3(status, headers, hop.url.clone(), body, bodiless)?));
+                        return Ok(H3Step::Response(ResponseStream::from_h3(
+                            status,
+                            headers,
+                            hop.url.clone(),
+                            body,
+                            bodiless,
+                        )?));
                     }
                 }
                 Err(f) => f,
@@ -1995,7 +2448,17 @@ impl Client {
     /// Sends the request on `conn` (the body after a go-ahead, if it waits for one: see [`RequestBuilder::expect_continue`]) and reads the
     /// response headers.
     #[allow(clippy::too_many_arguments)]
-    fn exchange(&self, conn: Conn, method: &str, url: &Url, head: &[u8], body: &[u8], limits: Limits, home: Option<Home>, expect: Option<Duration>) -> std::result::Result<ResponseStream, Failure> {
+    fn exchange(
+        &self,
+        conn: Conn,
+        method: &str,
+        url: &Url,
+        head: &[u8],
+        body: &[u8],
+        limits: Limits,
+        home: Option<Home>,
+        expect: Option<Duration>,
+    ) -> std::result::Result<ResponseStream, Failure> {
         let tls_version = conn.tls_version();
         let mut reader = BodyReader::new(conn, method, limits, home);
         match expect {
@@ -2003,7 +2466,12 @@ impl Client {
             None => reader.send_request(head, body, body.len() <= SMALL_BODY)?,
         }
         let response_head = reader.receive_head()?;
-        Ok(ResponseStream::new(response_head, url.clone(), reader, tls_version))
+        Ok(ResponseStream::new(
+            response_head,
+            url.clone(),
+            reader,
+            tls_version,
+        ))
     }
 
     /// An idle connection to `key` that the peer has not closed in the meantime, with the limits of
@@ -2022,15 +2490,29 @@ impl Client {
         None
     }
 
-    fn tcp_connect(&self, host: &str, port: u16, deadline: Option<Instant>, permit: Option<Permit>) -> Result<Io> {
-        tcp_connect(host, port, self.connect_options(deadline), &self.establish, permit)
+    fn tcp_connect(
+        &self,
+        host: &str,
+        port: u16,
+        deadline: Option<Instant>,
+        permit: Option<Permit>,
+    ) -> Result<Io> {
+        tcp_connect(
+            host,
+            port,
+            self.connect_options(deadline),
+            &self.establish,
+            permit,
+        )
     }
 
     /// A slot for a new connection to `url`'s host under [`max_connections_per_host`](Client::max_connections_per_host)
     /// (none without a limit), or, if `reuse` names the request's key, a connection for it that came back to the pool
     /// while this waited.
     fn room(&self, url: &Url, reuse: Option<&Key>, deadline: Option<Instant>) -> Result<Room> {
-        let Some(slots) = &self.conn_limit else { return Ok(Room::Slot(None)) };
+        let Some(slots) = &self.conn_limit else {
+            return Ok(Room::Slot(None));
+        };
         let key = slot_key(url);
         let started = Instant::now();
         let until = deadline.unwrap_or_else(|| started + self.timeout);
@@ -2043,7 +2525,11 @@ impl Client {
                 return Ok(Room::Parked(conn));
             }
             #[cfg(test)]
-            ROOM_PAUSE.with(|p| if let Some(d) = p.get() { std::thread::sleep(d) });
+            ROOM_PAUSE.with(|p| {
+                if let Some(d) = p.get() {
+                    std::thread::sleep(d)
+                }
+            });
             // an idle connection to the host that this request cannot use (made for another proxy or TLS minimum) is closed
             // to make room; one of its own key that was parked since the look above is not, and is taken on the next turn
             if let Some(idle) = self.idle.take_oldest_to(&url.host, url.port, reuse) {
@@ -2057,7 +2543,11 @@ impl Client {
     }
 
     pub(crate) fn connect_options(&self, deadline: Option<Instant>) -> ConnectOptions {
-        ConnectOptions { connect_timeout: self.connect_timeout, timeout: self.timeout, deadline }
+        ConnectOptions {
+            connect_timeout: self.connect_timeout,
+            timeout: self.timeout,
+            deadline,
+        }
     }
 
     /// The proxy a request to `url` goes through, if any, once the rule of [`allowed_proxies`](Client::allowed_proxies) has allowed it
@@ -2066,15 +2556,30 @@ impl Client {
         let proxy = self.choose_proxy(url, &env_var)?;
         if let (Some(p), Some(rules)) = (&proxy, &self.proxy_hosts) {
             if !rules.allows(&p.host, p.port, DEFAULT_PROXY_PORT) {
-                let host = if p.host.contains(':') { format!("[{}]", p.host) } else { p.host.clone() };
-                return Err(Error::Refused(Refused { hop, by: RefusedBy::ProxyRule, reason: format!("proxy not allowed: {host}:{} is not in the allowed proxies", p.port) }));
+                let host = if p.host.contains(':') {
+                    format!("[{}]", p.host)
+                } else {
+                    p.host.clone()
+                };
+                return Err(Error::Refused(Refused {
+                    hop,
+                    by: RefusedBy::ProxyRule,
+                    reason: format!(
+                        "proxy not allowed: {host}:{} is not in the allowed proxies",
+                        p.port
+                    ),
+                }));
             }
         }
         Ok(proxy)
     }
 
     /// The proxy the client's setting gives for `url`, with the environment that `var` reads.
-    fn choose_proxy(&self, url: &Url, var: &dyn Fn(&str) -> Option<String>) -> Result<Option<Proxy>> {
+    fn choose_proxy(
+        &self,
+        url: &Url,
+        var: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<Option<Proxy>> {
         if !url.is_https() {
             return Ok(None);
         }
@@ -2098,24 +2603,45 @@ impl Client {
     fn slot(&self, url: &Url, deadline: Option<Instant>) -> Result<Option<Permit>> {
         match self.room(url, None, deadline)? {
             Room::Slot(permit) => Ok(permit),
-            Room::Parked(_) => Err(Error::Http("internal: a parked connection where none was asked for".into())),
+            Room::Parked(_) => Err(Error::Http(
+                "internal: a parked connection where none was asked for".into(),
+            )),
         }
     }
 
     /// A new connection for an HTTP/1.1 request, holding `permit`.
-    fn connect(&self, url: &Url, proxy: Option<&Proxy>, deadline: Option<Instant>, min_tls: TlsVersion, permit: Option<Permit>) -> Result<Conn> {
+    fn connect(
+        &self,
+        url: &Url,
+        proxy: Option<&Proxy>,
+        deadline: Option<Instant>,
+        min_tls: TlsVersion,
+        permit: Option<Permit>,
+    ) -> Result<Conn> {
         if !url.is_https() {
-            return Ok(Conn::Plain(self.tcp_connect(&url.host, url.port, deadline, permit)?));
+            return Ok(Conn::Plain(
+                self.tcp_connect(&url.host, url.port, deadline, permit)?,
+            ));
         }
         match self.dial(url, proxy, deadline, false, min_tls, permit)? {
             Dialed::Http1(conn) => Ok(conn),
-            Dialed::H2(_) => Err(Error::Http("internal: an HTTP/2 connection where HTTP/1.1 was asked for".into())),
+            Dialed::H2(_) => Err(Error::Http(
+                "internal: an HTTP/2 connection where HTTP/1.1 was asked for".into(),
+            )),
         }
     }
 
     /// A new TLS connection to an https origin (through the proxy, if there is one). With `offer_h2` the client
     /// offers `h2` in ALPN, and a server that picks it gets an HTTP/2 connection.
-    fn dial(&self, url: &Url, proxy: Option<&Proxy>, deadline: Option<Instant>, offer_h2: bool, min_tls: TlsVersion, permit: Option<Permit>) -> Result<Dialed> {
+    fn dial(
+        &self,
+        url: &Url,
+        proxy: Option<&Proxy>,
+        deadline: Option<Instant>,
+        offer_h2: bool,
+        min_tls: TlsVersion,
+        permit: Option<Permit>,
+    ) -> Result<Dialed> {
         let mut io = match proxy {
             Some(p) => self.proxy_tunnel(p, &url.host, url.port, deadline, permit)?,
             None => self.tcp_connect(&url.host, url.port, deadline, permit)?,
@@ -2145,10 +2671,21 @@ impl Client {
 
     /// The CONNECT request that asks `proxy` for a tunnel to host:port.
     pub(crate) fn connect_request(&self, proxy: &Proxy, host: &str, port: u16) -> String {
-        let target = if host.contains(':') { format!("[{}]:{}", host, port) } else { format!("{}:{}", host, port) };
-        let mut req = format!("CONNECT {t} HTTP/1.1\r\nHost: {t}\r\nUser-Agent: {ua}\r\n", t = target, ua = self.user_agent);
+        let target = if host.contains(':') {
+            format!("[{}]:{}", host, port)
+        } else {
+            format!("{}:{}", host, port)
+        };
+        let mut req = format!(
+            "CONNECT {t} HTTP/1.1\r\nHost: {t}\r\nUser-Agent: {ua}\r\n",
+            t = target,
+            ua = self.user_agent
+        );
         if let Some(a) = &proxy.auth {
-            req.push_str(&format!("Proxy-Authorization: Basic {}\r\n", base64_encode(a.as_bytes())));
+            req.push_str(&format!(
+                "Proxy-Authorization: Basic {}\r\n",
+                base64_encode(a.as_bytes())
+            ));
         }
         req.push_str("\r\n");
         req
@@ -2158,7 +2695,14 @@ impl Client {
     /// has one for an `https` URL to that host, or straight there; the client's timeouts set on it.
     #[cfg_attr(not(any(test, feature = "server")), allow(dead_code))]
     pub(crate) fn tunnel(&self, host: &str, port: u16) -> Result<std::net::TcpStream> {
-        let url = Url::parse(&format!("https://{}:{port}/", if host.contains(':') { format!("[{host}]") } else { host.to_string() }))?;
+        let url = Url::parse(&format!(
+            "https://{}:{port}/",
+            if host.contains(':') {
+                format!("[{host}]")
+            } else {
+                host.to_string()
+            }
+        ))?;
         let io = match self.proxy_for(&url, 0)? {
             Some(p) => self.proxy_tunnel(&p, host, port, None, None)?,
             None => self.tcp_connect(host, port, None, None)?,
@@ -2167,7 +2711,14 @@ impl Client {
     }
 
     /// Opens a CONNECT tunnel through `proxy` to host:port.
-    fn proxy_tunnel(&self, proxy: &Proxy, host: &str, port: u16, deadline: Option<Instant>, permit: Option<Permit>) -> Result<Io> {
+    fn proxy_tunnel(
+        &self,
+        proxy: &Proxy,
+        host: &str,
+        port: u16,
+        deadline: Option<Instant>,
+        permit: Option<Permit>,
+    ) -> Result<Io> {
         let mut s = self.tcp_connect(&proxy.host, proxy.port, deadline, permit)?;
         s.write_all(self.connect_request(proxy, host, port).as_bytes())?;
         // Read the response head one byte at a time so no tunnel data is consumed.
@@ -2178,7 +2729,9 @@ impl Client {
                 return Err(Error::Http("proxy response headers too large".into()));
             }
             if s.read(&mut byte)? == 0 {
-                return Err(Error::Http("proxy closed the connection during CONNECT".into()));
+                return Err(Error::Http(
+                    "proxy closed the connection during CONNECT".into(),
+                ));
             }
             head.push(byte[0]);
         }
@@ -2192,8 +2745,13 @@ pub(crate) const CONNECT_HEAD_LIMIT: usize = 16 * 1024;
 
 /// Fails unless the proxy's response head starts with a 2xx status.
 pub(crate) fn check_connect_response(head: &[u8]) -> Result<()> {
-    let first = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[])).trim().to_string();
-    let ok = first.split_whitespace().nth(1).map_or(false, |c| c.starts_with('2'));
+    let first = String::from_utf8_lossy(head.split(|&b| b == b'\n').next().unwrap_or(&[]))
+        .trim()
+        .to_string();
+    let ok = first
+        .split_whitespace()
+        .nth(1)
+        .map_or(false, |c| c.starts_with('2'));
     if !ok {
         return Err(Error::Http(format!("proxy refused CONNECT: {}", first)));
     }
@@ -2220,7 +2778,9 @@ mod tests {
         let log2 = log.clone();
         thread::spawn(move || {
             for _ in 0..connections {
-                let Ok((mut s, _)) = listener.accept() else { return };
+                let Ok((mut s, _)) = listener.accept() else {
+                    return;
+                };
                 let mut reader = BufReader::new(s.try_clone().unwrap());
                 let mut head = String::new();
                 let mut content_length = 0usize;
@@ -2248,28 +2808,42 @@ mod tests {
     }
 
     fn plain_client() -> Client {
-        Client::with_tls_config(ClientConfig::new(crate::x509::TrustStore::empty())).allow_insecure_http(true).timeout(Duration::from_secs(5))
+        Client::with_tls_config(ClientConfig::new(crate::x509::TrustStore::empty()))
+            .allow_insecure_http(true)
+            .timeout(Duration::from_secs(5))
     }
 
     #[test]
     fn plain_get_with_default_headers() {
-        let (port, log) = spawn_server(1, |_, _| b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-Test: yes\r\n\r\nhello".to_vec());
-        let r = plain_client().get(&format!("http://127.0.0.1:{}/path?q=1", port)).unwrap();
+        let (port, log) = spawn_server(1, |_, _| {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-Test: yes\r\n\r\nhello".to_vec()
+        });
+        let r = plain_client()
+            .get(&format!("http://127.0.0.1:{}/path?q=1", port))
+            .unwrap();
         assert_eq!(r.status, 200);
         assert_eq!(r.text(), "hello");
         assert_eq!(r.header("x-test"), Some("yes"));
         let head = log.lock().unwrap()[0].clone();
         assert!(head.starts_with("GET /path?q=1 HTTP/1.1\r\n"), "{}", head);
         assert!(head.contains(&format!("Host: 127.0.0.1:{}\r\n", port)));
-        assert!(!head.to_ascii_lowercase().contains("connection:"), "a keep-alive client has nothing to say about the connection: {head}");
+        assert!(
+            !head.to_ascii_lowercase().contains("connection:"),
+            "a keep-alive client has nothing to say about the connection: {head}"
+        );
         assert!(head.contains("Accept-Encoding: identity\r\n"));
         assert!(head.contains("User-Agent: pratique/"));
     }
 
     #[test]
     fn without_keep_alive_every_request_says_connection_close() {
-        let (port, log) = spawn_server(1, |_, _| b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec());
-        plain_client().keep_alive(false).get(&format!("http://127.0.0.1:{}/", port)).unwrap();
+        let (port, log) = spawn_server(1, |_, _| {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec()
+        });
+        plain_client()
+            .keep_alive(false)
+            .get(&format!("http://127.0.0.1:{}/", port))
+            .unwrap();
         assert!(log.lock().unwrap()[0].contains("Connection: close\r\n"));
     }
 
@@ -2290,7 +2864,12 @@ mod tests {
             .unwrap();
         assert_eq!((r.status, r.text().as_str()), (201, r#"{"a":1}"#));
         let head = log.lock().unwrap()[0].clone();
-        assert!(head.contains("Content-Length: 7\r\n") && head.contains("Content-Type: application/json\r\n"), "{}", head);
+        assert!(
+            head.contains("Content-Length: 7\r\n")
+                && head.contains("Content-Type: application/json\r\n"),
+            "{}",
+            head
+        );
     }
 
     #[test]
@@ -2299,11 +2878,16 @@ mod tests {
         for size in [SMALL_BODY, SMALL_BODY + 1, 300_000] {
             let body: Vec<u8> = (0..size).map(|i| (i * 13 % 251) as u8).collect();
             let (port, log) = spawn_server(1, |_, body| {
-                let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+                let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
+                    .into_bytes();
                 r.extend_from_slice(body);
                 r
             });
-            let r = plain_client().request("POST", &format!("http://127.0.0.1:{}/up", port)).body(body.clone()).send().unwrap();
+            let r = plain_client()
+                .request("POST", &format!("http://127.0.0.1:{}/up", port))
+                .body(body.clone())
+                .send()
+                .unwrap();
             assert_eq!(r.status, 200);
             assert!(r.body == body, "echoed body differs for size {size}");
             assert!(log.lock().unwrap()[0].contains(&format!("Content-Length: {size}\r\n")));
@@ -2321,24 +2905,40 @@ mod tests {
                 b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\ndone".to_vec()
             }
         });
-        let r = plain_client().post(&format!("http://127.0.0.1:{}/start", port), b"data".to_vec()).unwrap();
+        let r = plain_client()
+            .post(
+                &format!("http://127.0.0.1:{}/start", port),
+                b"data".to_vec(),
+            )
+            .unwrap();
         assert_eq!(r.text(), "done");
         assert_eq!(r.url.path_and_query, "/final?x=1");
         let log = log.lock().unwrap();
-        assert!(log[1].starts_with("GET /middle") && !log[1].contains("Content-Length"), "{}", log[1]);
+        assert!(
+            log[1].starts_with("GET /middle") && !log[1].contains("Content-Length"),
+            "{}",
+            log[1]
+        );
         assert!(log[2].starts_with("GET /final?x=1"));
     }
 
     #[test]
     fn redirect_loop_is_cut_off() {
-        let (port, _) = spawn_server(4, |_, _| b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n".to_vec());
-        let err = plain_client().max_redirects(3).get(&format!("http://127.0.0.1:{}/", port)).unwrap_err();
+        let (port, _) = spawn_server(4, |_, _| {
+            b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n".to_vec()
+        });
+        let err = plain_client()
+            .max_redirects(3)
+            .get(&format!("http://127.0.0.1:{}/", port))
+            .unwrap_err();
         assert!(err.to_string().contains("too many redirects"), "{}", err);
     }
 
     #[test]
     fn credentials_not_forwarded_to_other_origin() {
-        let (port_b, log_b) = spawn_server(1, |_, _| b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec());
+        let (port_b, log_b) = spawn_server(1, |_, _| {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_vec()
+        });
         let (port_a, log_a) = spawn_server(1, move |_, _| {
             format!("HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{}/b\r\nContent-Length: 0\r\n\r\n", port_b).into_bytes()
         });
@@ -2351,14 +2951,22 @@ mod tests {
         assert_eq!(r.text(), "ok");
         assert!(log_a.lock().unwrap()[0].contains("Authorization: Bearer secret"));
         let b = log_b.lock().unwrap()[0].clone();
-        assert!(!b.contains("Authorization"), "credentials leaked to another origin: {}", b);
+        assert!(
+            !b.contains("Authorization"),
+            "credentials leaked to another origin: {}",
+            b
+        );
         assert!(b.contains("X-Keep: 1"));
     }
 
     #[test]
     fn userinfo_becomes_basic_auth() {
-        let (port, log) = spawn_server(1, |_, _| b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec());
-        plain_client().get(&format!("http://user:pw@127.0.0.1:{}/", port)).unwrap();
+        let (port, log) = spawn_server(1, |_, _| {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".to_vec()
+        });
+        plain_client()
+            .get(&format!("http://user:pw@127.0.0.1:{}/", port))
+            .unwrap();
         // base64("user:pw") = dXNlcjpwdw==
         assert!(log.lock().unwrap()[0].contains("Authorization: Basic dXNlcjpwdw==\r\n"));
     }
@@ -2366,14 +2974,26 @@ mod tests {
     #[test]
     fn plain_http_is_refused_by_default() {
         let c = Client::with_tls_config(ClientConfig::new(crate::x509::TrustStore::empty()));
-        assert!(c.get("http://127.0.0.1:1/").unwrap_err().to_string().contains("disabled"));
+        assert!(c
+            .get("http://127.0.0.1:1/")
+            .unwrap_err()
+            .to_string()
+            .contains("disabled"));
     }
 
     #[test]
     fn header_injection_is_refused() {
         let c = plain_client();
-        assert!(c.request("GET", "http://127.0.0.1:1/").header("X", "a\r\nEvil: 1").send().is_err());
-        assert!(c.request("GET", "http://127.0.0.1:1/").header("Bad Name", "v").send().is_err());
+        assert!(c
+            .request("GET", "http://127.0.0.1:1/")
+            .header("X", "a\r\nEvil: 1")
+            .send()
+            .is_err());
+        assert!(c
+            .request("GET", "http://127.0.0.1:1/")
+            .header("Bad Name", "v")
+            .send()
+            .is_err());
         assert!(c.request("GE T", "http://127.0.0.1:1/").send().is_err());
         assert!(c.get("http://127.0.0.1:1/x\r\nEvil: 1").is_err());
     }
@@ -2385,9 +3005,15 @@ mod tests {
 
     #[test]
     fn async_get_returns_the_same_response_as_the_blocking_call() {
-        let (port, log) = spawn_server(1, |_, _| b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-Test: yes\r\n\r\nhello".to_vec());
-        let r = block_on(plain_client().get_async(&format!("http://127.0.0.1:{}/a?b=1", port))).unwrap();
-        assert_eq!((r.status, r.text().as_str(), r.header("x-test")), (200, "hello", Some("yes")));
+        let (port, log) = spawn_server(1, |_, _| {
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-Test: yes\r\n\r\nhello".to_vec()
+        });
+        let r = block_on(plain_client().get_async(&format!("http://127.0.0.1:{}/a?b=1", port)))
+            .unwrap();
+        assert_eq!(
+            (r.status, r.text().as_str(), r.header("x-test")),
+            (200, "hello", Some("yes"))
+        );
         assert!(log.lock().unwrap()[0].starts_with("GET /a?b=1 HTTP/1.1\r\n"));
     }
 
@@ -2409,10 +3035,21 @@ mod tests {
                 .send_async(),
         )
         .unwrap();
-        assert_eq!((r.status, r.text().as_str(), r.url.path_and_query.as_str()), (200, "next", "/next"));
+        assert_eq!(
+            (r.status, r.text().as_str(), r.url.path_and_query.as_str()),
+            (200, "next", "/next")
+        );
         let log = log.lock().unwrap();
-        assert!(log[0].contains("X-Id: 7\r\n") && log[0].contains("Content-Length: 7\r\n"), "{}", log[0]);
-        assert!(log[1].starts_with("GET /next") && log[1].contains("X-Id: 7\r\n"), "{}", log[1]);
+        assert!(
+            log[0].contains("X-Id: 7\r\n") && log[0].contains("Content-Length: 7\r\n"),
+            "{}",
+            log[0]
+        );
+        assert!(
+            log[1].starts_with("GET /next") && log[1].contains("X-Id: 7\r\n"),
+            "{}",
+            log[1]
+        );
     }
 
     #[test]
@@ -2421,7 +3058,8 @@ mod tests {
             if head.starts_with("HEAD") {
                 b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n".to_vec()
             } else {
-                let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+                let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
+                    .into_bytes();
                 r.extend_from_slice(body);
                 r
             }
@@ -2438,15 +3076,27 @@ mod tests {
     fn async_errors_arrive_through_the_future() {
         let c = plain_client();
         // rejected before anything is sent
-        let e = block_on(c.request("GET", "http://127.0.0.1:1/").header("X", "a\r\nEvil: 1").send_async()).unwrap_err();
+        let e = block_on(
+            c.request("GET", "http://127.0.0.1:1/")
+                .header("X", "a\r\nEvil: 1")
+                .send_async(),
+        )
+        .unwrap_err();
         assert!(e.to_string().contains("invalid header"), "{}", e);
-        let e = block_on(Client::with_tls_config(ClientConfig::new(crate::x509::TrustStore::empty())).get_async("http://127.0.0.1:1/")).unwrap_err();
+        let e = block_on(
+            Client::with_tls_config(ClientConfig::new(crate::x509::TrustStore::empty()))
+                .get_async("http://127.0.0.1:1/"),
+        )
+        .unwrap_err();
         assert!(e.to_string().contains("disabled"), "{}", e);
         // nothing is listening: the connection error comes back as an error, not a hang
         let closed = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = closed.local_addr().unwrap().port();
         drop(closed);
-        assert!(matches!(block_on(c.get_async(&format!("http://127.0.0.1:{}/", port))), Err(Error::Io(_))));
+        assert!(matches!(
+            block_on(c.get_async(&format!("http://127.0.0.1:{}/", port))),
+            Err(Error::Io(_))
+        ));
     }
 
     /// A server that answers only once `n` requests are open at the same time.
@@ -2456,7 +3106,9 @@ mod tests {
         let arrived = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         thread::spawn(move || {
             for _ in 0..n {
-                let Ok((mut s, _)) = listener.accept() else { return };
+                let Ok((mut s, _)) = listener.accept() else {
+                    return;
+                };
                 let arrived = arrived.clone();
                 thread::spawn(move || {
                     let mut head = Vec::new();
@@ -2469,11 +3121,17 @@ mod tests {
                     }
                     arrived.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let give_up = Instant::now() + Duration::from_secs(5);
-                    while arrived.load(std::sync::atomic::Ordering::SeqCst) < n && Instant::now() < give_up {
+                    while arrived.load(std::sync::atomic::Ordering::SeqCst) < n
+                        && Instant::now() < give_up
+                    {
                         thread::sleep(Duration::from_millis(2));
                     }
                     let ok = arrived.load(std::sync::atomic::Ordering::SeqCst) >= n;
-                    let _ = s.write_all(if ok { b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" } else { b"HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 0\r\n\r\n" });
+                    let _ = s.write_all(if ok {
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+                    } else {
+                        b"HTTP/1.1 504 Gateway Timeout\r\nContent-Length: 0\r\n\r\n"
+                    });
                 });
             }
         });
@@ -2486,7 +3144,9 @@ mod tests {
         // another they would all get the 504.
         let port = rendezvous_server(4);
         let c = plain_client().pool(Pool::new(4));
-        let futs: Vec<_> = (0..4).map(|i| c.get_async(&format!("http://127.0.0.1:{}/{}", port, i))).collect();
+        let futs: Vec<_> = (0..4)
+            .map(|i| c.get_async(&format!("http://127.0.0.1:{}/{}", port, i)))
+            .collect();
         for r in block_on(join_all(futs)) {
             assert_eq!(r.unwrap().status, 200);
         }
@@ -2507,19 +3167,29 @@ mod tests {
         release.send(()).unwrap();
         block_on(blocker).unwrap();
         block_on(pool.spawn_blocking(|| ())).unwrap(); // the worker has now passed the abandoned job
-        assert!(listener.accept().is_err(), "an abandoned request was sent anyway");
+        assert!(
+            listener.accept().is_err(),
+            "an abandoned request was sent anyway"
+        );
     }
 
     // ---- total timeout
 
     /// Accepts connections; for each, reads the request head, then sends `head` and `drip` one
     /// byte at a time, `gap` apart.
-    fn slow_server(connections: usize, head: &'static str, drip: &'static [u8], gap: Duration) -> u16 {
+    fn slow_server(
+        connections: usize,
+        head: &'static str,
+        drip: &'static [u8],
+        gap: Duration,
+    ) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         thread::spawn(move || {
             for _ in 0..connections {
-                let Ok((mut s, _)) = listener.accept() else { return };
+                let Ok((mut s, _)) = listener.accept() else {
+                    return;
+                };
                 thread::spawn(move || {
                     let mut seen = Vec::new();
                     let mut b = [0u8; 1];
@@ -2547,15 +3217,34 @@ mod tests {
     #[test]
     fn total_timeout_stops_a_server_that_drips_bytes() {
         // every single read is well inside the 5 s per-operation limit, but the body takes 2 s
-        let port = slow_server(2, "HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n", b"01234567890123456789", Duration::from_millis(100));
+        let port = slow_server(
+            2,
+            "HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n",
+            b"01234567890123456789",
+            Duration::from_millis(100),
+        );
         let url = format!("http://127.0.0.1:{}/", port);
         let started = Instant::now();
-        let err = plain_client().total_timeout(Duration::from_millis(400)).get(&url).unwrap_err();
-        assert!(started.elapsed() < Duration::from_secs(1), "took {:?}", started.elapsed());
-        assert!(matches!(&err, Error::Io(e) if e.kind() == io::ErrorKind::TimedOut), "{:?}", err);
+        let err = plain_client()
+            .total_timeout(Duration::from_millis(400))
+            .get(&url)
+            .unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert!(
+            matches!(&err, Error::Io(e) if e.kind() == io::ErrorKind::TimedOut),
+            "{:?}",
+            err
+        );
         assert!(err.to_string().contains("total time limit"), "{}", err);
         // the same server and a generous limit: the request succeeds
-        let ok = plain_client().total_timeout(Duration::from_secs(10)).get(&url).unwrap();
+        let ok = plain_client()
+            .total_timeout(Duration::from_secs(10))
+            .get(&url)
+            .unwrap();
         assert_eq!(ok.body.len(), 20);
     }
 
@@ -2564,7 +3253,12 @@ mod tests {
         // Each hop takes about 150 ms: fine alone, too slow for 250 ms in total.
         let first = TcpListener::bind("127.0.0.1:0").unwrap();
         let first_port = first.local_addr().unwrap().port();
-        let second = slow_server(1, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n", b"x", Duration::from_millis(150));
+        let second = slow_server(
+            1,
+            "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n",
+            b"x",
+            Duration::from_millis(150),
+        );
         thread::spawn(move || {
             let (mut s, _) = first.accept().unwrap();
             let mut seen = Vec::new();
@@ -2577,7 +3271,10 @@ mod tests {
             let _ = s.write_all(format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/two\r\nContent-Length: 0\r\n\r\n", second).as_bytes());
         });
         let url = format!("http://127.0.0.1:{}/one", first_port);
-        let err = plain_client().total_timeout(Duration::from_millis(250)).get(&url).unwrap_err();
+        let err = plain_client()
+            .total_timeout(Duration::from_millis(250))
+            .get(&url)
+            .unwrap_err();
         assert!(err.to_string().contains("total time limit"), "{}", err);
     }
 
@@ -2590,19 +3287,39 @@ mod tests {
                 b"HTTP/1.1 302 Found\r\nLocation: /middle\r\nContent-Length: 0\r\n\r\n".to_vec()
             } else if head.starts_with("GET /middle") {
                 assert!(body.is_empty());
-                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ndone\r\n0\r\n\r\n".to_vec()
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ndone\r\n0\r\n\r\n"
+                    .to_vec()
             } else {
                 b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi".to_vec()
             }
         });
         let c = plain_client().into_async();
-        let r = block_on(c.request("POST", &format!("http://127.0.0.1:{}/start", port)).header("X-Id", "9").body("payload").send()).unwrap();
-        assert_eq!((r.status, r.text().as_str(), r.url.path_and_query.as_str()), (200, "done", "/middle"));
+        let r = block_on(
+            c.request("POST", &format!("http://127.0.0.1:{}/start", port))
+                .header("X-Id", "9")
+                .body("payload")
+                .send(),
+        )
+        .unwrap();
+        assert_eq!(
+            (r.status, r.text().as_str(), r.url.path_and_query.as_str()),
+            (200, "done", "/middle")
+        );
         let r = block_on(c.get(&format!("http://127.0.0.1:{}/plain", port))).unwrap();
         assert_eq!(r.text(), "hi");
         let log = log.lock().unwrap();
-        assert!(log[0].contains("Content-Length: 7\r\n") && log[0].contains("X-Id: 9\r\n"), "{}", log[0]);
-        assert!(log[1].starts_with("GET /middle") && log[1].contains("X-Id: 9\r\n") && !log[1].contains("Content-Length"), "{}", log[1]);
+        assert!(
+            log[0].contains("Content-Length: 7\r\n") && log[0].contains("X-Id: 9\r\n"),
+            "{}",
+            log[0]
+        );
+        assert!(
+            log[1].starts_with("GET /middle")
+                && log[1].contains("X-Id: 9\r\n")
+                && !log[1].contains("Content-Length"),
+            "{}",
+            log[1]
+        );
     }
 
     #[test]
@@ -2611,7 +3328,8 @@ mod tests {
             if head.starts_with("HEAD") {
                 b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\n".to_vec()
             } else {
-                let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+                let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
+                    .into_bytes();
                 r.extend_from_slice(body);
                 r
             }
@@ -2627,14 +3345,31 @@ mod tests {
     #[test]
     fn async_client_refuses_what_the_blocking_client_refuses() {
         let c = plain_client().into_async();
-        let e = block_on(c.request("GET", "http://127.0.0.1:1/").header("X", "a\r\nEvil: 1").send()).unwrap_err();
+        let e = block_on(
+            c.request("GET", "http://127.0.0.1:1/")
+                .header("X", "a\r\nEvil: 1")
+                .send(),
+        )
+        .unwrap_err();
         assert!(e.to_string().contains("invalid header"), "{}", e);
         assert!(block_on(c.request("GE T", "http://127.0.0.1:1/").send()).is_err());
         assert!(block_on(c.get("http://127.0.0.1:1/x\r\nEvil: 1")).is_err());
-        let strict = Client::with_tls_config(ClientConfig::new(crate::x509::TrustStore::empty())).into_async();
-        assert!(block_on(strict.get("http://127.0.0.1:1/")).unwrap_err().to_string().contains("disabled"));
-        let (port, _) = spawn_server(3, |_, _| b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n".to_vec());
-        let err = block_on(plain_client().max_redirects(2).into_async().get(&format!("http://127.0.0.1:{}/", port))).unwrap_err();
+        let strict = Client::with_tls_config(ClientConfig::new(crate::x509::TrustStore::empty()))
+            .into_async();
+        assert!(block_on(strict.get("http://127.0.0.1:1/"))
+            .unwrap_err()
+            .to_string()
+            .contains("disabled"));
+        let (port, _) = spawn_server(3, |_, _| {
+            b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n".to_vec()
+        });
+        let err = block_on(
+            plain_client()
+                .max_redirects(2)
+                .into_async()
+                .get(&format!("http://127.0.0.1:{}/", port)),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("too many redirects"), "{}", err);
     }
 
@@ -2642,7 +3377,9 @@ mod tests {
     fn async_client_runs_requests_concurrently() {
         let port = rendezvous_server(4);
         let c = plain_client().pool(Pool::new(8)).into_async();
-        let urls: Vec<String> = (0..4).map(|i| format!("http://127.0.0.1:{}/{}", port, i)).collect();
+        let urls: Vec<String> = (0..4)
+            .map(|i| format!("http://127.0.0.1:{}/{}", port, i))
+            .collect();
         let futs: Vec<_> = urls.iter().map(|u| Box::pin(c.get(u))).collect();
         for r in block_on(join_all(futs)) {
             assert_eq!(r.unwrap().status, 200);
@@ -2651,10 +3388,25 @@ mod tests {
 
     #[test]
     fn async_client_total_timeout_cuts_off_a_dripping_server() {
-        let port = slow_server(1, "HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n", b"01234567890123456789", Duration::from_millis(100));
+        let port = slow_server(
+            1,
+            "HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\n",
+            b"01234567890123456789",
+            Duration::from_millis(100),
+        );
         let started = Instant::now();
-        let err = block_on(plain_client().total_timeout(Duration::from_millis(400)).into_async().get(&format!("http://127.0.0.1:{}/", port))).unwrap_err();
-        assert!(started.elapsed() < Duration::from_secs(1), "took {:?}", started.elapsed());
+        let err = block_on(
+            plain_client()
+                .total_timeout(Duration::from_millis(400))
+                .into_async()
+                .get(&format!("http://127.0.0.1:{}/", port)),
+        )
+        .unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "took {:?}",
+            started.elapsed()
+        );
         assert!(err.to_string().contains("total time limit"), "{}", err);
     }
 
@@ -2668,14 +3420,22 @@ mod tests {
     struct Narrow<S>(S);
 
     impl<S: crate::asyncio::AsyncRead + Unpin> crate::asyncio::AsyncRead for Narrow<S> {
-        fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
             let n = buf.len().min(1);
             Pin::new(&mut self.0).poll_read(cx, &mut buf[..n])
         }
     }
 
     impl<S: crate::asyncio::AsyncWrite + Unpin> crate::asyncio::AsyncWrite for Narrow<S> {
-        fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
             let n = buf.len().min(3);
             Pin::new(&mut self.0).poll_write(cx, &buf[..n])
         }
@@ -2689,8 +3449,16 @@ mod tests {
 
     impl Connect for Dribbling {
         type Stream = Narrow<crate::asyncio::ThreadedStream>;
-        fn connect<'a>(&'a self, host: &'a str, port: u16, opts: ConnectOptions) -> Pin<Box<dyn Future<Output = io::Result<Self::Stream>> + Send + 'a>> {
-            self.seen.lock().unwrap().push((host.to_string(), port, opts));
+        fn connect<'a>(
+            &'a self,
+            host: &'a str,
+            port: u16,
+            opts: ConnectOptions,
+        ) -> Pin<Box<dyn Future<Output = io::Result<Self::Stream>> + Send + 'a>> {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((host.to_string(), port, opts));
             let fut = self.inner.connect(host, port, opts);
             Box::pin(async move { Ok(Narrow(fut.await?)) })
         }
@@ -2699,10 +3467,17 @@ mod tests {
     #[test]
     fn async_client_works_over_any_connector() {
         let body = "0123456789".repeat(100);
-        let reply = format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n", body.len(), body);
+        let reply = format!(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n{:x}\r\n{}\r\n0\r\n\r\n",
+            body.len(),
+            body
+        );
         let (port, log) = spawn_server(1, move |_, _| reply.clone().into_bytes());
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let connector = Dribbling { inner: ThreadConnector::new(Pool::new(4)), seen: seen.clone() };
+        let connector = Dribbling {
+            inner: ThreadConnector::new(Pool::new(4)),
+            seen: seen.clone(),
+        };
         let client = plain_client().total_timeout(Duration::from_secs(30));
         let c = AsyncClient::with_connector(client, connector);
         let r = block_on(c.post(&format!("http://127.0.0.1:{}/x", port), "abcdefghij")).unwrap();
@@ -2711,7 +3486,10 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.len(), 1);
         assert_eq!((seen[0].0.as_str(), seen[0].1), ("127.0.0.1", port));
-        assert!(seen[0].2.deadline.is_some(), "the connector was not told about the total deadline");
+        assert!(
+            seen[0].2.deadline.is_some(),
+            "the connector was not told about the total deadline"
+        );
         assert_eq!(seen[0].2.timeout, Duration::from_secs(5));
     }
 
@@ -2731,25 +3509,48 @@ mod tests {
                     s.read_exact(&mut b).unwrap();
                     head.push(b[0]);
                 }
-                seen2.lock().unwrap().push(String::from_utf8_lossy(&head).into_owned());
-                s.write_all(format!("HTTP/1.1 {}\r\n\r\n", status).as_bytes()).unwrap();
+                seen2
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&head).into_owned());
+                s.write_all(format!("HTTP/1.1 {}\r\n\r\n", status).as_bytes())
+                    .unwrap();
             }
         });
-        let c = plain_client().proxy(&format!("http://u:p@127.0.0.1:{}", port)).unwrap().into_async();
+        let c = plain_client()
+            .proxy(&format!("http://u:p@127.0.0.1:{}", port))
+            .unwrap()
+            .into_async();
         let err = block_on(c.get("https://example.com/")).unwrap_err();
-        assert!(err.to_string().contains("proxy refused CONNECT") && err.to_string().contains("403"), "{}", err);
+        assert!(
+            err.to_string().contains("proxy refused CONNECT") && err.to_string().contains("403"),
+            "{}",
+            err
+        );
         // the tunnel opens, but the "server" behind it is not there: the TLS handshake fails
         let err = block_on(c.get("https://example.com:8443/")).unwrap_err();
         assert!(matches!(err, Error::Io(_)), "{:?}", err);
         let seen = seen.lock().unwrap();
-        assert!(seen[0].starts_with("CONNECT example.com:443 HTTP/1.1\r\n") && seen[0].contains("Proxy-Authorization: Basic dTpw\r\n"), "{}", seen[0]);
-        assert!(seen[1].starts_with("CONNECT example.com:8443 HTTP/1.1\r\n"), "{}", seen[1]);
+        assert!(
+            seen[0].starts_with("CONNECT example.com:443 HTTP/1.1\r\n")
+                && seen[0].contains("Proxy-Authorization: Basic dTpw\r\n"),
+            "{}",
+            seen[0]
+        );
+        assert!(
+            seen[1].starts_with("CONNECT example.com:8443 HTTP/1.1\r\n"),
+            "{}",
+            seen[1]
+        );
     }
 
     #[test]
     fn proxy_parsing() {
         let p = Proxy::parse("http://user:pw@proxy.local:3128").unwrap();
-        assert_eq!((p.host.as_str(), p.port, p.auth.as_deref()), ("proxy.local", 3128, Some("user:pw")));
+        assert_eq!(
+            (p.host.as_str(), p.port, p.auth.as_deref()),
+            ("proxy.local", 3128, Some("user:pw"))
+        );
         assert_eq!(Proxy::parse("proxy.local:8888").unwrap().port, 8888);
         assert_eq!(Proxy::parse("http://proxy.local").unwrap().port, 8080);
         assert!(Proxy::parse("https://proxy.local:3128").is_err());
@@ -2772,16 +3573,31 @@ mod tests {
                     head.push(b[0]);
                 }
                 *seen2.lock().unwrap() = String::from_utf8_lossy(&head).into_owned();
-                s.write_all(format!("HTTP/1.1 {}\r\n\r\n", status).as_bytes()).unwrap();
+                s.write_all(format!("HTTP/1.1 {}\r\n\r\n", status).as_bytes())
+                    .unwrap();
             }
         });
         let c = plain_client();
-        let p = Proxy { host: "127.0.0.1".into(), port, auth: Some("u:p".into()) };
+        let p = Proxy {
+            host: "127.0.0.1".into(),
+            port,
+            auth: Some("u:p".into()),
+        };
         assert!(c.proxy_tunnel(&p, "example.com", 443, None, None).is_ok());
         let head = seen.lock().unwrap().clone();
-        assert!(head.starts_with("CONNECT example.com:443 HTTP/1.1\r\n"), "{}", head);
-        assert!(head.contains("Proxy-Authorization: Basic dTpw\r\n"), "{}", head);
-        let err = c.proxy_tunnel(&p, "example.com", 443, None, None).unwrap_err();
+        assert!(
+            head.starts_with("CONNECT example.com:443 HTTP/1.1\r\n"),
+            "{}",
+            head
+        );
+        assert!(
+            head.contains("Proxy-Authorization: Basic dTpw\r\n"),
+            "{}",
+            head
+        );
+        let err = c
+            .proxy_tunnel(&p, "example.com", 443, None, None)
+            .unwrap_err();
         assert!(err.to_string().contains("403"), "{}", err);
     }
 }

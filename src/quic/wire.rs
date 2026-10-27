@@ -29,7 +29,10 @@ pub fn put_varint(out: &mut Vec<u8>, v: u64) {
 ///
 /// Panics if `v` does not fit in `len` bytes or `len` is not one of those four.
 pub fn put_varint_len(out: &mut Vec<u8>, v: u64, len: usize) {
-    assert!(matches!(len, 1 | 2 | 4 | 8), "a variable-length integer is 1, 2, 4 or 8 bytes, not {len}");
+    assert!(
+        matches!(len, 1 | 2 | 4 | 8),
+        "a variable-length integer is 1, 2, 4 or 8 bytes, not {len}"
+    );
     assert!(varint_len(v) <= len, "{v} does not fit in {len} bytes");
     let tag: u64 = match len {
         1 => 0,
@@ -191,13 +194,22 @@ mod tests {
     #[test]
     fn the_variable_length_integers_of_the_rfc() {
         // RFC 9000 appendix A.1
-        assert_eq!(get_varint(&[0xc2, 0x19, 0x7c, 0x5e, 0xff, 0x14, 0xe8, 0x8c]), Some((151_288_809_941_952_652, 8)));
-        assert_eq!(get_varint(&[0x9d, 0x7f, 0x3e, 0x7d]), Some((494_878_333, 4)));
+        assert_eq!(
+            get_varint(&[0xc2, 0x19, 0x7c, 0x5e, 0xff, 0x14, 0xe8, 0x8c]),
+            Some((151_288_809_941_952_652, 8))
+        );
+        assert_eq!(
+            get_varint(&[0x9d, 0x7f, 0x3e, 0x7d]),
+            Some((494_878_333, 4))
+        );
         assert_eq!(get_varint(&[0x7b, 0xbd]), Some((15_293, 2)));
         assert_eq!(get_varint(&[0x25]), Some((37, 1)));
         // the same value, written with more bytes than it needs
         assert_eq!(get_varint(&[0x40, 0x25]), Some((37, 2)));
-        assert_eq!(encoded(151_288_809_941_952_652), [0xc2, 0x19, 0x7c, 0x5e, 0xff, 0x14, 0xe8, 0x8c]);
+        assert_eq!(
+            encoded(151_288_809_941_952_652),
+            [0xc2, 0x19, 0x7c, 0x5e, 0xff, 0x14, 0xe8, 0x8c]
+        );
         assert_eq!(encoded(494_878_333), [0x9d, 0x7f, 0x3e, 0x7d]);
         assert_eq!(encoded(15_293), [0x7b, 0xbd]);
         assert_eq!(encoded(37), [0x25]);
@@ -205,7 +217,16 @@ mod tests {
 
     #[test]
     fn varints_change_length_at_the_boundaries() {
-        for (v, n) in [(0u64, 1usize), (63, 1), (64, 2), (16_383, 2), (16_384, 4), (1_073_741_823, 4), (1_073_741_824, 8), (MAX_VARINT, 8)] {
+        for (v, n) in [
+            (0u64, 1usize),
+            (63, 1),
+            (64, 2),
+            (16_383, 2),
+            (16_384, 4),
+            (1_073_741_823, 4),
+            (1_073_741_824, 8),
+            (MAX_VARINT, 8),
+        ] {
             let e = encoded(v);
             assert_eq!(e.len(), n, "{v}");
             assert_eq!(varint_len(v), n);
@@ -267,7 +288,10 @@ mod tests {
     #[test]
     fn packet_numbers_are_recovered_as_the_rfc_says() {
         // RFC 9000 appendix A.3
-        assert_eq!(decode_packet_number(Some(0xa82f30ea), 0x9b32, 2), 0xa82f9b32);
+        assert_eq!(
+            decode_packet_number(Some(0xa82f30ea), 0x9b32, 2),
+            0xa82f9b32
+        );
         // the nearest to the next one expected, either side of the window
         assert_eq!(decode_packet_number(Some(0xff), 0x00, 1), 0x100);
         assert_eq!(decode_packet_number(Some(0x100), 0xff, 1), 0xff);
@@ -275,7 +299,10 @@ mod tests {
         assert_eq!(decode_packet_number(None, 5, 1), 5);
         assert_eq!(decode_packet_number(Some(0), 1, 4), 1);
         // not past the largest packet number that exists
-        assert_eq!(decode_packet_number(Some((1 << 62) - 1 - 5), 0xffff_ffff, 4), (1 << 62) - 1);
+        assert_eq!(
+            decode_packet_number(Some((1 << 62) - 1 - 5), 0xffff_ffff, 4),
+            (1 << 62) - 1
+        );
         // (and nothing a peer sends makes it fail)
         assert_eq!(decode_packet_number(Some(u64::MAX), 7, 1) & 0xff, 7);
     }
@@ -302,14 +329,37 @@ mod tests {
     fn what_is_sent_is_what_the_peer_recovers() {
         // for every packet number sent with the length chosen for it, the peer, which has received everything up to some
         // packet number within the window, gets the packet number back
-        for pn in [0u64, 1, 2, 63, 64, 127, 128, 255, 256, 1000, 65_535, 65_536, 70_000, 0x7f_ffff, 0x80_0000, 1 << 30] {
+        for pn in [
+            0u64,
+            1,
+            2,
+            63,
+            64,
+            127,
+            128,
+            255,
+            256,
+            1000,
+            65_535,
+            65_536,
+            70_000,
+            0x7f_ffff,
+            0x80_0000,
+            1 << 30,
+        ] {
             for behind in [0u64, 1, 2, 10, 100, 1000, 30_000] {
                 let acked = pn.checked_sub(behind);
-                let Some(n) = packet_number_len(pn, acked) else { continue };
+                let Some(n) = packet_number_len(pn, acked) else {
+                    continue;
+                };
                 let truncated = pn & ((1u64 << (8 * n)) - 1);
                 // the peer has received up to a packet number between the acknowledged one and this one
                 for largest in [acked, pn.checked_sub(1), pn.checked_sub(behind / 2)] {
-                    assert_eq!(decode_packet_number(largest, truncated, n), pn, "pn {pn} acked {acked:?} largest {largest:?} in {n} bytes");
+                    assert_eq!(
+                        decode_packet_number(largest, truncated, n),
+                        pn,
+                        "pn {pn} acked {acked:?} largest {largest:?} in {n} bytes"
+                    );
                 }
             }
         }

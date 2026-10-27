@@ -15,7 +15,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 /// A server on plain TCP that runs `script` on each connection (with its number, from 0) on a thread of its own.
-pub(super) fn raw_server(script: impl Fn(usize, TcpStream) + Send + Sync + 'static) -> (u16, Arc<AtomicUsize>) {
+pub(super) fn raw_server(
+    script: impl Fn(usize, TcpStream) + Send + Sync + 'static,
+) -> (u16, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let count = Arc::new(AtomicUsize::new(0));
@@ -33,7 +35,9 @@ pub(super) fn raw_server(script: impl Fn(usize, TcpStream) + Send + Sync + 'stat
 }
 
 pub(super) fn client() -> Client {
-    Client::with_tls_config(ClientConfig::new(TrustStore::empty())).allow_insecure_http(true).timeout(Duration::from_secs(5))
+    Client::with_tls_config(ClientConfig::new(TrustStore::empty()))
+        .allow_insecure_http(true)
+        .timeout(Duration::from_secs(5))
 }
 
 /// Reads up to the end of a request head.
@@ -50,7 +54,11 @@ pub(super) fn read_head(s: &mut TcpStream) -> String {
 }
 
 pub(super) fn header<'a>(head: &'a str, name: &str) -> Option<&'a str> {
-    head.lines().skip(1).find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.trim()))
+    head.lines().skip(1).find_map(|l| {
+        l.split_once(':')
+            .filter(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.trim())
+    })
 }
 
 pub(super) fn length(head: &str) -> usize {
@@ -104,9 +112,19 @@ fn the_body_waits_for_the_go_ahead() {
         let _ = arrives_within(&mut s, Duration::from_secs(2));
     });
     let t0 = Instant::now();
-    let r = client().expect_continue_timeout(Duration::from_secs(10)).request("PUT", &format!("http://127.0.0.1:{port}/up")).body(upload()).expect_continue().send().unwrap();
+    let r = client()
+        .expect_continue_timeout(Duration::from_secs(10))
+        .request("PUT", &format!("http://127.0.0.1:{port}/up"))
+        .body(upload())
+        .expect_continue()
+        .send()
+        .unwrap();
     assert_eq!((r.status, r.text()), (200, format!("got {UPLOAD}")));
-    assert_eq!(*early.lock().unwrap(), Some(0), "body bytes arrived before the go-ahead");
+    assert_eq!(
+        *early.lock().unwrap(),
+        Some(0),
+        "body bytes arrived before the go-ahead"
+    );
     // it went on the go-ahead, not after the ten seconds
     assert!(t0.elapsed() < Duration::from_secs(5), "{:?}", t0.elapsed());
 }
@@ -118,56 +136,115 @@ fn an_answer_before_the_body_means_the_body_is_never_sent() {
     let (port, connections) = raw_server(move |_, mut s| {
         let head = read_head(&mut s);
         assert_eq!(header(&head, "expect"), Some("100-continue"));
-        s.write_all(&response(401, &["WWW-Authenticate: Bearer"], b"who are you")).unwrap();
+        s.write_all(&response(
+            401,
+            &["WWW-Authenticate: Bearer"],
+            b"who are you",
+        ))
+        .unwrap();
         // what comes after the answer: nothing, and then the client closes
-        r2.lock().unwrap().push(arrives_within(&mut s, Duration::from_secs(2)));
+        r2.lock()
+            .unwrap()
+            .push(arrives_within(&mut s, Duration::from_secs(2)));
     });
     let client = client().expect_continue_timeout(Duration::from_secs(10));
     let url = format!("http://127.0.0.1:{port}/up");
     let t0 = Instant::now();
-    let r = client.request("POST", &url).body(upload()).expect_continue().send().unwrap();
+    let r = client
+        .request("POST", &url)
+        .body(upload())
+        .expect_continue()
+        .send()
+        .unwrap();
     assert_eq!((r.status, r.text().as_str()), (401, "who are you"));
     assert!(t0.elapsed() < Duration::from_secs(5));
     // the connection, on which the server might still be waiting for the body, is not used again
-    let r = client.request("POST", &url).body(upload()).expect_continue().send().unwrap();
+    let r = client
+        .request("POST", &url)
+        .body(upload())
+        .expect_continue()
+        .send()
+        .unwrap();
     assert_eq!(r.status, 401);
     assert_eq!(connections.load(Ordering::SeqCst), 2);
     let deadline = Instant::now() + Duration::from_secs(5);
     while received.lock().unwrap().len() < 2 && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(*received.lock().unwrap(), vec![0, 0], "body bytes were sent after the answer");
+    assert_eq!(
+        *received.lock().unwrap(),
+        vec![0, 0],
+        "body bytes were sent after the answer"
+    );
 }
 
 #[test]
 fn a_server_that_says_nothing_gets_the_body_after_the_wait() {
     // (/silent: the test server waits for the body without a go-ahead)
-    let echo = |seen: &Seen| Reply::Send(response(200, &[], format!("got {}", seen.body.len()).as_bytes()));
+    let echo = |seen: &Seen| {
+        Reply::Send(response(
+            200,
+            &[],
+            format!("got {}", seen.body.len()).as_bytes(),
+        ))
+    };
     for server in [TestServer::start(echo), TestServer::start_tls(echo)] {
-        let client = server.client().expect_continue_timeout(Duration::from_millis(300));
+        let client = server
+            .client()
+            .expect_continue_timeout(Duration::from_millis(300));
         let t0 = Instant::now();
-        let r = client.request("POST", &server.url("/silent")).body(upload()).expect_continue().send().unwrap();
+        let r = client
+            .request("POST", &server.url("/silent"))
+            .body(upload())
+            .expect_continue()
+            .send()
+            .unwrap();
         assert_eq!(r.text(), format!("got {UPLOAD}"));
-        assert!(t0.elapsed() >= Duration::from_millis(250), "{:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() >= Duration::from_millis(250),
+            "{:?}",
+            t0.elapsed()
+        );
         // the connection came through the wait in good order (a read that timed out, over TLS too) and is used again
-        let r = client.request("POST", &server.url("/up")).body(upload()).expect_continue().send().unwrap();
+        let r = client
+            .request("POST", &server.url("/up"))
+            .body(upload())
+            .expect_continue()
+            .send()
+            .unwrap();
         assert_eq!(r.text(), format!("got {UPLOAD}"));
         let r = client.get(&server.url("/after")).unwrap();
         assert_eq!(r.text(), "got 0");
         assert_eq!(server.connections(), 1);
         let seen = server.requests();
         assert_eq!(seen.len(), 3);
-        assert!(seen[0].has_header("Expect: 100-continue") && seen[1].has_header("Expect: 100-continue"));
+        assert!(
+            seen[0].has_header("Expect: 100-continue")
+                && seen[1].has_header("Expect: 100-continue")
+        );
     }
 }
 
 #[test]
 fn over_tls_the_go_ahead_ends_the_wait() {
-    let server = TestServer::start_tls(|seen: &Seen| Reply::Send(response(200, &[], format!("got {}", seen.body.len()).as_bytes())));
-    let client = server.client().expect_continue_timeout(Duration::from_secs(10));
+    let server = TestServer::start_tls(|seen: &Seen| {
+        Reply::Send(response(
+            200,
+            &[],
+            format!("got {}", seen.body.len()).as_bytes(),
+        ))
+    });
+    let client = server
+        .client()
+        .expect_continue_timeout(Duration::from_secs(10));
     let t0 = Instant::now();
     for _ in 0..3 {
-        let r = client.request("PUT", &server.url("/up")).body(upload()).expect_continue().send().unwrap();
+        let r = client
+            .request("PUT", &server.url("/up"))
+            .body(upload())
+            .expect_continue()
+            .send()
+            .unwrap();
         assert_eq!(r.text(), format!("got {UPLOAD}"));
     }
     assert!(t0.elapsed() < Duration::from_secs(5), "{:?}", t0.elapsed());
@@ -182,15 +259,26 @@ fn a_417_sends_the_request_again_without_the_expectation() {
         let head = read_head(&mut s);
         h.lock().unwrap().push(head.clone());
         if header(&head, "expect").is_some() {
-            s.write_all(b"HTTP/1.1 417 Expectation Failed\r\nContent-Length: 0\r\n\r\n").unwrap();
+            s.write_all(b"HTTP/1.1 417 Expectation Failed\r\nContent-Length: 0\r\n\r\n")
+                .unwrap();
             let _ = arrives_within(&mut s, Duration::from_secs(2));
             return;
         }
         let body = read_body(&mut s, length(&head));
-        s.write_all(&response(200, &[], format!("got {}", body.len()).as_bytes())).unwrap();
+        s.write_all(&response(
+            200,
+            &[],
+            format!("got {}", body.len()).as_bytes(),
+        ))
+        .unwrap();
         let _ = arrives_within(&mut s, Duration::from_secs(2));
     });
-    let r = client().request("POST", &format!("http://127.0.0.1:{port}/up")).body(upload()).expect_continue().send().unwrap();
+    let r = client()
+        .request("POST", &format!("http://127.0.0.1:{port}/up"))
+        .body(upload())
+        .expect_continue()
+        .send()
+        .unwrap();
     assert_eq!((r.status, r.text()), (200, format!("got {UPLOAD}")));
     let heads = heads.lock().unwrap();
     assert_eq!(heads.len(), 2);
@@ -206,18 +294,32 @@ fn a_redirect_that_keeps_the_body_gets_it_only_where_it_leads() {
         let head = read_head(&mut s);
         let path = head.split(' ').nth(1).unwrap_or("").to_string();
         if path == "/old" {
-            s.write_all(&response(307, &["Location: /new"], b"")).unwrap();
-            b.lock().unwrap().push(("/old".to_string(), arrives_within(&mut s, Duration::from_secs(2))));
+            s.write_all(&response(307, &["Location: /new"], b""))
+                .unwrap();
+            b.lock().unwrap().push((
+                "/old".to_string(),
+                arrives_within(&mut s, Duration::from_secs(2)),
+            ));
             return;
         }
-        assert_eq!(header(&head, "expect"), Some("100-continue"), "the redirect keeps the expectation");
+        assert_eq!(
+            header(&head, "expect"),
+            Some("100-continue"),
+            "the redirect keeps the expectation"
+        );
         s.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
         let body = read_body(&mut s, length(&head));
         b.lock().unwrap().push((path, body.len()));
         s.write_all(&response(201, &[], b"stored")).unwrap();
         let _ = arrives_within(&mut s, Duration::from_secs(2));
     });
-    let r = client().expect_continue_timeout(Duration::from_secs(10)).request("PUT", &format!("http://127.0.0.1:{port}/old")).body(upload()).expect_continue().send().unwrap();
+    let r = client()
+        .expect_continue_timeout(Duration::from_secs(10))
+        .request("PUT", &format!("http://127.0.0.1:{port}/old"))
+        .body(upload())
+        .expect_continue()
+        .send()
+        .unwrap();
     assert_eq!((r.status, r.text().as_str()), (201, "stored"));
     let deadline = Instant::now() + Duration::from_secs(5);
     while bodies.lock().unwrap().len() < 2 && Instant::now() < deadline {
@@ -225,7 +327,10 @@ fn a_redirect_that_keeps_the_body_gets_it_only_where_it_leads() {
     }
     let mut got = bodies.lock().unwrap().clone();
     got.sort();
-    assert_eq!(got, vec![("/new".to_string(), UPLOAD), ("/old".to_string(), 0)]);
+    assert_eq!(
+        got,
+        vec![("/new".to_string(), UPLOAD), ("/old".to_string(), 0)]
+    );
 }
 
 #[test]
@@ -249,16 +354,45 @@ fn the_wait_never_outlasts_the_requests_own_time() {
 
 #[test]
 fn a_request_without_a_body_or_without_the_header_does_not_wait() {
-    let server = TestServer::start(|seen: &Seen| Reply::Send(response(200, &[], format!("got {}", seen.body.len()).as_bytes())));
-    let client = server.client().expect_continue_timeout(Duration::from_secs(10));
+    let server = TestServer::start(|seen: &Seen| {
+        Reply::Send(response(
+            200,
+            &[],
+            format!("got {}", seen.body.len()).as_bytes(),
+        ))
+    });
+    let client = server
+        .client()
+        .expect_continue_timeout(Duration::from_secs(10));
     let t0 = Instant::now();
     // (a /silent server would hold a request that waited for ten seconds)
-    let r = client.request("POST", &server.url("/silent/empty")).expect_continue().send().unwrap();
+    let r = client
+        .request("POST", &server.url("/silent/empty"))
+        .expect_continue()
+        .send()
+        .unwrap();
     assert_eq!(r.text(), "got 0");
-    let r = client.request("POST", &server.url("/silent/plain")).body(upload()).send().unwrap();
+    let r = client
+        .request("POST", &server.url("/silent/plain"))
+        .body(upload())
+        .send()
+        .unwrap();
     assert_eq!(r.text(), format!("got {UPLOAD}"));
     assert!(t0.elapsed() < Duration::from_secs(5));
     // and the builder does not say it twice
-    let _ = client.request("POST", &server.url("/twice")).header("expect", "100-continue").body("x").expect_continue().send().unwrap();
-    assert_eq!(server.requests()[2].head.to_ascii_lowercase().matches("expect:").count(), 1);
+    let _ = client
+        .request("POST", &server.url("/twice"))
+        .header("expect", "100-continue")
+        .body("x")
+        .expect_continue()
+        .send()
+        .unwrap();
+    assert_eq!(
+        server.requests()[2]
+            .head
+            .to_ascii_lowercase()
+            .matches("expect:")
+            .count(),
+        1
+    );
 }

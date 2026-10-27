@@ -158,12 +158,17 @@ mod zeroize_tests {
         for start in 0..9usize {
             for len in 0..=80usize {
                 let mut buf = [0xa5a5_a5a5_a5a5_a5a5u64; 16]; // 128 bytes, aligned for u64
-                // SAFETY: the u64 array is 128 initialised bytes, viewed as bytes for the test
-                let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 128) };
+                                                              // SAFETY: the u64 array is 128 initialised bytes, viewed as bytes for the test
+                let bytes =
+                    unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut u8, 128) };
                 bytes[start..start + len].zeroize();
                 for (i, &b) in bytes.iter().enumerate() {
                     let inside = (start..start + len).contains(&i);
-                    assert_eq!(b, if inside { 0 } else { 0xa5 }, "start {start}, length {len}, byte {i}");
+                    assert_eq!(
+                        b,
+                        if inside { 0 } else { 0xa5 },
+                        "start {start}, length {len}, byte {i}"
+                    );
                 }
             }
         }

@@ -100,7 +100,11 @@ impl Cipher {
     }
 
     /// Opens a record in place: (content type, where the content starts in `payload`, its length).
-    fn decrypt_in_place(&mut self, header: &[u8; 5], payload: &mut [u8]) -> Result<(u8, usize, usize)> {
+    fn decrypt_in_place(
+        &mut self,
+        header: &[u8; 5],
+        payload: &mut [u8],
+    ) -> Result<(u8, usize, usize)> {
         match self {
             Cipher::V13(c) => c.decrypt_in_place(header, payload).map(|(t, n)| (t, 0, n)),
             Cipher::V12(c) => c.decrypt_in_place(header, payload),
@@ -190,12 +194,25 @@ impl ClientConnection {
         private.copy_from_slice(&all[..32]);
         let random: [u8; 32] = all[32..64].try_into().expect("32 bytes");
         let session_id: [u8; 32] = all[64..].try_into().expect("32 bytes");
-        Ok(ClientConnection::start(server_name, config, private, &random, &session_id))
+        Ok(ClientConnection::start(
+            server_name,
+            config,
+            private,
+            &random,
+            &session_id,
+        ))
     }
 
     /// `new` with the randomness given, so that tests can fix it.
-    pub(super) fn start(server_name: &str, config: &ClientConfig, private: Zeroizing<[u8; 32]>, random: &[u8; 32], session_id: &[u8; 32]) -> ClientConnection {
-        let (hs, client_hello) = Handshake::start(server_name, config, None, private, random, session_id);
+    pub(super) fn start(
+        server_name: &str,
+        config: &ClientConfig,
+        private: Zeroizing<[u8; 32]>,
+        random: &[u8; 32],
+        session_id: &[u8; 32],
+    ) -> ClientConnection {
+        let (hs, client_hello) =
+            Handshake::start(server_name, config, None, private, random, session_id);
         let mut conn = ClientConnection::blank();
         if config.resumption.is_enabled() {
             conn.tickets = Some(TicketSink {
@@ -235,7 +252,14 @@ impl ClientConnection {
     ) -> ClientConnection {
         let mut conn = ClientConnection::blank();
         conn.queue_plain(RT_HANDSHAKE, client_hello);
-        conn.hs = Some(Hs::V13(Box::new(Handshake::recorded(server_name, config, private, session_id, client_hello, ignored_ee_extensions))));
+        conn.hs = Some(Hs::V13(Box::new(Handshake::recorded(
+            server_name,
+            config,
+            private,
+            session_id,
+            client_hello,
+            ignored_ee_extensions,
+        ))));
         conn
     }
 
@@ -297,7 +321,11 @@ impl ClientConnection {
 
     /// A connection that is already established with fixed traffic keys (for tests and the fuzzer).
     #[cfg(any(test, pratique_fuzzing))]
-    pub(super) fn established(suite: Suite, read_secret: &[u8], write_secret: &[u8]) -> ClientConnection {
+    pub(super) fn established(
+        suite: Suite,
+        read_secret: &[u8],
+        write_secret: &[u8],
+    ) -> ClientConnection {
         let mut c = ClientConnection::blank();
         c.read_cipher = Some(Cipher::V13(RecordCipher::new(suite, read_secret)));
         c.write_cipher = Some(Cipher::V13(RecordCipher::new(suite, write_secret)));
@@ -364,7 +392,9 @@ impl ClientConnection {
     /// The name of the negotiated cipher suite, in either version (`TLS_AES_128_GCM_SHA256`,
     /// `TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256`, ...).
     pub fn cipher_suite_name(&self) -> Option<&'static str> {
-        self.suite12.map(Suite12::name).or(self.suite.map(Suite::name))
+        self.suite12
+            .map(Suite12::name)
+            .or(self.suite.map(Suite::name))
     }
 
     /// The version of TLS the server chose; `None` before its ServerHello.
@@ -425,13 +455,17 @@ impl ClientConnection {
     /// Appends an unprotected record to the output.
     fn queue_plain(&mut self, record_type: u8, content: &[u8]) {
         self.out.extend_from_slice(&[record_type, 0x03, 0x03]);
-        self.out.extend_from_slice(&(content.len() as u16).to_be_bytes());
+        self.out
+            .extend_from_slice(&(content.len() as u16).to_be_bytes());
         self.out.extend_from_slice(content);
     }
 
     /// Encrypts `content` into records appended to the output.
     fn queue_protected(&mut self, inner_type: u8, content: &[u8]) -> Result<()> {
-        let cipher = self.write_cipher.as_mut().ok_or_else(|| Error::Tls("internal: no write keys".into()))?;
+        let cipher = self
+            .write_cipher
+            .as_mut()
+            .ok_or_else(|| Error::Tls("internal: no write keys".into()))?;
         for chunk in content.chunks(MAX_PLAINTEXT) {
             cipher.encrypt_into(inner_type, chunk, &mut self.out);
         }
@@ -443,13 +477,21 @@ impl ClientConnection {
     /// has finished, after `send_close_notify` and after a fatal error.
     pub fn write_plaintext(&mut self, data: &[u8]) -> Result<usize> {
         if self.failed {
-            return Err(Error::Io(io::Error::new(io::ErrorKind::BrokenPipe, "the TLS connection failed")));
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the TLS connection failed",
+            )));
         }
         if self.sent_close_notify {
-            return Err(Error::Io(io::Error::new(io::ErrorKind::BrokenPipe, "TLS connection already closed for writing")));
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "TLS connection already closed for writing",
+            )));
         }
         if !self.handshake_done {
-            return Err(Error::Tls("internal: application data before the handshake finished".into()));
+            return Err(Error::Tls(
+                "internal: application data before the handshake finished".into(),
+            ));
         }
         let n = data.len().min(MAX_WRITE);
         let _dit = Dit::on(); // one switch for the records of this call (B-104)
@@ -468,7 +510,10 @@ impl ClientConnection {
     /// TLS 1.2 has no KeyUpdate: a connection whose key is used up cannot go on, and says so (the HTTP client then opens
     /// another; at 2^24 records of up to 16 KiB that is 256 GiB in one direction).
     fn rekey_if_due(&mut self) -> Result<()> {
-        let due = self.write_cipher.as_ref().is_some_and(|c| c.records().saturating_add(1) >= self.rekey_after);
+        let due = self
+            .write_cipher
+            .as_ref()
+            .is_some_and(|c| c.records().saturating_add(1) >= self.rekey_after);
         if due {
             let next = match self.write_cipher.as_ref() {
                 Some(Cipher::V13(c)) => c.next_generation(),
@@ -542,7 +587,10 @@ impl ClientConnection {
             return None;
         }
         self.recv_buf();
-        Some(RecvBuf { buf: std::mem::take(&mut self.rbuf), end: self.rend })
+        Some(RecvBuf {
+            buf: std::mem::take(&mut self.rbuf),
+            end: self.rend,
+        })
     }
 
     /// Gives back what [`take_recv_buf`](ClientConnection::take_recv_buf) took; `filled` bytes were read into it.
@@ -618,7 +666,9 @@ impl ClientConnection {
     /// output (send it if you can) and every later call fails.
     pub fn process(&mut self) -> Result<()> {
         if self.failed {
-            return Err(Error::Tls("internal: the connection has already failed".into()));
+            return Err(Error::Tls(
+                "internal: the connection has already failed".into(),
+            ));
         }
         // One switch to data-independent timing for all the records this call opens and the handshake work on them (B-104):
         // the AEAD, HMAC and X25519 calls inside then find it set and leave it (on ARM a switch on and off is about 30 ns).
@@ -653,17 +703,23 @@ impl ClientConnection {
             if self.app_pos < self.app_end || self.got_close_notify {
                 return Ok(());
             }
-            let Some((t, start, n)) = self.next_record()? else { return Ok(()) };
+            let Some((t, start, n)) = self.next_record()? else {
+                return Ok(());
+            };
             if self.hs.is_some() {
                 match t {
                     RT_HANDSHAKE if n == 0 => {
                         // RFC 8446 section 5.1: zero-length fragments of Handshake types are forbidden.
-                        return Err(Error::Tls("unexpected_message: empty handshake record".into()));
+                        return Err(Error::Tls(
+                            "unexpected_message: empty handshake record".into(),
+                        ));
                     }
                     RT_HANDSHAKE => {
                         self.hs_buf.extend_from_slice(&self.rbuf[start..start + n]);
                         while self.hs.is_some() {
-                            let Some(msg) = self.take_buffered_handshake_message()? else { break };
+                            let Some(msg) = self.take_buffered_handshake_message()? else {
+                                break;
+                            };
                             self.handshake_step(&msg)?;
                         }
                     }
@@ -673,18 +729,27 @@ impl ClientConnection {
                             return Err(Error::Tls("unexpected_message: a handshake message is cut by change_cipher_spec".into()));
                         }
                         let Some(Hs::V12(hs)) = self.hs.as_mut() else {
-                            return Err(Error::Tls("unexpected_message: change_cipher_spec".into()));
+                            return Err(Error::Tls(
+                                "unexpected_message: change_cipher_spec".into(),
+                            ));
                         };
                         let cipher = hs.on_change_cipher_spec()?;
                         self.read_cipher = Some(Cipher::V12(cipher));
                     }
                     RT_ALERT => return Err(alert_error(&self.rbuf[start..start + n])),
-                    _ => return Err(Error::Tls("unexpected_message: non-handshake record during handshake".into())),
+                    _ => {
+                        return Err(Error::Tls(
+                            "unexpected_message: non-handshake record during handshake".into(),
+                        ))
+                    }
                 }
             } else {
                 // RFC 8446 section 5.1: no record of another type inside a handshake message split over records
                 if t != RT_HANDSHAKE && !self.hs_buf.is_empty() {
-                    return Err(Error::Tls("unexpected_message: a record of another type inside a handshake message".into()));
+                    return Err(Error::Tls(
+                        "unexpected_message: a record of another type inside a handshake message"
+                            .into(),
+                    ));
                 }
                 match t {
                     RT_APPLICATION_DATA => {
@@ -701,7 +766,9 @@ impl ClientConnection {
                     }
                     RT_HANDSHAKE => {
                         if n == 0 {
-                            return Err(Error::Tls("unexpected_message: empty handshake record".into()));
+                            return Err(Error::Tls(
+                                "unexpected_message: empty handshake record".into(),
+                            ));
                         }
                         self.hs_buf.extend_from_slice(&self.rbuf[start..start + n]);
                         if self.version == Some(TlsVersion::Tls12) {
@@ -710,7 +777,11 @@ impl ClientConnection {
                             self.process_post_handshake()?;
                         }
                     }
-                    _ => return Err(Error::Tls("unexpected_message: unexpected record type".into())),
+                    _ => {
+                        return Err(Error::Tls(
+                            "unexpected_message: unexpected record type".into(),
+                        ))
+                    }
                 }
             }
         }
@@ -730,9 +801,15 @@ impl ClientConnection {
             let record_type = header[0];
             let length = u16::from_be_bytes([header[3], header[4]]) as usize;
             if header[1] != 0x03 {
-                return Err(Error::Tls("protocol_version: peer is not speaking TLS".into()));
+                return Err(Error::Tls(
+                    "protocol_version: peer is not speaking TLS".into(),
+                ));
             }
-            let limit = if self.read_cipher.is_some() { MAX_CIPHERTEXT_RECORD } else { MAX_PLAINTEXT };
+            let limit = if self.read_cipher.is_some() {
+                MAX_CIPHERTEXT_RECORD
+            } else {
+                MAX_PLAINTEXT
+            };
             if length > limit {
                 return Err(Error::Tls("record_overflow: record too large".into()));
             }
@@ -748,18 +825,24 @@ impl ClientConnection {
                 // TLS 1.2's is the real thing: the server's keys start after it (only during the handshake, and before any keys)
                 (None, RT_CHANGE_CIPHER_SPEC) if tls12 => {
                     if payload != [1] || self.handshake_done {
-                        return Err(Error::Tls("unexpected_message: bad change_cipher_spec".into()));
+                        return Err(Error::Tls(
+                            "unexpected_message: bad change_cipher_spec".into(),
+                        ));
                     }
                     return Ok(Some((RT_CHANGE_CIPHER_SPEC, start, length)));
                 }
                 (Some(_), RT_CHANGE_CIPHER_SPEC) if tls12 => {
-                    return Err(Error::Tls("unexpected_message: change_cipher_spec after the keys changed".into()));
+                    return Err(Error::Tls(
+                        "unexpected_message: change_cipher_spec after the keys changed".into(),
+                    ));
                 }
                 (_, RT_CHANGE_CIPHER_SPEC) => {
                     // RFC 8446 appendix D.4: a single 0x01 byte, only during the handshake. A
                     // conforming server sends at most one; a flood is treated as an attack.
                     if self.handshake_done || payload != [1] || self.ccs_skipped >= MAX_COMPAT_CCS {
-                        return Err(Error::Tls("unexpected_message: bad change_cipher_spec".into()));
+                        return Err(Error::Tls(
+                            "unexpected_message: bad change_cipher_spec".into(),
+                        ));
                     }
                     self.ccs_skipped += 1;
                     continue;
@@ -767,7 +850,9 @@ impl ClientConnection {
                 (Some(c @ Cipher::V13(_)), RT_APPLICATION_DATA) => {
                     let (t, _, n) = c.decrypt_in_place(&header, payload)?;
                     if t == RT_CHANGE_CIPHER_SPEC {
-                        return Err(Error::Tls("unexpected_message: protected change_cipher_spec".into()));
+                        return Err(Error::Tls(
+                            "unexpected_message: protected change_cipher_spec".into(),
+                        ));
                     }
                     return Ok(Some((t, start, n)));
                 }
@@ -777,10 +862,18 @@ impl ClientConnection {
                     return Ok(Some((t, start + offset, n)));
                 }
                 (Some(_), _) => {
-                    return Err(Error::Tls("unexpected_message: unprotected record after keys were established".into()));
+                    return Err(Error::Tls(
+                        "unexpected_message: unprotected record after keys were established".into(),
+                    ));
                 }
-                (None, RT_ALERT) | (None, RT_HANDSHAKE) => return Ok(Some((record_type, start, length))),
-                (None, _) => return Err(Error::Tls("unexpected_message: unexpected record type".into())),
+                (None, RT_ALERT) | (None, RT_HANDSHAKE) => {
+                    return Ok(Some((record_type, start, length)))
+                }
+                (None, _) => {
+                    return Err(Error::Tls(
+                        "unexpected_message: unexpected record type".into(),
+                    ))
+                }
             }
         }
     }
@@ -793,7 +886,11 @@ impl ClientConnection {
 
     fn handshake_step(&mut self, msg: &[u8]) -> Result<()> {
         let trailing = !self.hs_buf.is_empty();
-        match self.hs.take().ok_or_else(|| Error::Tls("internal: no handshake in progress".into()))? {
+        match self
+            .hs
+            .take()
+            .ok_or_else(|| Error::Tls("internal: no handshake in progress".into()))?
+        {
             Hs::V13(mut hs) => {
                 let events = hs.on_message(msg, trailing)?;
                 let rekey_after = hs.config().rekey_after_records;
@@ -844,7 +941,11 @@ impl ClientConnection {
 
     /// Does what a step of the handshake asks for, in the order it asks. Returns the TLS 1.2 handshake to go on with if the
     /// server turned out to speak TLS 1.2.
-    fn apply(&mut self, events: Vec<Event>, rekey_after: Option<u64>) -> Result<Option<Box<Handshake12>>> {
+    fn apply(
+        &mut self,
+        events: Vec<Event>,
+        rekey_after: Option<u64>,
+    ) -> Result<Option<Box<Handshake12>>> {
         for event in events {
             match event {
                 Event::Send(Epoch::Initial, message) => {
@@ -857,7 +958,11 @@ impl ClientConnection {
                     self.compat_ccs();
                     self.queue_protected(RT_HANDSHAKE, &message)?
                 }
-                Event::HandshakeSecrets { suite, client, server } => {
+                Event::HandshakeSecrets {
+                    suite,
+                    client,
+                    server,
+                } => {
                     self.suite = Some(suite);
                     self.version = Some(TlsVersion::Tls13);
                     self.read_cipher = Some(Cipher::V13(RecordCipher::new(suite, &server)));
@@ -868,7 +973,11 @@ impl ClientConnection {
                 Event::PeerCertificates(chain) => self.peer_chain = chain,
                 Event::Unchecked(u) => self.unchecked = Some(u),
                 Event::PeerTransportParameters(_) => {} // only a QUIC handshake has them
-                Event::ApplicationSecrets { suite, client, server } => {
+                Event::ApplicationSecrets {
+                    suite,
+                    client,
+                    server,
+                } => {
                     // The Finished record stays in the output until the driver chooses to send it; see the
                     // module documentation.
                     self.write_cipher = Some(Cipher::V13(RecordCipher::new(suite, &client)));
@@ -877,7 +986,11 @@ impl ClientConnection {
                     self.handshake_done = true;
                 }
                 Event::Resumed => self.resumed = true,
-                Event::ResumptionSecret { suite, secret, verified_at } => {
+                Event::ResumptionSecret {
+                    suite,
+                    secret,
+                    verified_at,
+                } => {
                     // a chain whose revocation is still to be checked (deferred) gives no sessions: a resumption would skip
                     // that check
                     if self.unchecked.is_some() {
@@ -915,14 +1028,21 @@ impl ClientConnection {
                     }
                     if msg[4] > 1 {
                         // RFC 8446 section 4.6.3
-                        return Err(Error::Tls("illegal_parameter: a KeyUpdate that neither asks nor does not ask".into()));
+                        return Err(Error::Tls(
+                            "illegal_parameter: a KeyUpdate that neither asks nor does not ask"
+                                .into(),
+                        ));
                     }
                     if !self.hs_buf.is_empty() {
                         // RFC 8446 section 5.1: messages must not span a key change
                         return Err(Error::Tls("unexpected_message: handshake data follows a KeyUpdate in the same record".into()));
                     }
-                    let (Some(Cipher::V13(rc)), Some(Cipher::V13(wc))) = (self.read_cipher.as_ref(), self.write_cipher.as_ref()) else {
-                        return Err(Error::Tls("internal: KeyUpdate without traffic keys".into()));
+                    let (Some(Cipher::V13(rc)), Some(Cipher::V13(wc))) =
+                        (self.read_cipher.as_ref(), self.write_cipher.as_ref())
+                    else {
+                        return Err(Error::Tls(
+                            "internal: KeyUpdate without traffic keys".into(),
+                        ));
                     };
                     let next = rc.next_generation();
                     let next_write = wc.next_generation();
@@ -935,7 +1055,11 @@ impl ClientConnection {
                         self.write_cipher = Some(Cipher::V13(next_write));
                     }
                 }
-                _ => return Err(Error::Tls("unexpected_message: unexpected post-handshake message".into())),
+                _ => {
+                    return Err(Error::Tls(
+                        "unexpected_message: unexpected post-handshake message".into(),
+                    ))
+                }
             }
         }
         Ok(())
@@ -944,7 +1068,16 @@ impl ClientConnection {
     /// Keeps a ticket for the next connection to this server (RFC 8446 section 4.6.1): its PSK is HKDF-Expand-Label of the
     /// resumption master secret with the ticket's nonce. A ticket of lifetime 0 is not kept.
     fn keep_ticket(&mut self, t: NewSessionTicket) {
-        let Some(TicketSink { resumption, server, scope, time_override, secret: Some((suite, secret, verified_at)) }) = &self.tickets else { return };
+        let Some(TicketSink {
+            resumption,
+            server,
+            scope,
+            time_override,
+            secret: Some((suite, secret, verified_at)),
+        }) = &self.tickets
+        else {
+            return;
+        };
         if t.lifetime == 0 {
             return;
         }
@@ -956,7 +1089,13 @@ impl ClientConnection {
         }
         let session = super::session::Session {
             ticket: t.ticket,
-            psk: Zeroizing::new(expand_label(alg, secret, "resumption", &t.nonce, alg.output_len())),
+            psk: Zeroizing::new(expand_label(
+                alg,
+                secret,
+                "resumption",
+                &t.nonce,
+                alg.output_len(),
+            )),
             suite: *suite,
             age_add: t.age_add,
             received: std::time::Instant::now(),
@@ -976,7 +1115,10 @@ impl ClientConnection {
                 // (nothing is sent after our close_notify, an answer included)
                 HS_HELLO_REQUEST if msg.len() == 4 && self.sent_close_notify => {}
                 HS_HELLO_REQUEST if msg.len() == 4 => self.queue_protected(RT_ALERT, &[1, 100])?,
-                _ => return Err(Error::Tls("unexpected_message: unexpected handshake message after a TLS 1.2 handshake".into())),
+                _ => return Err(Error::Tls(
+                    "unexpected_message: unexpected handshake message after a TLS 1.2 handshake"
+                        .into(),
+                )),
             }
         }
         Ok(())
@@ -1010,20 +1152,60 @@ mod tests {
     #[test]
     fn server_names_are_checked_and_sent_without_a_trailing_dot() {
         let config = ClientConfig::new(crate::x509::TrustStore::empty());
-        for good in ["example.com", "example.com.", "EXAMPLE.com", "localhost", "_srv.example", "xn--bcher-kva.example", "127.0.0.1", "::1", "a-b.c-d"] {
+        for good in [
+            "example.com",
+            "example.com.",
+            "EXAMPLE.com",
+            "localhost",
+            "_srv.example",
+            "xn--bcher-kva.example",
+            "127.0.0.1",
+            "::1",
+            "a-b.c-d",
+        ] {
             ClientConnection::new(good, &config).unwrap_or_else(|e| panic!("{good:?}: {e}"));
         }
         let long_label = format!("{}.example", "a".repeat(64));
         let long_name = vec!["abcdefghi"; 26].join(".");
-        for bad in ["", ".", "a..b", "example.com..", "[::1]", "exa mple.com", "*.example.com", "a/b", "bücher.example", long_label.as_str(), long_name.as_str()] {
-            let e = ClientConnection::new(bad, &config).err().unwrap_or_else(|| panic!("{bad:?} accepted")).to_string();
-            assert!(e.contains("is not a host name or IP address"), "{bad:?}: {e}");
-            assert_eq!(e.contains("idna::to_ascii"), !bad.is_ascii(), "{bad:?}: {e}");
+        for bad in [
+            "",
+            ".",
+            "a..b",
+            "example.com..",
+            "[::1]",
+            "exa mple.com",
+            "*.example.com",
+            "a/b",
+            "bücher.example",
+            long_label.as_str(),
+            long_name.as_str(),
+        ] {
+            let e = ClientConnection::new(bad, &config)
+                .err()
+                .unwrap_or_else(|| panic!("{bad:?} accepted"))
+                .to_string();
+            assert!(
+                e.contains("is not a host name or IP address"),
+                "{bad:?}: {e}"
+            );
+            assert_eq!(
+                e.contains("idna::to_ascii"),
+                !bad.is_ascii(),
+                "{bad:?}: {e}"
+            );
         }
         // the extension carries the name without its trailing dot, and an IP literal is not sent at all
-        let hello = |name: &str| ClientConnection::new(name, &config).unwrap().output().to_vec();
+        let hello = |name: &str| {
+            ClientConnection::new(name, &config)
+                .unwrap()
+                .output()
+                .to_vec()
+        };
         let with_dot = hello("example.com.");
-        assert!(with_dot.windows(11).any(|w| w == b"example.com") && !with_dot.windows(12).any(|w| w == b"example.com."));
+        assert!(
+            with_dot.windows(11).any(|w| w == b"example.com")
+                && !with_dot.windows(12).any(|w| w == b"example.com.")
+        );
         assert_eq!(with_dot.len(), hello("example.com").len());
         assert!(!hello("127.0.0.1").windows(9).any(|w| w == b"127.0.0.1"));
     }
@@ -1073,7 +1255,14 @@ mod tests {
             let n = suite.hash().output_len();
             let (read_secret, write_secret) = (vec![2u8; n], vec![1u8; n]);
             let client = ClientConnection::established(suite, &read_secret, &write_secret);
-            (client, Peer { suite, send: RecordCipher::new(suite, &read_secret), recv: RecordCipher::new(suite, &write_secret) })
+            (
+                client,
+                Peer {
+                    suite,
+                    send: RecordCipher::new(suite, &read_secret),
+                    recv: RecordCipher::new(suite, &write_secret),
+                },
+            )
         }
 
         /// The peer's next record, protecting `content`.
@@ -1095,7 +1284,10 @@ mod tests {
             while !bytes.is_empty() {
                 let len = u16::from_be_bytes([bytes[3], bytes[4]]) as usize;
                 let header: [u8; 5] = bytes[..5].try_into().unwrap();
-                let opened = self.recv.decrypt(&header, &bytes[5..5 + len]).expect("the client's record opens under the peer's keys");
+                let opened = self
+                    .recv
+                    .decrypt(&header, &bytes[5..5 + len])
+                    .expect("the client's record opens under the peer's keys");
                 if opened.0 == RT_HANDSHAKE && opened.1[0] == HS_KEY_UPDATE {
                     assert_eq!(opened.1[1..4], [0, 0, 1], "a KeyUpdate is one byte long");
                     self.recv = self.recv.next_generation();
@@ -1152,15 +1344,33 @@ mod tests {
     fn a_peer_key_update_without_a_request_rotates_only_what_we_read() {
         for suite in Suite::ALL {
             let (mut c, mut peer) = Peer::connect(suite);
-            assert_eq!(feed(&mut c, &peer.record(RT_APPLICATION_DATA, b"before")).unwrap(), b"before");
+            assert_eq!(
+                feed(&mut c, &peer.record(RT_APPLICATION_DATA, b"before")).unwrap(),
+                b"before"
+            );
             assert_eq!(feed(&mut c, &peer.key_update(0)).unwrap(), b"");
-            assert_eq!(peer.send.records(), 0, "the new generation starts counting again");
-            assert_eq!(feed(&mut c, &peer.record(RT_APPLICATION_DATA, b"after")).unwrap(), b"after");
-            assert!(c.output().is_empty(), "update_not_requested needs no answer");
+            assert_eq!(
+                peer.send.records(),
+                0,
+                "the new generation starts counting again"
+            );
+            assert_eq!(
+                feed(&mut c, &peer.record(RT_APPLICATION_DATA, b"after")).unwrap(),
+                b"after"
+            );
+            assert!(
+                c.output().is_empty(),
+                "update_not_requested needs no answer"
+            );
             // what we send is still under the old keys
             write_all(&mut c, b"reply");
             let sent = take_output(&mut c);
-            assert_eq!(peer.open_all(&sent), vec![(RT_APPLICATION_DATA, b"reply".to_vec())], "{:?}", peer.suite());
+            assert_eq!(
+                peer.open_all(&sent),
+                vec![(RT_APPLICATION_DATA, b"reply".to_vec())],
+                "{:?}",
+                peer.suite()
+            );
         }
     }
 
@@ -1184,7 +1394,11 @@ mod tests {
                 "{:?}",
                 suite
             );
-            assert_eq!(peer.recv.records(), 1, "the record after the answer is the first under the new keys");
+            assert_eq!(
+                peer.recv.records(),
+                1,
+                "the record after the answer is the first under the new keys"
+            );
         }
     }
 
@@ -1194,11 +1408,17 @@ mod tests {
         for suite in Suite::ALL {
             let (mut c, mut peer) = Peer::connect(suite);
             c.send_close_notify();
-            assert_eq!(peer.open_all(&take_output(&mut c)), vec![(RT_ALERT, vec![1, 0])]);
+            assert_eq!(
+                peer.open_all(&take_output(&mut c)),
+                vec![(RT_ALERT, vec![1, 0])]
+            );
             assert_eq!(feed(&mut c, &peer.key_update(1)).unwrap(), b"");
             assert!(!c.wants_write(), "{suite:?}: an answer after close_notify");
             // and what the peer sends under its next keys is still read
-            assert_eq!(feed(&mut c, &peer.record(RT_APPLICATION_DATA, b"still read")).unwrap(), b"still read");
+            assert_eq!(
+                feed(&mut c, &peer.record(RT_APPLICATION_DATA, b"still read")).unwrap(),
+                b"still read"
+            );
         }
     }
 
@@ -1210,12 +1430,25 @@ mod tests {
                 let request = round % 2; // alternate requested and not requested
                 assert_eq!(feed(&mut c, &peer.key_update(request)).unwrap(), b"");
                 let msg = vec![round; 50 + round as usize];
-                assert_eq!(feed(&mut c, &peer.record(RT_APPLICATION_DATA, &msg)).unwrap(), msg, "round {round}");
+                assert_eq!(
+                    feed(&mut c, &peer.record(RT_APPLICATION_DATA, &msg)).unwrap(),
+                    msg,
+                    "round {round}"
+                );
                 write_all(&mut c, &msg);
                 let sent = take_output(&mut c);
                 let got = peer.open_all(&sent);
-                assert_eq!(got.last(), Some(&(RT_APPLICATION_DATA, msg)), "{:?} round {round}", suite);
-                assert_eq!(got.len(), 1 + request as usize, "a KeyUpdate answer exactly when one was requested");
+                assert_eq!(
+                    got.last(),
+                    Some(&(RT_APPLICATION_DATA, msg)),
+                    "{:?} round {round}",
+                    suite
+                );
+                assert_eq!(
+                    got.len(),
+                    1 + request as usize,
+                    "a KeyUpdate answer exactly when one was requested"
+                );
             }
         }
     }
@@ -1227,7 +1460,11 @@ mod tests {
             let (mut c, mut peer) = Peer::connect(suite);
             let mut stale = RecordCipher::new(suite, &vec![2u8; n]);
             assert_eq!(feed(&mut c, &peer.key_update(0)).unwrap(), b"");
-            let err = feed(&mut c, &stale.encrypt(RT_APPLICATION_DATA, b"replayed under the old key")).unwrap_err();
+            let err = feed(
+                &mut c,
+                &stale.encrypt(RT_APPLICATION_DATA, b"replayed under the old key"),
+            )
+            .unwrap_err();
             assert!(err.to_string().contains("bad_record_mac"), "{}", err);
             // and the alert it sends is protected with the (unchanged) write keys, which the peer can open
             let sent = take_output(&mut c);
@@ -1255,13 +1492,20 @@ mod tests {
         };
         let s = Suite::Aes128GcmSha256;
         // an unknown request value (illegal_parameter, RFC 8446 section 4.6.3), a wrong length either way (decode_error)
-        for (bad, wanted) in [(vec![HS_KEY_UPDATE, 0, 0, 1, 2], 47), (vec![HS_KEY_UPDATE, 0, 0, 2, 0, 0], 50), (vec![HS_KEY_UPDATE, 0, 0, 0], 50)] {
+        for (bad, wanted) in [
+            (vec![HS_KEY_UPDATE, 0, 0, 1, 2], 47),
+            (vec![HS_KEY_UPDATE, 0, 0, 2, 0, 0], 50),
+            (vec![HS_KEY_UPDATE, 0, 0, 0], 50),
+        ] {
             let (text, alert) = alert_for(s, std::slice::from_ref(&bad));
             assert!(text.contains("KeyUpdate"), "{:?}: {}", bad, text);
             assert_eq!(alert, wanted, "{:?}", bad);
         }
         // another handshake message in the same record, after the KeyUpdate (section 5.1)
-        let (text, alert) = alert_for(s, &[vec![HS_KEY_UPDATE, 0, 0, 1, 0, HS_KEY_UPDATE, 0, 0, 1, 0]]);
+        let (text, alert) = alert_for(
+            s,
+            &[vec![HS_KEY_UPDATE, 0, 0, 1, 0, HS_KEY_UPDATE, 0, 0, 1, 0]],
+        );
         assert!(text.contains("follows a KeyUpdate"), "{}", text);
         assert_eq!(alert, 10, "unexpected_message");
         // a handshake message that is not allowed after the handshake
@@ -1276,7 +1520,9 @@ mod tests {
         let first = peer.record(RT_HANDSHAKE, &[HS_KEY_UPDATE, 0]);
         let between = peer.record(RT_APPLICATION_DATA, b"between");
         let second = peer.record(RT_HANDSHAKE, &[0, 1, 0]);
-        let err = feed(&mut c, &[first, between, second].concat()).unwrap_err().to_string();
+        let err = feed(&mut c, &[first, between, second].concat())
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("inside a handshake message"), "{err}");
     }
 
@@ -1287,12 +1533,22 @@ mod tests {
         let second = peer.record(RT_HANDSHAKE, &[0, 1, 1]);
         assert_eq!(feed(&mut c, &[first, second].concat()).unwrap(), b"");
         peer.send = peer.send.next_generation();
-        assert_eq!(feed(&mut c, &peer.record(RT_APPLICATION_DATA, b"fine")).unwrap(), b"fine");
+        assert_eq!(
+            feed(&mut c, &peer.record(RT_APPLICATION_DATA, b"fine")).unwrap(),
+            b"fine"
+        );
         let sent = take_output(&mut c);
         let mut peer_recv = Peer::connect(Suite::Aes256GcmSha384).1.recv;
-        assert_eq!(sent.len(), 5 + 5 + 1 + 16, "the connection answered the request with one record");
+        assert_eq!(
+            sent.len(),
+            5 + 5 + 1 + 16,
+            "the connection answered the request with one record"
+        );
         let header: [u8; 5] = sent[..5].try_into().unwrap();
-        assert_eq!(peer_recv.decrypt(&header, &sent[5..]).unwrap(), (RT_HANDSHAKE, vec![HS_KEY_UPDATE, 0, 0, 1, 0]));
+        assert_eq!(
+            peer_recv.decrypt(&header, &sent[5..]).unwrap(),
+            (RT_HANDSHAKE, vec![HS_KEY_UPDATE, 0, 0, 1, 0])
+        );
     }
 
     #[test]
@@ -1312,9 +1568,16 @@ mod tests {
             while !rest.is_empty() {
                 let len = u16::from_be_bytes([rest[3], rest[4]]) as usize;
                 let header: [u8; 5] = rest[..5].try_into().unwrap();
-                let rec = peer.recv.decrypt(&header, &rest[5..5 + len]).expect("every record opens under the peer's current keys");
+                let rec = peer
+                    .recv
+                    .decrypt(&header, &rest[5..5 + len])
+                    .expect("every record opens under the peer's current keys");
                 if rec.0 == RT_HANDSHAKE {
-                    assert_eq!(rec.1, vec![HS_KEY_UPDATE, 0, 0, 1, 0], "update_not_requested");
+                    assert_eq!(
+                        rec.1,
+                        vec![HS_KEY_UPDATE, 0, 0, 1, 0],
+                        "update_not_requested"
+                    );
                     generation_sizes.push(peer.recv.records());
                     peer.recv = peer.recv.next_generation();
                 } else {
@@ -1350,11 +1613,17 @@ mod tests {
             let (mut c, mut peer) = Peer::connect(suite);
             c.set_rekey_after(3);
             // five full records in one call (four per call are taken, so two calls)
-            let data: Vec<u8> = (0..5 * MAX_PLAINTEXT + 17).map(|i| (i * 7 % 251) as u8).collect();
+            let data: Vec<u8> = (0..5 * MAX_PLAINTEXT + 17)
+                .map(|i| (i * 7 % 251) as u8)
+                .collect();
             write_all(&mut c, &data);
             let sent = take_output(&mut c);
             let records = peer.open_all(&sent);
-            let got: Vec<u8> = records.iter().filter(|(t, _)| *t == RT_APPLICATION_DATA).flat_map(|(_, d)| d.clone()).collect();
+            let got: Vec<u8> = records
+                .iter()
+                .filter(|(t, _)| *t == RT_APPLICATION_DATA)
+                .flat_map(|(_, d)| d.clone())
+                .collect();
             assert!(got == data, "{:?}: the data came back different", suite);
             let updates = records.iter().filter(|(t, _)| *t == RT_HANDSHAKE).count();
             assert_eq!(updates, 2, "{:?}", suite);
@@ -1381,7 +1650,12 @@ mod tests {
             // a, b, KeyUpdate (the answer), c, d, KeyUpdate (the proactive one), e, f
             let ku = (RT_HANDSHAKE, 5);
             let app = (RT_APPLICATION_DATA, 1);
-            assert_eq!(shapes, vec![app, app, ku, app, app, ku, app, app], "{:?}", suite);
+            assert_eq!(
+                shapes,
+                vec![app, app, ku, app, app, ku, app, app],
+                "{:?}",
+                suite
+            );
         }
     }
 
@@ -1389,8 +1663,16 @@ mod tests {
     fn the_rekey_interval_can_be_configured_and_is_never_below_two() {
         let cfg = ClientConfig::new(crate::x509::TrustStore::empty());
         assert_eq!(cfg.rekey_after_records, None);
-        assert_eq!(cfg.clone().with_rekey_after_records(1000).rekey_after_records, Some(1000));
-        assert_eq!(cfg.clone().with_rekey_after_records(0).rekey_after_records, Some(2));
+        assert_eq!(
+            cfg.clone()
+                .with_rekey_after_records(1000)
+                .rekey_after_records,
+            Some(1000)
+        );
+        assert_eq!(
+            cfg.clone().with_rekey_after_records(0).rekey_after_records,
+            Some(2)
+        );
         assert_eq!(cfg.with_rekey_after_records(1).rekey_after_records, Some(2));
     }
 
@@ -1401,8 +1683,15 @@ mod tests {
         let key = vec![3u8; suite.aead_suite().key_len()];
         let other = vec![4u8; suite.aead_suite().key_len()];
         let iv = [5u8; 12];
-        let client = ClientConnection::established12(RecordCipher12::new(suite, &key, &iv[..4]), RecordCipher12::new(suite, &other, &iv[..4]));
-        (client, RecordCipher12::new(suite, &key, &iv[..4]), RecordCipher12::new(suite, &other, &iv[..4]))
+        let client = ClientConnection::established12(
+            RecordCipher12::new(suite, &key, &iv[..4]),
+            RecordCipher12::new(suite, &other, &iv[..4]),
+        );
+        (
+            client,
+            RecordCipher12::new(suite, &key, &iv[..4]),
+            RecordCipher12::new(suite, &other, &iv[..4]),
+        )
     }
 
     fn open12(opener: &mut RecordCipher12, mut bytes: &[u8]) -> Vec<(u8, Vec<u8>)> {
@@ -1432,7 +1721,15 @@ mod tests {
             write_all(&mut c, b"from the client");
             c.send_close_notify();
             let sent = open12(&mut open, &take_output(&mut c));
-            assert_eq!(sent, vec![(RT_APPLICATION_DATA, b"from the client".to_vec()), (RT_ALERT, vec![1, 0])], "{}", suite.name());
+            assert_eq!(
+                sent,
+                vec![
+                    (RT_APPLICATION_DATA, b"from the client".to_vec()),
+                    (RT_ALERT, vec![1, 0])
+                ],
+                "{}",
+                suite.name()
+            );
             let mut wire = Vec::new();
             seal.encrypt_into(RT_ALERT, &[1, 0], &mut wire);
             feed(&mut c, &wire).unwrap();
@@ -1448,18 +1745,29 @@ mod tests {
         seal.encrypt_into(RT_APPLICATION_DATA, b"still here", &mut wire);
         assert_eq!(feed(&mut c, &wire).unwrap(), b"still here");
         // a warning, not a handshake: the connection goes on as it was
-        assert_eq!(open12(&mut open, &take_output(&mut c)), vec![(RT_ALERT, vec![1, 100])]);
+        assert_eq!(
+            open12(&mut open, &take_output(&mut c)),
+            vec![(RT_ALERT, vec![1, 100])]
+        );
         assert!(c.is_quiet());
         // after our close_notify, a HelloRequest gets no answer (nothing follows close_notify) and is otherwise ignored
         c.send_close_notify();
-        assert_eq!(open12(&mut open, &take_output(&mut c)), vec![(RT_ALERT, vec![1, 0])]);
+        assert_eq!(
+            open12(&mut open, &take_output(&mut c)),
+            vec![(RT_ALERT, vec![1, 0])]
+        );
         let mut wire = Vec::new();
         seal.encrypt_into(RT_HANDSHAKE, &[HS_HELLO_REQUEST, 0, 0, 0], &mut wire);
         seal.encrypt_into(RT_APPLICATION_DATA, b"read on", &mut wire);
         assert_eq!(feed(&mut c, &wire).unwrap(), b"read on");
         assert!(!c.wants_write());
         // a KeyUpdate, a session ticket, a ClientHello-shaped thing or a HelloRequest with a body: not in TLS 1.2 after the handshake
-        for msg in [vec![HS_KEY_UPDATE, 0, 0, 1, 0], vec![HS_NEW_SESSION_TICKET, 0, 0, 0], vec![HS_HELLO_REQUEST, 0, 0, 1, 0], vec![1, 0, 0, 0]] {
+        for msg in [
+            vec![HS_KEY_UPDATE, 0, 0, 1, 0],
+            vec![HS_NEW_SESSION_TICKET, 0, 0, 0],
+            vec![HS_HELLO_REQUEST, 0, 0, 1, 0],
+            vec![1, 0, 0, 0],
+        ] {
             let (mut c, mut seal, _) = tls12_pair(Suite12::EcdheRsaAes128Gcm);
             let mut wire = Vec::new();
             seal.encrypt_into(RT_HANDSHAKE, &msg, &mut wire);
@@ -1488,14 +1796,35 @@ mod tests {
 
     #[test]
     fn the_compatibility_change_cipher_spec_waits_when_tls12_is_offered() {
-        let tls13 = ClientConfig::new(crate::x509::TrustStore::empty()).with_min_version(TlsVersion::Tls13);
-        let c = ClientConnection::start("example.com", &tls13, Zeroizing::new([7; 32]), &[1; 32], &[2; 32]);
-        assert!(c.output().ends_with(&[RT_CHANGE_CIPHER_SPEC, 3, 3, 0, 1, 1]), "after a TLS 1.3-only ClientHello at once");
+        let tls13 =
+            ClientConfig::new(crate::x509::TrustStore::empty()).with_min_version(TlsVersion::Tls13);
+        let c = ClientConnection::start(
+            "example.com",
+            &tls13,
+            Zeroizing::new([7; 32]),
+            &[1; 32],
+            &[2; 32],
+        );
+        assert!(
+            c.output()
+                .ends_with(&[RT_CHANGE_CIPHER_SPEC, 3, 3, 0, 1, 1]),
+            "after a TLS 1.3-only ClientHello at once"
+        );
         let both = ClientConfig::new(crate::x509::TrustStore::empty());
-        let c = ClientConnection::start("example.com", &both, Zeroizing::new([7; 32]), &[1; 32], &[2; 32]);
+        let c = ClientConnection::start(
+            "example.com",
+            &both,
+            Zeroizing::new([7; 32]),
+            &[1; 32],
+            &[2; 32],
+        );
         assert_eq!(c.output()[0], RT_HANDSHAKE);
         let len = u16::from_be_bytes([c.output()[3], c.output()[4]]) as usize;
-        assert_eq!(c.output().len(), 5 + len, "nothing after a ClientHello that offers TLS 1.2 too");
+        assert_eq!(
+            c.output().len(),
+            5 + len,
+            "nothing after a ClientHello that offers TLS 1.2 too"
+        );
         assert!(c.compat_ccs_pending);
     }
 }

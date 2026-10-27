@@ -65,7 +65,10 @@ impl<'a> Cursor<'a> {
 
 /// The byte at offset `at` of the stream `id` that `from_client` writes.
 fn pat(from_client: bool, id: u64, at: u64) -> u8 {
-    (at.wrapping_mul(131).wrapping_add(id.wrapping_mul(17)).wrapping_add(u64::from(from_client) * 7) % 251) as u8
+    (at.wrapping_mul(131)
+        .wrapping_add(id.wrapping_mul(17))
+        .wrapping_add(u64::from(from_client) * 7)
+        % 251) as u8
 }
 
 fn is_bidirectional(id: u64) -> bool {
@@ -135,10 +138,19 @@ impl Sim {
         while self.client.poll_transmit(self.now, &mut buf) {
             n += 1;
             assert!(n < 50_000, "the client sends datagrams without end");
-            assert!(buf.len() <= self.max_datagram.max(1200), "a datagram of {} bytes, the limit is {}", buf.len(), self.max_datagram.max(1200));
+            assert!(
+                buf.len() <= self.max_datagram.max(1200),
+                "a datagram of {} bytes, the limit is {}",
+                buf.len(),
+                self.max_datagram.max(1200)
+            );
             if self.first_datagram {
                 self.first_datagram = false;
-                assert!(buf.len() >= 1200, "the first datagram of the client is {} bytes, under 1200", buf.len());
+                assert!(
+                    buf.len() >= 1200,
+                    "the first datagram of the client is {} bytes, under 1200",
+                    buf.len()
+                );
             }
             self.route(true, buf.clone());
         }
@@ -164,7 +176,10 @@ impl Sim {
         // (what is corrupted is not read, which is a loss as far as the others are concerned; the version and the first byte stay: a
         // changed version makes a Version Negotiation packet, which a client believes. Nor is anything corrupted on its way to the
         // server before the handshake is done, for the test server takes the connection ids and keys of the first Initial it sees.)
-        let mut corrupted = bytes.len() > 6 && !protected && self.rng.chance(self.corrupt) && (!to_server || self.server.handshake_done || !self.honest);
+        let mut corrupted = bytes.len() > 6
+            && !protected
+            && self.rng.chance(self.corrupt)
+            && (!to_server || self.server.handshake_done || !self.honest);
         if (lose || corrupted) && self.honest {
             // (three in a row is not enough on its own: the probes of a client that has heard nothing back off, one round trip
             // after another can fail with a loss in either direction, and an honest network that lost every round trip for
@@ -173,7 +188,9 @@ impl Sim {
             // idle timeout that applies, the smaller of the two sides'. A quarter of the client's alone, 30 s of a 120 s setting,
             // was all of the server's 30 s, and the network could be silent until the client gave up: found by fuzzing after the
             // field run.)
-            if self.dropped_in_a_row[dir] >= 3 || self.now.saturating_duration_since(self.last_through[dir]) >= self.starved {
+            if self.dropped_in_a_row[dir] >= 3
+                || self.now.saturating_duration_since(self.last_through[dir]) >= self.starved
+            {
                 lose = false;
                 corrupted = false;
             }
@@ -185,7 +202,23 @@ impl Sim {
             self.last_through[dir] = self.now;
         }
         if self.trace {
-            eprintln!("{:>8.1} ms  {}  {:>5} bytes  {}", (self.now - self.start).as_secs_f64() * 1000.0, if to_server { "client->server" } else { "server->client" }, bytes.len(), if lose { "lost" } else if corrupted { "corrupted" } else { "" });
+            eprintln!(
+                "{:>8.1} ms  {}  {:>5} bytes  {}",
+                (self.now - self.start).as_secs_f64() * 1000.0,
+                if to_server {
+                    "client->server"
+                } else {
+                    "server->client"
+                },
+                bytes.len(),
+                if lose {
+                    "lost"
+                } else if corrupted {
+                    "corrupted"
+                } else {
+                    ""
+                }
+            );
         }
         if lose {
             return;
@@ -202,7 +235,8 @@ impl Sim {
         if self.rng.chance(self.duplicate) {
             self.seq += 1;
             let again = when + Duration::from_millis(self.rng.below(30));
-            self.transit.push((again, self.seq, to_server, bytes.clone()));
+            self.transit
+                .push((again, self.seq, to_server, bytes.clone()));
         }
         self.transit.push((when, self.seq, to_server, bytes));
     }
@@ -225,10 +259,17 @@ impl Sim {
     /// Does what happens at `t`: delivers the datagrams that are due and runs the timers that are due.
     fn process_at(&mut self, t: Instant) {
         self.steps += 1;
-        assert!(self.steps < 400_000, "it does not end: {} steps, {:?} of virtual time", self.steps, self.now - self.start);
+        assert!(
+            self.steps < 400_000,
+            "it does not end: {} steps, {:?} of virtual time",
+            self.steps,
+            self.now - self.start
+        );
         self.now = self.now.max(t);
         let now = self.now;
-        let (mut due, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.transit).into_iter().partition(|d| d.0 <= now);
+        let (mut due, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.transit)
+            .into_iter()
+            .partition(|d| d.0 <= now);
         self.transit = rest;
         due.sort_by_key(|d| (d.0, d.1));
         for (_, _, to_server, mut bytes) in due {
@@ -267,7 +308,9 @@ impl Sim {
         let deadline = self.now + limit;
         self.flush();
         while !done(self) {
-            let Some(t) = self.next_event() else { return done(self) };
+            let Some(t) = self.next_event() else {
+                return done(self);
+            };
             if t > deadline {
                 return false;
             }
@@ -282,7 +325,10 @@ impl Sim {
         while let Some(e) = self.client.poll_event() {
             if let Event::Closed(reason) = e {
                 if self.trace {
-                    eprintln!("{:>8.1} ms  the client's connection is closed: {reason:?}", (self.now - self.start).as_secs_f64() * 1000.0);
+                    eprintln!(
+                        "{:>8.1} ms  the client's connection is closed: {reason:?}",
+                        (self.now - self.start).as_secs_f64() * 1000.0
+                    );
                 }
                 self.closed.get_or_insert(reason);
             }
@@ -318,8 +364,14 @@ impl Sim {
     fn write_on(&mut self, from_client: bool, id: u64, len: usize, fin: bool) {
         let key = (from_client, id);
         let at = self.book.written.get(&key).copied().unwrap_or(0);
-        let data: Vec<u8> = (0..len as u64).map(|i| pat(from_client, id, at + i)).collect();
-        let r = if from_client { self.client.stream_write(id, &data, fin) } else { self.server.streams.write(id, &data, fin) };
+        let data: Vec<u8> = (0..len as u64)
+            .map(|i| pat(from_client, id, at + i))
+            .collect();
+        let r = if from_client {
+            self.client.stream_write(id, &data, fin)
+        } else {
+            self.server.streams.write(id, &data, fin)
+        };
         match r {
             Ok(n) => {
                 assert!(n <= len, "a write took {n} of {len} bytes");
@@ -338,14 +390,24 @@ impl Sim {
         let key = (!by_client, id);
         let mut buf = vec![0u8; max.max(1)];
         for _ in 0..10_000 {
-            let r = if by_client { self.client.stream_read(id, &mut buf) } else { self.server.streams.read(id, &mut buf) };
+            let r = if by_client {
+                self.client.stream_read(id, &mut buf)
+            } else {
+                self.server.streams.read(id, &mut buf)
+            };
             match r {
                 Ok((n, fin)) => {
                     assert!(n <= buf.len());
                     let at = self.book.read.entry(key).or_insert(0);
                     if self.honest {
                         for (i, b) in buf[..n].iter().enumerate() {
-                            assert_eq!(*b, pat(key.0, id, *at + i as u64), "stream {id} (written by the {}): byte {} is not what was written", if key.0 { "client" } else { "server" }, *at + i as u64);
+                            assert_eq!(
+                                *b,
+                                pat(key.0, id, *at + i as u64),
+                                "stream {id} (written by the {}): byte {} is not what was written",
+                                if key.0 { "client" } else { "server" },
+                                *at + i as u64
+                            );
                         }
                     }
                     *at += n as u64;
@@ -368,7 +430,13 @@ impl Sim {
 
     /// Every stream that the books know of is read, by whoever is its reader.
     fn read_everything(&mut self) {
-        let keys: BTreeSet<(bool, u64)> = self.book.written.keys().chain(self.book.fin_written.iter()).copied().collect();
+        let keys: BTreeSet<(bool, u64)> = self
+            .book
+            .written
+            .keys()
+            .chain(self.book.fin_written.iter())
+            .copied()
+            .collect();
         for (from_client, id) in keys {
             self.read_on(!from_client, id, 5000);
         }
@@ -376,25 +444,47 @@ impl Sim {
 
     /// Whether every stream that was not broken has been read whole, with its end.
     fn complete(&self) -> bool {
-        self.book.written.keys().chain(self.book.fin_written.iter()).all(|key| {
-            self.book.broken.contains(key)
-                || (self.book.read.get(key).copied().unwrap_or(0) == self.book.written.get(key).copied().unwrap_or(0)
-                    && (!self.book.fin_written.contains(key) || self.book.fin_read.contains(key)))
-        })
+        self.book
+            .written
+            .keys()
+            .chain(self.book.fin_written.iter())
+            .all(|key| {
+                self.book.broken.contains(key)
+                    || (self.book.read.get(key).copied().unwrap_or(0)
+                        == self.book.written.get(key).copied().unwrap_or(0)
+                        && (!self.book.fin_written.contains(key)
+                            || self.book.fin_read.contains(key)))
+            })
     }
 
     fn describe_incomplete(&self) -> String {
         let mut s = String::new();
         if self.trace {
-            eprintln!("the server's streams: pending {} ; client {:?} stats {:?} timeout {:?}", self.server.streams.has_pending(), self.client.state(), self.client.stats(), self.client.timeout().map(|t| t.saturating_duration_since(self.now)));
+            eprintln!(
+                "the server's streams: pending {} ; client {:?} stats {:?} timeout {:?}",
+                self.server.streams.has_pending(),
+                self.client.state(),
+                self.client.stats(),
+                self.client
+                    .timeout()
+                    .map(|t| t.saturating_duration_since(self.now))
+            );
             for id in self.server.streams.stream_ids() {
-                eprintln!("server stream {id}: {}", self.server.streams.describe_send(id));
+                eprintln!(
+                    "server stream {id}: {}",
+                    self.server.streams.describe_send(id)
+                );
             }
             for id in self.known_client.iter().chain(self.own_client.iter()) {
                 eprintln!("client stream {id}: {}", self.client.describe_stream(*id));
             }
             eprintln!("client: window {} in flight {} ssthresh {} srtt {:?} streams pending {} confirmed {}", self.client.congestion().window(), self.client.bytes_in_flight(), self.client.congestion().ssthresh(), self.client.smoothed_rtt(), self.client.streams_have_pending(), self.client.is_confirmed());
-            eprintln!("server timer {:?}", self.server.timeout().map(|t| t.saturating_duration_since(self.now)));
+            eprintln!(
+                "server timer {:?}",
+                self.server
+                    .timeout()
+                    .map(|t| t.saturating_duration_since(self.now))
+            );
             eprintln!("what the server was told:");
             for line in self.server.log.iter().rev().take(80).rev() {
                 eprintln!("   {line}");
@@ -404,9 +494,19 @@ impl Sim {
             if self.book.broken.contains(key) {
                 continue;
             }
-            let (w, r) = (self.book.written.get(key).copied().unwrap_or(0), self.book.read.get(key).copied().unwrap_or(0));
-            if r != w || (self.book.fin_written.contains(key) && !self.book.fin_read.contains(key)) {
-                s += &format!("\n stream {} by the {}: wrote {w}, read {r}, end written {} read {}", key.1, if key.0 { "client" } else { "server" }, self.book.fin_written.contains(key), self.book.fin_read.contains(key));
+            let (w, r) = (
+                self.book.written.get(key).copied().unwrap_or(0),
+                self.book.read.get(key).copied().unwrap_or(0),
+            );
+            if r != w || (self.book.fin_written.contains(key) && !self.book.fin_read.contains(key))
+            {
+                s += &format!(
+                    "\n stream {} by the {}: wrote {w}, read {r}, end written {} read {}",
+                    key.1,
+                    if key.0 { "client" } else { "server" },
+                    self.book.fin_written.contains(key),
+                    self.book.fin_read.contains(key)
+                );
             }
         }
         if self.trace {
@@ -446,7 +546,11 @@ pub fn connection(data: &[u8]) {
     let mut config = Config::default();
     // (an honest run is not to end by the idle timeout because the loss was unlucky: backing off after the loss of a few probes in a
     // row takes seconds. A hostile one may, and ends so.)
-    config.max_idle_timeout = Duration::from_secs(if honest { [30, 60, 120][(b1 % 3) as usize] } else { [5, 15, 30][(b1 % 3) as usize] });
+    config.max_idle_timeout = Duration::from_secs(if honest {
+        [30, 60, 120][(b1 % 3) as usize]
+    } else {
+        [5, 15, 30][(b1 % 3) as usize]
+    });
     config.initial_max_data = windows[(b1 >> 2) as usize & 3];
     config.initial_max_stream_data_bidi_local = windows[(b1 >> 4) as usize & 3];
     config.initial_max_stream_data_uni = windows[(b1 >> 6) as usize & 3];
@@ -478,7 +582,15 @@ pub fn connection(data: &[u8]) {
     let now = Instant::now();
     let tls = server.client_config();
     let scid: Vec<u8> = (0..config.cid_len).map(|i| 0xa0 + i as u8).collect();
-    let client = Connection::connect_with_ids(&config, &tls, "example.test", now, scid, vec![0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7]).expect("a connection");
+    let client = Connection::connect_with_ids(
+        &config,
+        &tls,
+        "example.test",
+        now,
+        scid,
+        vec![0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7],
+    )
+    .expect("a connection");
     let mut sim = Sim {
         now,
         start: now,
@@ -494,7 +606,10 @@ pub fn connection(data: &[u8]) {
         corrupt: if honest { 3 } else { 10 },
         dropped_in_a_row: [0; 2],
         last_through: [now; 2],
-        starved: config.max_idle_timeout.min(Duration::from_millis(SERVER_IDLE_MS)) / 4,
+        starved: config
+            .max_idle_timeout
+            .min(Duration::from_millis(SERVER_IDLE_MS))
+            / 4,
         server_muted: false,
         honest,
         max_datagram: config.max_datagram_size,
@@ -518,7 +633,11 @@ pub fn connection(data: &[u8]) {
     // the handshake, over the same network
     let confirmed = sim.run_until(Duration::from_secs(120), |s| s.client.is_confirmed());
     if !confirmed {
-        assert!(!honest, "the handshake did not finish in two minutes: {:?}", sim.client.state());
+        assert!(
+            !honest,
+            "the handshake did not finish in two minutes: {:?}",
+            sim.client.state()
+        );
         return;
     }
     sim.service();
@@ -532,7 +651,10 @@ pub fn connection(data: &[u8]) {
         let a = c.u8();
         let n = c.u16() as usize;
         if sim.trace {
-            eprintln!("{:>8.1} ms  op {op} a {a} n {n}", (sim.now - sim.start).as_secs_f64() * 1000.0);
+            eprintln!(
+                "{:>8.1} ms  op {op} a {a} n {n}",
+                (sim.now - sim.start).as_secs_f64() * 1000.0
+            );
         }
         match op {
             0..=2 => {
@@ -540,7 +662,9 @@ pub fn connection(data: &[u8]) {
                     // (traffic, so that the idle timeout is not what ends a run that waits)
                     sim.client.ping();
                 }
-                sim.advance(Duration::from_millis([1, 7, 40][op as usize] * (1 + u64::from(a) % 8)))
+                sim.advance(Duration::from_millis(
+                    [1, 7, 40][op as usize] * (1 + u64::from(a) % 8),
+                ))
             }
             3 => {
                 if let Ok(id) = sim.client.open_stream(a & 1 == 0) {
@@ -549,14 +673,24 @@ pub fn connection(data: &[u8]) {
             }
             4 | 5 => {
                 let mut ids = sim.own_client.clone();
-                ids.extend(sim.known_client.iter().copied().filter(|&id| is_bidirectional(id) && id & 1 == 1));
+                ids.extend(
+                    sim.known_client
+                        .iter()
+                        .copied()
+                        .filter(|&id| is_bidirectional(id) && id & 1 == 1),
+                );
                 if let Some(id) = pick(&ids, a) {
                     sim.write_on(true, id, n % 2500, a % 9 == 0);
                 }
             }
             6 => {
                 let mut ids: Vec<u64> = sim.known_client.iter().copied().collect();
-                ids.extend(sim.own_client.iter().copied().filter(|&id| is_bidirectional(id)));
+                ids.extend(
+                    sim.own_client
+                        .iter()
+                        .copied()
+                        .filter(|&id| is_bidirectional(id)),
+                );
                 if let Some(id) = pick(&ids, a) {
                     sim.read_on(true, id, 1 + n % 3000);
                 }
@@ -566,7 +700,12 @@ pub fn connection(data: &[u8]) {
                 let code = u64::from(c.u8());
                 if a & 1 == 0 {
                     let mut ids: Vec<u64> = sim.known_client.iter().copied().collect();
-                    ids.extend(sim.own_client.iter().copied().filter(|&id| is_bidirectional(id)));
+                    ids.extend(
+                        sim.own_client
+                            .iter()
+                            .copied()
+                            .filter(|&id| is_bidirectional(id)),
+                    );
                     if let Some(id) = pick(&ids, a >> 1) {
                         if sim.client.stream_stop_sending(id, code).is_ok() {
                             sim.book.broken.insert((false, id));
@@ -574,7 +713,12 @@ pub fn connection(data: &[u8]) {
                     }
                 } else {
                     let mut ids = sim.own_client.clone();
-                    ids.extend(sim.known_client.iter().copied().filter(|&id| is_bidirectional(id)));
+                    ids.extend(
+                        sim.known_client
+                            .iter()
+                            .copied()
+                            .filter(|&id| is_bidirectional(id)),
+                    );
                     if let Some(id) = pick(&ids, a >> 1) {
                         if sim.client.stream_reset(id, code).is_ok() {
                             sim.book.broken.insert((true, id));
@@ -589,7 +733,12 @@ pub fn connection(data: &[u8]) {
             }
             9 | 10 => {
                 let mut ids = sim.own_server.clone();
-                ids.extend(sim.known_server.iter().copied().filter(|&id| is_bidirectional(id)));
+                ids.extend(
+                    sim.known_server
+                        .iter()
+                        .copied()
+                        .filter(|&id| is_bidirectional(id)),
+                );
                 if let Some(id) = pick(&ids, a) {
                     sim.write_on(false, id, n % 2500, a % 9 == 0);
                 }
@@ -649,8 +798,15 @@ pub fn connection(data: &[u8]) {
         sim.flush();
         sim.service();
         // what must hold of the client whatever happened
-        assert!(sim.client.congestion().window() >= 2 * 1200, "a congestion window of {} bytes", sim.client.congestion().window());
-        assert_eq!(sim.client.bytes_in_flight(), sim.client.congestion().bytes_in_flight());
+        assert!(
+            sim.client.congestion().window() >= 2 * 1200,
+            "a congestion window of {} bytes",
+            sim.client.congestion().window()
+        );
+        assert_eq!(
+            sim.client.bytes_in_flight(),
+            sim.client.congestion().bytes_in_flight()
+        );
     }
 
     if honest && !closed_by_us {
@@ -665,9 +821,24 @@ pub fn connection(data: &[u8]) {
             sim.advance(Duration::from_millis(100));
             assert!(!sim.client.is_closing(), "the client ended the connection: {:?}, {:?} (the server's streams said {:?}; at {:?}){}", sim.client.state(), sim.closed, sim.server.stream_error, sim.now - sim.start, sim.describe_incomplete());
         }
-        assert!(ok, "after two minutes the data has not all come:{} (client {:?}, {} lost of {} sent)", sim.describe_incomplete(), sim.client.state(), sim.client.stats().packets_lost, sim.client.stats().packets_sent);
-        assert!(sim.server.stream_error.is_none(), "the client broke a rule of streams: {:?}", sim.server.stream_error);
-        assert!(sim.server.close_received.is_none(), "the client closed: {:?}", sim.server.close_received);
+        assert!(
+            ok,
+            "after two minutes the data has not all come:{} (client {:?}, {} lost of {} sent)",
+            sim.describe_incomplete(),
+            sim.client.state(),
+            sim.client.stats().packets_lost,
+            sim.client.stats().packets_sent
+        );
+        assert!(
+            sim.server.stream_error.is_none(),
+            "the client broke a rule of streams: {:?}",
+            sim.server.stream_error
+        );
+        assert!(
+            sim.server.close_received.is_none(),
+            "the client closed: {:?}",
+            sim.server.close_received
+        );
 
         // everything arrived, so the acknowledgments of it do (the loss that is left is bounded), and a stream that both sides have
         // finished with, written to its end, acknowledged and read to its end, is then forgotten (or the books of a connection that
@@ -684,15 +855,23 @@ pub fn connection(data: &[u8]) {
         }
         assert!(settled, "everything arrived, but after two minutes the client still has {} bytes in flight (pending: {})", sim.client.bytes_in_flight(), sim.client.streams_have_pending());
         let live: BTreeSet<u64> = sim.client.stream_ids().into_iter().collect();
-        let ids: BTreeSet<u64> = sim.book.written.keys().chain(sim.book.fin_written.iter()).map(|k| k.1).collect();
+        let ids: BTreeSet<u64> = sim
+            .book
+            .written
+            .keys()
+            .chain(sim.book.fin_written.iter())
+            .map(|k| k.1)
+            .collect();
         for id in ids {
             let (sent, got) = ((true, id), (false, id));
             if sim.book.broken.contains(&sent) || sim.book.broken.contains(&got) {
                 continue;
             }
             let client_opened = id & 1 == 0;
-            let sending_done = (!client_opened && !is_bidirectional(id)) || sim.book.fin_written.contains(&sent);
-            let receiving_done = (client_opened && !is_bidirectional(id)) || sim.book.fin_read.contains(&got);
+            let sending_done =
+                (!client_opened && !is_bidirectional(id)) || sim.book.fin_written.contains(&sent);
+            let receiving_done =
+                (client_opened && !is_bidirectional(id)) || sim.book.fin_read.contains(&got);
             assert!(!(sending_done && receiving_done && live.contains(&id)), "stream {id} is finished both ways, and everything is acknowledged, but the client still keeps it ({})", sim.client.describe_stream(id));
         }
     }
@@ -713,8 +892,19 @@ pub fn connection(data: &[u8]) {
         }
         sim.advance(Duration::from_millis(500));
     }
-    assert!(ended, "after the script the connection did not end in 1000 seconds: {:?}, timer {:?}", sim.client.state(), sim.client.timeout());
-    assert!(sim.client.timeout().is_none(), "a closed connection with a timer");
+    assert!(
+        ended,
+        "after the script the connection did not end in 1000 seconds: {:?}, timer {:?}",
+        sim.client.state(),
+        sim.client.timeout()
+    );
+    assert!(
+        sim.client.timeout().is_none(),
+        "a closed connection with a timer"
+    );
     let mut buf = Vec::new();
-    assert!(!sim.client.poll_transmit(sim.now, &mut buf), "a closed connection sends");
+    assert!(
+        !sim.client.poll_transmit(sim.now, &mut buf),
+        "a closed connection sends"
+    );
 }

@@ -13,8 +13,84 @@
 
 pub(crate) const OUTPUT_LEN: usize = 20;
 
+/// Streaming SHA-1 for bounded-memory legacy protocol interoperability.
+#[derive(Clone)]
+pub struct Sha1 {
+    state: [u32; 5],
+    buffer: [u8; 64],
+    used: usize,
+    length: u64,
+}
+
+impl Default for Sha1 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sha1 {
+    pub fn new() -> Self {
+        Self {
+            state: [
+                0x6745_2301,
+                0xefcd_ab89,
+                0x98ba_dcfe,
+                0x1032_5476,
+                0xc3d2_e1f0,
+            ],
+            buffer: [0; 64],
+            used: 0,
+            length: 0,
+        }
+    }
+
+    pub fn update(&mut self, mut bytes: &[u8]) {
+        self.length = self.length.wrapping_add(bytes.len() as u64);
+        if self.used != 0 {
+            let take = (64 - self.used).min(bytes.len());
+            self.buffer[self.used..self.used + take].copy_from_slice(&bytes[..take]);
+            self.used += take;
+            bytes = &bytes[take..];
+            if self.used != 64 {
+                return;
+            }
+            compress(&mut self.state, &self.buffer);
+            self.used = 0;
+        }
+        let mut chunks = bytes.chunks_exact(64);
+        for block in &mut chunks {
+            compress(&mut self.state, block.try_into().unwrap());
+        }
+        let rest = chunks.remainder();
+        self.buffer[..rest.len()].copy_from_slice(rest);
+        self.used = rest.len();
+    }
+
+    pub fn finalize(mut self) -> [u8; 20] {
+        let mut tail = [0; 128];
+        tail[..self.used].copy_from_slice(&self.buffer[..self.used]);
+        tail[self.used] = 0x80;
+        let total = if self.used < 56 { 64 } else { 128 };
+        tail[total - 8..total].copy_from_slice(&self.length.wrapping_mul(8).to_be_bytes());
+        for block in tail[..total].chunks_exact(64) {
+            compress(&mut self.state, block.try_into().unwrap());
+        }
+        let mut out = [0; 20];
+        for (dst, word) in out.chunks_exact_mut(4).zip(self.state) {
+            dst.copy_from_slice(&word.to_be_bytes());
+        }
+        out
+    }
+}
+
 pub(crate) fn digest(data: &[u8]) -> [u8; OUTPUT_LEN] {
-    let mut h: [u32; 5] = [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476, 0xc3d2_e1f0];
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xefcd_ab89,
+        0x98ba_dcfe,
+        0x1032_5476,
+        0xc3d2_e1f0,
+    ];
     let bit_len = (data.len() as u64).wrapping_mul(8);
 
     let mut chunks = data.chunks_exact(64);
@@ -42,7 +118,12 @@ pub(crate) fn digest(data: &[u8]) -> [u8; OUTPUT_LEN] {
 fn compress(h: &mut [u32; 5], block: &[u8; 64]) {
     let mut w = [0u32; 80];
     for i in 0..16 {
-        w[i] = u32::from_be_bytes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]);
+        w[i] = u32::from_be_bytes([
+            block[4 * i],
+            block[4 * i + 1],
+            block[4 * i + 2],
+            block[4 * i + 3],
+        ]);
     }
     for i in 16..80 {
         w[i] = (w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_left(1);
@@ -55,7 +136,12 @@ fn compress(h: &mut [u32; 5], block: &[u8; 64]) {
             40..=59 => ((b & c) | (b & d) | (c & d), 0x8f1b_bcdc),
             _ => (b ^ c ^ d, 0xca62_c1d6),
         };
-        let t = a.rotate_left(5).wrapping_add(f).wrapping_add(e).wrapping_add(k).wrapping_add(*wi);
+        let t = a
+            .rotate_left(5)
+            .wrapping_add(f)
+            .wrapping_add(e)
+            .wrapping_add(k)
+            .wrapping_add(*wi);
         e = d;
         d = c;
         c = b.rotate_left(30);
@@ -76,14 +162,25 @@ mod tests {
 
     #[test]
     fn fips_180_vectors() {
-        assert_eq!(hex(&digest(b"")), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
-        assert_eq!(hex(&digest(b"abc")), "a9993e364706816aba3e25717850c26c9cd0d89d");
         assert_eq!(
-            hex(&digest(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")),
+            hex(&digest(b"")),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
+        assert_eq!(
+            hex(&digest(b"abc")),
+            "a9993e364706816aba3e25717850c26c9cd0d89d"
+        );
+        assert_eq!(
+            hex(&digest(
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+            )),
             "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
         );
         let million_a = vec![b'a'; 1_000_000];
-        assert_eq!(hex(&digest(&million_a)), "34aa973cd4c4daa4f61eeb2bdbad27316534016f");
+        assert_eq!(
+            hex(&digest(&million_a)),
+            "34aa973cd4c4daa4f61eeb2bdbad27316534016f"
+        );
     }
 
     /// Lengths around the padding boundaries (55, 56, 63, 64 bytes) against known hashes of

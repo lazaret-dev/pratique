@@ -12,7 +12,9 @@ use super::hpack::{Decoder, Encoder, FieldRef};
 /// the limit must be written by an encoder and read back by a fresh decoder as the same list, with and without the
 /// fields marked sensitive.
 pub fn hpack(data: &[u8]) {
-    let Some((&sel, block)) = data.split_first() else { return };
+    let Some((&sel, block)) = data.split_first() else {
+        return;
+    };
     let allowed = [0usize, 64, 512, 4096][(sel & 3) as usize];
     let list = [100usize, 1000, 64 << 10, 1 << 20][((sel >> 2) & 3) as usize];
     let mut decoder = Decoder::new(allowed, list);
@@ -22,7 +24,14 @@ pub fn hpack(data: &[u8]) {
     let _ = decoder.decode(block, &mut again);
     if let Ok(true) = first {
         for sensitive in [false, true] {
-            let refs: Vec<FieldRef<'_>> = fields.iter().map(|f| FieldRef { name: &f.name, value: &f.value, sensitive }).collect();
+            let refs: Vec<FieldRef<'_>> = fields
+                .iter()
+                .map(|f| FieldRef {
+                    name: &f.name,
+                    value: &f.value,
+                    sensitive,
+                })
+                .collect();
             let mut encoder = Encoder::new();
             let mut wire = Vec::new();
             encoder.encode(&refs, &mut wire);
@@ -31,11 +40,22 @@ pub fn hpack(data: &[u8]) {
             encoder.encode(&refs, &mut wire2);
             let mut fresh = Decoder::new(4096, 1 << 24);
             let mut back = Vec::new();
-            assert_eq!(fresh.decode(&wire, &mut back), Ok(true), "a block we wrote does not decode");
+            assert_eq!(
+                fresh.decode(&wire, &mut back),
+                Ok(true),
+                "a block we wrote does not decode"
+            );
             assert_eq!(back, fields, "a block we wrote decodes to other fields");
             let mut back2 = Vec::new();
-            assert_eq!(fresh.decode(&wire2, &mut back2), Ok(true), "a second block we wrote does not decode");
-            assert_eq!(back2, fields, "a second block we wrote decodes to other fields");
+            assert_eq!(
+                fresh.decode(&wire2, &mut back2),
+                Ok(true),
+                "a second block we wrote does not decode"
+            );
+            assert_eq!(
+                back2, fields,
+                "a second block we wrote decodes to other fields"
+            );
         }
     }
 }
@@ -54,12 +74,20 @@ pub fn frames(data: &[u8]) -> usize {
         let payload = &data[pos + HEADER_LEN..end];
         if let Ok(frame) = frame::parse(&header, payload) {
             match frame {
-                Frame::Data { data, flow_len, .. } => assert!(data.len() <= flow_len as usize && flow_len == header.length),
-                Frame::Headers { fragment, .. } | Frame::Continuation { fragment, .. } => assert!(fragment.len() <= payload.len()),
-                Frame::Settings { ack, values } => assert!(values.len() * 6 == payload.len() && (!ack || values.is_empty())),
+                Frame::Data { data, flow_len, .. } => {
+                    assert!(data.len() <= flow_len as usize && flow_len == header.length)
+                }
+                Frame::Headers { fragment, .. } | Frame::Continuation { fragment, .. } => {
+                    assert!(fragment.len() <= payload.len())
+                }
+                Frame::Settings { ack, values } => {
+                    assert!(values.len() * 6 == payload.len() && (!ack || values.is_empty()))
+                }
                 Frame::GoAway { debug, .. } => assert!(debug.len() + 8 == payload.len()),
                 Frame::Ping { .. } => assert_eq!(payload.len(), 8),
-                Frame::WindowUpdate { .. } | Frame::RstStream { .. } => assert_eq!(payload.len(), 4),
+                Frame::WindowUpdate { .. } | Frame::RstStream { .. } => {
+                    assert_eq!(payload.len(), 4)
+                }
                 Frame::Priority { .. } | Frame::PushPromise { .. } | Frame::Unknown { .. } => {}
             }
         }
@@ -119,8 +147,18 @@ fn client_run(data: &[u8], direct: bool) {
     let open = |c: &mut Connection, ids: &mut Vec<u32>, posts: &mut Vec<u32>| {
         for i in 0..requests {
             let method = ["GET", "POST", "HEAD"][i % 3];
-            let headers = vec![("accept".to_string(), "*/*".to_string()), ("x-n".to_string(), i.to_string())];
-            let request = Request { method, scheme: "https", authority: "example.com", path: "/a?b=c", headers: &headers, secret: &[] };
+            let headers = vec![
+                ("accept".to_string(), "*/*".to_string()),
+                ("x-n".to_string(), i.to_string()),
+            ];
+            let request = Request {
+                method,
+                scheme: "https",
+                authority: "example.com",
+                path: "/a?b=c",
+                headers: &headers,
+                secret: &[],
+            };
             if let Ok(id) = c.open_stream(&request, method != "POST") {
                 ids.push(id);
                 if method == "POST" {
@@ -159,7 +197,10 @@ fn client_run(data: &[u8], direct: bool) {
                 let mut d = Direct::new(first, &mut scratch);
                 lost = c.feed_direct(&input[offset..end], Some(&mut d)).is_err();
                 let w = d.written();
-                assert!(w == 0 || !collecting.contains(&first), "a stream that collects had its body written to a reader's buffer");
+                assert!(
+                    w == 0 || !collecting.contains(&first),
+                    "a stream that collects had its body written to a reader's buffer"
+                );
                 delivered[0].extend_from_slice(&scratch[..w]);
             }
             _ => lost = c.feed(&input[offset..end]).is_err(),
@@ -209,14 +250,23 @@ fn client_run(data: &[u8], direct: bool) {
             }
         };
         let got = &delivered[i];
-        assert!(sent.starts_with(got), "stream {id} gave {} bytes that are not the start of the {} its DATA frames carry", got.len(), sent.len());
+        assert!(
+            sent.starts_with(got),
+            "stream {id} gave {} bytes that are not the start of the {} its DATA frames carry",
+            got.len(),
+            sent.len()
+        );
         if ended {
             assert_eq!(Some(got.len()), end, "stream {id} ended with {} bytes of body, where its DATA frames carry {end:?} to the end", got.len());
         }
         c.release_stream(id);
     }
     c.assert_books();
-    assert_eq!(c.active_streams(), 0, "a stream is still active after every one was released");
+    assert_eq!(
+        c.active_streams(),
+        0,
+        "a stream is still active after every one was released"
+    );
     wire.take(&mut c);
     wire.check();
 }
@@ -224,18 +274,32 @@ fn client_run(data: &[u8], direct: bool) {
 /// Asks a collecting stream for its body: if it is done, the body is within the limit, and the first time it is added to
 /// what the stream gave (`taken` says it was); if the transport is lost (`over`), it must be done or failed, and not still
 /// waiting.
-fn poll_collected(c: &mut Connection, id: u32, limit: u64, over: bool, delivered: &mut Vec<u8>, taken: &mut bool) {
+fn poll_collected(
+    c: &mut Connection,
+    id: u32,
+    limit: u64,
+    over: bool,
+    delivered: &mut Vec<u8>,
+    taken: &mut bool,
+) {
     let mut body = Vec::new();
     match c.collected(id, &mut body) {
         Collected::Done(_) => {
-            assert!(body.len() as u64 <= limit, "a collected body of {} bytes is over the limit {limit}", body.len());
+            assert!(
+                body.len() as u64 <= limit,
+                "a collected body of {} bytes is over the limit {limit}",
+                body.len()
+            );
             if !*taken {
                 delivered.extend_from_slice(&body);
                 *taken = true;
             }
         }
         Collected::Failed { .. } => {}
-        Collected::Pending(_) => assert!(!over, "stream {id} is still pending after the connection was lost"),
+        Collected::Pending(_) => assert!(
+            !over,
+            "stream {id} is still pending after the connection was lost"
+        ),
     }
 }
 
@@ -275,14 +339,19 @@ fn sent_body(input: &[u8], id: u32) -> (Vec<u8>, Option<usize>) {
                 }
                 break;
             }
-            if let Ok(Frame::Data { data, .. }) = frame::parse(&header, &input[pos + HEADER_LEN..end]) {
+            if let Ok(Frame::Data { data, .. }) =
+                frame::parse(&header, &input[pos + HEADER_LEN..end])
+            {
                 body.extend_from_slice(data);
             }
         }
         if end > input.len() {
             break;
         }
-        if header.stream == id && ends_stream && (header.kind == frame::kind::DATA || header.kind == frame::kind::HEADERS) {
+        if header.stream == id
+            && ends_stream
+            && (header.kind == frame::kind::DATA || header.kind == frame::kind::HEADERS)
+        {
             let len = body.len();
             return (body, Some(len));
         }
@@ -309,7 +378,10 @@ impl Writer {
     fn check(&mut self) {
         let mut rest = &self.bytes[..];
         if !self.prefaced {
-            assert!(rest.starts_with(PREFACE), "the connection did not begin with the preface");
+            assert!(
+                rest.starts_with(PREFACE),
+                "the connection did not begin with the preface"
+            );
             rest = &rest[PREFACE.len()..];
             self.prefaced = true;
         }
@@ -319,28 +391,48 @@ impl Writer {
         while !rest.is_empty() {
             assert!(rest.len() >= HEADER_LEN, "a frame header was cut short");
             let header = Header::parse(rest[..HEADER_LEN].try_into().unwrap());
-            assert!(header.length <= DEFAULT_MAX_FRAME_SIZE, "a frame larger than the peer allows");
+            assert!(
+                header.length <= DEFAULT_MAX_FRAME_SIZE,
+                "a frame larger than the peer allows"
+            );
             let end = HEADER_LEN + header.length as usize;
             assert!(rest.len() >= end, "a frame was cut short");
-            let frame = frame::parse(&header, &rest[HEADER_LEN..end]).unwrap_or_else(|e| panic!("a frame the client wrote does not parse: {e:?}"));
+            let frame = frame::parse(&header, &rest[HEADER_LEN..end])
+                .unwrap_or_else(|e| panic!("a frame the client wrote does not parse: {e:?}"));
             match frame {
-                Frame::Headers { end_headers, fragment, .. } => {
+                Frame::Headers {
+                    end_headers,
+                    fragment,
+                    ..
+                } => {
                     assert!(!in_block, "a HEADERS inside a header block");
                     block.clear();
                     block.extend_from_slice(fragment);
                     in_block = !end_headers;
                     if end_headers {
                         let mut fields = Vec::new();
-                        assert_eq!(decoder.decode(&block, &mut fields), Ok(true), "a header block the client wrote does not decode");
+                        assert_eq!(
+                            decoder.decode(&block, &mut fields),
+                            Ok(true),
+                            "a header block the client wrote does not decode"
+                        );
                     }
                 }
-                Frame::Continuation { end_headers, fragment, .. } => {
+                Frame::Continuation {
+                    end_headers,
+                    fragment,
+                    ..
+                } => {
                     assert!(in_block, "a CONTINUATION outside a header block");
                     block.extend_from_slice(fragment);
                     if end_headers {
                         in_block = false;
                         let mut fields = Vec::new();
-                        assert_eq!(decoder.decode(&block, &mut fields), Ok(true), "a header block the client wrote does not decode");
+                        assert_eq!(
+                            decoder.decode(&block, &mut fields),
+                            Ok(true),
+                            "a header block the client wrote does not decode"
+                        );
                     }
                 }
                 _ => assert!(!in_block, "a frame inside a header block"),
@@ -405,11 +497,15 @@ pub fn server(data: &[u8]) {
     // what the server wrote is whole frames that parse (its first frame is SETTINGS: it has no preface)
     let mut rest = &written[..];
     while !rest.is_empty() {
-        assert!(rest.len() >= HEADER_LEN, "the server wrote a frame header and stopped");
+        assert!(
+            rest.len() >= HEADER_LEN,
+            "the server wrote a frame header and stopped"
+        );
         let header = Header::parse(rest[..HEADER_LEN].try_into().unwrap());
         let end = HEADER_LEN + header.length as usize;
         assert!(rest.len() >= end, "the server wrote a frame and stopped");
-        frame::parse(&header, &rest[HEADER_LEN..end]).unwrap_or_else(|e| panic!("a frame the server wrote does not parse: {e:?}"));
+        frame::parse(&header, &rest[HEADER_LEN..end])
+            .unwrap_or_else(|e| panic!("a frame the server wrote does not parse: {e:?}"));
         rest = &rest[end..];
     }
 }
@@ -419,7 +515,14 @@ pub fn server(data: &[u8]) {
 pub fn example_server_flights() -> Vec<Vec<u8>> {
     let mut encoder = Encoder::new();
     let mut block = |fields: &[(&str, &str)]| -> Vec<u8> {
-        let refs: Vec<FieldRef<'_>> = fields.iter().map(|(n, v)| FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false }).collect();
+        let refs: Vec<FieldRef<'_>> = fields
+            .iter()
+            .map(|(n, v)| FieldRef {
+                name: n.as_bytes(),
+                value: v.as_bytes(),
+                sensitive: false,
+            })
+            .collect();
         let mut out = Vec::new();
         encoder.encode(&refs, &mut out);
         out
@@ -427,13 +530,35 @@ pub fn example_server_flights() -> Vec<Vec<u8>> {
     let mut flights = Vec::new();
 
     let mut f = Vec::new();
-    frame::write_header_block(&mut f, 1, false, &block(&[(":status", "200"), ("content-type", "text/plain"), ("content-length", "5")]), 16384);
+    frame::write_header_block(
+        &mut f,
+        1,
+        false,
+        &block(&[
+            (":status", "200"),
+            ("content-type", "text/plain"),
+            ("content-length", "5"),
+        ]),
+        16384,
+    );
     frame::write_data(&mut f, 1, true, b"hello");
     flights.push(f);
 
     let mut f = Vec::new();
-    frame::write_header_block(&mut f, 1, false, &block(&[(":status", "103"), ("link", "</a>; rel=preload")]), 16384);
-    frame::write_header_block(&mut f, 1, false, &block(&[(":status", "200"), ("server", "x")]), 16384);
+    frame::write_header_block(
+        &mut f,
+        1,
+        false,
+        &block(&[(":status", "103"), ("link", "</a>; rel=preload")]),
+        16384,
+    );
+    frame::write_header_block(
+        &mut f,
+        1,
+        false,
+        &block(&[(":status", "200"), ("server", "x")]),
+        16384,
+    );
     frame::write_data(&mut f, 1, false, &[b'a'; 300]);
     frame::write_header_block(&mut f, 1, true, &block(&[("x-trailer", "1")]), 16384);
     frame::write_ping(&mut f, false, *b"12345678");
@@ -455,15 +580,31 @@ pub fn example_server_flights() -> Vec<Vec<u8>> {
     let pieces: Vec<&[u8]> = whole.chunks(50).collect();
     for (i, piece) in pieces.iter().enumerate() {
         let last = i + 1 == pieces.len();
-        let kind = if i == 0 { frame::kind::HEADERS } else { frame::kind::CONTINUATION };
-        Header { length: piece.len() as u32, kind, flags: if last { frame::flag::END_HEADERS } else { 0 }, stream: 1 }.write(&mut f);
+        let kind = if i == 0 {
+            frame::kind::HEADERS
+        } else {
+            frame::kind::CONTINUATION
+        };
+        Header {
+            length: piece.len() as u32,
+            kind,
+            flags: if last { frame::flag::END_HEADERS } else { 0 },
+            stream: 1,
+        }
+        .write(&mut f);
         f.extend_from_slice(piece);
     }
     frame::write_data(&mut f, 1, true, b"x");
     flights.push(f);
 
     let mut f = Vec::new();
-    frame::write_settings(&mut f, &[(frame::setting::INITIAL_WINDOW_SIZE, 100), (frame::setting::MAX_FRAME_SIZE, 16384)]);
+    frame::write_settings(
+        &mut f,
+        &[
+            (frame::setting::INITIAL_WINDOW_SIZE, 100),
+            (frame::setting::MAX_FRAME_SIZE, 16384),
+        ],
+    );
     frame::write_settings_ack(&mut f);
     frame::write_window_update(&mut f, 1, 50);
     frame::write_header_block(&mut f, 5, true, &block(&[(":status", "304")]), 16384);
@@ -476,11 +617,33 @@ pub fn example_header_blocks() -> Vec<Vec<u8>> {
     let mut encoder = Encoder::new();
     let mut out = Vec::new();
     for fields in [
-        &[(":status", "200"), ("content-type", "text/html"), ("content-length", "1234")][..],
-        &[(":method", "GET"), (":scheme", "https"), (":path", "/index.html"), (":authority", "example.com"), ("accept", "*/*")][..],
-        &[("cookie", "a=b"), ("set-cookie", "c=d; Path=/"), ("x-same", "x-same"), ("x-same", "x-same")][..],
+        &[
+            (":status", "200"),
+            ("content-type", "text/html"),
+            ("content-length", "1234"),
+        ][..],
+        &[
+            (":method", "GET"),
+            (":scheme", "https"),
+            (":path", "/index.html"),
+            (":authority", "example.com"),
+            ("accept", "*/*"),
+        ][..],
+        &[
+            ("cookie", "a=b"),
+            ("set-cookie", "c=d; Path=/"),
+            ("x-same", "x-same"),
+            ("x-same", "x-same"),
+        ][..],
     ] {
-        let refs: Vec<FieldRef<'_>> = fields.iter().map(|(n, v)| FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: n == &"set-cookie" }).collect();
+        let refs: Vec<FieldRef<'_>> = fields
+            .iter()
+            .map(|(n, v)| FieldRef {
+                name: n.as_bytes(),
+                value: v.as_bytes(),
+                sensitive: n == &"set-cookie",
+            })
+            .collect();
         let mut block = vec![0u8];
         encoder.encode(&refs, &mut block);
         out.push(block);
@@ -492,13 +655,24 @@ pub fn example_header_blocks() -> Vec<Vec<u8>> {
 /// and a reset, for seeds of the server's target.
 pub fn example_client_flights() -> Vec<Vec<u8>> {
     let mut flights = Vec::new();
-    for (method, end, long) in [("GET", true, false), ("POST", false, false), ("GET", true, true)] {
+    for (method, end, long) in [
+        ("GET", true, false),
+        ("POST", false, false),
+        ("GET", true, true),
+    ] {
         let mut c = Connection::new(Config::default());
         let mut headers = vec![("accept".to_string(), "*/*".to_string())];
         if long {
             headers.push(("x-long".to_string(), "v".repeat(40_000)));
         }
-        let request = Request { method, scheme: "https", authority: "example.com", path: "/a?b=c", headers: &headers, secret: &[] };
+        let request = Request {
+            method,
+            scheme: "https",
+            authority: "example.com",
+            path: "/a?b=c",
+            headers: &headers,
+            secret: &[],
+        };
         let _ = c.feed(&{
             let mut s = Vec::new();
             frame::write_settings(&mut s, &[]);
@@ -512,7 +686,8 @@ pub fn example_client_flights() -> Vec<Vec<u8>> {
         let out = c.output().to_vec();
         // the preface and the client's SETTINGS are the fuzz target's own business
         let mut rest = &out[PREFACE.len()..];
-        let settings_len = HEADER_LEN + Header::parse(rest[..HEADER_LEN].try_into().unwrap()).length as usize;
+        let settings_len =
+            HEADER_LEN + Header::parse(rest[..HEADER_LEN].try_into().unwrap()).length as usize;
         rest = &rest[settings_len..];
         flights.push(rest.to_vec());
     }

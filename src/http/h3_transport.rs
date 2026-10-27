@@ -28,11 +28,16 @@
 use super::altsvc::{self, Alternative, Parsed};
 use super::h2::connection::{Head, Request};
 use super::h2_transport::{Failure, StartError, Waits};
-use super::h3::connection::{Config as H3Config, Connection as H3Connection, OpenError, QuicTransport, StreamError, StreamEvent};
+use super::h3::connection::{
+    Config as H3Config, Connection as H3Connection, OpenError, QuicTransport, StreamError,
+    StreamEvent,
+};
 use super::h3::frame::code as h3_code;
 use super::idle::Key;
 use crate::error::Error;
-use crate::quic::connection::{CloseReason, Config as QuicConfig, Connection as QuicConnection, Event};
+use crate::quic::connection::{
+    CloseReason, Config as QuicConfig, Connection as QuicConnection, Event,
+};
 use crate::tls::ClientConfig;
 use std::collections::HashMap;
 use std::io;
@@ -141,15 +146,28 @@ pub(super) struct DialOptions {
 
 /// Makes a QUIC connection to `host:port` that is authenticated as `server_name` (the origin: an alternative service has to be
 /// authoritative for it), and starts its threads.
-pub(super) fn dial(host: &str, port: u16, server_name: &str, tls: &ClientConfig, opts: DialOptions) -> Result<Arc<Shared>, Error> {
+pub(super) fn dial(
+    host: &str,
+    port: u16,
+    server_name: &str,
+    tls: &ClientConfig,
+    opts: DialOptions,
+) -> Result<Arc<Shared>, Error> {
     let now = Instant::now();
-    let mut limit = now.checked_add(opts.handshake_timeout).unwrap_or(now + Duration::from_secs(3600));
+    let mut limit = now
+        .checked_add(opts.handshake_timeout)
+        .unwrap_or(now + Duration::from_secs(3600));
     if let Some(d) = opts.deadline {
         limit = limit.min(d);
     }
     // the client's resolver (its cache, and its order: the address that last connected over TCP first, the families
     // interleaved), within the time of the handshake
-    let addrs: Vec<SocketAddr> = opts.resolver.resolve(host, limit)?.into_iter().map(|ip| SocketAddr::new(ip, port)).collect();
+    let addrs: Vec<SocketAddr> = opts
+        .resolver
+        .resolve(host, limit)?
+        .into_iter()
+        .map(|ip| SocketAddr::new(ip, port))
+        .collect();
     if addrs.is_empty() {
         return Err(Error::Http(format!("no address for {host}")));
     }
@@ -162,20 +180,42 @@ pub(super) fn dial(host: &str, port: u16, server_name: &str, tls: &ClientConfig,
         // (an address that does not answer is not given all the time there is when another may)
         let until = Instant::now() + if i + 1 < addrs.len() { left / 2 } else { left };
         match handshake(*addr, server_name, tls, until) {
-            Ok((socket, quic)) => return Shared::start_threads(socket, quic, opts.idle_timeout, (host.to_ascii_lowercase(), port)),
+            Ok((socket, quic)) => {
+                return Shared::start_threads(
+                    socket,
+                    quic,
+                    opts.idle_timeout,
+                    (host.to_ascii_lowercase(), port),
+                )
+            }
             Err(e) => last = Some(e),
         }
     }
-    Err(last.unwrap_or_else(|| Error::Io(io::Error::new(io::ErrorKind::TimedOut, "timed out making a QUIC connection"))))
+    Err(last.unwrap_or_else(|| {
+        Error::Io(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "timed out making a QUIC connection",
+        ))
+    }))
 }
 
 /// The handshake with one address, on a socket of its own, up to the moment the 1-RTT keys are in (the requests can go from then on).
-fn handshake(addr: SocketAddr, server_name: &str, tls: &ClientConfig, until: Instant) -> Result<(UdpSocket, QuicConnection), Error> {
-    let socket = UdpSocket::bind(if addr.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" })?;
+fn handshake(
+    addr: SocketAddr,
+    server_name: &str,
+    tls: &ClientConfig,
+    until: Instant,
+) -> Result<(UdpSocket, QuicConnection), Error> {
+    let socket = UdpSocket::bind(if addr.is_ipv6() {
+        "[::]:0"
+    } else {
+        "0.0.0.0:0"
+    })?;
     socket.connect(addr)?;
     let mut tls = tls.clone();
     tls.alpn_protocols = vec![b"h3".to_vec()];
-    let mut quic = QuicConnection::connect(&QuicConfig::default(), &tls, server_name, Instant::now())?;
+    let mut quic =
+        QuicConnection::connect(&QuicConfig::default(), &tls, server_name, Instant::now())?;
     let mut out = Vec::new();
     let mut buf = vec![0u8; 65536];
     loop {
@@ -188,22 +228,39 @@ fn handshake(addr: SocketAddr, server_name: &str, tls: &ClientConfig, until: Ins
             match ev {
                 Event::Established => {
                     if quic.alpn() != Some(b"h3") {
-                        return Err(Error::Http("the server did not choose HTTP/3 in the QUIC handshake".into()));
+                        return Err(Error::Http(
+                            "the server did not choose HTTP/3 in the QUIC handshake".into(),
+                        ));
                     }
                     return Ok((socket, quic));
                 }
-                Event::Closed(reason) => return Err(Error::Http(format!("the QUIC handshake failed: {}", describe_close(&reason)))),
+                Event::Closed(reason) => {
+                    return Err(Error::Http(format!(
+                        "the QUIC handshake failed: {}",
+                        describe_close(&reason)
+                    )))
+                }
                 Event::Confirmed => {}
             }
         }
         if now >= until {
-            return Err(Error::Io(io::Error::new(io::ErrorKind::TimedOut, "timed out in the QUIC handshake")));
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out in the QUIC handshake",
+            )));
         }
         let wake = quic.timeout().map_or(until, |t| t.min(until));
-        socket.set_read_timeout(Some(wake.saturating_duration_since(now).max(Duration::from_millis(1))))?;
+        socket.set_read_timeout(Some(
+            wake.saturating_duration_since(now)
+                .max(Duration::from_millis(1)),
+        ))?;
         match socket.recv(&mut buf) {
             Ok(n) => quic.recv(Instant::now(), &mut buf[..n]),
-            Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {}
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
             // an ICMP "port unreachable" comes back as this: nothing listens
             Err(e) => return Err(Error::Io(e)),
         }
@@ -216,12 +273,24 @@ fn handshake(addr: SocketAddr, server_name: &str, tls: &ClientConfig, until: Ins
 fn describe_close(reason: &CloseReason) -> String {
     match reason {
         CloseReason::Local(e) => e.to_string(),
-        CloseReason::Application { code, .. } => format!("closed by us with application error {code:#x}"),
-        CloseReason::PeerTransport { code, reason, .. } => format!("the server closed the connection with transport error {code:#x} ({})", String::from_utf8_lossy(reason)),
-        CloseReason::PeerApplication { code, reason } => format!("the server closed the connection with application error {code:#x} ({})", String::from_utf8_lossy(reason)),
+        CloseReason::Application { code, .. } => {
+            format!("closed by us with application error {code:#x}")
+        }
+        CloseReason::PeerTransport { code, reason, .. } => format!(
+            "the server closed the connection with transport error {code:#x} ({})",
+            String::from_utf8_lossy(reason)
+        ),
+        CloseReason::PeerApplication { code, reason } => format!(
+            "the server closed the connection with application error {code:#x} ({})",
+            String::from_utf8_lossy(reason)
+        ),
         CloseReason::IdleTimeout => "the connection timed out".into(),
-        CloseReason::StatelessReset => "the server has no state for the connection (a stateless reset)".into(),
-        CloseReason::VersionNegotiation(v) => format!("the server does not speak QUIC version 1 (it listed {v:x?})"),
+        CloseReason::StatelessReset => {
+            "the server has no state for the connection (a stateless reset)".into()
+        }
+        CloseReason::VersionNegotiation(v) => {
+            format!("the server does not speak QUIC version 1 (it listed {v:x?})")
+        }
     }
 }
 
@@ -231,7 +300,12 @@ impl Shared {
         (&self.endpoint.0, self.endpoint.1)
     }
 
-    fn start_threads(socket: UdpSocket, quic: QuicConnection, idle_timeout: Duration, endpoint: (String, u16)) -> Result<Arc<Shared>, Error> {
+    fn start_threads(
+        socket: UdpSocket,
+        quic: QuicConnection,
+        idle_timeout: Duration,
+        endpoint: (String, u16),
+    ) -> Result<Arc<Shared>, Error> {
         let state = State {
             quic,
             h3: H3Connection::new(H3Config::default()),
@@ -244,7 +318,14 @@ impl Shared {
             slots: HashMap::new(),
             timer_at: None,
         };
-        let shared = Arc::new(Shared { state: Mutex::new(state), timer: Condvar::new(), socket, idle_timeout, done: AtomicBool::new(false), endpoint });
+        let shared = Arc::new(Shared {
+            state: Mutex::new(state),
+            timer: Condvar::new(),
+            socket,
+            idle_timeout,
+            done: AtomicBool::new(false),
+            endpoint,
+        });
         shared.socket.set_read_timeout(Some(READ_WAIT))?;
         {
             // (the HTTP/3 layer opens its three streams and says its SETTINGS)
@@ -252,9 +333,14 @@ impl Shared {
             shared.pump(&mut g);
         }
         let reader = shared.clone();
-        thread::Builder::new().name("pratique-h3-read".into()).spawn(move || reader.read_loop())?;
+        thread::Builder::new()
+            .name("pratique-h3-read".into())
+            .spawn(move || reader.read_loop())?;
         let timer = shared.clone();
-        if let Err(e) = thread::Builder::new().name("pratique-h3-timer".into()).spawn(move || timer.timer_loop()) {
+        if let Err(e) = thread::Builder::new()
+            .name("pratique-h3-timer".into())
+            .spawn(move || timer.timer_loop())
+        {
             shared.retire();
             return Err(e.into());
         }
@@ -297,15 +383,28 @@ impl Shared {
 
     /// Sends the datagrams that are due.
     fn transmit(&self, g: &mut State, now: Instant) {
-        let State { quic, out, lost, .. } = &mut *g;
+        let State {
+            quic, out, lost, ..
+        } = &mut *g;
         // one switch to data-independent timing for the whole flight (B-104); the sends in between do not mind it
         let _dit = crate::crypto::dit::Dit::on();
         while quic.poll_transmit(now, out) {
             if let Err(e) = self.socket.send(out) {
                 // A send that fails once the connection is up is a datagram that is lost, which the connection deals with as it does
                 // any other; but one that says there is no route is a connection that is not going to come back.
-                if lost.is_none() && matches!(e.kind(), io::ErrorKind::NetworkUnreachable | io::ErrorKind::HostUnreachable | io::ErrorKind::NetworkDown | io::ErrorKind::PermissionDenied) {
-                    *lost = Some(Lost { peer_closed: true, why: format!("sending failed: {e}") });
+                if lost.is_none()
+                    && matches!(
+                        e.kind(),
+                        io::ErrorKind::NetworkUnreachable
+                            | io::ErrorKind::HostUnreachable
+                            | io::ErrorKind::NetworkDown
+                            | io::ErrorKind::PermissionDenied
+                    )
+                {
+                    *lost = Some(Lost {
+                        peer_closed: true,
+                        why: format!("sending failed: {e}"),
+                    });
                     break;
                 }
             }
@@ -316,15 +415,28 @@ impl Shared {
     fn take_events(&self, g: &mut State) {
         while let Some(ev) = g.quic.poll_event() {
             if let Event::Closed(reason) = ev {
-                let peer_closed = matches!(reason, CloseReason::PeerApplication { .. } | CloseReason::PeerTransport { .. } | CloseReason::StatelessReset | CloseReason::IdleTimeout);
+                let peer_closed = matches!(
+                    reason,
+                    CloseReason::PeerApplication { .. }
+                        | CloseReason::PeerTransport { .. }
+                        | CloseReason::StatelessReset
+                        | CloseReason::IdleTimeout
+                );
                 if g.lost.is_none() {
-                    g.lost = Some(Lost { peer_closed, why: describe_close(&reason) });
+                    g.lost = Some(Lost {
+                        peer_closed,
+                        why: describe_close(&reason),
+                    });
                 }
             }
         }
         if let Some(lost) = &g.lost {
             // (every stream that is not complete fails, and what is waiting hears of it)
-            let code = if lost.peer_closed { h3_code::H3_NO_ERROR } else { h3_code::H3_INTERNAL_ERROR };
+            let code = if lost.peer_closed {
+                h3_code::H3_NO_ERROR
+            } else {
+                h3_code::H3_INTERNAL_ERROR
+            };
             let why = lost.why.clone();
             g.h3.transport_closed(code, &why);
             self.done.store(true, Ordering::Release);
@@ -339,7 +451,9 @@ impl Shared {
             if want == WANT_NOTHING {
                 continue;
             }
-            let go = g.lost.is_some() || (want == WANT_NEWS && g.h3.ready(*id)) || (want == WANT_ROOM && g.h3.writable(*id));
+            let go = g.lost.is_some()
+                || (want == WANT_NEWS && g.h3.ready(*id))
+                || (want == WANT_ROOM && g.h3.writable(*id));
             if go {
                 slot.cv.notify_one();
             }
@@ -347,13 +461,22 @@ impl Shared {
     }
 
     /// Waits on a stream's condition variable until `until` (or until it is woken): the lock comes back, or `Err` if the time is up.
-    fn wait<'a>(&'a self, g: MutexGuard<'a, State>, slot: &Slot, want: u8, until: Instant) -> Result<MutexGuard<'a, State>, ()> {
+    fn wait<'a>(
+        &'a self,
+        g: MutexGuard<'a, State>,
+        slot: &Slot,
+        want: u8,
+        until: Instant,
+    ) -> Result<MutexGuard<'a, State>, ()> {
         let now = Instant::now();
         if now >= until {
             return Err(());
         }
         slot.want.store(want, Ordering::Relaxed);
-        let (g, _) = slot.cv.wait_timeout(g, until - now).unwrap_or_else(|e| e.into_inner());
+        let (g, _) = slot
+            .cv
+            .wait_timeout(g, until - now)
+            .unwrap_or_else(|e| e.into_inner());
         slot.want.store(WANT_NOTHING, Ordering::Relaxed);
         Ok(g)
     }
@@ -375,7 +498,13 @@ impl Shared {
                     g.quic.recv(Instant::now(), &mut buf[..n]);
                     self.pump(&mut g);
                 }
-                Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut | io::ErrorKind::Interrupted) => {}
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock
+                            | io::ErrorKind::TimedOut
+                            | io::ErrorKind::Interrupted
+                    ) => {}
                 Err(e) => {
                     // an ICMP error for a datagram that was sent comes back on a connected socket: before the handshake is over it is the
                     // end of the connection (the dial hears of it itself), after it it is ignored (RFC 9000 section 14.5 says to)
@@ -383,7 +512,10 @@ impl Shared {
                     if errors > 100 {
                         let mut g = self.lock();
                         if g.lost.is_none() {
-                            g.lost = Some(Lost { peer_closed: true, why: format!("the socket failed: {e}") });
+                            g.lost = Some(Lost {
+                                peer_closed: true,
+                                why: format!("the socket failed: {e}"),
+                            });
                         }
                         self.take_events(&mut g);
                         self.wake(&g);
@@ -419,8 +551,14 @@ impl Shared {
                 (a, b) => a.or(b),
             };
             g.timer_at = next;
-            let wait = next.map_or(TIMER_WAIT, |t| t.saturating_duration_since(now)).min(TIMER_WAIT);
-            g = self.timer.wait_timeout(g, wait).unwrap_or_else(|e| e.into_inner()).0;
+            let wait = next
+                .map_or(TIMER_WAIT, |t| t.saturating_duration_since(now))
+                .min(TIMER_WAIT);
+            g = self
+                .timer
+                .wait_timeout(g, wait)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
             g.timer_at = None;
         }
     }
@@ -488,7 +626,10 @@ impl Shared {
         h3.close(&mut QuicTransport { conn: quic, now });
         self.transmit(g, now);
         if g.lost.is_none() {
-            g.lost = Some(Lost { peer_closed: false, why: "the connection was closed by the client".into() });
+            g.lost = Some(Lost {
+                peer_closed: false,
+                why: "the connection was closed by the client".into(),
+            });
         }
         self.take_events(g);
         self.wake(g);
@@ -497,7 +638,12 @@ impl Shared {
     // -------------------------------------------------------------------------------------------- requests
 
     /// Opens a stream for a request and sends its body (as the connection takes it). The head of the response is asked of the stream.
-    pub(super) fn start(self: &Arc<Self>, request: &Request<'_>, body: &[u8], waits: Waits) -> Result<H3Stream, StartError> {
+    pub(super) fn start(
+        self: &Arc<Self>,
+        request: &Request<'_>,
+        body: &[u8],
+        waits: Waits,
+    ) -> Result<H3Stream, StartError> {
         let (id, slot) = {
             let mut g = self.lock();
             if g.lost.is_some() || g.retired {
@@ -506,14 +652,27 @@ impl Shared {
             let now = Instant::now();
             let id = {
                 let State { h3, quic, .. } = &mut *g;
-                match h3.open_stream(&mut QuicTransport { conn: quic, now }, request, body.is_empty()) {
+                match h3.open_stream(
+                    &mut QuicTransport { conn: quic, now },
+                    request,
+                    body.is_empty(),
+                ) {
                     Ok(id) => id,
                     Err(OpenError::Full) => return Err(StartError::Full),
                     Err(OpenError::Unavailable) => return Err(StartError::Unavailable),
-                    Err(OpenError::Invalid(why)) => return Err(StartError::Failed(Failure { error: Error::Http(why), retry_safe: false, peer_closed: false })),
+                    Err(OpenError::Invalid(why)) => {
+                        return Err(StartError::Failed(Failure {
+                            error: Error::Http(why),
+                            retry_safe: false,
+                            peer_closed: false,
+                        }))
+                    }
                 }
             };
-            let slot = Arc::new(Slot { cv: Condvar::new(), want: AtomicU8::new(WANT_NOTHING) });
+            let slot = Arc::new(Slot {
+                cv: Condvar::new(),
+                want: AtomicU8::new(WANT_NOTHING),
+            });
             g.slots.insert(id, slot.clone());
             g.open += 1;
             // (while a request is in flight the connection does not go idle, however long the server takes: B-91)
@@ -522,7 +681,13 @@ impl Shared {
             (id, slot)
         };
         // (from here on the stream gives itself up when it is dropped)
-        let mut stream = H3Stream { shared: self.clone(), id, slot, got_head: false, finished: false };
+        let mut stream = H3Stream {
+            shared: self.clone(),
+            id,
+            slot,
+            got_head: false,
+            finished: false,
+        };
         if let Err(f) = stream.send_body(body, waits) {
             return Err(StartError::Failed(f));
         }
@@ -533,8 +698,19 @@ impl Shared {
     /// answer, that too.
     fn failure(g: &State, e: &StreamError, got_head: bool) -> Failure {
         let peer_closed = g.lost.as_ref().is_some_and(|l| l.peer_closed) && !got_head;
-        let error = if peer_closed { Error::Io(io::Error::new(io::ErrorKind::ConnectionReset, e.reason.clone())) } else { Error::Http(e.to_string()) };
-        Failure { error, retry_safe: e.retry_safe, peer_closed }
+        let error = if peer_closed {
+            Error::Io(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                e.reason.clone(),
+            ))
+        } else {
+            Error::Http(e.to_string())
+        };
+        Failure {
+            error,
+            retry_safe: e.retry_safe,
+            peer_closed,
+        }
     }
 }
 
@@ -561,7 +737,12 @@ impl H3Stream {
             let now = Instant::now();
             let taken = {
                 let State { h3, quic, .. } = &mut *g;
-                h3.send_data(&mut QuicTransport { conn: quic, now }, self.id, &body[sent..], true)
+                h3.send_data(
+                    &mut QuicTransport { conn: quic, now },
+                    self.id,
+                    &body[sent..],
+                    true,
+                )
             };
             match taken {
                 Ok(n) => {
@@ -572,7 +753,13 @@ impl H3Stream {
                     } else {
                         g = match shared.wait(g, &self.slot, WANT_ROOM, until) {
                             Ok(g) => g,
-                            Err(()) => return Err(Failure { error: waits.expired_in("HTTP/3"), retry_safe: false, peer_closed: false }),
+                            Err(()) => {
+                                return Err(Failure {
+                                    error: waits.expired_in("HTTP/3"),
+                                    retry_safe: false,
+                                    peer_closed: false,
+                                })
+                            }
                         };
                     }
                 }
@@ -598,7 +785,13 @@ impl H3Stream {
             }
             g = match shared.wait(g, &self.slot, WANT_NEWS, until) {
                 Ok(g) => g,
-                Err(()) => return Err(Failure { error: waits.expired_in("HTTP/3"), retry_safe: false, peer_closed: false }),
+                Err(()) => {
+                    return Err(Failure {
+                        error: waits.expired_in("HTTP/3"),
+                        retry_safe: false,
+                        peer_closed: false,
+                    })
+                }
             };
         }
     }
@@ -629,7 +822,13 @@ impl H3Stream {
             }
             g = match shared.wait(g, &self.slot, WANT_NEWS, until) {
                 Ok(g) => g,
-                Err(()) => return Err(Failure { error: waits.expired_in("HTTP/3"), retry_safe: false, peer_closed: false }),
+                Err(()) => {
+                    return Err(Failure {
+                        error: waits.expired_in("HTTP/3"),
+                        retry_safe: false,
+                        peer_closed: false,
+                    })
+                }
             };
         }
     }
@@ -653,7 +852,13 @@ impl H3Stream {
                         body.extend_from_slice(&piece);
                     }
                     if body.len() as u64 > limit {
-                        return Err(Failure { error: Error::Http("response body exceeds the configured size limit".into()), retry_safe: false, peer_closed: false });
+                        return Err(Failure {
+                            error: Error::Http(
+                                "response body exceeds the configured size limit".into(),
+                            ),
+                            retry_safe: false,
+                            peer_closed: false,
+                        });
                     }
                     shared.pump(&mut g);
                     until = waits.until();
@@ -669,7 +874,13 @@ impl H3Stream {
             }
             g = match shared.wait(g, &self.slot, WANT_NEWS, until) {
                 Ok(g) => g,
-                Err(()) => return Err(Failure { error: waits.expired_in("HTTP/3"), retry_safe: false, peer_closed: false }),
+                Err(()) => {
+                    return Err(Failure {
+                        error: waits.expired_in("HTTP/3"),
+                        retry_safe: false,
+                        peer_closed: false,
+                    })
+                }
             };
         }
     }
@@ -741,7 +952,10 @@ pub(super) struct Registry {
 
 impl Registry {
     pub(super) fn new() -> Registry {
-        Registry { origins: Mutex::new(HashMap::new()), changed: Condvar::new() }
+        Registry {
+            origins: Mutex::new(HashMap::new()),
+            changed: Condvar::new(),
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<Key, Origin>> {
@@ -750,13 +964,23 @@ impl Registry {
 
     /// Notes what a response from `key` said in its `Alt-Svc` fields (only the first alternative for HTTP/3 counts). A response over a
     /// connection that was not authenticated must not be believed: the caller says only what came over TLS or QUIC.
-    pub(super) fn learn<'a>(&self, key: &Key, values: impl Iterator<Item = &'a str>, host_allowed: &dyn Fn(&str, u16) -> bool) {
+    pub(super) fn learn<'a>(
+        &self,
+        key: &Key,
+        values: impl Iterator<Item = &'a str>,
+        host_allowed: &dyn Fn(&str, u16) -> bool,
+    ) {
         let (mut found, mut clear) = (None, false);
         for v in values {
             match altsvc::parse(v) {
                 Parsed::Clear => clear = true,
                 // (an alternative at another host is a place to send requests to: the client's rule has a say)
-                Parsed::H3(Some(a)) if found.is_none() && host_allowed(a.host.as_deref().unwrap_or(&key.host), a.port) => found = Some(a),
+                Parsed::H3(Some(a))
+                    if found.is_none()
+                        && host_allowed(a.host.as_deref().unwrap_or(&key.host), a.port) =>
+                {
+                    found = Some(a)
+                }
                 Parsed::H3(_) => {}
             }
         }
@@ -766,7 +990,11 @@ impl Registry {
         let mut map = self.lock();
         if map.len() >= MAX_ORIGINS && !map.contains_key(key) {
             let now = Instant::now();
-            map.retain(|_, o| !o.conns.is_empty() || o.dialing || o.backoff.as_ref().is_some_and(|b| b.until > now));
+            map.retain(|_, o| {
+                !o.conns.is_empty()
+                    || o.dialing
+                    || o.backoff.as_ref().is_some_and(|b| b.until > now)
+            });
             if map.len() >= MAX_ORIGINS {
                 return;
             }
@@ -774,7 +1002,9 @@ impl Registry {
         let origin = map.entry(key.clone()).or_default();
         match found {
             Some(alt) if !alt.max_age.is_zero() => {
-                let expires = Instant::now().checked_add(alt.max_age).unwrap_or_else(|| Instant::now() + Duration::from_secs(30 * 24 * 3600));
+                let expires = Instant::now()
+                    .checked_add(alt.max_age)
+                    .unwrap_or_else(|| Instant::now() + Duration::from_secs(30 * 24 * 3600));
                 origin.alt = Some(Known { alt, expires });
                 // (a newer word from the origin ends the time that its own `clear` set; a failure's time it does not)
                 if origin.backoff.as_ref().is_some_and(|b| b.failures == 0) {
@@ -789,7 +1019,10 @@ impl Registry {
                     c.drain();
                 }
                 if origin.backoff.is_none() {
-                    origin.backoff = Some(Backoff { until: Instant::now() + BACKOFF_BASE, failures: 0 });
+                    origin.backoff = Some(Backoff {
+                        until: Instant::now() + BACKOFF_BASE,
+                        failures: 0,
+                    });
                 }
             }
         }
@@ -799,10 +1032,20 @@ impl Registry {
     /// now. `assume`: the client tries QUIC for an origin it has heard nothing about, and a request that comes while another dials waits for
     /// it (up to `wait`, or the request's deadline); without it only an origin that said it is there is tried, and a request that comes
     /// while another dials goes the TCP way at once.
-    pub(super) fn acquire(self: &Arc<Self>, key: &Key, host: &str, port: u16, assume: bool, waits: Waits, wait: Duration) -> Acquired {
+    pub(super) fn acquire(
+        self: &Arc<Self>,
+        key: &Key,
+        host: &str,
+        port: u16,
+        assume: bool,
+        waits: Waits,
+        wait: Duration,
+    ) -> Acquired {
         let give_up = {
             let now = Instant::now();
-            let by_wait = now.checked_add(wait).unwrap_or_else(|| now + Duration::from_secs(3600));
+            let by_wait = now
+                .checked_add(wait)
+                .unwrap_or_else(|| now + Duration::from_secs(3600));
             waits.deadline.map_or(by_wait, |d| by_wait.min(d))
         };
         let mut map = self.lock();
@@ -839,21 +1082,38 @@ impl Registry {
                 return Acquired::Conn(c);
             }
             let target = match (&origin.alt, assume) {
-                (Some(k), _) => (k.alt.host.clone().unwrap_or_else(|| host.to_string()), k.alt.port),
+                (Some(k), _) => (
+                    k.alt.host.clone().unwrap_or_else(|| host.to_string()),
+                    k.alt.port,
+                ),
                 (None, true) => (host.to_string(), port),
                 (None, false) => return Acquired::Skip,
             };
-            if origin.backoff.as_ref().is_some_and(|b| now < b.until) || origin.conns.len() >= MAX_CONNECTIONS {
+            if origin.backoff.as_ref().is_some_and(|b| now < b.until)
+                || origin.conns.len() >= MAX_CONNECTIONS
+            {
                 return Acquired::Skip;
             }
             if !origin.dialing {
                 origin.dialing = true;
-                return Acquired::Dial(Ticket { registry: self.clone(), key: key.clone(), settled: false }, target.0, target.1);
+                return Acquired::Dial(
+                    Ticket {
+                        registry: self.clone(),
+                        key: key.clone(),
+                        settled: false,
+                    },
+                    target.0,
+                    target.1,
+                );
             }
             if !assume || now >= give_up {
                 return Acquired::Skip;
             }
-            map = self.changed.wait_timeout(map, give_up - now).unwrap_or_else(|e| e.into_inner()).0;
+            map = self
+                .changed
+                .wait_timeout(map, give_up - now)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
         }
     }
 
@@ -862,13 +1122,24 @@ impl Registry {
     pub(super) fn broken(&self, key: &Key) {
         let mut map = self.lock();
         let origin = map.entry(key.clone()).or_default();
-        let failures = origin.backoff.as_ref().map_or(0, |b| b.failures).saturating_add(1);
-        origin.backoff = Some(Backoff { until: Instant::now() + backoff_for(failures), failures });
+        let failures = origin
+            .backoff
+            .as_ref()
+            .map_or(0, |b| b.failures)
+            .saturating_add(1);
+        origin.backoff = Some(Backoff {
+            until: Instant::now() + backoff_for(failures),
+            failures,
+        });
     }
 
     /// Closes the connections that have no stream in flight.
     pub(super) fn close_idle(&self) {
-        let conns: Vec<Arc<Shared>> = self.lock().values().flat_map(|o| o.conns.iter().cloned()).collect();
+        let conns: Vec<Arc<Shared>> = self
+            .lock()
+            .values()
+            .flat_map(|o| o.conns.iter().cloned())
+            .collect();
         for c in conns {
             c.close_if_idle();
         }
@@ -876,7 +1147,11 @@ impl Registry {
 
     /// How many connections have no stream in flight.
     pub(super) fn idle(&self) -> usize {
-        let conns: Vec<Arc<Shared>> = self.lock().values().flat_map(|o| o.conns.iter().cloned()).collect();
+        let conns: Vec<Arc<Shared>> = self
+            .lock()
+            .values()
+            .flat_map(|o| o.conns.iter().cloned())
+            .collect();
         conns.iter().filter(|c| c.is_idle()).count()
     }
 
@@ -885,7 +1160,10 @@ impl Registry {
     pub(super) fn standing(&self, key: &Key) -> (bool, Option<Alternative>) {
         let map = self.lock();
         match map.get(key) {
-            Some(o) => (o.backoff.as_ref().is_some_and(|b| Instant::now() < b.until), o.alt.as_ref().map(|k| k.alt.clone())),
+            Some(o) => (
+                o.backoff.as_ref().is_some_and(|b| Instant::now() < b.until),
+                o.alt.as_ref().map(|k| k.alt.clone()),
+            ),
             None => (false, None),
         }
     }
@@ -904,7 +1182,10 @@ impl Drop for Registry {
 
 /// How long an origin is left to TCP after this many failures in a row.
 fn backoff_for(failures: u32) -> Duration {
-    BACKOFF_BASE.checked_mul(1u32 << failures.saturating_sub(1).min(20)).unwrap_or(BACKOFF_MAX).min(BACKOFF_MAX)
+    BACKOFF_BASE
+        .checked_mul(1u32 << failures.saturating_sub(1).min(20))
+        .unwrap_or(BACKOFF_MAX)
+        .min(BACKOFF_MAX)
 }
 
 /// The duty to dial a connection to an origin, held by the request that has been told to. Requests to the origin that assume QUIC
@@ -936,8 +1217,15 @@ impl Ticket {
             let mut map = self.registry.lock();
             let origin = map.entry(self.key.clone()).or_default();
             origin.dialing = false;
-            let failures = origin.backoff.as_ref().map_or(0, |b| b.failures).saturating_add(1);
-            origin.backoff = Some(Backoff { until: Instant::now() + backoff_for(failures), failures });
+            let failures = origin
+                .backoff
+                .as_ref()
+                .map_or(0, |b| b.failures)
+                .saturating_add(1);
+            origin.backoff = Some(Backoff {
+                until: Instant::now() + backoff_for(failures),
+                failures,
+            });
         }
         self.registry.changed.notify_all();
     }
@@ -964,45 +1252,110 @@ mod tests {
     use super::*;
 
     fn key() -> Key {
-        Key { tls: true, host: "example.com".into(), port: 443, proxy: None, min_tls: crate::tls::TlsVersion::Tls12 }
+        Key {
+            tls: true,
+            host: "example.com".into(),
+            port: 443,
+            proxy: None,
+            min_tls: crate::tls::TlsVersion::Tls12,
+        }
     }
 
     fn waits() -> Waits {
-        Waits { timeout: Duration::from_secs(5), deadline: None }
+        Waits {
+            timeout: Duration::from_secs(5),
+            deadline: None,
+        }
     }
 
     fn alt(port: u16, secs: u64) -> Alternative {
-        Alternative { host: None, port, max_age: Duration::from_secs(secs) }
+        Alternative {
+            host: None,
+            port,
+            max_age: Duration::from_secs(secs),
+        }
     }
 
     #[test]
     fn an_origin_nobody_has_spoken_of_is_left_to_tcp() {
         let r = Arc::new(Registry::new());
-        assert!(matches!(r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)), Acquired::Skip));
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                false,
+                waits(),
+                Duration::from_secs(1)
+            ),
+            Acquired::Skip
+        ));
     }
 
     #[test]
     fn an_alternative_that_was_advertised_is_dialed_once_at_a_time() {
         let r = Arc::new(Registry::new());
         r.learn(&key(), [r#"h3=":8443"; ma=60"#].into_iter(), &|_, _| true);
-        let first = r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1));
+        let first = r.acquire(
+            &key(),
+            "example.com",
+            443,
+            false,
+            waits(),
+            Duration::from_secs(1),
+        );
         match &first {
-            Acquired::Dial(_, host, port) => assert_eq!((host.as_str(), *port), ("example.com", 8443)),
+            Acquired::Dial(_, host, port) => {
+                assert_eq!((host.as_str(), *port), ("example.com", 8443))
+            }
             _ => panic!("the first request has to dial"),
         }
         // the second does not wait for it: TCP now
-        assert!(matches!(r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)), Acquired::Skip));
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                false,
+                waits(),
+                Duration::from_secs(1)
+            ),
+            Acquired::Skip
+        ));
         // and when the dial is dropped without a word another may try
         drop(first);
-        assert!(matches!(r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)), Acquired::Dial(..)));
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                false,
+                waits(),
+                Duration::from_secs(1)
+            ),
+            Acquired::Dial(..)
+        ));
     }
 
     #[test]
     fn an_alternative_on_another_host_is_dialed_there() {
         let r = Arc::new(Registry::new());
-        r.learn(&key(), [r#"h3="alt.example.net:4433""#].into_iter(), &|_, _| true);
-        match r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)) {
-            Acquired::Dial(_, host, port) => assert_eq!((host.as_str(), port), ("alt.example.net", 4433)),
+        r.learn(
+            &key(),
+            [r#"h3="alt.example.net:4433""#].into_iter(),
+            &|_, _| true,
+        );
+        match r.acquire(
+            &key(),
+            "example.com",
+            443,
+            false,
+            waits(),
+            Duration::from_secs(1),
+        ) {
+            Acquired::Dial(_, host, port) => {
+                assert_eq!((host.as_str(), port), ("alt.example.net", 4433))
+            }
             _ => panic!("dial"),
         }
     }
@@ -1019,17 +1372,37 @@ mod tests {
         assert_eq!(r.standing(&key()).1, None);
         // a field that says nothing about HTTP/3 changes nothing
         r.learn(&key(), [r#"h3=":443"; ma=60"#].into_iter(), &|_, _| true);
-        r.learn(&key(), [r#"h2=":443""#, "nonsense"].into_iter(), &|_, _| true);
+        r.learn(&key(), [r#"h2=":443""#, "nonsense"].into_iter(), &|_, _| {
+            true
+        });
         assert_eq!(r.standing(&key()).1, Some(alt(443, 60)));
         // the first alternative of the fields is the one; `clear` in a field of its own clears what the others did not replace
-        r.learn(&key(), [r#"h3=":1""#, r#"h3=":2""#].into_iter(), &|_, _| true);
+        r.learn(&key(), [r#"h3=":1""#, r#"h3=":2""#].into_iter(), &|_, _| {
+            true
+        });
         assert_eq!(r.standing(&key()).1, Some(alt(1, altsvc::DEFAULT_MAX_AGE)));
         r.learn(&key(), ["clear"].into_iter(), &|_, _| true);
         assert_eq!(r.standing(&key()).1, None);
         // (a lifetime that has run out is not believed)
         r.learn(&key(), [r#"h3=":443"; ma=1"#].into_iter(), &|_, _| true);
-        r.lock().get_mut(&key()).unwrap().alt.as_mut().unwrap().expires = Instant::now() - Duration::from_millis(1);
-        assert!(matches!(r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)), Acquired::Skip));
+        r.lock()
+            .get_mut(&key())
+            .unwrap()
+            .alt
+            .as_mut()
+            .unwrap()
+            .expires = Instant::now() - Duration::from_millis(1);
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                false,
+                waits(),
+                Duration::from_secs(1)
+            ),
+            Acquired::Skip
+        ));
         assert_eq!(r.standing(&key()).1, None);
     }
 
@@ -1040,16 +1413,46 @@ mod tests {
         let mut waited = vec![];
         for _ in 0..4 {
             // (let the last backoff run out)
-            r.lock().get_mut(&key()).unwrap().backoff.as_mut().map(|b| b.until = Instant::now() - Duration::from_millis(1));
-            let Acquired::Dial(ticket, ..) = r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)) else { panic!("dial") };
+            r.lock()
+                .get_mut(&key())
+                .unwrap()
+                .backoff
+                .as_mut()
+                .map(|b| b.until = Instant::now() - Duration::from_millis(1));
+            let Acquired::Dial(ticket, ..) = r.acquire(
+                &key(),
+                "example.com",
+                443,
+                false,
+                waits(),
+                Duration::from_secs(1),
+            ) else {
+                panic!("dial")
+            };
             ticket.failed();
             assert!(r.standing(&key()).0);
-            assert!(matches!(r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)), Acquired::Skip));
+            assert!(matches!(
+                r.acquire(
+                    &key(),
+                    "example.com",
+                    443,
+                    false,
+                    waits(),
+                    Duration::from_secs(1)
+                ),
+                Acquired::Skip
+            ));
             let b = r.lock();
             let o = b.get(&key()).unwrap().backoff.as_ref().unwrap();
-            waited.push((o.failures, o.until.saturating_duration_since(Instant::now()).as_secs()));
+            waited.push((
+                o.failures,
+                o.until.saturating_duration_since(Instant::now()).as_secs(),
+            ));
         }
-        assert_eq!(waited.iter().map(|w| w.0).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
+        assert_eq!(
+            waited.iter().map(|w| w.0).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
         // 5 minutes, 10, 20, 40 (a second less each, for the time that has gone)
         for (w, want) in waited.iter().zip([300u64, 600, 1200, 2400]) {
             assert!(w.1 <= want && w.1 + 3 >= want, "{w:?} for {want}");
@@ -1059,15 +1462,34 @@ mod tests {
     #[test]
     fn an_alternative_at_a_host_the_clients_rule_does_not_allow_is_not_learned() {
         let r = Arc::new(Registry::new());
-        let only_example = |host: &str, _port: u16| host == "alt.example.net" || host == "example.com";
+        let only_example =
+            |host: &str, _port: u16| host == "alt.example.net" || host == "example.com";
         // another host that the rule does not name: not used (the origin's own host, which the rule let the request go to, is)
-        r.learn(&key(), [r#"h3="evil.example.org:443""#].into_iter(), &only_example);
+        r.learn(
+            &key(),
+            [r#"h3="evil.example.org:443""#].into_iter(),
+            &only_example,
+        );
         assert_eq!(r.standing(&key()).1, None);
         // (the next field's alternative is looked at: the first one that is allowed is the one)
-        r.learn(&key(), [r#"h3="evil.example.org:443""#, r#"h3=":8443""#].into_iter(), &only_example);
-        assert_eq!(r.standing(&key()).1, Some(alt(8443, altsvc::DEFAULT_MAX_AGE)));
-        r.learn(&key(), [r#"h3="alt.example.net:4433""#].into_iter(), &only_example);
-        assert_eq!(r.standing(&key()).1.unwrap().host.as_deref(), Some("alt.example.net"));
+        r.learn(
+            &key(),
+            [r#"h3="evil.example.org:443""#, r#"h3=":8443""#].into_iter(),
+            &only_example,
+        );
+        assert_eq!(
+            r.standing(&key()).1,
+            Some(alt(8443, altsvc::DEFAULT_MAX_AGE))
+        );
+        r.learn(
+            &key(),
+            [r#"h3="alt.example.net:4433""#].into_iter(),
+            &only_example,
+        );
+        assert_eq!(
+            r.standing(&key()).1.unwrap().host.as_deref(),
+            Some("alt.example.net")
+        );
     }
 
     #[test]
@@ -1078,8 +1500,15 @@ mod tests {
         let default_port_only = |host: &str, port: u16| host == "example.com" && port == 443;
         r.learn(&key(), [r#"h3=":8443""#].into_iter(), &default_port_only);
         assert_eq!(r.standing(&key()).1, None);
-        r.learn(&key(), [r#"h3="example.com:8443""#, r#"h3=":443""#].into_iter(), &default_port_only);
-        assert_eq!(r.standing(&key()).1, Some(alt(443, altsvc::DEFAULT_MAX_AGE)));
+        r.learn(
+            &key(),
+            [r#"h3="example.com:8443""#, r#"h3=":443""#].into_iter(),
+            &default_port_only,
+        );
+        assert_eq!(
+            r.standing(&key()).1,
+            Some(alt(443, altsvc::DEFAULT_MAX_AGE))
+        );
     }
 
     #[test]
@@ -1088,11 +1517,40 @@ mod tests {
         r.learn(&key(), [r#"h3=":443"; ma=3600"#].into_iter(), &|_, _| true);
         r.broken(&key());
         assert!(r.standing(&key()).0);
-        assert!(matches!(r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)), Acquired::Skip));
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                false,
+                waits(),
+                Duration::from_secs(1)
+            ),
+            Acquired::Skip
+        ));
         // (not even for a client that assumes: the failure counts as a failed dial)
-        assert!(matches!(r.acquire(&key(), "example.com", 443, true, waits(), Duration::from_secs(1)), Acquired::Skip));
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                true,
+                waits(),
+                Duration::from_secs(1)
+            ),
+            Acquired::Skip
+        ));
         r.broken(&key());
-        assert_eq!(r.lock().get(&key()).unwrap().backoff.as_ref().unwrap().failures, 2);
+        assert_eq!(
+            r.lock()
+                .get(&key())
+                .unwrap()
+                .backoff
+                .as_ref()
+                .unwrap()
+                .failures,
+            2
+        );
         // the alternative is still known: it is the time that is waited out
         assert_eq!(r.standing(&key()).1, Some(alt(443, 3600)));
     }
@@ -1103,63 +1561,171 @@ mod tests {
         r.learn(&key(), [r#"h3=":443"; ma=3600"#].into_iter(), &|_, _| true);
         r.learn(&key(), ["clear"].into_iter(), &|_, _| true);
         // nothing is tried, by a client that is told or by one that assumes
-        assert!(matches!(r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)), Acquired::Skip));
-        assert!(matches!(r.acquire(&key(), "example.com", 443, true, waits(), Duration::from_secs(1)), Acquired::Skip));
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                false,
+                waits(),
+                Duration::from_secs(1)
+            ),
+            Acquired::Skip
+        ));
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                true,
+                waits(),
+                Duration::from_secs(1)
+            ),
+            Acquired::Skip
+        ));
         // until it advertises again
         r.learn(&key(), [r#"h3=":8443"; ma=3600"#].into_iter(), &|_, _| true);
-        match r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)) {
-            Acquired::Dial(_, host, port) => assert_eq!((host.as_str(), port), ("example.com", 8443)),
+        match r.acquire(
+            &key(),
+            "example.com",
+            443,
+            false,
+            waits(),
+            Duration::from_secs(1),
+        ) {
+            Acquired::Dial(_, host, port) => {
+                assert_eq!((host.as_str(), port), ("example.com", 8443))
+            }
             _ => panic!("dial"),
         }
         // (but a word from the origin does not undo the time of a failure)
         let r = Arc::new(Registry::new());
         r.learn(&key(), [r#"h3=":443""#].into_iter(), &|_, _| true);
-        let Acquired::Dial(ticket, ..) = r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)) else { panic!("dial") };
+        let Acquired::Dial(ticket, ..) = r.acquire(
+            &key(),
+            "example.com",
+            443,
+            false,
+            waits(),
+            Duration::from_secs(1),
+        ) else {
+            panic!("dial")
+        };
         ticket.failed();
         r.learn(&key(), [r#"h3=":443""#].into_iter(), &|_, _| true);
-        assert!(matches!(r.acquire(&key(), "example.com", 443, false, waits(), Duration::from_secs(1)), Acquired::Skip));
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                false,
+                waits(),
+                Duration::from_secs(1)
+            ),
+            Acquired::Skip
+        ));
     }
 
     #[test]
     fn a_client_that_assumes_http3_tries_an_origin_nobody_has_spoken_of() {
         let r = Arc::new(Registry::new());
-        match r.acquire(&key(), "example.com", 443, true, waits(), Duration::from_secs(1)) {
-            Acquired::Dial(_, host, port) => assert_eq!((host.as_str(), port), ("example.com", 443)),
+        match r.acquire(
+            &key(),
+            "example.com",
+            443,
+            true,
+            waits(),
+            Duration::from_secs(1),
+        ) {
+            Acquired::Dial(_, host, port) => {
+                assert_eq!((host.as_str(), port), ("example.com", 443))
+            }
             _ => panic!("dial"),
         }
     }
 
     #[test]
-    fn a_client_that_assumes_waits_for_a_dial_that_is_going_on_and_then_goes_the_tcp_way_if_it_failed() {
+    fn a_client_that_assumes_waits_for_a_dial_that_is_going_on_and_then_goes_the_tcp_way_if_it_failed(
+    ) {
         let r = Arc::new(Registry::new());
-        let Acquired::Dial(ticket, ..) = r.acquire(&key(), "example.com", 443, true, waits(), Duration::from_secs(1)) else { panic!("dial") };
+        let Acquired::Dial(ticket, ..) = r.acquire(
+            &key(),
+            "example.com",
+            443,
+            true,
+            waits(),
+            Duration::from_secs(1),
+        ) else {
+            panic!("dial")
+        };
         let r2 = r.clone();
         let waiter = thread::spawn(move || {
             let started = Instant::now();
-            let got = r2.acquire(&key(), "example.com", 443, true, waits(), Duration::from_secs(10));
+            let got = r2.acquire(
+                &key(),
+                "example.com",
+                443,
+                true,
+                waits(),
+                Duration::from_secs(10),
+            );
             (matches!(got, Acquired::Skip), started.elapsed())
         });
         thread::sleep(Duration::from_millis(100));
         ticket.failed();
         let (skipped, took) = waiter.join().unwrap();
-        assert!(skipped, "an origin that could not be reached is left to TCP");
-        assert!(took >= Duration::from_millis(80) && took < Duration::from_secs(5), "{took:?}");
+        assert!(
+            skipped,
+            "an origin that could not be reached is left to TCP"
+        );
+        assert!(
+            took >= Duration::from_millis(80) && took < Duration::from_secs(5),
+            "{took:?}"
+        );
     }
 
     #[test]
     fn a_request_that_waits_for_a_dial_gives_up_when_its_time_is_up() {
         let r = Arc::new(Registry::new());
-        let Acquired::Dial(_ticket, ..) = r.acquire(&key(), "example.com", 443, true, waits(), Duration::from_secs(1)) else { panic!("dial") };
+        let Acquired::Dial(_ticket, ..) = r.acquire(
+            &key(),
+            "example.com",
+            443,
+            true,
+            waits(),
+            Duration::from_secs(1),
+        ) else {
+            panic!("dial")
+        };
         let started = Instant::now();
-        assert!(matches!(r.acquire(&key(), "example.com", 443, true, waits(), Duration::from_millis(150)), Acquired::Skip));
-        assert!(started.elapsed() >= Duration::from_millis(100) && started.elapsed() < Duration::from_secs(3));
+        assert!(matches!(
+            r.acquire(
+                &key(),
+                "example.com",
+                443,
+                true,
+                waits(),
+                Duration::from_millis(150)
+            ),
+            Acquired::Skip
+        ));
+        assert!(
+            started.elapsed() >= Duration::from_millis(100)
+                && started.elapsed() < Duration::from_secs(3)
+        );
     }
 
     #[test]
     fn only_so_many_origins_are_remembered() {
         let r = Arc::new(Registry::new());
         for i in 0..MAX_ORIGINS + 50 {
-            let k = Key { tls: true, host: format!("h{i}.example"), port: 443, proxy: None, min_tls: crate::tls::TlsVersion::Tls12 };
+            let k = Key {
+                tls: true,
+                host: format!("h{i}.example"),
+                port: 443,
+                proxy: None,
+                min_tls: crate::tls::TlsVersion::Tls12,
+            };
             r.learn(&k, [r#"h3=":443""#].into_iter(), &|_, _| true);
         }
         assert!(r.lock().len() <= MAX_ORIGINS);

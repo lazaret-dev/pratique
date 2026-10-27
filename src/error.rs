@@ -119,7 +119,11 @@ impl fmt::Display for Error {
             Error::Io(e) => write!(f, "I/O error: {}", e),
             Error::Tls(m) => write!(f, "TLS error: {}", m),
             Error::Alert(level, desc) => {
-                write!(f, "TLS alert received (level {}, description {}", level, desc)?;
+                write!(
+                    f,
+                    "TLS alert received (level {}, description {}",
+                    level, desc
+                )?;
                 if let Some(name) = alert_name(*desc) {
                     write!(f, ": {}", name)?;
                 }
@@ -177,13 +181,25 @@ mod tests {
         assert_eq!(alert_name(48), Some("unknown_ca"));
         assert_eq!(alert_name(255), None);
         let m = Error::Alert(2, 70).to_string();
-        assert!(m.starts_with("TLS alert received (level 2, description 70: protocol_version)"), "{m}");
+        assert!(
+            m.starts_with("TLS alert received (level 2, description 70: protocol_version)"),
+            "{m}"
+        );
         assert!(m.contains("TLS 1.2"), "{m}");
         let m = Error::Alert(2, 40).to_string();
-        assert!(m.contains("handshake_failure") && m.contains("TLS 1.2"), "{m}");
+        assert!(
+            m.contains("handshake_failure") && m.contains("TLS 1.2"),
+            "{m}"
+        );
         // an alert that has nothing to do with versions says no such thing, and an unknown one still prints
         let m = Error::Alert(2, 48).to_string();
-        assert_eq!(m, "TLS alert received (level 2, description 48: unknown_ca)");
-        assert_eq!(Error::Alert(1, 200).to_string(), "TLS alert received (level 1, description 200)");
+        assert_eq!(
+            m,
+            "TLS alert received (level 2, description 48: unknown_ca)"
+        );
+        assert_eq!(
+            Error::Alert(1, 200).to_string(),
+            "TLS alert received (level 1, description 200)"
+        );
     }
 }

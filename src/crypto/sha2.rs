@@ -18,7 +18,10 @@ pub(crate) struct Accel {
 impl Accel {
     /// No hardware: what a build without `net`, or for a CPU without the instructions, uses.
     #[allow(dead_code)] // unused in builds whose hardware code fills in both fields
-    pub(crate) const NONE: Accel = Accel { sha256: None, sha512: None };
+    pub(crate) const NONE: Accel = Accel {
+        sha256: None,
+        sha512: None,
+    };
 }
 
 /// What this process uses, decided once.
@@ -84,18 +87,30 @@ impl Sha256 {
     fn compress(state: &mut [u32; 8], block: &[u8]) {
         let mut w = [0u32; 64];
         for i in 0..16 {
-            w[i] = u32::from_be_bytes([block[4 * i], block[4 * i + 1], block[4 * i + 2], block[4 * i + 3]]);
+            w[i] = u32::from_be_bytes([
+                block[4 * i],
+                block[4 * i + 1],
+                block[4 * i + 2],
+                block[4 * i + 3],
+            ]);
         }
         for i in 16..64 {
             let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
             let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
         }
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
         for i in 0..64 {
             let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
             let ch = (e & f) ^ (!e & g);
-            let t1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K256[i]).wrapping_add(w[i]);
+            let t1 = h
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K256[i])
+                .wrapping_add(w[i]);
             let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
             let maj = (a & b) ^ (a & c) ^ (b & c);
             let t2 = s0.wrapping_add(maj);
@@ -119,7 +134,12 @@ impl Hash for Sha256 {
     const BLOCK_LEN: usize = 64;
 
     fn new() -> Self {
-        Sha256 { state: H256, buf: [0; 64], buf_len: 0, total: 0 }
+        Sha256 {
+            state: H256,
+            buf: [0; 64],
+            buf_len: 0,
+            total: 0,
+        }
     }
 
     fn update(&mut self, mut data: &[u8]) {
@@ -177,7 +197,12 @@ pub(crate) struct Sha512Core {
 
 impl Sha512Core {
     fn new(iv: [u64; 8]) -> Self {
-        Sha512Core { state: iv, buf: [0; 128], buf_len: 0, total: 0 }
+        Sha512Core {
+            state: iv,
+            buf: [0; 128],
+            buf_len: 0,
+            total: 0,
+        }
     }
 
     fn compress(state: &mut [u64; 8], block: &[u8]) {
@@ -190,13 +215,20 @@ impl Sha512Core {
         for i in 16..80 {
             let s0 = w[i - 15].rotate_right(1) ^ w[i - 15].rotate_right(8) ^ (w[i - 15] >> 7);
             let s1 = w[i - 2].rotate_right(19) ^ w[i - 2].rotate_right(61) ^ (w[i - 2] >> 6);
-            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
         }
         let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
         for i in 0..80 {
             let s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
             let ch = (e & f) ^ (!e & g);
-            let t1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K512[i]).wrapping_add(w[i]);
+            let t1 = h
+                .wrapping_add(s1)
+                .wrapping_add(ch)
+                .wrapping_add(K512[i])
+                .wrapping_add(w[i]);
             let s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
             let maj = (a & b) ^ (a & c) ^ (b & c);
             let t2 = s0.wrapping_add(maj);
@@ -375,24 +407,39 @@ mod tests {
             for piece in [0usize, 1, 63, 64, 65, 127, 128, 129, 300] {
                 r.update(&data[fed..fed + piece]);
                 fed += piece;
-                assert_eq!(r.digest(), alg.digest(&data[..fed]), "{alg:?} after {fed} bytes");
+                assert_eq!(
+                    r.digest(),
+                    alg.digest(&data[..fed]),
+                    "{alg:?} after {fed} bytes"
+                );
             }
         }
     }
 
     #[test]
     fn sha256_vectors() {
-        assert_eq!(hex(&Sha256::digest(b"")), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
-        assert_eq!(hex(&Sha256::digest(b"abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         assert_eq!(
-            hex(&Sha256::digest(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")),
+            hex(&Sha256::digest(b"")),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            hex(&Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            hex(&Sha256::digest(
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+            )),
             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
         );
         let mut h = Sha256::new();
         for _ in 0..1000 {
             h.update(&[b'a'; 1000]);
         }
-        assert_eq!(hex(&h.finalize()), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+        assert_eq!(
+            hex(&h.finalize()),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+        );
     }
 
     #[test]

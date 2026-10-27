@@ -136,9 +136,25 @@ pub struct TlsWriteHalf<S: Duplex> {
 }
 
 /// Makes the halves of a connection whose handshake is done, over two handles to one transport.
-pub(super) fn halves<S: Duplex>(conn: ClientConnection, reader: S, writer: S) -> (TlsReadHalf<S>, TlsWriteHalf<S>) {
-    let shared = Arc::new(Shared { conn: Mutex::new(conn), out: Mutex::new(Sender { io: writer, buf: Vec::new() }) });
-    (TlsReadHalf { shared: shared.clone(), io: reader }, TlsWriteHalf { shared })
+pub(super) fn halves<S: Duplex>(
+    conn: ClientConnection,
+    reader: S,
+    writer: S,
+) -> (TlsReadHalf<S>, TlsWriteHalf<S>) {
+    let shared = Arc::new(Shared {
+        conn: Mutex::new(conn),
+        out: Mutex::new(Sender {
+            io: writer,
+            buf: Vec::new(),
+        }),
+    });
+    (
+        TlsReadHalf {
+            shared: shared.clone(),
+            io: reader,
+        },
+        TlsWriteHalf { shared },
+    )
 }
 
 impl<S: Duplex> TlsReadHalf<S> {
@@ -154,7 +170,9 @@ impl<S: Duplex> TlsReadHalf<S> {
     fn receive(&mut self) -> io::Result<()> {
         let taken = self.shared.conn().take_recv_buf();
         let Some(mut rb) = taken else {
-            return Err(to_io(Error::Tls("internal: the TLS receive buffer cannot be taken".into())));
+            return Err(to_io(Error::Tls(
+                "internal: the TLS receive buffer cannot be taken".into(),
+            )));
         };
         let got = loop {
             match self.io.read(rb.space()) {

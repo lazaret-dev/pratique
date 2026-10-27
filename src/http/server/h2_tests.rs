@@ -12,7 +12,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 fn hello(req: Request) -> Response {
-    Response::text(200, format!("{} {} {}", req.method(), req.path(), req.authority()))
+    Response::text(
+        200,
+        format!("{} {} {}", req.method(), req.path(), req.authority()),
+    )
 }
 
 fn small_floods() -> HttpConfig {
@@ -37,7 +40,11 @@ fn requests_go_over_one_connection_with_bodies_both_ways() {
                 let n = req.read_body(64 << 20).unwrap().len();
                 Response::text(200, format!("{n}"))
             }
-            "/big" => Response::bytes(200, "application/octet-stream", (0..3_000_000u32).map(|i| (i % 251) as u8).collect()),
+            "/big" => Response::bytes(
+                200,
+                "application/octet-stream",
+                (0..3_000_000u32).map(|i| (i % 251) as u8).collect(),
+            ),
             _ => hello(req),
         },
         HttpConfig::default(),
@@ -45,14 +52,30 @@ fn requests_go_over_one_connection_with_bodies_both_ways() {
     );
     let client = s.client();
     let r = client.get(&s.url("/hi")).unwrap();
-    assert_eq!((r.status, r.version, r.text()), (200, crate::http::HttpVersion::Http2, format!("GET /hi 127.0.0.1:{}", s.addr.port())));
+    assert_eq!(
+        (r.status, r.version, r.text()),
+        (
+            200,
+            crate::http::HttpVersion::Http2,
+            format!("GET /hi 127.0.0.1:{}", s.addr.port())
+        )
+    );
     assert!(r.header("date").is_some());
     let body: Vec<u8> = (0..5_000_000u32).map(|i| (i % 253) as u8).collect();
     let r = client.post(&s.url("/echo"), body.clone()).unwrap();
     assert!(r.body == body, "an echo of 5 MB, through windows of 1 MB");
-    assert_eq!(client.post(&s.url("/len"), vec![1u8; 2_500_000]).unwrap().text(), "2500000");
+    assert_eq!(
+        client
+            .post(&s.url("/len"), vec![1u8; 2_500_000])
+            .unwrap()
+            .text(),
+        "2500000"
+    );
     let r = client.get(&s.url("/big")).unwrap();
-    assert_eq!((r.body.len(), r.body[2_999_999]), (3_000_000, (2_999_999u32 % 251) as u8));
+    assert_eq!(
+        (r.body.len(), r.body[2_999_999]),
+        (3_000_000, (2_999_999u32 % 251) as u8)
+    );
     // many at once, each on its own stream
     let threads: Vec<_> = (0..20)
         .map(|i| {
@@ -63,13 +86,26 @@ fn requests_go_over_one_connection_with_bodies_both_ways() {
     for (i, t) in threads.into_iter().enumerate() {
         assert!(t.join().unwrap().starts_with(&format!("GET /{i} ")));
     }
-    assert_eq!(s.connections.load(Ordering::SeqCst), 1, "one connection for everything");
+    assert_eq!(
+        s.connections.load(Ordering::SeqCst),
+        1,
+        "one connection for everything"
+    );
 }
 
 #[test]
 fn a_stream_waits_for_the_client_window_and_others_go_on() {
     // the client gives no stream credit at first: the head comes, the data waits for a WINDOW_UPDATE
-    let s = Server::plain(|req: Request| if req.path() == "/big" { Response::bytes(200, "x/y", vec![9; 100_000]) } else { hello(req) }, HttpConfig::default());
+    let s = Server::plain(
+        |req: Request| {
+            if req.path() == "/big" {
+                Response::bytes(200, "x/y", vec![9; 100_000])
+            } else {
+                hello(req)
+            }
+        },
+        HttpConfig::default(),
+    );
     let mut c = Raw::connect(&s, &[(setting::INITIAL_WINDOW_SIZE, 0)]);
     c.get(1, "/big");
     let frames = c.until(|f| f.h.stream == 1 && f.is(kind::HEADERS));
@@ -78,7 +114,10 @@ fn a_stream_waits_for_the_client_window_and_others_go_on() {
     thread::sleep(Duration::from_millis(100));
     c.raw_frame(kind::PING, 0, 0, b"roundtrp");
     let frames = c.until(|f| f.is(kind::PING));
-    assert!(frames.iter().all(|f| !f.is(kind::DATA)), "no data without a window: {frames:?}");
+    assert!(
+        frames.iter().all(|f| !f.is(kind::DATA)),
+        "no data without a window: {frames:?}"
+    );
     // credit for 10 bytes: 10 bytes come
     let mut out = Vec::new();
     frame::write_window_update(&mut out, 1, 10);
@@ -115,7 +154,16 @@ fn a_handler_that_does_not_read_holds_its_client_to_the_window() {
         config,
     );
     let mut c = Raw::connect(&s, &[]);
-    c.headers(1, &[(":method", "POST"), (":scheme", "http"), (":authority", "a"), (":path", "/up")], false);
+    c.headers(
+        1,
+        &[
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/up"),
+        ],
+        false,
+    );
     c.data(1, &vec![1u8; 16_384], false);
     c.data(1, &vec![1u8; 16_384], false);
     c.data(1, &vec![1u8; 16_384], false);
@@ -125,14 +173,26 @@ fn a_handler_that_does_not_read_holds_its_client_to_the_window() {
     assert_eq!(c.reset_of(1), Some(ErrorCode::FLOW_CONTROL_ERROR.0));
     go_tx.send(()).unwrap();
     // a stream that keeps within the window gets its credit as the handler reads
-    c.headers(3, &[(":method", "POST"), (":scheme", "http"), (":authority", "a"), (":path", "/up")], false);
+    c.headers(
+        3,
+        &[
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/up"),
+        ],
+        false,
+    );
     c.data(3, &vec![2u8; 60_000], false);
     go_tx.send(()).unwrap();
     // as a client must: what the window allows, and more as the credit comes
     let mut window: i64 = 65_535 - 60_000;
     let mut left = 60_000i64;
     while left > 0 {
-        let f = c.until(|f| f.is(kind::WINDOW_UPDATE) && f.h.stream == 3).pop().expect("credit as the handler reads");
+        let f = c
+            .until(|f| f.is(kind::WINDOW_UPDATE) && f.h.stream == 3)
+            .pop()
+            .expect("credit as the handler reads");
         window += u32::from_be_bytes(f.p[..4].try_into().unwrap()) as i64;
         let n = window.min(left);
         if n > 0 {
@@ -142,7 +202,10 @@ fn a_handler_that_does_not_read_holds_its_client_to_the_window() {
         }
     }
     let (status, _, body) = c.response(3);
-    assert_eq!((status, String::from_utf8(body).unwrap()), (200, "120000".into()));
+    assert_eq!(
+        (status, String::from_utf8(body).unwrap()),
+        (200, "120000".into())
+    );
 }
 
 #[test]
@@ -151,7 +214,12 @@ fn trailers_head_and_hundred_continue() {
         |mut req: Request| match req.path() {
             "/trailers" => {
                 let body = req.read_body(1 << 20).unwrap();
-                let got: Vec<String> = req.body().trailers().iter().map(|(n, v)| format!("{n}={v}")).collect();
+                let got: Vec<String> = req
+                    .body()
+                    .trailers()
+                    .iter()
+                    .map(|(n, v)| format!("{n}={v}"))
+                    .collect();
                 Response::stream(200, move |w| {
                     w.write_all(&body)?;
                     w.write_all(got.join(",").as_bytes())?;
@@ -168,7 +236,17 @@ fn trailers_head_and_hundred_continue() {
         HttpConfig::default(),
     );
     let mut c = Raw::connect(&s, &[]);
-    c.headers(1, &[(":method", "POST"), (":scheme", "http"), (":authority", "a"), (":path", "/trailers"), ("te", "trailers")], false);
+    c.headers(
+        1,
+        &[
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/trailers"),
+            ("te", "trailers"),
+        ],
+        false,
+    );
     c.data(1, b"body;", false);
     c.headers(1, &[("x-sum", "42")], true);
     let frames = c.until(|f| f.h.stream == 1 && f.h.has(flag::END_STREAM));
@@ -183,17 +261,49 @@ fn trailers_head_and_hundred_continue() {
         }
     }
     assert_eq!(String::from_utf8(body).unwrap(), "body;x-sum=42");
-    assert_eq!(blocks.last().unwrap(), &vec![("grpc-status".to_string(), "0".to_string())]);
+    assert_eq!(
+        blocks.last().unwrap(),
+        &vec![("grpc-status".to_string(), "0".to_string())]
+    );
     // HEAD: the length, no data
-    c.headers(3, &[(":method", "HEAD"), (":scheme", "http"), (":authority", "a"), (":path", "/sized")], true);
+    c.headers(
+        3,
+        &[
+            (":method", "HEAD"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/sized"),
+        ],
+        true,
+    );
     let frames = c.until(|f| f.h.stream == 3 && f.h.has(flag::END_STREAM));
-    assert!(frames.iter().all(|f| !(f.is(kind::DATA) && f.h.stream == 3)));
-    let head = c.decode(frames.iter().find(|f| f.h.stream == 3 && f.is(kind::HEADERS)).unwrap());
+    assert!(frames
+        .iter()
+        .all(|f| !(f.is(kind::DATA) && f.h.stream == 3)));
+    let head = c.decode(
+        frames
+            .iter()
+            .find(|f| f.h.stream == 3 && f.is(kind::HEADERS))
+            .unwrap(),
+    );
     assert!(head.contains(&("content-length".to_string(), "1234".to_string())));
     // Expect: 100-continue: a 100 once the handler reads
-    c.headers(5, &[(":method", "PUT"), (":scheme", "http"), (":authority", "a"), (":path", "/up"), ("expect", "100-continue")], false);
+    c.headers(
+        5,
+        &[
+            (":method", "PUT"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/up"),
+            ("expect", "100-continue"),
+        ],
+        false,
+    );
     let frames = c.until(|f| f.h.stream == 5 && f.is(kind::HEADERS));
-    assert_eq!(c.decode(frames.last().unwrap()), vec![(":status".to_string(), "100".to_string())]);
+    assert_eq!(
+        c.decode(frames.last().unwrap()),
+        vec![(":status".to_string(), "100".to_string())]
+    );
     c.data(5, b"abc", true);
     let (status, _, body) = c.response(5);
     assert_eq!((status, body), (200, b"3".to_vec()));
@@ -203,7 +313,10 @@ fn trailers_head_and_hundred_continue() {
 fn connect_over_a_stream_is_a_tunnel() {
     let s = Server::plain(
         |req: Request| {
-            assert_eq!((req.method(), req.target()), ("CONNECT", "upstream.example:443"));
+            assert_eq!(
+                (req.method(), req.target()),
+                ("CONNECT", "upstream.example:443")
+            );
             Response::upgrade(200, |mut t| {
                 let mut buf = [0u8; 100];
                 loop {
@@ -219,16 +332,29 @@ fn connect_over_a_stream_is_a_tunnel() {
         HttpConfig::default(),
     );
     let mut c = Raw::connect(&s, &[]);
-    c.headers(1, &[(":method", "CONNECT"), (":authority", "upstream.example:443")], false);
+    c.headers(
+        1,
+        &[
+            (":method", "CONNECT"),
+            (":authority", "upstream.example:443"),
+        ],
+        false,
+    );
     let frames = c.until(|f| f.h.stream == 1 && f.is(kind::HEADERS));
-    assert_eq!(c.decode(frames.last().unwrap()).first().unwrap(), &(":status".to_string(), "200".to_string()));
+    assert_eq!(
+        c.decode(frames.last().unwrap()).first().unwrap(),
+        &(":status".to_string(), "200".to_string())
+    );
     assert!(!frames.last().unwrap().h.has(flag::END_STREAM));
     c.data(1, b"through the tunnel", false);
     let f = c.until(|f| f.is(kind::DATA)).pop().unwrap();
     assert_eq!(f.p, b"THROUGH THE TUNNEL");
     c.data(1, b"", true);
     let frames = c.until(|f| f.h.stream == 1 && f.h.has(flag::END_STREAM));
-    assert!(frames.last().unwrap().h.has(flag::END_STREAM), "the tunnel ends both ways");
+    assert!(
+        frames.last().unwrap().h.has(flag::END_STREAM),
+        "the tunnel ends both ways"
+    );
 }
 
 // ------------------------------------------------------------------------------------------------ what is refused
@@ -237,7 +363,12 @@ fn connect_over_a_stream_is_a_tunnel() {
 fn malformed_requests_are_reset_and_the_connection_goes_on() {
     let s = Server::plain(hello, HttpConfig::default());
     let mut c = Raw::connect(&s, &[]);
-    let base = [(":method", "GET"), (":scheme", "https"), (":authority", "a.example"), (":path", "/")];
+    let base = [
+        (":method", "GET"),
+        (":scheme", "https"),
+        (":authority", "a.example"),
+        (":path", "/"),
+    ];
     let mut id = 1;
     for extra in [
         &[("Upper", "x")][..],
@@ -252,24 +383,68 @@ fn malformed_requests_are_reset_and_the_connection_goes_on() {
         let mut fields = base.to_vec();
         fields.extend_from_slice(extra);
         c.headers(id, &fields, true);
-        assert_eq!(c.reset_of(id), Some(ErrorCode::PROTOCOL_ERROR.0), "{extra:?}");
+        assert_eq!(
+            c.reset_of(id),
+            Some(ErrorCode::PROTOCOL_ERROR.0),
+            "{extra:?}"
+        );
         id += 2;
     }
     for fields in [
-        &[(":method", "GET"), (":scheme", "https"), (":authority", "a")][..],
+        &[
+            (":method", "GET"),
+            (":scheme", "https"),
+            (":authority", "a"),
+        ][..],
         &[(":method", "GET"), (":authority", "a"), (":path", "/")],
         &[(":method", "GET"), (":scheme", "https"), (":path", "/")],
-        &[(":method", "GET"), (":scheme", "https"), (":authority", "a"), (":path", "x")],
-        &[(":method", "GET"), (":scheme", "ftp"), (":authority", "a"), (":path", "/")],
+        &[
+            (":method", "GET"),
+            (":scheme", "https"),
+            (":authority", "a"),
+            (":path", "x"),
+        ],
+        &[
+            (":method", "GET"),
+            (":scheme", "ftp"),
+            (":authority", "a"),
+            (":path", "/"),
+        ],
         &[(":scheme", "https"), (":authority", "a"), (":path", "/")],
-        &[(":method", "GET"), (":method", "GET"), (":scheme", "https"), (":authority", "a"), (":path", "/")],
-        &[(":method", "GET"), ("x", "y"), (":scheme", "https"), (":authority", "a"), (":path", "/")],
-        &[(":method", "CONNECT"), (":authority", "a:443"), (":path", "/")],
+        &[
+            (":method", "GET"),
+            (":method", "GET"),
+            (":scheme", "https"),
+            (":authority", "a"),
+            (":path", "/"),
+        ],
+        &[
+            (":method", "GET"),
+            ("x", "y"),
+            (":scheme", "https"),
+            (":authority", "a"),
+            (":path", "/"),
+        ],
+        &[
+            (":method", "CONNECT"),
+            (":authority", "a:443"),
+            (":path", "/"),
+        ],
         &[(":method", "CONNECT"), (":authority", "a")],
-        &[(":method", "POST"), (":scheme", "https"), (":authority", "a"), (":path", "/"), ("content-length", "5")],
+        &[
+            (":method", "POST"),
+            (":scheme", "https"),
+            (":authority", "a"),
+            (":path", "/"),
+            ("content-length", "5"),
+        ],
     ] {
         c.headers(id, fields, true);
-        assert_eq!(c.reset_of(id), Some(ErrorCode::PROTOCOL_ERROR.0), "{fields:?}");
+        assert_eq!(
+            c.reset_of(id),
+            Some(ErrorCode::PROTOCOL_ERROR.0),
+            "{fields:?}"
+        );
         id += 2;
     }
     // and after all that, a good request is answered
@@ -281,41 +456,132 @@ fn malformed_requests_are_reset_and_the_connection_goes_on() {
 fn protocol_errors_lose_the_connection_with_the_right_code() {
     let s = Server::plain(hello, HttpConfig::default());
     let cases: Vec<(&str, Box<dyn Fn(&mut Raw)>, ErrorCode)> = vec![
-        ("HEADERS on an even stream", Box::new(|c: &mut Raw| c.get(2, "/")), ErrorCode::PROTOCOL_ERROR),
-        ("a stream id that goes back", Box::new(|c: &mut Raw| {
-            c.get(5, "/");
-            c.get(3, "/");
-        }), ErrorCode::PROTOCOL_ERROR),
-        ("DATA on an idle stream", Box::new(|c: &mut Raw| c.data(7, b"x", true)), ErrorCode::PROTOCOL_ERROR),
-        ("WINDOW_UPDATE on an idle stream", Box::new(|c: &mut Raw| c.raw_frame(kind::WINDOW_UPDATE, 0, 9, &1u32.to_be_bytes())), ErrorCode::PROTOCOL_ERROR),
-        ("RST_STREAM on an idle stream", Box::new(|c: &mut Raw| c.raw_frame(kind::RST_STREAM, 0, 9, &0u32.to_be_bytes())), ErrorCode::PROTOCOL_ERROR),
-        ("CONTINUATION without HEADERS", Box::new(|c: &mut Raw| c.raw_frame(kind::CONTINUATION, flag::END_HEADERS, 1, b"")), ErrorCode::PROTOCOL_ERROR),
-        ("a frame inside a header block", Box::new(|c: &mut Raw| {
-            let block = c.block(&[(":method", "GET"), (":scheme", "http"), (":authority", "a"), (":path", "/")]);
-            c.raw_frame(kind::HEADERS, flag::END_STREAM, 1, &block);
-            c.raw_frame(kind::PING, 0, 0, &[0; 8]);
-        }), ErrorCode::PROTOCOL_ERROR),
-        ("PUSH_PROMISE from a client", Box::new(|c: &mut Raw| c.raw_frame(kind::PUSH_PROMISE, flag::END_HEADERS, 1, &[0, 0, 0, 2])), ErrorCode::PROTOCOL_ERROR),
-        ("a frame larger than announced", Box::new(|c: &mut Raw| c.raw_frame(kind::DATA, 0, 1, &vec![0; 16_385])), ErrorCode::FRAME_SIZE_ERROR),
-        ("a connection window over 2^31-1", Box::new(|c: &mut Raw| c.raw_frame(kind::WINDOW_UPDATE, 0, 0, &0x7fff_ffffu32.to_be_bytes())), ErrorCode::FLOW_CONTROL_ERROR),
-        ("SETTINGS_ENABLE_PUSH of 2", Box::new(|c: &mut Raw| {
-            let mut out = Vec::new();
-            frame::write_settings(&mut out, &[(setting::ENABLE_PUSH, 2)]);
-            c.send(&out);
-        }), ErrorCode::PROTOCOL_ERROR),
-        ("a header block that does not decode", Box::new(|c: &mut Raw| c.raw_frame(kind::HEADERS, flag::END_HEADERS | flag::END_STREAM, 1, &[0xff, 0xff, 0xff, 0xff, 0x7f])), ErrorCode::COMPRESSION_ERROR),
-        ("a stream that depends on itself", Box::new(|c: &mut Raw| {
-            let block = c.block(&[(":method", "GET"), (":scheme", "http"), (":authority", "a"), (":path", "/")]);
-            let mut p = 1u32.to_be_bytes().to_vec();
-            p.push(16);
-            p.extend_from_slice(&block);
-            c.raw_frame(kind::HEADERS, flag::END_HEADERS | flag::END_STREAM | flag::PRIORITY, 1, &p);
-        }), ErrorCode::PROTOCOL_ERROR),
-        ("DATA on a stream the client ended", Box::new(|c: &mut Raw| {
-            c.headers(1, &[(":method", "GET"), (":scheme", "http"), (":authority", "a"), (":path", "/")], true);
-            let _ = c.until(|f| f.h.stream == 1 && f.h.has(flag::END_STREAM));
-            c.data(1, b"late", true);
-        }), ErrorCode::STREAM_CLOSED),
+        (
+            "HEADERS on an even stream",
+            Box::new(|c: &mut Raw| c.get(2, "/")),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "a stream id that goes back",
+            Box::new(|c: &mut Raw| {
+                c.get(5, "/");
+                c.get(3, "/");
+            }),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "DATA on an idle stream",
+            Box::new(|c: &mut Raw| c.data(7, b"x", true)),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "WINDOW_UPDATE on an idle stream",
+            Box::new(|c: &mut Raw| c.raw_frame(kind::WINDOW_UPDATE, 0, 9, &1u32.to_be_bytes())),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "RST_STREAM on an idle stream",
+            Box::new(|c: &mut Raw| c.raw_frame(kind::RST_STREAM, 0, 9, &0u32.to_be_bytes())),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "CONTINUATION without HEADERS",
+            Box::new(|c: &mut Raw| c.raw_frame(kind::CONTINUATION, flag::END_HEADERS, 1, b"")),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "a frame inside a header block",
+            Box::new(|c: &mut Raw| {
+                let block = c.block(&[
+                    (":method", "GET"),
+                    (":scheme", "http"),
+                    (":authority", "a"),
+                    (":path", "/"),
+                ]);
+                c.raw_frame(kind::HEADERS, flag::END_STREAM, 1, &block);
+                c.raw_frame(kind::PING, 0, 0, &[0; 8]);
+            }),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "PUSH_PROMISE from a client",
+            Box::new(|c: &mut Raw| {
+                c.raw_frame(kind::PUSH_PROMISE, flag::END_HEADERS, 1, &[0, 0, 0, 2])
+            }),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "a frame larger than announced",
+            Box::new(|c: &mut Raw| c.raw_frame(kind::DATA, 0, 1, &vec![0; 16_385])),
+            ErrorCode::FRAME_SIZE_ERROR,
+        ),
+        (
+            "a connection window over 2^31-1",
+            Box::new(|c: &mut Raw| {
+                c.raw_frame(kind::WINDOW_UPDATE, 0, 0, &0x7fff_ffffu32.to_be_bytes())
+            }),
+            ErrorCode::FLOW_CONTROL_ERROR,
+        ),
+        (
+            "SETTINGS_ENABLE_PUSH of 2",
+            Box::new(|c: &mut Raw| {
+                let mut out = Vec::new();
+                frame::write_settings(&mut out, &[(setting::ENABLE_PUSH, 2)]);
+                c.send(&out);
+            }),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "a header block that does not decode",
+            Box::new(|c: &mut Raw| {
+                c.raw_frame(
+                    kind::HEADERS,
+                    flag::END_HEADERS | flag::END_STREAM,
+                    1,
+                    &[0xff, 0xff, 0xff, 0xff, 0x7f],
+                )
+            }),
+            ErrorCode::COMPRESSION_ERROR,
+        ),
+        (
+            "a stream that depends on itself",
+            Box::new(|c: &mut Raw| {
+                let block = c.block(&[
+                    (":method", "GET"),
+                    (":scheme", "http"),
+                    (":authority", "a"),
+                    (":path", "/"),
+                ]);
+                let mut p = 1u32.to_be_bytes().to_vec();
+                p.push(16);
+                p.extend_from_slice(&block);
+                c.raw_frame(
+                    kind::HEADERS,
+                    flag::END_HEADERS | flag::END_STREAM | flag::PRIORITY,
+                    1,
+                    &p,
+                );
+            }),
+            ErrorCode::PROTOCOL_ERROR,
+        ),
+        (
+            "DATA on a stream the client ended",
+            Box::new(|c: &mut Raw| {
+                c.headers(
+                    1,
+                    &[
+                        (":method", "GET"),
+                        (":scheme", "http"),
+                        (":authority", "a"),
+                        (":path", "/"),
+                    ],
+                    true,
+                );
+                let _ = c.until(|f| f.h.stream == 1 && f.h.has(flag::END_STREAM));
+                c.data(1, b"late", true);
+            }),
+            ErrorCode::STREAM_CLOSED,
+        ),
     ];
     for (what, act, code) in cases {
         let mut c = Raw::connect(&s, &[]);
@@ -367,20 +633,43 @@ fn rapid_reset_is_stopped_and_resets_do_not_free_handler_places() {
     if let Some(code) = c.goaway() {
         lost = Some(code);
     }
-    assert_eq!(lost, Some(ErrorCode::ENHANCE_YOUR_CALM.0), "200 streams opened and reset at once");
+    assert_eq!(
+        lost,
+        Some(ErrorCode::ENHANCE_YOUR_CALM.0),
+        "200 streams opened and reset at once"
+    );
     thread::sleep(Duration::from_millis(400));
-    assert!(most.load(Ordering::SeqCst) <= 4, "at most the four handlers the limit allows ran at once: {}", most.load(Ordering::SeqCst));
+    assert!(
+        most.load(Ordering::SeqCst) <= 4,
+        "at most the four handlers the limit allows ran at once: {}",
+        most.load(Ordering::SeqCst)
+    );
 }
 
 #[test]
 fn the_2019_floods_are_stopped() {
     let s = Server::plain(hello, small_floods());
     let floods: Vec<(&str, Box<dyn Fn(&mut Raw)>)> = vec![
-        ("PING", Box::new(|c: &mut Raw| c.raw_frame(kind::PING, 0, 0, &[1; 8]))),
-        ("SETTINGS", Box::new(|c: &mut Raw| c.raw_frame(kind::SETTINGS, 0, 0, b""))),
-        ("PRIORITY", Box::new(|c: &mut Raw| c.raw_frame(kind::PRIORITY, 0, 1, &[0, 0, 0, 3, 16]))),
-        ("unknown frames", Box::new(|c: &mut Raw| c.raw_frame(0x77, 0, 0, b"x"))),
-        ("small window updates", Box::new(|c: &mut Raw| c.raw_frame(kind::WINDOW_UPDATE, 0, 0, &1u32.to_be_bytes()))),
+        (
+            "PING",
+            Box::new(|c: &mut Raw| c.raw_frame(kind::PING, 0, 0, &[1; 8])),
+        ),
+        (
+            "SETTINGS",
+            Box::new(|c: &mut Raw| c.raw_frame(kind::SETTINGS, 0, 0, b"")),
+        ),
+        (
+            "PRIORITY",
+            Box::new(|c: &mut Raw| c.raw_frame(kind::PRIORITY, 0, 1, &[0, 0, 0, 3, 16])),
+        ),
+        (
+            "unknown frames",
+            Box::new(|c: &mut Raw| c.raw_frame(0x77, 0, 0, b"x")),
+        ),
+        (
+            "small window updates",
+            Box::new(|c: &mut Raw| c.raw_frame(kind::WINDOW_UPDATE, 0, 0, &1u32.to_be_bytes())),
+        ),
     ];
     for (what, one) in floods {
         let mut c = Raw::connect(&s, &[]);
@@ -391,11 +680,24 @@ fn the_2019_floods_are_stopped() {
     }
     // empty DATA frames on an open stream
     let mut c = Raw::connect(&s, &[]);
-    c.headers(1, &[(":method", "POST"), (":scheme", "http"), (":authority", "a"), (":path", "/")], false);
+    c.headers(
+        1,
+        &[
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/"),
+        ],
+        false,
+    );
     for _ in 0..200 {
         c.data(1, b"", false);
     }
-    assert_eq!(c.goaway(), Some(ErrorCode::ENHANCE_YOUR_CALM.0), "empty DATA");
+    assert_eq!(
+        c.goaway(),
+        Some(ErrorCode::ENHANCE_YOUR_CALM.0),
+        "empty DATA"
+    );
     // a few of each are fine
     let mut c = Raw::connect(&s, &[]);
     for _ in 0..5 {
@@ -408,17 +710,37 @@ fn the_2019_floods_are_stopped() {
 
 #[test]
 fn continuation_floods_and_hpack_bombs_cost_little() {
-    let s = Server::plain(hello, HttpConfig { max_header_bytes: 16 * 1024, ..small_floods() });
+    let s = Server::plain(
+        hello,
+        HttpConfig {
+            max_header_bytes: 16 * 1024,
+            ..small_floods()
+        },
+    );
     // CVE-2024-27316: a header block that never ends
     let mut c = Raw::connect(&s, &[]);
-    let block = c.block(&[(":method", "GET"), (":scheme", "http"), (":authority", "a"), (":path", "/")]);
+    let block = c.block(&[
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":authority", "a"),
+        (":path", "/"),
+    ]);
     c.raw_frame(kind::HEADERS, 0, 1, &block);
     for _ in 0..100 {
         c.raw_frame(kind::CONTINUATION, 0, 1, &[0x40, 1, b'x', 1, b'y']);
     }
-    assert_eq!(c.goaway(), Some(ErrorCode::ENHANCE_YOUR_CALM.0), "too many CONTINUATION frames");
+    assert_eq!(
+        c.goaway(),
+        Some(ErrorCode::ENHANCE_YOUR_CALM.0),
+        "too many CONTINUATION frames"
+    );
     let mut c = Raw::connect(&s, &[]);
-    let block = c.block(&[(":method", "GET"), (":scheme", "http"), (":authority", "a"), (":path", "/")]);
+    let block = c.block(&[
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":authority", "a"),
+        (":path", "/"),
+    ]);
     c.raw_frame(kind::HEADERS, 0, 1, &block);
     let big = vec![b'a'; 16_000];
     let mut lit = vec![0x00, 0x01, b'x', 0x7f];
@@ -432,10 +754,19 @@ fn continuation_floods_and_hpack_bombs_cost_little() {
     lit.extend_from_slice(&big);
     c.raw_frame(kind::CONTINUATION, 0, 1, &lit);
     c.raw_frame(kind::CONTINUATION, 0, 1, &lit);
-    assert_eq!(c.goaway(), Some(ErrorCode::ENHANCE_YOUR_CALM.0), "a header block longer than the limit");
+    assert_eq!(
+        c.goaway(),
+        Some(ErrorCode::ENHANCE_YOUR_CALM.0),
+        "a header block longer than the limit"
+    );
     // an HPACK bomb: one large entry in the table, referred to again and again with one byte each
     let mut c = Raw::connect(&s, &[]);
-    let mut block = c.block(&[(":method", "GET"), (":scheme", "http"), (":authority", "a"), (":path", "/")]);
+    let mut block = c.block(&[
+        (":method", "GET"),
+        (":scheme", "http"),
+        (":authority", "a"),
+        (":path", "/"),
+    ]);
     // literal with incremental indexing, new name "x-big", value of 4000 bytes: it goes into the table at index 62
     block.extend_from_slice(&[0x40, 5]);
     block.extend_from_slice(b"x-big");
@@ -453,10 +784,17 @@ fn continuation_floods_and_hpack_bombs_cost_little() {
     let mut out = Vec::new();
     frame::write_header_block(&mut out, 1, true, &block, 16_384);
     c.send(&out);
-    let frames = c.until(|f| f.h.stream == 1 && (f.h.has(flag::END_STREAM) || f.is(kind::RST_STREAM)) || f.is(kind::GOAWAY));
+    let frames = c.until(|f| {
+        f.h.stream == 1 && (f.h.has(flag::END_STREAM) || f.is(kind::RST_STREAM))
+            || f.is(kind::GOAWAY)
+    });
     let last = frames.last().unwrap();
     if last.is(kind::HEADERS) {
-        assert_eq!(c.decode(last)[0], (":status".to_string(), "431".to_string()), "40 MB of fields, refused");
+        assert_eq!(
+            c.decode(last)[0],
+            (":status".to_string(), "431".to_string()),
+            "40 MB of fields, refused"
+        );
     } else {
         assert!(last.is(kind::GOAWAY), "{last:?}");
     }
@@ -519,7 +857,10 @@ fn a_client_that_reads_nothing_stops_the_server_reading_and_holds_no_more_than_a
     c.get(1, "/firehose");
     thread::sleep(Duration::from_millis(500));
     let w = written.load(Ordering::SeqCst);
-    assert!(w < 64 << 20, "the handler was held back by the socket: {w} bytes written");
+    assert!(
+        w < 64 << 20,
+        "the handler was held back by the socket: {w} bytes written"
+    );
     drop(c);
 }
 
@@ -530,12 +871,20 @@ fn a_client_goaway_refuses_new_streams_and_the_client_closes_when_it_likes() {
     c.get(1, "/");
     assert_eq!(c.response(1).0, 200);
     let mut out = Vec::new();
-    frame::write_goaway(&mut out, 0, ErrorCode(0xbad), b"an unknown code is no special case");
+    frame::write_goaway(
+        &mut out,
+        0,
+        ErrorCode(0xbad),
+        b"an unknown code is no special case",
+    );
     c.send(&out);
     // the connection still answers: a PING, and a stream opened after the GOAWAY is refused
     c.raw_frame(kind::PING, 0, 0, b"stillup!");
     let frames = c.until(|f| f.is(kind::PING));
-    assert_eq!(frames.last().map(|f| f.p.clone()), Some(b"stillup!".to_vec()));
+    assert_eq!(
+        frames.last().map(|f| f.p.clone()),
+        Some(b"stillup!".to_vec())
+    );
     c.get(3, "/late");
     assert_eq!(c.reset_of(3), Some(ErrorCode::REFUSED_STREAM.0));
     drop(c);
@@ -561,12 +910,29 @@ fn frames_on_a_stream_the_client_reset_are_stream_errors_and_ours_are_ignored() 
         )
     };
     let mut c = Raw::connect(&s, &[]);
-    c.headers(1, &[(":method", "POST"), (":scheme", "http"), (":authority", "a"), (":path", "/")], false);
+    c.headers(
+        1,
+        &[
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/"),
+        ],
+        false,
+    );
     c.raw_frame(kind::RST_STREAM, 0, 1, &ErrorCode::CANCEL.0.to_be_bytes());
     c.data(1, b"after the reset", false);
-    assert_eq!(c.reset_of(1), Some(ErrorCode::STREAM_CLOSED.0), "DATA after the client's own reset");
+    assert_eq!(
+        c.reset_of(1),
+        Some(ErrorCode::STREAM_CLOSED.0),
+        "DATA after the client's own reset"
+    );
     c.headers(1, &[("x-trailer", "late")], true);
-    assert_eq!(c.reset_of(1), Some(ErrorCode::STREAM_CLOSED.0), "HEADERS after the client's own reset");
+    assert_eq!(
+        c.reset_of(1),
+        Some(ErrorCode::STREAM_CLOSED.0),
+        "HEADERS after the client's own reset"
+    );
     drop(held);
     c.get(3, "/after");
     assert_eq!(c.response(3).0, 200, "the connection goes on");
@@ -576,7 +942,12 @@ fn frames_on_a_stream_the_client_reset_are_stream_errors_and_ours_are_ignored() 
 fn a_stream_answered_before_its_request_ends_is_still_checked_and_stopped_if_it_goes_on() {
     let s = Server::plain(hello, HttpConfig::default());
     let mut c = Raw::connect(&s, &[]);
-    let post = [(":method", "POST"), (":scheme", "http"), (":authority", "a"), (":path", "/")];
+    let post = [
+        (":method", "POST"),
+        (":scheme", "http"),
+        (":authority", "a"),
+        (":path", "/"),
+    ];
     // answered at once; trailers that do not end the stream are still an error on it
     c.headers(1, &post, false);
     assert_eq!(c.response(1).0, 200);
@@ -593,5 +964,10 @@ fn a_stream_answered_before_its_request_ends_is_still_checked_and_stopped_if_it_
     c.data(5, b"", true);
     c.get(7, "/next");
     let frames = c.until(|f| f.h.stream == 7 && f.h.has(flag::END_STREAM));
-    assert!(frames.iter().all(|f| !(f.h.stream == 5 && f.is(kind::RST_STREAM))), "{frames:?}");
+    assert!(
+        frames
+            .iter()
+            .all(|f| !(f.h.stream == 5 && f.is(kind::RST_STREAM))),
+        "{frames:?}"
+    );
 }

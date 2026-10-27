@@ -5,7 +5,10 @@
 //! | `http_server_h1` | a whole HTTP/1.1 connection over an in-memory transport, the input as what the client sends, with a handler that reads the body and answers in one of four ways the path picks: nothing panics, the connection ends, and every byte the server wrote parses strictly as responses (CRLF lines, a status line, framing that matches the bytes: a length or well-formed chunks) |
 //! | `h2_server` | the HTTP/2 engine fed the input as frames after the preface (in pieces the first byte sizes), each new request answered by a handler that the stream id steers (reads its body, answers with a body and trailers, resets, or leaves it), the output pumped and taken as it would be sent: nothing panics, and the output is whole frames no larger than the client allows, beginning with SETTINGS, whose header blocks decode with an independent HPACK decoder, with nothing after a GOAWAY that ends the connection |
 
-use super::super::h2::frame::{self, flag, kind, setting, ErrorCode, Header, DEFAULT_MAX_FRAME_SIZE, HEADER_LEN, MAX_FRAME_SIZE_LIMIT};
+use super::super::h2::frame::{
+    self, flag, kind, setting, ErrorCode, Header, DEFAULT_MAX_FRAME_SIZE, HEADER_LEN,
+    MAX_FRAME_SIZE_LIMIT,
+};
 use super::super::h2::hpack::{Decoder, Encoder, FieldRef};
 use super::h2::Engine;
 use super::{h1, ConnInfo, HttpConfig, Request, Response, Transport};
@@ -13,7 +16,15 @@ use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
 
 fn config() -> HttpConfig {
-    let mut c = HttpConfig { max_request_line: 512, max_header_bytes: 2048, max_headers: 32, max_body: Some(16 * 1024), max_requests_per_connection: 50, drain_limit: 4096, ..HttpConfig::default() };
+    let mut c = HttpConfig {
+        max_request_line: 512,
+        max_header_bytes: 2048,
+        max_headers: 32,
+        max_body: Some(16 * 1024),
+        max_requests_per_connection: 50,
+        drain_limit: 4096,
+        ..HttpConfig::default()
+    };
     c.h2.max_concurrent_streams = 8;
     c.h2.stream_send_buffer = 4096;
     c
@@ -68,7 +79,9 @@ fn h1_handler(mut req: Request) -> Response {
     }
     let body = req.read_body(16 * 1024);
     let trailers = req.body().trailers().len();
-    let Ok(body) = body else { return Response::text(400, "body\n") };
+    let Ok(body) = body else {
+        return Response::text(400, "body\n");
+    };
     match req.path().len() % 4 {
         0 => Response::bytes(200, "x/y", body),
         1 => Response::stream(200, move |w| {
@@ -84,8 +97,18 @@ fn h1_handler(mut req: Request) -> Response {
 /// Runs one HTTP/1.1 connection on `data` and checks what the server wrote.
 pub fn h1_exchange(data: &[u8]) {
     let out = Arc::new(Mutex::new(Vec::new()));
-    let mem = Mem { input: io::Cursor::new(data.to_vec()), out: out.clone() };
-    let _ = h1::serve_with(Box::new(mem), Vec::new(), Arc::new(ConnInfo::default()), Arc::new(h1_handler), &config(), super::runtime::Ctl::detached());
+    let mem = Mem {
+        input: io::Cursor::new(data.to_vec()),
+        out: out.clone(),
+    };
+    let _ = h1::serve_with(
+        Box::new(mem),
+        Vec::new(),
+        Arc::new(ConnInfo::default()),
+        Arc::new(h1_handler),
+        &config(),
+        super::runtime::Ctl::detached(),
+    );
     let written = out.lock().unwrap().clone();
     check_responses(&written);
 }
@@ -93,30 +116,55 @@ pub fn h1_exchange(data: &[u8]) {
 /// Every byte is part of a well-formed response.
 fn check_responses(mut d: &[u8]) {
     fn line<'a>(d: &mut &'a [u8]) -> &'a [u8] {
-        let i = d.windows(2).position(|w| w == b"\r\n").expect("a line ends with CRLF");
+        let i = d
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .expect("a line ends with CRLF");
         let l = &d[..i];
-        assert!(!l.contains(&b'\r') && !l.contains(&b'\n'), "a bare CR or LF in a line the server wrote");
+        assert!(
+            !l.contains(&b'\r') && !l.contains(&b'\n'),
+            "a bare CR or LF in a line the server wrote"
+        );
         *d = &d[i + 2..];
         l
     }
     while !d.is_empty() {
         let status = line(&mut d);
-        assert!(status.starts_with(b"HTTP/1.1 ") && status.len() >= 12 && status[9..12].iter().all(u8::is_ascii_digit), "a status line: {:?}", String::from_utf8_lossy(status));
-        let code: u16 = std::str::from_utf8(&status[9..12]).unwrap().parse().unwrap();
+        assert!(
+            status.starts_with(b"HTTP/1.1 ")
+                && status.len() >= 12
+                && status[9..12].iter().all(u8::is_ascii_digit),
+            "a status line: {:?}",
+            String::from_utf8_lossy(status)
+        );
+        let code: u16 = std::str::from_utf8(&status[9..12])
+            .unwrap()
+            .parse()
+            .unwrap();
         let (mut length, mut chunked) = (None, false);
         loop {
             let l = line(&mut d);
             if l.is_empty() {
                 break;
             }
-            let colon = l.iter().position(|&b| b == b':').expect("a field has a colon");
-            assert!(colon > 0 && l[..colon].iter().all(|&b| super::is_tchar(b)), "a field name");
+            let colon = l
+                .iter()
+                .position(|&b| b == b':')
+                .expect("a field has a colon");
+            assert!(
+                colon > 0 && l[..colon].iter().all(|&b| super::is_tchar(b)),
+                "a field name"
+            );
             let name = String::from_utf8_lossy(&l[..colon]).to_ascii_lowercase();
             let value = String::from_utf8_lossy(&l[colon + 1..]).trim().to_string();
             match name.as_str() {
                 "content-length" => {
                     assert!(length.is_none(), "one Content-Length");
-                    length = Some(value.parse::<usize>().expect("a Content-Length is a number"));
+                    length = Some(
+                        value
+                            .parse::<usize>()
+                            .expect("a Content-Length is a number"),
+                    );
                 }
                 "transfer-encoding" => {
                     assert_eq!(value, "chunked");
@@ -125,14 +173,18 @@ fn check_responses(mut d: &[u8]) {
                 _ => {}
             }
         }
-        assert!(!(chunked && length.is_some()), "never both Content-Length and chunked");
+        assert!(
+            !(chunked && length.is_some()),
+            "never both Content-Length and chunked"
+        );
         if (100..200).contains(&code) || code == 204 || code == 304 {
             assert!(!chunked);
             continue;
         }
         if chunked {
             loop {
-                let size = usize::from_str_radix(std::str::from_utf8(line(&mut d)).unwrap(), 16).expect("a chunk size");
+                let size = usize::from_str_radix(std::str::from_utf8(line(&mut d)).unwrap(), 16)
+                    .expect("a chunk size");
                 if size == 0 {
                     while !line(&mut d).is_empty() {}
                     break;
@@ -170,7 +222,9 @@ pub fn h1_seeds() -> Vec<Vec<u8>> {
 
 /// Feeds `data` (frames after the preface) to the engine, answering requests as the stream ids say, and checks the output.
 pub fn h2_engine(data: &[u8]) {
-    let Some((&piece, data)) = data.split_first() else { return };
+    let Some((&piece, data)) = data.split_first() else {
+        return;
+    };
     let piece = usize::from(piece % 64) + 1;
     let mut e = Engine::new(&config());
     let mut checker = OutputCheck::new();
@@ -253,24 +307,42 @@ struct OutputCheck {
 
 impl OutputCheck {
     fn new() -> OutputCheck {
-        OutputCheck { buf: Vec::new(), decoder: Decoder::new(4096, 1 << 20), first: true, block: None, gone: false }
+        OutputCheck {
+            buf: Vec::new(),
+            decoder: Decoder::new(4096, 1 << 20),
+            first: true,
+            block: None,
+            gone: false,
+        }
     }
 
     fn feed(&mut self, out: &[u8], e: &Engine) {
         if out.is_empty() {
             return;
         }
-        assert!(!self.gone, "output after a GOAWAY that ended the connection");
+        assert!(
+            !self.gone,
+            "output after a GOAWAY that ended the connection"
+        );
         self.buf.extend_from_slice(out);
         let mut pos = 0;
         while self.buf.len() - pos >= HEADER_LEN {
             let h = Header::parse(self.buf[pos..pos + HEADER_LEN].try_into().unwrap());
-            assert!(h.length <= MAX_FRAME_SIZE_LIMIT && h.length as usize <= e.peer_max_frame_for_fuzz().max(DEFAULT_MAX_FRAME_SIZE as usize), "a frame larger than the client allows");
+            assert!(
+                h.length <= MAX_FRAME_SIZE_LIMIT
+                    && h.length as usize
+                        <= e.peer_max_frame_for_fuzz()
+                            .max(DEFAULT_MAX_FRAME_SIZE as usize),
+                "a frame larger than the client allows"
+            );
             let end = pos + HEADER_LEN + h.length as usize;
             assert!(self.buf.len() >= end, "the engine's output is whole frames");
             let payload = &self.buf[pos + HEADER_LEN..end];
             if self.first {
-                assert!(h.kind == kind::SETTINGS && !h.has(flag::ACK), "the server begins with SETTINGS");
+                assert!(
+                    h.kind == kind::SETTINGS && !h.has(flag::ACK),
+                    "the server begins with SETTINGS"
+                );
                 self.first = false;
             }
             frame::parse(&h, payload).expect("the server's own frames parse");
@@ -280,8 +352,12 @@ impl OutputCheck {
                     let mut b = payload.to_vec();
                     if h.has(flag::END_HEADERS) {
                         let mut fields = Vec::new();
-                        self.decoder.decode(&std::mem::take(&mut b), &mut fields).expect("our header blocks decode");
-                        assert!(fields.first().is_none_or(|f| f.name == b":status" || !f.name.starts_with(b":")));
+                        self.decoder
+                            .decode(&std::mem::take(&mut b), &mut fields)
+                            .expect("our header blocks decode");
+                        assert!(fields
+                            .first()
+                            .is_none_or(|f| f.name == b":status" || !f.name.starts_with(b":")));
                     } else {
                         self.block = Some(b);
                     }
@@ -291,7 +367,9 @@ impl OutputCheck {
                     b.extend_from_slice(payload);
                     if h.has(flag::END_HEADERS) {
                         let mut fields = Vec::new();
-                        self.decoder.decode(&b, &mut fields).expect("our header blocks decode");
+                        self.decoder
+                            .decode(&b, &mut fields)
+                            .expect("our header blocks decode");
                     } else {
                         self.block = Some(b);
                     }
@@ -314,18 +392,36 @@ impl OutputCheck {
 pub fn h2_seeds() -> Vec<Vec<u8>> {
     let mut enc = Encoder::new();
     let mut block = |fields: &[(&str, &str)]| {
-        let refs: Vec<FieldRef<'_>> = fields.iter().map(|(n, v)| FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false }).collect();
+        let refs: Vec<FieldRef<'_>> = fields
+            .iter()
+            .map(|(n, v)| FieldRef {
+                name: n.as_bytes(),
+                value: v.as_bytes(),
+                sensitive: false,
+            })
+            .collect();
         let mut b = Vec::new();
         enc.encode(&refs, &mut b);
         b
     };
     fn get(path: &str) -> Vec<(&str, &str)> {
-        vec![(":method", "GET"), (":scheme", "https"), (":authority", "a.example"), (":path", path)]
+        vec![
+            (":method", "GET"),
+            (":scheme", "https"),
+            (":authority", "a.example"),
+            (":path", path),
+        ]
     }
     let mut seeds = Vec::new();
     for piece in [0u8, 6, 63] {
         let mut s = vec![piece];
-        frame::write_settings(&mut s, &[(setting::INITIAL_WINDOW_SIZE, 1000), (setting::MAX_FRAME_SIZE, 16_384)]);
+        frame::write_settings(
+            &mut s,
+            &[
+                (setting::INITIAL_WINDOW_SIZE, 1000),
+                (setting::MAX_FRAME_SIZE, 16_384),
+            ],
+        );
         frame::write_settings_ack(&mut s);
         let mut post = get("/up");
         post[0] = (":method", "POST");

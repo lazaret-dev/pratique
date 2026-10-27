@@ -106,7 +106,8 @@ impl Aes {
                     for b in 0..4u32 {
                         let at = 16 * b as usize;
                         blocks[at..at + 12].copy_from_slice(nonce);
-                        blocks[at + 12..at + 16].copy_from_slice(&counter.wrapping_add(b).to_be_bytes());
+                        blocks[at + 12..at + 16]
+                            .copy_from_slice(&counter.wrapping_add(b).to_be_bytes());
                     }
                     k.encrypt4(&mut blocks);
                     for (d, ks) in chunk.iter_mut().zip(blocks.iter()) {
@@ -143,7 +144,13 @@ impl Aes {
 
     /// AES-GCM encryption of `data` in place in one pass, where the CPU has the code for it: the tag (the GHASH value S of
     /// `aad` and the ciphertext, masked with E(J0)). `None` if not (then CTR and GHASH are done one after the other).
-    pub(crate) fn gcm_seal(&self, nonce: &[u8; 12], aad: &[u8], data: &mut [u8], powers: Option<&aes_hw::Powers>) -> Option<[u8; 16]> {
+    pub(crate) fn gcm_seal(
+        &self,
+        nonce: &[u8; 12],
+        aad: &[u8],
+        data: &mut [u8],
+        powers: Option<&aes_hw::Powers>,
+    ) -> Option<[u8; 16]> {
         match (&self.imp, powers) {
             (Imp::Hardware(k), Some(p)) => k.gcm_seal(nonce, aad, data, p),
             _ => None,
@@ -153,7 +160,13 @@ impl Aes {
     /// The same for decryption: `data` is plaintext afterwards, the tag returned is the one the ciphertext it was should
     /// have, and the message's is still to be checked against it (and the ciphertext put back if it is wrong:
     /// [`Aes::ctr_xor`] does that).
-    pub(crate) fn gcm_open(&self, nonce: &[u8; 12], aad: &[u8], data: &mut [u8], powers: Option<&aes_hw::Powers>) -> Option<[u8; 16]> {
+    pub(crate) fn gcm_open(
+        &self,
+        nonce: &[u8; 12],
+        aad: &[u8],
+        data: &mut [u8],
+        powers: Option<&aes_hw::Powers>,
+    ) -> Option<[u8; 16]> {
         match (&self.imp, powers) {
             (Imp::Hardware(k), Some(p)) => k.gcm_open(nonce, aad, data, p),
             _ => None,
@@ -216,7 +229,10 @@ pub(crate) mod reference {
     }
 
     pub(crate) fn expand_key(key: &[u8]) -> ([[u8; 16]; 15], usize) {
-        assert!(key.len() == 16 || key.len() == 32, "unsupported AES key length");
+        assert!(
+            key.len() == 16 || key.len() == 32,
+            "unsupported AES key length"
+        );
         let nk = key.len() / 4;
         let nr = nk + 6;
         let total_words = 4 * (nr + 1);
@@ -228,10 +244,20 @@ pub(crate) mod reference {
         for i in nk..total_words {
             let mut t = w[i - 1];
             if i % nk == 0 {
-                t = [SBOX[t[1] as usize] ^ rcon, SBOX[t[2] as usize], SBOX[t[3] as usize], SBOX[t[0] as usize]];
+                t = [
+                    SBOX[t[1] as usize] ^ rcon,
+                    SBOX[t[2] as usize],
+                    SBOX[t[3] as usize],
+                    SBOX[t[0] as usize],
+                ];
                 rcon = xtime(rcon);
             } else if nk > 6 && i % nk == 4 {
-                t = [SBOX[t[0] as usize], SBOX[t[1] as usize], SBOX[t[2] as usize], SBOX[t[3] as usize]];
+                t = [
+                    SBOX[t[0] as usize],
+                    SBOX[t[1] as usize],
+                    SBOX[t[2] as usize],
+                    SBOX[t[3] as usize],
+                ];
             }
             let p = w[i - nk];
             w.push([p[0] ^ t[0], p[1] ^ t[1], p[2] ^ t[2], p[3] ^ t[3]]);
@@ -308,7 +334,10 @@ mod tests {
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0 >> 24
         }
         fn bytes(&mut self, n: usize) -> Vec<u8> {
@@ -329,17 +358,32 @@ mod tests {
     fn fips197_aes128() {
         for b in backends() {
             let aes = Aes::with_backend(&unhex("000102030405060708090a0b0c0d0e0f"), b);
-            let pt: [u8; 16] = unhex("00112233445566778899aabbccddeeff").try_into().unwrap();
-            assert_eq!(hex(&aes.encrypt_block(&pt)), "69c4e0d86a7b0430d8cdb78070b4c55a", "{b:?}");
+            let pt: [u8; 16] = unhex("00112233445566778899aabbccddeeff")
+                .try_into()
+                .unwrap();
+            assert_eq!(
+                hex(&aes.encrypt_block(&pt)),
+                "69c4e0d86a7b0430d8cdb78070b4c55a",
+                "{b:?}"
+            );
         }
     }
 
     #[test]
     fn fips197_aes256() {
         for b in backends() {
-            let aes = Aes::with_backend(&unhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"), b);
-            let pt: [u8; 16] = unhex("00112233445566778899aabbccddeeff").try_into().unwrap();
-            assert_eq!(hex(&aes.encrypt_block(&pt)), "8ea2b7ca516745bfeafc49904b496089", "{b:?}");
+            let aes = Aes::with_backend(
+                &unhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"),
+                b,
+            );
+            let pt: [u8; 16] = unhex("00112233445566778899aabbccddeeff")
+                .try_into()
+                .unwrap();
+            assert_eq!(
+                hex(&aes.encrypt_block(&pt)),
+                "8ea2b7ca516745bfeafc49904b496089",
+                "{b:?}"
+            );
         }
     }
 
@@ -347,8 +391,16 @@ mod tests {
     fn fips197_appendix_b_and_nist_ecb_vectors() {
         // FIPS 197 appendix B, and the first AES-128 / AES-256 ECB known-answer vectors of SP 800-38A
         let cases = [
-            ("2b7e151628aed2a6abf7158809cf4f3c", "3243f6a8885a308d313198a2e0370734", "3925841d02dc09fbdc118597196a0b32"),
-            ("2b7e151628aed2a6abf7158809cf4f3c", "6bc1bee22e409f96e93d7e117393172a", "3ad77bb40d7a3660a89ecaf32466ef97"),
+            (
+                "2b7e151628aed2a6abf7158809cf4f3c",
+                "3243f6a8885a308d313198a2e0370734",
+                "3925841d02dc09fbdc118597196a0b32",
+            ),
+            (
+                "2b7e151628aed2a6abf7158809cf4f3c",
+                "6bc1bee22e409f96e93d7e117393172a",
+                "3ad77bb40d7a3660a89ecaf32466ef97",
+            ),
             (
                 "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4",
                 "6bc1bee22e409f96e93d7e117393172a",
@@ -373,7 +425,11 @@ mod tests {
                 let block: [u8; 16] = rng.bytes(16).try_into().unwrap();
                 let want = reference::encrypt_block(&key, &block);
                 for b in backends() {
-                    assert_eq!(Aes::with_backend(&key, b).encrypt_block(&block), want, "{b:?} key {len}");
+                    assert_eq!(
+                        Aes::with_backend(&key, b).encrypt_block(&block),
+                        want,
+                        "{b:?} key {len}"
+                    );
                 }
             }
         }
@@ -387,7 +443,10 @@ mod tests {
             let nonce: [u8; 12] = rng.bytes(12).try_into().unwrap();
             // lengths cover: empty, partial blocks, the 4-block and 8-block boundaries of the two
             // implementations, and a few multiples of both
-            let lengths = [0usize, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 191, 192, 255, 256, 257, 500, 1031];
+            let lengths = [
+                0usize, 1, 15, 16, 17, 63, 64, 65, 127, 128, 129, 191, 192, 255, 256, 257, 500,
+                1031,
+            ];
             // starting counters include the 32-bit wrap
             let counters = [0u32, 1, 2, 0xffff_fff9, 0xffff_fffe, 0xffff_ffff];
             for &len in &lengths {
@@ -398,7 +457,10 @@ mod tests {
                     for b in backends() {
                         let mut got = data.clone();
                         Aes::with_backend(&key, b).ctr_xor(&nonce, ctr, &mut got);
-                        assert_eq!(got, want, "{b:?}, key {key_len}, len {len}, counter {ctr:#x}");
+                        assert_eq!(
+                            got, want,
+                            "{b:?}, key {key_len}, len {len}, counter {ctr:#x}"
+                        );
                     }
                 }
             }
@@ -417,7 +479,11 @@ mod tests {
             for b in backends() {
                 let mut buf = backing.clone();
                 Aes::with_backend(&key, b).ctr_xor(&nonce, 2, &mut buf[offset..offset + 300]);
-                assert_eq!(&buf[offset..offset + 300], &want[..], "{b:?} offset {offset}");
+                assert_eq!(
+                    &buf[offset..offset + 300],
+                    &want[..],
+                    "{b:?} offset {offset}"
+                );
                 // bytes outside the slice are untouched
                 assert_eq!(&buf[..offset], &backing[..offset]);
                 assert_eq!(&buf[offset + 300..], &backing[offset + 300..]);

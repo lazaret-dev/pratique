@@ -15,7 +15,10 @@
 //! stream and makes the connection unusable; the application sees it from [`Connection::process`] and from each
 //! stream's next [`Connection::poll_stream`].
 
-use super::frame::{self, flag, kind, setting, ErrorCode, Frame, FrameError, Header, DEFAULT_MAX_FRAME_SIZE, DEFAULT_WINDOW, HEADER_LEN, MAX_FRAME_SIZE_LIMIT, MAX_WINDOW, PREFACE};
+use super::frame::{
+    self, flag, kind, setting, ErrorCode, Frame, FrameError, Header, DEFAULT_MAX_FRAME_SIZE,
+    DEFAULT_WINDOW, HEADER_LEN, MAX_FRAME_SIZE_LIMIT, MAX_WINDOW, PREFACE,
+};
 use super::hpack::{self, Decoder, Encoder, FieldRef};
 use std::collections::HashMap;
 use std::fmt;
@@ -37,7 +40,11 @@ impl Default for Config {
         // Big enough that a fast path with a long delay is not held up by waiting for credit: a window has to cover
         // the bandwidth-delay product (100 MB/s at 80 ms is 8 MB). The memory this can cost is bounded by the
         // connection window, and only for a response the application is slow to read.
-        Config { stream_window: 8 << 20, connection_window: 32 << 20, max_header_list: 64 << 10 }
+        Config {
+            stream_window: 8 << 20,
+            connection_window: 32 << 20,
+            max_header_list: 64 << 10,
+        }
     }
 }
 
@@ -79,7 +86,11 @@ pub(crate) struct Direct<'a> {
 
 impl<'a> Direct<'a> {
     pub(crate) fn new(stream: u32, out: &'a mut [u8]) -> Direct<'a> {
-        Direct { stream, out, written: 0 }
+        Direct {
+            stream,
+            out,
+            written: 0,
+        }
     }
 
     /// How many bytes of the body were written into the buffer (from its start), all of which count as read.
@@ -140,7 +151,17 @@ pub(crate) struct ConnectionError {
 
 impl fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "HTTP/2 connection {}: {} ({})", if self.local { "failed" } else { "closed by the server" }, self.reason, self.code)
+        write!(
+            f,
+            "HTTP/2 connection {}: {} ({})",
+            if self.local {
+                "failed"
+            } else {
+                "closed by the server"
+            },
+            self.reason,
+            self.code
+        )
     }
 }
 
@@ -174,8 +195,12 @@ pub(crate) enum OpenError {
 impl fmt::Display for OpenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OpenError::Full => f.write_str("the HTTP/2 connection has as many streams as the server allows"),
-            OpenError::Unavailable => f.write_str("the HTTP/2 connection cannot take another request"),
+            OpenError::Full => {
+                f.write_str("the HTTP/2 connection has as many streams as the server allows")
+            }
+            OpenError::Unavailable => {
+                f.write_str("the HTTP/2 connection cannot take another request")
+            }
             OpenError::Invalid(why) => write!(f, "the request cannot be sent over HTTP/2: {why}"),
         }
     }
@@ -280,7 +305,9 @@ impl Stream {
         if self.expected.is_some_and(|n| n > self.collect_limit) {
             return false;
         }
-        let room = left.min(self.collect_limit.saturating_sub(self.received)).min(COLLECT_ROOM_MAX);
+        let room = left
+            .min(self.collect_limit.saturating_sub(self.received))
+            .min(COLLECT_ROOM_MAX);
         self.body.reserve_exact(room as usize);
         true
     }
@@ -505,7 +532,11 @@ impl Connection {
     /// collecting; what does not fit is kept for a poll as usual, and so is everything after it. So a reader that feeds
     /// with an empty buffer, or whose stream has something waiting, sees exactly what [`feed`](Connection::feed) would
     /// have done.
-    pub(crate) fn feed_direct(&mut self, mut data: &[u8], mut direct: Option<&mut Direct<'_>>) -> Result<(), ConnectionError> {
+    pub(crate) fn feed_direct(
+        &mut self,
+        mut data: &[u8],
+        mut direct: Option<&mut Direct<'_>>,
+    ) -> Result<(), ConnectionError> {
         if let Some(e) = &self.error {
             return Err(e.clone());
         }
@@ -544,14 +575,19 @@ impl Connection {
             return HEADER_LEN - self.inbound.len();
         }
         let header = Header::parse(self.inbound[..HEADER_LEN].try_into().expect("nine bytes"));
-        (HEADER_LEN + header.length.min(DEFAULT_MAX_FRAME_SIZE) as usize).saturating_sub(self.inbound.len())
+        (HEADER_LEN + header.length.min(DEFAULT_MAX_FRAME_SIZE) as usize)
+            .saturating_sub(self.inbound.len())
     }
 
     /// Handles the complete frames at the start of `buf`, and passes on the payload of a DATA frame that is cut off
     /// at its end (when it can be told what to do with the bytes from the header alone: the frame is not padded,
     /// and nothing else is in the way): how many bytes of `buf` that was, and how it went. A frame that is not
     /// complete and is not one of those is left, and not counted.
-    fn run(&mut self, buf: &[u8], mut direct: Option<&mut Direct<'_>>) -> (usize, Result<(), ConnectionError>) {
+    fn run(
+        &mut self,
+        buf: &[u8],
+        mut direct: Option<&mut Direct<'_>>,
+    ) -> (usize, Result<(), ConnectionError>) {
         let mut pos = 0;
         let result = loop {
             if self.incoming.is_some() {
@@ -566,11 +602,18 @@ impl Connection {
             }
             let header = Header::parse(buf[pos..pos + HEADER_LEN].try_into().expect("nine bytes"));
             if header.length > DEFAULT_MAX_FRAME_SIZE {
-                break Err(connection_error(ErrorCode::FRAME_SIZE_ERROR, "a frame larger than the frame size this endpoint allows"));
+                break Err(connection_error(
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    "a frame larger than the frame size this endpoint allows",
+                ));
             }
             let end = pos + HEADER_LEN + header.length as usize;
             if buf.len() < end {
-                let streamable = header.kind == kind::DATA && header.flags & flag::PADDED == 0 && header.stream != 0 && self.got_peer_settings && self.block.is_none();
+                let streamable = header.kind == kind::DATA
+                    && header.flags & flag::PADDED == 0
+                    && header.stream != 0
+                    && self.got_peer_settings
+                    && self.block.is_none();
                 if !streamable {
                     break Ok(());
                 }
@@ -580,13 +623,26 @@ impl Connection {
                     Err(e) => break Err(e),
                 }
             }
-            if !self.got_peer_settings && !(header.kind == kind::SETTINGS && header.flags & flag::ACK == 0) {
-                break Err(connection_error(ErrorCode::PROTOCOL_ERROR, "the server's first frame is not SETTINGS"));
+            if !self.got_peer_settings
+                && !(header.kind == kind::SETTINGS && header.flags & flag::ACK == 0)
+            {
+                break Err(connection_error(
+                    ErrorCode::PROTOCOL_ERROR,
+                    "the server's first frame is not SETTINGS",
+                ));
             }
             let step = match frame::parse(&header, &buf[pos + HEADER_LEN..end]) {
                 Ok(f) => self.handle(f, direct.as_deref_mut()),
-                Err(FrameError { code, stream: None, reason }) => Err(connection_error(code, reason)),
-                Err(FrameError { code, stream: Some(id), reason }) => {
+                Err(FrameError {
+                    code,
+                    stream: None,
+                    reason,
+                }) => Err(connection_error(code, reason)),
+                Err(FrameError {
+                    code,
+                    stream: Some(id),
+                    reason,
+                }) => {
                     self.stream_error(id, code, reason);
                     Ok(())
                 }
@@ -622,7 +678,11 @@ impl Connection {
         self.incoming = None;
         for s in self.streams.values_mut() {
             if s.failure.is_none() && !s.remote_ended {
-                s.failure = Some(StreamError { code: error.code, reason: error.to_string(), retry_safe: false });
+                s.failure = Some(StreamError {
+                    code: error.code,
+                    reason: error.to_string(),
+                    retry_safe: false,
+                });
                 if s.collecting {
                     // a body that is wanted whole is of no use in part (and may be a great deal)
                     s.body = Vec::new();
@@ -637,8 +697,16 @@ impl Connection {
     pub(crate) fn peer_closed(&mut self) {
         if self.error.is_none() {
             let error = match self.goaway {
-                Some((_, code)) if code != ErrorCode::NO_ERROR => ConnectionError { code, reason: "the server said it was going away and closed the connection".into(), local: false },
-                _ => ConnectionError { code: ErrorCode::NO_ERROR, reason: "the server closed the connection".into(), local: false },
+                Some((_, code)) if code != ErrorCode::NO_ERROR => ConnectionError {
+                    code,
+                    reason: "the server said it was going away and closed the connection".into(),
+                    local: false,
+                },
+                _ => ConnectionError {
+                    code: ErrorCode::NO_ERROR,
+                    reason: "the server closed the connection".into(),
+                    local: false,
+                },
             };
             self.die(error);
         }
@@ -655,10 +723,18 @@ impl Connection {
         }
         let held: i64 = self.streams.values().map(|s| s.unread() as i64).sum();
         let initial = self.config.connection_window.max(DEFAULT_WINDOW) as i64;
-        assert_eq!(self.recv_window + self.unannounced as i64 + held, initial, "the connection window");
+        assert_eq!(
+            self.recv_window + self.unannounced as i64 + held,
+            initial,
+            "the connection window"
+        );
         assert!(self.recv_window >= 0);
         for (id, s) in self.streams.iter().filter(|(_, s)| s.failure.is_none()) {
-            assert_eq!(s.recv_window + s.unannounced as i64 + s.unread() as i64, self.config.stream_window as i64, "the window of stream {id}");
+            assert_eq!(
+                s.recv_window + s.unannounced as i64 + s.unread() as i64,
+                self.config.stream_window as i64,
+                "the window of stream {id}"
+            );
         }
         assert!((0..=MAX_WINDOW as i64).contains(&self.send_window));
     }
@@ -682,7 +758,11 @@ impl Connection {
     pub(crate) fn close(&mut self) {
         if self.error.is_none() {
             frame::write_goaway(&mut self.out, 0, ErrorCode::NO_ERROR, b"");
-            let error = ConnectionError { code: ErrorCode::NO_ERROR, reason: "closed by this endpoint".into(), local: true };
+            let error = ConnectionError {
+                code: ErrorCode::NO_ERROR,
+                reason: "closed by this endpoint".into(),
+                local: true,
+            };
             self.die(error);
         }
     }
@@ -706,7 +786,11 @@ impl Connection {
 
     /// Sends the head of a request on a new stream. With `end_stream` the request has no body and the stream is
     /// half closed already; without, the body goes by [`send_data`](Connection::send_data).
-    pub(crate) fn open_stream(&mut self, request: &Request<'_>, end_stream: bool) -> Result<u32, OpenError> {
+    pub(crate) fn open_stream(
+        &mut self,
+        request: &Request<'_>,
+        end_stream: bool,
+    ) -> Result<u32, OpenError> {
         if !self.usable() {
             return Err(OpenError::Unavailable);
         }
@@ -717,7 +801,10 @@ impl Connection {
         let list = request_fields(request, &lowered)?;
         let size: usize = list.iter().map(|f| f.name.len() + f.value.len() + 32).sum();
         if size as u64 > self.peer_max_header_list as u64 {
-            return Err(OpenError::Invalid(format!("the header list is {size} bytes and the server takes {}", self.peer_max_header_list)));
+            return Err(OpenError::Invalid(format!(
+                "the header list is {size} bytes and the server takes {}",
+                self.peer_max_header_list
+            )));
         }
         let mut block = Vec::new();
         self.encoder.encode(&list, &mut block);
@@ -752,7 +839,9 @@ impl Connection {
 
     /// How many bytes of body [`send_data`](Connection::send_data) would take now on this stream.
     pub(crate) fn send_capacity(&self, id: u32) -> usize {
-        let Some(s) = self.streams.get(&id) else { return 0 };
+        let Some(s) = self.streams.get(&id) else {
+            return 0;
+        };
         if s.failure.is_some() || s.local_ended || self.error.is_some() {
             return 0;
         }
@@ -764,7 +853,12 @@ impl Connection {
     /// With `end_stream` the stream is closed on this side once all of `data` has gone; the end is not sent if
     /// less than all of it did, so the caller calls again with the rest. An empty `data` with `end_stream` always
     /// goes. An error if the stream has failed or was already ended by this side.
-    pub(crate) fn send_data(&mut self, id: u32, data: &[u8], end_stream: bool) -> Result<usize, StreamError> {
+    pub(crate) fn send_data(
+        &mut self,
+        id: u32,
+        data: &[u8],
+        end_stream: bool,
+    ) -> Result<usize, StreamError> {
         let n = self.send_capacity(id).min(data.len());
         let Some(s) = self.streams.get_mut(&id) else {
             return Err(local_error("there is no such stream"));
@@ -826,8 +920,14 @@ impl Connection {
         // the rest of a DATA frame that is arriving for the stream counts as received: it was let in as it began, when there
         // was no limit to check it against (found by fuzzing on the Mac: collecting begun in the middle of a frame took
         // the rest of it past the limit)
-        let arriving = self.incoming.as_ref().filter(|i| i.stream == id && i.keep).map_or(0, |i| i.remaining as u64);
-        let Some(s) = self.streams.get_mut(&id) else { return };
+        let arriving = self
+            .incoming
+            .as_ref()
+            .filter(|i| i.stream == id && i.keep)
+            .map_or(0, |i| i.remaining as u64);
+        let Some(s) = self.streams.get_mut(&id) else {
+            return;
+        };
         if s.collecting || s.failure.is_some() {
             return;
         }
@@ -855,13 +955,22 @@ impl Connection {
     /// application that has asked for the whole response is not woken for the head, or for pieces of the body.)
     pub(crate) fn collected(&mut self, id: u32, into: &mut Vec<u8>) -> Collected {
         let Some(s) = self.streams.get_mut(&id) else {
-            return Collected::Failed { error: local_error("there is no such stream"), got_head: false };
+            return Collected::Failed {
+                error: local_error("there is no such stream"),
+                got_head: false,
+            };
         };
         if let Some(f) = &s.failure {
-            return Collected::Failed { error: f.clone(), got_head: s.got_head };
+            return Collected::Failed {
+                error: f.clone(),
+                got_head: s.got_head,
+            };
         }
         if !s.collecting {
-            return Collected::Failed { error: local_error("the stream is not collecting"), got_head: s.got_head };
+            return Collected::Failed {
+                error: local_error("the stream is not collecting"),
+                got_head: s.got_head,
+            };
         }
         if s.remote_ended {
             into.clear();
@@ -931,8 +1040,15 @@ impl Connection {
     /// Tells the peer it may send more on the stream, once the application has read (or padding has used) half of
     /// the window (or [`REFRESH_CAP`], if that is less). (A stream whose response is complete is sent nothing more.)
     fn announce_stream(&mut self, id: u32) {
-        let Some(s) = self.streams.get_mut(&id) else { return };
-        if s.remote_ended || s.failure.is_some() || self.error.is_some() || s.unannounced == 0 || (s.unannounced as i64) < refresh_threshold(self.config.stream_window) {
+        let Some(s) = self.streams.get_mut(&id) else {
+            return;
+        };
+        if s.remote_ended
+            || s.failure.is_some()
+            || self.error.is_some()
+            || s.unannounced == 0
+            || (s.unannounced as i64) < refresh_threshold(self.config.stream_window)
+        {
             return;
         }
         let credit = std::mem::take(&mut s.unannounced);
@@ -947,7 +1063,10 @@ impl Connection {
             return;
         }
         self.unannounced += n;
-        if self.unannounced as i64 >= refresh_threshold(self.config.connection_window.max(DEFAULT_WINDOW)) && self.error.is_none() {
+        if self.unannounced as i64
+            >= refresh_threshold(self.config.connection_window.max(DEFAULT_WINDOW))
+            && self.error.is_none()
+        {
             let credit = std::mem::take(&mut self.unannounced);
             self.recv_window += credit as i64;
             frame::write_window_update(&mut self.out, 0, credit);
@@ -957,7 +1076,9 @@ impl Connection {
     /// The application is done with the stream: what is still unread is dropped, and if the exchange was not
     /// finished the server is told to stop (RST_STREAM CANCEL).
     pub(crate) fn release_stream(&mut self, id: u32) {
-        let Some(s) = self.streams.remove(&id) else { return };
+        let Some(s) = self.streams.remove(&id) else {
+            return;
+        };
         let unread = s.unread() as u32;
         if s.failure.is_none() && !(s.local_ended && s.remote_ended) && self.error.is_none() {
             frame::write_rst_stream(&mut self.out, id, ErrorCode::CANCEL);
@@ -969,15 +1090,31 @@ impl Connection {
 
     // -------------------------------------------------------------------------------------------- frames
 
-    fn handle(&mut self, f: Frame<'_>, direct: Option<&mut Direct<'_>>) -> Result<(), ConnectionError> {
+    fn handle(
+        &mut self,
+        f: Frame<'_>,
+        direct: Option<&mut Direct<'_>>,
+    ) -> Result<(), ConnectionError> {
         // a header block in progress is followed by its CONTINUATION frames and nothing else (RFC 9113 section 4.3)
         if let Some(block) = &self.block {
             match &f {
                 Frame::Continuation { stream, .. } if *stream == block.stream => {}
-                _ => return Err(connection_error(ErrorCode::PROTOCOL_ERROR, "a frame in the middle of a header block")),
+                _ => {
+                    return Err(connection_error(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "a frame in the middle of a header block",
+                    ))
+                }
             }
         }
-        if !matches!(f, Frame::Data { data: [], end_stream: false, .. }) {
+        if !matches!(
+            f,
+            Frame::Data {
+                data: [],
+                end_stream: false,
+                ..
+            }
+        ) {
             self.empty_frames = 0;
         }
         // who may be waiting for what this frame brings
@@ -986,26 +1123,59 @@ impl Connection {
             // to be told: only when its response is complete)
             Frame::RstStream { stream, .. } => self.news.touch(*stream),
             Frame::WindowUpdate { stream, .. } if *stream != 0 => self.news.touch(*stream),
-            Frame::WindowUpdate { .. } | Frame::Settings { .. } | Frame::GoAway { .. } | Frame::PushPromise { .. } => self.news.everyone(),
-            Frame::Data { .. } | Frame::Headers { .. } | Frame::Continuation { .. } | Frame::Ping { .. } | Frame::Priority { .. } | Frame::Unknown { .. } => {}
+            Frame::WindowUpdate { .. }
+            | Frame::Settings { .. }
+            | Frame::GoAway { .. }
+            | Frame::PushPromise { .. } => self.news.everyone(),
+            Frame::Data { .. }
+            | Frame::Headers { .. }
+            | Frame::Continuation { .. }
+            | Frame::Ping { .. }
+            | Frame::Priority { .. }
+            | Frame::Unknown { .. } => {}
         }
         match f {
-            Frame::Data { stream, end_stream, data, flow_len } => self.on_data(stream, end_stream, data, flow_len, direct),
-            Frame::Headers { stream, end_stream, end_headers, fragment } => {
+            Frame::Data {
+                stream,
+                end_stream,
+                data,
+                flow_len,
+            } => self.on_data(stream, end_stream, data, flow_len, direct),
+            Frame::Headers {
+                stream,
+                end_stream,
+                end_headers,
+                fragment,
+            } => {
                 self.require_server_stream_known(stream)?;
-                self.block = Some(Block { stream, end_stream, bytes: Vec::new(), frames: 0 });
+                self.block = Some(Block {
+                    stream,
+                    end_stream,
+                    bytes: Vec::new(),
+                    frames: 0,
+                });
                 self.on_fragment(end_headers, fragment)
             }
-            Frame::Continuation { end_headers, fragment, .. } => {
+            Frame::Continuation {
+                end_headers,
+                fragment,
+                ..
+            } => {
                 if self.block.is_none() {
-                    return Err(connection_error(ErrorCode::PROTOCOL_ERROR, "CONTINUATION with no header block to continue"));
+                    return Err(connection_error(
+                        ErrorCode::PROTOCOL_ERROR,
+                        "CONTINUATION with no header block to continue",
+                    ));
                 }
                 self.on_fragment(end_headers, fragment)
             }
             Frame::Priority { .. } | Frame::Unknown { .. } => Ok(()),
             Frame::RstStream { stream, code } => self.on_reset(stream, code),
             Frame::Settings { ack, values } => self.on_settings(ack, &values),
-            Frame::PushPromise { .. } => Err(connection_error(ErrorCode::PROTOCOL_ERROR, "PUSH_PROMISE, though push is switched off")),
+            Frame::PushPromise { .. } => Err(connection_error(
+                ErrorCode::PROTOCOL_ERROR,
+                "PUSH_PROMISE, though push is switched off",
+            )),
             Frame::Ping { ack, data } => {
                 if !ack {
                     self.control_backlog()?;
@@ -1013,7 +1183,11 @@ impl Connection {
                 }
                 Ok(())
             }
-            Frame::GoAway { last_stream, code, debug } => self.on_goaway(last_stream, code, debug),
+            Frame::GoAway {
+                last_stream,
+                code,
+                debug,
+            } => self.on_goaway(last_stream, code, debug),
             Frame::WindowUpdate { stream, increment } => self.on_window_update(stream, increment),
         }
     }
@@ -1022,24 +1196,40 @@ impl Connection {
     /// one for a stream that has been opened and is gone is for the caller to ignore.
     fn require_server_stream_known(&self, stream: u32) -> Result<(), ConnectionError> {
         if stream % 2 == 0 {
-            return Err(connection_error(ErrorCode::PROTOCOL_ERROR, "a frame on a stream the server would have to start, though push is switched off"));
+            return Err(connection_error(
+                ErrorCode::PROTOCOL_ERROR,
+                "a frame on a stream the server would have to start, though push is switched off",
+            ));
         }
         if stream >= self.next_stream_id {
-            return Err(connection_error(ErrorCode::PROTOCOL_ERROR, "a frame on a stream that was never opened"));
+            return Err(connection_error(
+                ErrorCode::PROTOCOL_ERROR,
+                "a frame on a stream that was never opened",
+            ));
         }
         Ok(())
     }
 
     fn control_backlog(&self) -> Result<(), ConnectionError> {
         if self.out.len() - self.out_pos > CONTROL_BACKLOG {
-            Err(connection_error(ErrorCode::ENHANCE_YOUR_CALM, "more frames needing an answer than can be answered"))
+            Err(connection_error(
+                ErrorCode::ENHANCE_YOUR_CALM,
+                "more frames needing an answer than can be answered",
+            ))
         } else {
             Ok(())
         }
     }
 
     /// A DATA frame that is all here.
-    fn on_data(&mut self, id: u32, end_stream: bool, data: &[u8], flow_len: u32, direct: Option<&mut Direct<'_>>) -> Result<(), ConnectionError> {
+    fn on_data(
+        &mut self,
+        id: u32,
+        end_stream: bool,
+        data: &[u8],
+        flow_len: u32,
+        direct: Option<&mut Direct<'_>>,
+    ) -> Result<(), ConnectionError> {
         let keep = self.check_data(id, end_stream, data.len(), flow_len)?;
         self.data_bytes(id, keep, data, direct);
         self.data_end(id, keep, end_stream, flow_len - data.len() as u32);
@@ -1052,17 +1242,29 @@ impl Connection {
         self.empty_frames = 0;
         let end_stream = h.has(flag::END_STREAM);
         let keep = self.check_data(h.stream, end_stream, h.length as usize, h.length)?;
-        self.incoming = Some(Incoming { stream: h.stream, remaining: h.length as usize, end_stream, keep });
+        self.incoming = Some(Incoming {
+            stream: h.stream,
+            remaining: h.length as usize,
+            end_stream,
+            keep,
+        });
         Ok(())
     }
 
     /// Passes on the payload of the DATA frame that is arriving: what of `bytes` it needs, which is how many bytes
     /// that is.
     fn pass_on(&mut self, bytes: &[u8], direct: Option<&mut Direct<'_>>) -> usize {
-        let Some(incoming) = self.incoming.as_mut() else { return 0 };
+        let Some(incoming) = self.incoming.as_mut() else {
+            return 0;
+        };
         let n = bytes.len().min(incoming.remaining);
         incoming.remaining -= n;
-        let (id, keep, end_stream, done) = (incoming.stream, incoming.keep, incoming.end_stream, incoming.remaining == 0);
+        let (id, keep, end_stream, done) = (
+            incoming.stream,
+            incoming.keep,
+            incoming.end_stream,
+            incoming.remaining == 0,
+        );
         if done {
             self.incoming = None;
         }
@@ -1077,15 +1279,27 @@ impl Connection {
     /// one that was opened, and the windows must have room for the frame (`flow_len` is all of it, padding too);
     /// then whether the bytes are kept. They are not if nobody wants them (the stream is gone or has failed) or the
     /// frame is wrong for the stream (it loses the stream, and the peer is told).
-    fn check_data(&mut self, id: u32, end_stream: bool, len: usize, flow_len: u32) -> Result<bool, ConnectionError> {
+    fn check_data(
+        &mut self,
+        id: u32,
+        end_stream: bool,
+        len: usize,
+        flow_len: u32,
+    ) -> Result<bool, ConnectionError> {
         self.require_server_stream_known(id)?;
         if flow_len as i64 > self.recv_window {
-            return Err(connection_error(ErrorCode::FLOW_CONTROL_ERROR, "the server sent more than the connection window allows"));
+            return Err(connection_error(
+                ErrorCode::FLOW_CONTROL_ERROR,
+                "the server sent more than the connection window allows",
+            ));
         }
         if len == 0 && !end_stream {
             self.empty_frames += 1;
             if self.empty_frames > EMPTY_FRAMES {
-                return Err(connection_error(ErrorCode::ENHANCE_YOUR_CALM, "a flood of empty DATA frames"));
+                return Err(connection_error(
+                    ErrorCode::ENHANCE_YOUR_CALM,
+                    "a flood of empty DATA frames",
+                ));
             }
         }
         let bad = match self.streams.get(&id) {
@@ -1093,19 +1307,37 @@ impl Connection {
             Some(s) if s.failure.is_some() => return Ok(false),
             Some(s) => {
                 if s.remote_ended {
-                    Some((ErrorCode::STREAM_CLOSED, "DATA after the end of the response"))
+                    Some((
+                        ErrorCode::STREAM_CLOSED,
+                        "DATA after the end of the response",
+                    ))
                 } else if !s.got_head {
-                    Some((ErrorCode::PROTOCOL_ERROR, "DATA before the response headers"))
+                    Some((
+                        ErrorCode::PROTOCOL_ERROR,
+                        "DATA before the response headers",
+                    ))
                 } else if flow_len as i64 > s.recv_window {
-                    Some((ErrorCode::FLOW_CONTROL_ERROR, "the server sent more than the stream window allows"))
+                    Some((
+                        ErrorCode::FLOW_CONTROL_ERROR,
+                        "the server sent more than the stream window allows",
+                    ))
                 } else if s.bodiless && len > 0 {
-                    Some((ErrorCode::PROTOCOL_ERROR, "DATA in a response that has no body"))
+                    Some((
+                        ErrorCode::PROTOCOL_ERROR,
+                        "DATA in a response that has no body",
+                    ))
                 } else if s.collecting && s.received + len as u64 > s.collect_limit {
                     Some((ErrorCode::CANCEL, BODY_TOO_BIG))
                 } else if s.expected.is_some_and(|n| s.received + len as u64 > n) {
-                    Some((ErrorCode::PROTOCOL_ERROR, "more DATA than the Content-Length says"))
+                    Some((
+                        ErrorCode::PROTOCOL_ERROR,
+                        "more DATA than the Content-Length says",
+                    ))
                 } else if end_stream && s.expected.is_some_and(|n| s.received + len as u64 != n) {
-                    Some((ErrorCode::PROTOCOL_ERROR, "less DATA than the Content-Length says"))
+                    Some((
+                        ErrorCode::PROTOCOL_ERROR,
+                        "less DATA than the Content-Length says",
+                    ))
                 } else {
                     None
                 }
@@ -1202,28 +1434,51 @@ impl Connection {
         let block = self.block.as_mut().expect("a block in progress");
         block.frames += 1;
         if block.frames > MAX_BLOCK_FRAMES || block.bytes.len() + fragment.len() > limit {
-            return Err(connection_error(ErrorCode::ENHANCE_YOUR_CALM, "a header block that goes on too long"));
+            return Err(connection_error(
+                ErrorCode::ENHANCE_YOUR_CALM,
+                "a header block that goes on too long",
+            ));
         }
         block.bytes.extend_from_slice(fragment);
         if !end_headers {
             return Ok(());
         }
-        let Block { stream, end_stream, bytes, .. } = self.block.take().expect("a block in progress");
+        let Block {
+            stream,
+            end_stream,
+            bytes,
+            ..
+        } = self.block.take().expect("a block in progress");
         let mut fields = Vec::new();
         // the block is decoded whatever stream it is for and whatever comes of it: the table must go on in step
-        let within = self.decoder.decode(&bytes, &mut fields).map_err(|e| connection_error(ErrorCode::COMPRESSION_ERROR, e.to_string()))?;
+        let within = self
+            .decoder
+            .decode(&bytes, &mut fields)
+            .map_err(|e| connection_error(ErrorCode::COMPRESSION_ERROR, e.to_string()))?;
         if !within {
-            self.stream_error(stream, ErrorCode::PROTOCOL_ERROR, "the response header list is larger than this client takes");
+            self.stream_error(
+                stream,
+                ErrorCode::PROTOCOL_ERROR,
+                "the response header list is larger than this client takes",
+            );
             return Ok(());
         }
         self.on_headers(stream, end_stream, fields)
     }
 
-    fn on_headers(&mut self, id: u32, end_stream: bool, fields: Vec<hpack::Field>) -> Result<(), ConnectionError> {
+    fn on_headers(
+        &mut self,
+        id: u32,
+        end_stream: bool,
+        fields: Vec<hpack::Field>,
+    ) -> Result<(), ConnectionError> {
         let (outcome, news) = match self.streams.get_mut(&id) {
             None => return Ok(()),
             Some(s) if s.failure.is_some() => return Ok(()),
-            Some(s) => (headers_for(s, end_stream, &fields), !s.collecting || s.remote_ended),
+            Some(s) => (
+                headers_for(s, end_stream, &fields),
+                !s.collecting || s.remote_ended,
+            ),
         };
         match outcome {
             Err((code, why)) => self.stream_error(id, code, why),
@@ -1235,9 +1490,14 @@ impl Connection {
 
     fn on_reset(&mut self, id: u32, code: ErrorCode) -> Result<(), ConnectionError> {
         if id % 2 == 0 || id >= self.next_stream_id {
-            return Err(connection_error(ErrorCode::PROTOCOL_ERROR, "RST_STREAM on a stream that was never opened"));
+            return Err(connection_error(
+                ErrorCode::PROTOCOL_ERROR,
+                "RST_STREAM on a stream that was never opened",
+            ));
         }
-        let Some(s) = self.streams.get_mut(&id) else { return Ok(()) };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return Ok(());
+        };
         // a server may say it is done with a stream whose response is complete (it has not read all the request)
         if s.remote_ended && s.failure.is_none() {
             s.local_ended = true;
@@ -1245,7 +1505,11 @@ impl Connection {
         }
         // what arrived before the reset stays for the application to read; the failure comes after it
         if s.failure.is_none() {
-            s.failure = Some(StreamError { code, reason: format!("the server reset the stream: {code}"), retry_safe: code == ErrorCode::REFUSED_STREAM });
+            s.failure = Some(StreamError {
+                code,
+                reason: format!("the server reset the stream: {code}"),
+                retry_safe: code == ErrorCode::REFUSED_STREAM,
+            });
         }
         Ok(())
     }
@@ -1260,13 +1524,19 @@ impl Connection {
                 setting::HEADER_TABLE_SIZE => self.encoder.set_peer_table_size(value as usize),
                 setting::ENABLE_PUSH => {
                     if value > 1 {
-                        return Err(connection_error(ErrorCode::PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH is neither 0 nor 1"));
+                        return Err(connection_error(
+                            ErrorCode::PROTOCOL_ERROR,
+                            "SETTINGS_ENABLE_PUSH is neither 0 nor 1",
+                        ));
                     }
                 }
                 setting::MAX_CONCURRENT_STREAMS => self.peer_max_concurrent = value,
                 setting::INITIAL_WINDOW_SIZE => {
                     if value > MAX_WINDOW {
-                        return Err(connection_error(ErrorCode::FLOW_CONTROL_ERROR, "SETTINGS_INITIAL_WINDOW_SIZE is over 2^31 - 1"));
+                        return Err(connection_error(
+                            ErrorCode::FLOW_CONTROL_ERROR,
+                            "SETTINGS_INITIAL_WINDOW_SIZE is over 2^31 - 1",
+                        ));
                     }
                     let delta = value as i64 - self.peer_initial_window;
                     self.peer_initial_window = value as i64;
@@ -1279,7 +1549,10 @@ impl Connection {
                 }
                 setting::MAX_FRAME_SIZE => {
                     if !(DEFAULT_MAX_FRAME_SIZE..=MAX_FRAME_SIZE_LIMIT).contains(&value) {
-                        return Err(connection_error(ErrorCode::PROTOCOL_ERROR, "SETTINGS_MAX_FRAME_SIZE out of range"));
+                        return Err(connection_error(
+                            ErrorCode::PROTOCOL_ERROR,
+                            "SETTINGS_MAX_FRAME_SIZE out of range",
+                        ));
                     }
                     self.peer_max_frame = value as usize;
                 }
@@ -1292,21 +1565,44 @@ impl Connection {
         Ok(())
     }
 
-    fn on_goaway(&mut self, last_stream: u32, code: ErrorCode, debug: &[u8]) -> Result<(), ConnectionError> {
+    fn on_goaway(
+        &mut self,
+        last_stream: u32,
+        code: ErrorCode,
+        debug: &[u8],
+    ) -> Result<(), ConnectionError> {
         // a later GOAWAY may only lower the last stream id
         let last = self.goaway.map_or(last_stream, |(l, _)| l.min(last_stream));
         self.goaway = Some((last, code));
         let note = String::from_utf8_lossy(&debug[..debug.len().min(200)]).into_owned();
-        let refused: Vec<u32> = self.streams.iter().filter(|(&id, s)| id > last && s.failure.is_none() && !s.remote_ended).map(|(&id, _)| id).collect();
+        let refused: Vec<u32> = self
+            .streams
+            .iter()
+            .filter(|(&id, s)| id > last && s.failure.is_none() && !s.remote_ended)
+            .map(|(&id, _)| id)
+            .collect();
         for id in refused {
-            self.fail_stream(id, StreamError { code, reason: format!("the server is going away ({code}) and did not take this request: {note}"), retry_safe: true });
+            self.fail_stream(
+                id,
+                StreamError {
+                    code,
+                    reason: format!(
+                        "the server is going away ({code}) and did not take this request: {note}"
+                    ),
+                    retry_safe: true,
+                },
+            );
         }
         if code == ErrorCode::NO_ERROR {
             // a graceful shutdown: what the server did take is finished, and nothing new is started
             Ok(())
         } else {
             // the server gave up on the connection: what it did not finish is lost
-            Err(ConnectionError { code, reason: format!("the server sent GOAWAY: {note}"), local: false })
+            Err(ConnectionError {
+                code,
+                reason: format!("the server sent GOAWAY: {note}"),
+                local: false,
+            })
         }
     }
 
@@ -1314,17 +1610,27 @@ impl Connection {
         if id == 0 {
             self.send_window += increment as i64;
             if self.send_window > MAX_WINDOW as i64 {
-                return Err(connection_error(ErrorCode::FLOW_CONTROL_ERROR, "the connection window went over 2^31 - 1"));
+                return Err(connection_error(
+                    ErrorCode::FLOW_CONTROL_ERROR,
+                    "the connection window went over 2^31 - 1",
+                ));
             }
             return Ok(());
         }
         if id % 2 == 0 || id >= self.next_stream_id {
-            return Err(connection_error(ErrorCode::PROTOCOL_ERROR, "WINDOW_UPDATE on a stream that was never opened"));
+            return Err(connection_error(
+                ErrorCode::PROTOCOL_ERROR,
+                "WINDOW_UPDATE on a stream that was never opened",
+            ));
         }
         if let Some(s) = self.streams.get_mut(&id) {
             s.send_window += increment as i64;
             if s.send_window > MAX_WINDOW as i64 {
-                self.stream_error(id, ErrorCode::FLOW_CONTROL_ERROR, "the stream window went over 2^31 - 1");
+                self.stream_error(
+                    id,
+                    ErrorCode::FLOW_CONTROL_ERROR,
+                    "the stream window went over 2^31 - 1",
+                );
             }
         }
         Ok(())
@@ -1334,14 +1640,23 @@ impl Connection {
     /// by it.)
     fn stream_error(&mut self, id: u32, code: ErrorCode, reason: &str) {
         if self.streams.get(&id).is_some_and(|s| s.failure.is_none()) {
-            self.fail_stream(id, StreamError { code, reason: reason.to_string(), retry_safe: false });
+            self.fail_stream(
+                id,
+                StreamError {
+                    code,
+                    reason: reason.to_string(),
+                    retry_safe: false,
+                },
+            );
             frame::write_rst_stream(&mut self.out, id, code);
         }
     }
 
     /// The stream has failed: what it held unread is dropped and the peer is given the credit for it.
     fn fail_stream(&mut self, id: u32, failure: StreamError) {
-        let Some(s) = self.streams.get_mut(&id) else { return };
+        let Some(s) = self.streams.get_mut(&id) else {
+            return;
+        };
         if s.failure.is_some() {
             return;
         }
@@ -1355,24 +1670,41 @@ impl Connection {
 }
 
 fn connection_error(code: ErrorCode, reason: impl Into<String>) -> ConnectionError {
-    ConnectionError { code, reason: reason.into(), local: true }
+    ConnectionError {
+        code,
+        reason: reason.into(),
+        local: true,
+    }
 }
 
 fn local_error(reason: &str) -> StreamError {
-    StreamError { code: ErrorCode::CANCEL, reason: reason.to_string(), retry_safe: false }
+    StreamError {
+        code: ErrorCode::CANCEL,
+        reason: reason.to_string(),
+        retry_safe: false,
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ fields
 
 /// Fields that belong to one HTTP/1.1 connection, which HTTP/2 does not have (RFC 9113 section 8.2.2).
-const CONNECTION_SPECIFIC: [&str; 5] = ["connection", "keep-alive", "proxy-connection", "transfer-encoding", "upgrade"];
+const CONNECTION_SPECIFIC: [&str; 5] = [
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "transfer-encoding",
+    "upgrade",
+];
 
 /// Header names whose values are secrets.
 const SENSITIVE: [&str; 3] = ["authorization", "cookie", "proxy-authorization"];
 
 /// A name that HTTP/2 allows: lower case token characters (a pseudo-header's colon is checked by the caller).
 fn valid_name(name: &str) -> bool {
-    !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"!#$%&'*+-.^_`|~".contains(&b))
+    !name.is_empty()
+        && name.bytes().all(|b| {
+            b.is_ascii_lowercase() || b.is_ascii_digit() || b"!#$%&'*+-.^_`|~".contains(&b)
+        })
 }
 
 fn valid_value(value: &[u8]) -> bool {
@@ -1381,39 +1713,80 @@ fn valid_value(value: &[u8]) -> bool {
 
 /// The header list of a request: the pseudo-headers, then the other fields with lower case names and without the
 /// connection-specific ones.
-pub(crate) fn request_fields<'a>(r: &'a Request<'_>, lowered: &'a [(String, String)]) -> Result<Vec<FieldRef<'a>>, OpenError> {
+pub(crate) fn request_fields<'a>(
+    r: &'a Request<'_>,
+    lowered: &'a [(String, String)],
+) -> Result<Vec<FieldRef<'a>>, OpenError> {
     let mut list = vec![
-        FieldRef { name: b":method", value: r.method.as_bytes(), sensitive: false },
-        FieldRef { name: b":scheme", value: r.scheme.as_bytes(), sensitive: false },
-        FieldRef { name: b":authority", value: r.authority.as_bytes(), sensitive: false },
-        FieldRef { name: b":path", value: r.path.as_bytes(), sensitive: false },
+        FieldRef {
+            name: b":method",
+            value: r.method.as_bytes(),
+            sensitive: false,
+        },
+        FieldRef {
+            name: b":scheme",
+            value: r.scheme.as_bytes(),
+            sensitive: false,
+        },
+        FieldRef {
+            name: b":authority",
+            value: r.authority.as_bytes(),
+            sensitive: false,
+        },
+        FieldRef {
+            name: b":path",
+            value: r.path.as_bytes(),
+            sensitive: false,
+        },
     ];
-    if r.method.is_empty() || r.path.is_empty() || r.authority.is_empty() || r.scheme.is_empty() || !list.iter().all(|f| valid_value(f.value)) {
-        return Err(OpenError::Invalid("an empty or damaged method, scheme, path or authority".into()));
+    if r.method.is_empty()
+        || r.path.is_empty()
+        || r.authority.is_empty()
+        || r.scheme.is_empty()
+        || !list.iter().all(|f| valid_value(f.value))
+    {
+        return Err(OpenError::Invalid(
+            "an empty or damaged method, scheme, path or authority".into(),
+        ));
     }
     if !r.method.bytes().all(is_token_byte) {
-        return Err(OpenError::Invalid(format!("{:?} is not a method", r.method)));
+        return Err(OpenError::Invalid(format!(
+            "{:?} is not a method",
+            r.method
+        )));
     }
     for (name, value) in lowered {
         if !valid_name(name) {
             return Err(OpenError::Invalid(format!("{name:?} is not a header name")));
         }
         if !valid_value(value.as_bytes()) {
-            return Err(OpenError::Invalid(format!("the value of {name} has a NUL, CR or LF")));
+            return Err(OpenError::Invalid(format!(
+                "the value of {name} has a NUL, CR or LF"
+            )));
         }
         // `te: trailers` is the one connection-specific field HTTP/2 allows in a request
         // (`host` goes too: the authority says what it did)
-        if CONNECTION_SPECIFIC.contains(&name.as_str()) || name == "host" || (name == "te" && !value.trim().eq_ignore_ascii_case("trailers")) {
+        if CONNECTION_SPECIFIC.contains(&name.as_str())
+            || name == "host"
+            || (name == "te" && !value.trim().eq_ignore_ascii_case("trailers"))
+        {
             continue;
         }
-        list.push(FieldRef { name: name.as_bytes(), value: value.as_bytes(), sensitive: SENSITIVE.contains(&name.as_str()) || r.secret.iter().any(|s| s == name) });
+        list.push(FieldRef {
+            name: name.as_bytes(),
+            value: value.as_bytes(),
+            sensitive: SENSITIVE.contains(&name.as_str()) || r.secret.iter().any(|s| s == name),
+        });
     }
     Ok(list)
 }
 
 /// The names of a request's fields in lower case, as HTTP/2 wants them.
 pub(crate) fn lower_names(headers: &[(String, String)]) -> Vec<(String, String)> {
-    headers.iter().map(|(n, v)| (n.to_ascii_lowercase(), v.clone())).collect()
+    headers
+        .iter()
+        .map(|(n, v)| (n.to_ascii_lowercase(), v.clone()))
+        .collect()
 }
 
 fn is_token_byte(b: u8) -> bool {
@@ -1422,7 +1795,9 @@ fn is_token_byte(b: u8) -> bool {
 
 /// Checks and takes apart the header list of a response: the status, the fields, and the Content-Length if there is
 /// one (RFC 9113 section 8.3).
-pub(crate) fn parse_response(fields: &[hpack::Field]) -> Result<(u16, Fields, Option<u64>), &'static str> {
+pub(crate) fn parse_response(
+    fields: &[hpack::Field],
+) -> Result<(u16, Fields, Option<u64>), &'static str> {
     let mut status = None;
     let mut seen_regular = false;
     let mut out = Vec::new();
@@ -1473,7 +1848,12 @@ pub(crate) fn parse_trailers(fields: &[hpack::Field]) -> Result<Fields, &'static
 /// A regular field of a response: the name lower case and a token, and not one that is connection-specific; the
 /// value without NUL, CR or LF (and without the spaces around it).
 fn regular_field(f: &hpack::Field) -> Result<(String, String), &'static str> {
-    if !f.name.iter().all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"!#$%&'*+-.^_`|~".contains(&b)) || f.name.is_empty() {
+    if !f
+        .name
+        .iter()
+        .all(|&b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"!#$%&'*+-.^_`|~".contains(&b))
+        || f.name.is_empty()
+    {
         return Err("a header field name that is not lower case token characters");
     }
     // all ASCII by the check above
@@ -1484,7 +1864,9 @@ fn regular_field(f: &hpack::Field) -> Result<(String, String), &'static str> {
     if !valid_value(&f.value) {
         return Err("a header field value with a NUL, CR or LF");
     }
-    let value = String::from_utf8_lossy(&f.value).trim_matches(|c| c == ' ' || c == '\t').to_string();
+    let value = String::from_utf8_lossy(&f.value)
+        .trim_matches(|c| c == ' ' || c == '\t')
+        .to_string();
     Ok((name, value))
 }
 
@@ -1492,7 +1874,8 @@ fn parse_status(value: &[u8]) -> Result<u16, &'static str> {
     if value.len() != 3 || !value.iter().all(u8::is_ascii_digit) {
         return Err(":status is not three digits");
     }
-    let code = (value[0] - b'0') as u16 * 100 + (value[1] - b'0') as u16 * 10 + (value[2] - b'0') as u16;
+    let code =
+        (value[0] - b'0') as u16 * 100 + (value[1] - b'0') as u16 * 10 + (value[2] - b'0') as u16;
     if code < 100 {
         return Err(":status is below 100");
     }
@@ -1503,12 +1886,18 @@ fn parse_length(value: &str) -> Result<u64, &'static str> {
     if value.is_empty() || !value.bytes().all(|b| b.is_ascii_digit()) {
         return Err("a Content-Length that is not a number");
     }
-    value.parse().map_err(|_| "a Content-Length that is too large")
+    value
+        .parse()
+        .map_err(|_| "a Content-Length that is too large")
 }
 
 /// What a header block does for a stream: the response head (an interim one is noted and dropped), or the
 /// trailers. The error is the stream's.
-fn headers_for(s: &mut Stream, end_stream: bool, fields: &[hpack::Field]) -> Result<(), (ErrorCode, &'static str)> {
+fn headers_for(
+    s: &mut Stream,
+    end_stream: bool,
+    fields: &[hpack::Field],
+) -> Result<(), (ErrorCode, &'static str)> {
     use ErrorCode as E;
     if s.remote_ended {
         return Err((E::STREAM_CLOSED, "HEADERS after the end of the response"));
@@ -1516,7 +1905,10 @@ fn headers_for(s: &mut Stream, end_stream: bool, fields: &[hpack::Field]) -> Res
     if s.got_head {
         // trailers
         if !end_stream {
-            return Err((E::PROTOCOL_ERROR, "a second HEADERS that does not end the stream"));
+            return Err((
+                E::PROTOCOL_ERROR,
+                "a second HEADERS that does not end the stream",
+            ));
         }
         let trailers = parse_trailers(fields).map_err(|why| (E::PROTOCOL_ERROR, why))?;
         s.remote_ended = true;
@@ -1526,13 +1918,17 @@ fn headers_for(s: &mut Stream, end_stream: bool, fields: &[hpack::Field]) -> Res
         s.trailers = Some(trailers);
         return Ok(());
     }
-    let (status, headers, length) = parse_response(fields).map_err(|why| (E::PROTOCOL_ERROR, why))?;
+    let (status, headers, length) =
+        parse_response(fields).map_err(|why| (E::PROTOCOL_ERROR, why))?;
     if (100..200).contains(&status) {
         // an interim response: nothing for the application, and the final one is still to come (RFC 9113 section
         // 8.1.1; a 101 has no place in HTTP/2, section 8.6)
         s.interim += 1;
         if end_stream || status == 101 || s.interim > MAX_INTERIM {
-            return Err((E::PROTOCOL_ERROR, "a 1xx response that ends the stream, a 101, or too many 1xx"));
+            return Err((
+                E::PROTOCOL_ERROR,
+                "a 1xx response that ends the stream, a 101, or too many 1xx",
+            ));
         }
         return Ok(());
     }
@@ -1547,7 +1943,10 @@ fn headers_for(s: &mut Stream, end_stream: bool, fields: &[hpack::Field]) -> Res
     if end_stream {
         s.remote_ended = true;
         if s.expected.is_some_and(|n| n != 0) {
-            return Err((E::PROTOCOL_ERROR, "the response ends without the DATA its Content-Length promised"));
+            return Err((
+                E::PROTOCOL_ERROR,
+                "the response ends without the DATA its Content-Length promised",
+            ));
         }
     }
     Ok(())
@@ -1578,13 +1977,23 @@ mod tests {
         /// The (setting, value) pairs of a SETTINGS frame.
         fn settings(&self) -> Vec<(u16, u32)> {
             assert_eq!(self.kind, kind::SETTINGS);
-            self.payload.chunks(6).map(|c| (u16::from_be_bytes([c[0], c[1]]), u32::from_be_bytes([c[2], c[3], c[4], c[5]]))).collect()
+            self.payload
+                .chunks(6)
+                .map(|c| {
+                    (
+                        u16::from_be_bytes([c[0], c[1]]),
+                        u32::from_be_bytes([c[2], c[3], c[4], c[5]]),
+                    )
+                })
+                .collect()
         }
 
         /// The number in a WINDOW_UPDATE, RST_STREAM or GOAWAY (the error code).
         fn number(&self) -> u32 {
             match self.kind {
-                kind::WINDOW_UPDATE | kind::RST_STREAM => u32::from_be_bytes(self.payload[..4].try_into().unwrap()),
+                kind::WINDOW_UPDATE | kind::RST_STREAM => {
+                    u32::from_be_bytes(self.payload[..4].try_into().unwrap())
+                }
                 kind::GOAWAY => u32::from_be_bytes(self.payload[4..8].try_into().unwrap()),
                 other => panic!("no number in a frame of kind {other}"),
             }
@@ -1593,7 +2002,13 @@ mod tests {
 
     fn raw(kind: u8, flags: u8, stream: u32, payload: &[u8]) -> Vec<u8> {
         let mut out = Vec::new();
-        Header { length: payload.len() as u32, kind, flags, stream }.write(&mut out);
+        Header {
+            length: payload.len() as u32,
+            kind,
+            flags,
+            stream,
+        }
+        .write(&mut out);
         out.extend_from_slice(payload);
         out
     }
@@ -1601,18 +2016,31 @@ mod tests {
     fn parse_sent(mut bytes: &[u8]) -> Vec<Sent> {
         let mut out = Vec::new();
         while !bytes.is_empty() {
-            assert!(bytes.len() >= HEADER_LEN, "a partial frame header in the output");
+            assert!(
+                bytes.len() >= HEADER_LEN,
+                "a partial frame header in the output"
+            );
             let h = Header::parse(bytes[..HEADER_LEN].try_into().unwrap());
             let end = HEADER_LEN + h.length as usize;
             assert!(bytes.len() >= end, "a partial frame in the output");
-            out.push(Sent { kind: h.kind, flags: h.flags, stream: h.stream, payload: bytes[HEADER_LEN..end].to_vec() });
+            out.push(Sent {
+                kind: h.kind,
+                flags: h.flags,
+                stream: h.stream,
+                payload: bytes[HEADER_LEN..end].to_vec(),
+            });
             bytes = &bytes[end..];
         }
         out
     }
 
     fn settings_ack() -> Sent {
-        Sent { kind: kind::SETTINGS, flags: flag::ACK, stream: 0, payload: vec![] }
+        Sent {
+            kind: kind::SETTINGS,
+            flags: flag::ACK,
+            stream: 0,
+            payload: vec![],
+        }
     }
 
     /// What one stream has delivered.
@@ -1638,7 +2066,13 @@ mod tests {
     impl Harness {
         /// A connection that has not heard from the server.
         fn unsettled(config: Config) -> Harness {
-            Harness { c: Connection::new(config), enc: Encoder::new(), dec: Decoder::new(4096, 1 << 20), prefaced: false, all: Vec::new() }
+            Harness {
+                c: Connection::new(config),
+                enc: Encoder::new(),
+                dec: Decoder::new(4096, 1 << 20),
+                prefaced: false,
+                all: Vec::new(),
+            }
         }
 
         /// A connection past the exchange of SETTINGS, the server's being these.
@@ -1668,7 +2102,10 @@ mod tests {
             let mut out = self.c.output().to_vec();
             self.c.consume_output(out.len());
             if !self.prefaced {
-                assert!(out.starts_with(PREFACE), "the connection does not begin with the preface");
+                assert!(
+                    out.starts_with(PREFACE),
+                    "the connection does not begin with the preface"
+                );
                 out.drain(..PREFACE.len());
                 self.prefaced = true;
             }
@@ -1688,14 +2125,26 @@ mod tests {
 
         /// A header block from the server's encoder.
         fn block(&mut self, fields: &[(&str, &str)]) -> Vec<u8> {
-            let refs: Vec<FieldRef<'_>> = fields.iter().map(|(n, v)| FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false }).collect();
+            let refs: Vec<FieldRef<'_>> = fields
+                .iter()
+                .map(|(n, v)| FieldRef {
+                    name: n.as_bytes(),
+                    value: v.as_bytes(),
+                    sensitive: false,
+                })
+                .collect();
             let mut out = Vec::new();
             self.enc.encode(&refs, &mut out);
             out
         }
 
         /// The server sends a HEADERS frame (and CONTINUATIONs if the block needs them) with `fields` as they are.
-        fn send_fields(&mut self, stream: u32, fields: &[(&str, &str)], end_stream: bool) -> Outcome {
+        fn send_fields(
+            &mut self,
+            stream: u32,
+            fields: &[(&str, &str)],
+            end_stream: bool,
+        ) -> Outcome {
             let block = self.block(fields);
             let mut out = Vec::new();
             frame::write_header_block(&mut out, stream, end_stream, &block, 16384);
@@ -1703,7 +2152,13 @@ mod tests {
         }
 
         /// The server sends the head of a response.
-        fn respond(&mut self, stream: u32, status: &str, extra: &[(&str, &str)], end_stream: bool) -> Outcome {
+        fn respond(
+            &mut self,
+            stream: u32,
+            status: &str,
+            extra: &[(&str, &str)],
+            end_stream: bool,
+        ) -> Outcome {
             let mut fields = vec![(":status", status)];
             fields.extend_from_slice(extra);
             self.send_fields(stream, &fields, end_stream)
@@ -1717,7 +2172,12 @@ mod tests {
             }
             let mut chunks = body.chunks(16384).peekable();
             while let Some(chunk) = chunks.next() {
-                frame::write_data(&mut out, stream, end_stream && chunks.peek().is_none(), chunk);
+                frame::write_data(
+                    &mut out,
+                    stream,
+                    end_stream && chunks.peek().is_none(),
+                    chunk,
+                );
             }
             self.feed(&out)
         }
@@ -1726,9 +2186,30 @@ mod tests {
             self.open_with(method, path, &[], true)
         }
 
-        fn open_with(&mut self, method: &str, path: &str, headers: &[(&str, &str)], end_stream: bool) -> u32 {
-            let headers: Vec<(String, String)> = headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect();
-            self.c.open_stream(&Request { method, scheme: "https", authority: "example.com", path, headers: &headers, secret: &[] }, end_stream).unwrap()
+        fn open_with(
+            &mut self,
+            method: &str,
+            path: &str,
+            headers: &[(&str, &str)],
+            end_stream: bool,
+        ) -> u32 {
+            let headers: Vec<(String, String)> = headers
+                .iter()
+                .map(|(n, v)| (n.to_string(), v.to_string()))
+                .collect();
+            self.c
+                .open_stream(
+                    &Request {
+                        method,
+                        scheme: "https",
+                        authority: "example.com",
+                        path,
+                        headers: &headers,
+                        secret: &[],
+                    },
+                    end_stream,
+                )
+                .unwrap()
         }
 
         /// The header list a HEADERS frame of the client carried.
@@ -1736,7 +2217,15 @@ mod tests {
             assert_eq!(f.kind, kind::HEADERS);
             let mut fields = Vec::new();
             assert!(self.dec.decode(&f.payload, &mut fields).unwrap());
-            fields.into_iter().map(|f| (String::from_utf8(f.name).unwrap(), String::from_utf8(f.value).unwrap())).collect()
+            fields
+                .into_iter()
+                .map(|f| {
+                    (
+                        String::from_utf8(f.name).unwrap(),
+                        String::from_utf8(f.value).unwrap(),
+                    )
+                })
+                .collect()
         }
 
         /// Everything the stream has for the application now, reading with a buffer of `size` bytes.
@@ -1770,7 +2259,10 @@ mod tests {
     }
 
     fn header_pairs(pairs: &[(&str, &str)]) -> Fields {
-        pairs.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect()
     }
 
     // ---------------------------------------------------------------------------------------- start
@@ -1785,11 +2277,22 @@ mod tests {
         assert_eq!((frames[0].kind, frames[0].stream), (kind::SETTINGS, 0));
         assert_eq!(
             frames[0].settings(),
-            vec![(setting::HEADER_TABLE_SIZE, 4096), (setting::ENABLE_PUSH, 0), (setting::INITIAL_WINDOW_SIZE, 8 << 20), (setting::MAX_HEADER_LIST_SIZE, 64 << 10)]
+            vec![
+                (setting::HEADER_TABLE_SIZE, 4096),
+                (setting::ENABLE_PUSH, 0),
+                (setting::INITIAL_WINDOW_SIZE, 8 << 20),
+                (setting::MAX_HEADER_LIST_SIZE, 64 << 10)
+            ]
         );
-        assert_eq!((frames[1].kind, frames[1].stream, frames[1].number()), (kind::WINDOW_UPDATE, 0, (32 << 20) - 65_535));
+        assert_eq!(
+            (frames[1].kind, frames[1].stream, frames[1].number()),
+            (kind::WINDOW_UPDATE, 0, (32 << 20) - 65_535)
+        );
         // a connection window that is the default needs no update
-        let c = Connection::new(Config { connection_window: 65_535, ..Config::default() });
+        let c = Connection::new(Config {
+            connection_window: 65_535,
+            ..Config::default()
+        });
         assert_eq!(parse_sent(&c.output()[PREFACE.len()..]).len(), 1);
     }
 
@@ -1812,7 +2315,10 @@ mod tests {
         let mut h = Harness::unsettled(Config::default());
         h.take();
         let mut s = Vec::new();
-        frame::write_settings(&mut s, &[(setting::MAX_CONCURRENT_STREAMS, 7), (0x77, 1234)]);
+        frame::write_settings(
+            &mut s,
+            &[(setting::MAX_CONCURRENT_STREAMS, 7), (0x77, 1234)],
+        );
         h.feed(&s).unwrap();
         assert_eq!(h.take(), vec![settings_ack()]);
         h.feed(&raw(kind::SETTINGS, flag::ACK, 0, &[])).unwrap();
@@ -1821,7 +2327,12 @@ mod tests {
 
     #[test]
     fn the_servers_first_frame_must_be_settings() {
-        for first in [raw(kind::PING, 0, 0, &[0; 8]), raw(kind::WINDOW_UPDATE, 0, 0, &[0, 0, 0, 1]), raw(kind::SETTINGS, flag::ACK, 0, &[]), raw(kind::GOAWAY, 0, 0, &[0; 8])] {
+        for first in [
+            raw(kind::PING, 0, 0, &[0; 8]),
+            raw(kind::WINDOW_UPDATE, 0, 0, &[0, 0, 0, 1]),
+            raw(kind::SETTINGS, flag::ACK, 0, &[]),
+            raw(kind::GOAWAY, 0, 0, &[0; 8]),
+        ] {
             let mut h = Harness::unsettled(Config::default());
             h.take();
             let e = h.feed(&first).unwrap_err();
@@ -1829,7 +2340,10 @@ mod tests {
             assert!(e.local);
             let out = h.take();
             assert_eq!(out.len(), 1);
-            assert_eq!((out[0].kind, out[0].number()), (kind::GOAWAY, ErrorCode::PROTOCOL_ERROR.0));
+            assert_eq!(
+                (out[0].kind, out[0].number()),
+                (kind::GOAWAY, ErrorCode::PROTOCOL_ERROR.0)
+            );
         }
     }
 
@@ -1837,10 +2351,25 @@ mod tests {
     fn nothing_works_before_the_settings_arrive_but_requests_may_be_sent() {
         // a client may send requests at once (RFC 9113 section 3.4): the server's SETTINGS can only widen what they may do
         let mut h = Harness::unsettled(Config::default());
-        let id = h.c.open_stream(&Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &[], secret: &[] }, true).unwrap();
+        let id =
+            h.c.open_stream(
+                &Request {
+                    method: "GET",
+                    scheme: "https",
+                    authority: "example.com",
+                    path: "/",
+                    headers: &[],
+                    secret: &[],
+                },
+                true,
+            )
+            .unwrap();
         assert_eq!(id, 1);
         let out = h.take();
-        assert_eq!(out.last().map(|f| (f.kind, f.stream)), Some((kind::HEADERS, 1)));
+        assert_eq!(
+            out.last().map(|f| (f.kind, f.stream)),
+            Some((kind::HEADERS, 1))
+        );
     }
 
     #[test]
@@ -1855,7 +2384,10 @@ mod tests {
         h.feed(&ping[ping.len() - 1..]).unwrap();
         let out = h.take();
         assert_eq!(out.len(), 1);
-        assert_eq!((out[0].kind, out[0].flags, out[0].payload.as_slice()), (kind::PING, flag::ACK, b"abcdefgh".as_slice()));
+        assert_eq!(
+            (out[0].kind, out[0].flags, out[0].payload.as_slice()),
+            (kind::PING, flag::ACK, b"abcdefgh".as_slice())
+        );
     }
 
     // ---------------------------------------------------------------------------------------- requests
@@ -1866,7 +2398,19 @@ mod tests {
         let id = h.open_with(
             "GET",
             "/a?b=c",
-            &[("Host", "example.com"), ("User-Agent", "tiny"), ("Accept", "*/*"), ("X-Mixed-Case", "Value"), ("Connection", "close"), ("Keep-Alive", "5"), ("Transfer-Encoding", "chunked"), ("Upgrade", "x"), ("Proxy-Connection", "x"), ("TE", "gzip"), ("TE", "trailers")],
+            &[
+                ("Host", "example.com"),
+                ("User-Agent", "tiny"),
+                ("Accept", "*/*"),
+                ("X-Mixed-Case", "Value"),
+                ("Connection", "close"),
+                ("Keep-Alive", "5"),
+                ("Transfer-Encoding", "chunked"),
+                ("Upgrade", "x"),
+                ("Proxy-Connection", "x"),
+                ("TE", "gzip"),
+                ("TE", "trailers"),
+            ],
             true,
         );
         assert_eq!(id, 1);
@@ -1877,7 +2421,16 @@ mod tests {
         let fields = h.request_of(&out[0]);
         assert_eq!(
             fields,
-            header_pairs(&[(":method", "GET"), (":scheme", "https"), (":authority", "example.com"), (":path", "/a?b=c"), ("user-agent", "tiny"), ("accept", "*/*"), ("x-mixed-case", "Value"), ("te", "trailers")])
+            header_pairs(&[
+                (":method", "GET"),
+                (":scheme", "https"),
+                (":authority", "example.com"),
+                (":path", "/a?b=c"),
+                ("user-agent", "tiny"),
+                ("accept", "*/*"),
+                ("x-mixed-case", "Value"),
+                ("te", "trailers")
+            ])
         );
         assert_eq!(h.open("GET", "/"), 3);
         assert_eq!(h.open("GET", "/"), 5);
@@ -1885,45 +2438,117 @@ mod tests {
 
     #[test]
     fn secrets_are_never_indexed() {
-        let headers = vec![("authorization".to_string(), "Bearer x".to_string()), ("cookie".to_string(), "a=b".to_string()), ("accept".to_string(), "*/*".to_string())];
-        let r = Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] };
+        let headers = vec![
+            ("authorization".to_string(), "Bearer x".to_string()),
+            ("cookie".to_string(), "a=b".to_string()),
+            ("accept".to_string(), "*/*".to_string()),
+        ];
+        let r = Request {
+            method: "GET",
+            scheme: "https",
+            authority: "example.com",
+            path: "/",
+            headers: &headers,
+            secret: &[],
+        };
         let lowered = lower_names(r.headers);
         let list = request_fields(&r, &lowered).unwrap();
         let sensitive: Vec<(&[u8], bool)> = list.iter().map(|f| (f.name, f.sensitive)).collect();
         assert_eq!(
             sensitive,
-            vec![(b":method".as_slice(), false), (b":scheme".as_slice(), false), (b":authority".as_slice(), false), (b":path".as_slice(), false), (b"authorization".as_slice(), true), (b"cookie".as_slice(), true), (b"accept".as_slice(), false)]
+            vec![
+                (b":method".as_slice(), false),
+                (b":scheme".as_slice(), false),
+                (b":authority".as_slice(), false),
+                (b":path".as_slice(), false),
+                (b"authorization".as_slice(), true),
+                (b"cookie".as_slice(), true),
+                (b"accept".as_slice(), false)
+            ]
         );
     }
 
     #[test]
     fn the_names_a_caller_says_are_secret_are_never_indexed_either() {
         // (a hop's own credentials: any name, in any case, given as the lower case name; the others stay as they were)
-        let headers = vec![("Private-Token".to_string(), "t0k3n".to_string()), ("X-Api-Key".to_string(), "k".to_string()), ("accept".to_string(), "*/*".to_string())];
+        let headers = vec![
+            ("Private-Token".to_string(), "t0k3n".to_string()),
+            ("X-Api-Key".to_string(), "k".to_string()),
+            ("accept".to_string(), "*/*".to_string()),
+        ];
         let secret = vec!["private-token".to_string(), "x-api-key".to_string()];
-        let r = Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &secret };
+        let r = Request {
+            method: "GET",
+            scheme: "https",
+            authority: "example.com",
+            path: "/",
+            headers: &headers,
+            secret: &secret,
+        };
         let lowered = lower_names(r.headers);
         let list = request_fields(&r, &lowered).unwrap();
-        let sensitive: Vec<(&[u8], bool)> = list.iter().skip(4).map(|f| (f.name, f.sensitive)).collect();
-        assert_eq!(sensitive, vec![(b"private-token".as_slice(), true), (b"x-api-key".as_slice(), true), (b"accept".as_slice(), false)]);
+        let sensitive: Vec<(&[u8], bool)> =
+            list.iter().skip(4).map(|f| (f.name, f.sensitive)).collect();
+        assert_eq!(
+            sensitive,
+            vec![
+                (b"private-token".as_slice(), true),
+                (b"x-api-key".as_slice(), true),
+                (b"accept".as_slice(), false)
+            ]
+        );
         // and what is written does not let a table keep them: the second of two identical requests on one connection is a few bytes when a table
         // holds the credentials, and carries them in full when it does not
         let second_block = |secret: &[String]| {
             let mut h = Harness::new();
-            let r = Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret };
+            let r = Request {
+                method: "GET",
+                scheme: "https",
+                authority: "example.com",
+                path: "/",
+                headers: &headers,
+                secret,
+            };
             h.c.open_stream(&r, true).unwrap();
             h.c.open_stream(&r, true).unwrap();
-            h.take().into_iter().filter(|f| f.kind == kind::HEADERS).map(|f| f.payload.len()).last().unwrap()
+            h.take()
+                .into_iter()
+                .filter(|f| f.kind == kind::HEADERS)
+                .map(|f| f.payload.len())
+                .last()
+                .unwrap()
         };
-        assert!(second_block(&secret) > second_block(&[]) + 10, "{} against {}", second_block(&secret), second_block(&[]));
+        assert!(
+            second_block(&secret) > second_block(&[]) + 10,
+            "{} against {}",
+            second_block(&secret),
+            second_block(&[])
+        );
     }
 
     #[test]
     fn requests_that_cannot_be_sent_are_refused_before_anything_is_written() {
         let mut h = Harness::new();
-        let try_open = |h: &mut Harness, method: &str, path: &str, authority: &str, headers: &[(&str, &str)]| {
-            let headers: Vec<(String, String)> = headers.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect();
-            h.c.open_stream(&Request { method, scheme: "https", authority, path, headers: &headers, secret: &[] }, true)
+        let try_open = |h: &mut Harness,
+                        method: &str,
+                        path: &str,
+                        authority: &str,
+                        headers: &[(&str, &str)]| {
+            let headers: Vec<(String, String)> = headers
+                .iter()
+                .map(|(n, v)| (n.to_string(), v.to_string()))
+                .collect();
+            h.c.open_stream(
+                &Request {
+                    method,
+                    scheme: "https",
+                    authority,
+                    path,
+                    headers: &headers,
+                    secret: &[],
+                },
+                true,
+            )
         };
         for (method, path, authority, headers) in [
             ("", "/", "example.com", vec![]),
@@ -1937,7 +2562,13 @@ mod tests {
             ("GET", "/", "example.com", vec![("x", "a\0b")]),
             ("GET", "/", "example.com", vec![(":path", "/other")]),
         ] {
-            assert!(matches!(try_open(&mut h, method, path, authority, &headers), Err(OpenError::Invalid(_))), "{method:?} {path:?} {authority:?} {headers:?}");
+            assert!(
+                matches!(
+                    try_open(&mut h, method, path, authority, &headers),
+                    Err(OpenError::Invalid(_))
+                ),
+                "{method:?} {path:?} {authority:?} {headers:?}"
+            );
         }
         assert!(h.take().is_empty(), "nothing was written");
         // and the stream ids were not used up
@@ -1946,31 +2577,69 @@ mod tests {
 
     #[test]
     fn a_header_list_over_what_the_server_takes_is_refused() {
-        let mut h = Harness::with_settings(Config::default(), &[(setting::MAX_HEADER_LIST_SIZE, 200)]);
+        let mut h =
+            Harness::with_settings(Config::default(), &[(setting::MAX_HEADER_LIST_SIZE, 200)]);
         let headers = vec![("x-big".to_string(), "v".repeat(300))];
-        let big = h.c.open_stream(&Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] }, true);
+        let big = h.c.open_stream(
+            &Request {
+                method: "GET",
+                scheme: "https",
+                authority: "example.com",
+                path: "/",
+                headers: &headers,
+                secret: &[],
+            },
+            true,
+        );
         assert!(matches!(big, Err(OpenError::Invalid(_))), "{big:?}");
         assert_eq!(h.open("GET", "/"), 1);
     }
 
     #[test]
     fn a_header_block_too_big_for_one_frame_continues_in_the_next() {
-        let mut h = Harness::with_settings(Config::default(), &[(setting::MAX_HEADER_LIST_SIZE, 1 << 20)]);
+        let mut h = Harness::with_settings(
+            Config::default(),
+            &[(setting::MAX_HEADER_LIST_SIZE, 1 << 20)],
+        );
         // values that do not repeat, so that Huffman and the table cannot make them small
-        let value: String = (0..60_000u32).map(|i| char::from(b'a' + ((i * 7 + i / 13) % 26) as u8)).collect();
+        let value: String = (0..60_000u32)
+            .map(|i| char::from(b'a' + ((i * 7 + i / 13) % 26) as u8))
+            .collect();
         let headers = vec![("x-big".to_string(), value.clone())];
-        h.c.open_stream(&Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] }, true).unwrap();
+        h.c.open_stream(
+            &Request {
+                method: "GET",
+                scheme: "https",
+                authority: "example.com",
+                path: "/",
+                headers: &headers,
+                secret: &[],
+            },
+            true,
+        )
+        .unwrap();
         let out = h.take();
         assert!(out.len() >= 3, "{} frames", out.len());
-        assert_eq!((out[0].kind, out[0].flags & flag::END_HEADERS), (kind::HEADERS, 0));
+        assert_eq!(
+            (out[0].kind, out[0].flags & flag::END_HEADERS),
+            (kind::HEADERS, 0)
+        );
         assert!(out[0].end_stream());
         for f in &out[1..out.len() - 1] {
             assert_eq!((f.kind, f.stream, f.flags), (kind::CONTINUATION, 1, 0));
         }
         let last = out.last().unwrap();
-        assert_eq!((last.kind, last.flags), (kind::CONTINUATION, flag::END_HEADERS));
+        assert_eq!(
+            (last.kind, last.flags),
+            (kind::CONTINUATION, flag::END_HEADERS)
+        );
         assert!(out.iter().all(|f| f.payload.len() <= 16_384));
-        let joined = Sent { kind: kind::HEADERS, flags: 0, stream: 1, payload: out.iter().flat_map(|f| f.payload.clone()).collect() };
+        let joined = Sent {
+            kind: kind::HEADERS,
+            flags: 0,
+            stream: 1,
+            payload: out.iter().flat_map(|f| f.payload.clone()).collect(),
+        };
         let fields = h.request_of(&joined);
         assert_eq!(fields.last().unwrap(), &("x-big".to_string(), value));
     }
@@ -1987,22 +2656,52 @@ mod tests {
         let sent = h.c.send_data(id, &body, true).unwrap();
         assert_eq!(sent, 65_535);
         let frames = h.take();
-        assert_eq!(frames.iter().map(|f| f.payload.len()).collect::<Vec<_>>(), vec![16_384, 16_384, 16_384, 16_383]);
-        assert!(frames.iter().all(|f| f.kind == kind::DATA && f.stream == 1 && !f.end_stream()), "the end waits for the rest");
-        assert_eq!(frames.iter().flat_map(|f| f.payload.clone()).collect::<Vec<u8>>(), body[..65_535]);
+        assert_eq!(
+            frames.iter().map(|f| f.payload.len()).collect::<Vec<_>>(),
+            vec![16_384, 16_384, 16_384, 16_383]
+        );
+        assert!(
+            frames
+                .iter()
+                .all(|f| f.kind == kind::DATA && f.stream == 1 && !f.end_stream()),
+            "the end waits for the rest"
+        );
+        assert_eq!(
+            frames
+                .iter()
+                .flat_map(|f| f.payload.clone())
+                .collect::<Vec<u8>>(),
+            body[..65_535]
+        );
         assert_eq!(h.c.send_capacity(id), 0);
         assert_eq!(h.c.send_data(id, &body[65_535..], true).unwrap(), 0);
         assert!(h.take().is_empty());
         // the server makes room: for the stream, and for the connection
-        h.feed_frame(kind::WINDOW_UPDATE, 0, 1, &50_000u32.to_be_bytes()).unwrap();
-        assert_eq!(h.c.send_capacity(id), 0, "the connection window is still spent");
-        h.feed_frame(kind::WINDOW_UPDATE, 0, 0, &40_000u32.to_be_bytes()).unwrap();
-        assert_eq!(h.c.send_capacity(id), 40_000, "the smaller of the two windows");
+        h.feed_frame(kind::WINDOW_UPDATE, 0, 1, &50_000u32.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            h.c.send_capacity(id),
+            0,
+            "the connection window is still spent"
+        );
+        h.feed_frame(kind::WINDOW_UPDATE, 0, 0, &40_000u32.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            h.c.send_capacity(id),
+            40_000,
+            "the smaller of the two windows"
+        );
         let rest = &body[65_535..];
         assert_eq!(h.c.send_data(id, rest, true).unwrap(), 34_465);
         let frames = h.take();
-        assert_eq!(frames.iter().map(|f| f.payload.len()).sum::<usize>(), 34_465);
-        assert!(frames.last().unwrap().end_stream(), "all of the body went, so the end goes with it");
+        assert_eq!(
+            frames.iter().map(|f| f.payload.len()).sum::<usize>(),
+            34_465
+        );
+        assert!(
+            frames.last().unwrap().end_stream(),
+            "all of the body went, so the end goes with it"
+        );
         assert_eq!(h.c.send_capacity(id), 0, "the stream is ended");
     }
 
@@ -2016,7 +2715,10 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert!(out[0].end_stream());
         assert_eq!(out[0].payload, b"hello");
-        assert!(h.c.send_data(id, b"more", false).is_err(), "the body was ended");
+        assert!(
+            h.c.send_data(id, b"more", false).is_err(),
+            "the body was ended"
+        );
         // an empty DATA frame ends a body that was sent without its end
         let id2 = h.open_with("POST", "/", &[], false);
         h.take();
@@ -2035,25 +2737,43 @@ mod tests {
 
     #[test]
     fn a_larger_frame_size_from_the_server_makes_larger_frames() {
-        let mut h = Harness::with_settings(Config::default(), &[(setting::MAX_FRAME_SIZE, 40_000), (setting::INITIAL_WINDOW_SIZE, 1 << 20)]);
-        h.feed_frame(kind::WINDOW_UPDATE, 0, 0, &(1u32 << 20).to_be_bytes()).unwrap();
+        let mut h = Harness::with_settings(
+            Config::default(),
+            &[
+                (setting::MAX_FRAME_SIZE, 40_000),
+                (setting::INITIAL_WINDOW_SIZE, 1 << 20),
+            ],
+        );
+        h.feed_frame(kind::WINDOW_UPDATE, 0, 0, &(1u32 << 20).to_be_bytes())
+            .unwrap();
         let id = h.open_with("POST", "/", &[], false);
         h.take();
-        assert_eq!(h.c.send_data(id, &vec![7u8; 100_000], true).unwrap(), 100_000);
+        assert_eq!(
+            h.c.send_data(id, &vec![7u8; 100_000], true).unwrap(),
+            100_000
+        );
         let sizes: Vec<usize> = h.take().iter().map(|f| f.payload.len()).collect();
         assert_eq!(sizes, vec![40_000, 40_000, 20_000]);
     }
 
     #[test]
     fn the_output_backlog_limits_what_send_data_takes() {
-        let mut h = Harness::with_settings(Config::default(), &[(setting::INITIAL_WINDOW_SIZE, 10 << 20)]);
-        h.feed_frame(kind::WINDOW_UPDATE, 0, 0, &(10u32 << 20).to_be_bytes()).unwrap();
+        let mut h = Harness::with_settings(
+            Config::default(),
+            &[(setting::INITIAL_WINDOW_SIZE, 10 << 20)],
+        );
+        h.feed_frame(kind::WINDOW_UPDATE, 0, 0, &(10u32 << 20).to_be_bytes())
+            .unwrap();
         let id = h.open_with("POST", "/", &[], false);
         h.take();
         let body = vec![1u8; 2 << 20];
         let first = h.c.send_data(id, &body, false).unwrap();
         assert_eq!(first, OUTPUT_HIGH_WATER);
-        assert_eq!(h.c.send_data(id, &body, false).unwrap(), 0, "nothing more until the output is sent");
+        assert_eq!(
+            h.c.send_data(id, &body, false).unwrap(),
+            0,
+            "nothing more until the output is sent"
+        );
         let out = h.c.output().len();
         h.c.consume_output(out / 2);
         assert_eq!(h.c.send_capacity(id), OUTPUT_HIGH_WATER - (out - out / 2));
@@ -2073,7 +2793,8 @@ mod tests {
         h.feed(&s).unwrap();
         assert_eq!(h.c.streams[&id].send_window, -59_000);
         assert_eq!(h.c.send_capacity(id), 0);
-        h.feed_frame(kind::WINDOW_UPDATE, 0, 1, &60_000u32.to_be_bytes()).unwrap();
+        h.feed_frame(kind::WINDOW_UPDATE, 0, 1, &60_000u32.to_be_bytes())
+            .unwrap();
         assert_eq!(h.c.streams[&id].send_window, 1000);
         // and streams opened later start with the new one
         let id2 = h.open_with("POST", "/", &[], false);
@@ -2088,9 +2809,29 @@ mod tests {
         let id = h.open("GET", "/");
         h.take();
         assert_eq!(h.got(id).head, None);
-        h.respond(1, "200", &[("content-type", "text/plain"), ("content-length", "11"), ("x-n", " padded ")], false).unwrap();
+        h.respond(
+            1,
+            "200",
+            &[
+                ("content-type", "text/plain"),
+                ("content-length", "11"),
+                ("x-n", " padded "),
+            ],
+            false,
+        )
+        .unwrap();
         let got = h.got(id);
-        assert_eq!(got.head, Some(Head { status: 200, headers: header_pairs(&[("content-type", "text/plain"), ("content-length", "11"), ("x-n", "padded")]) }));
+        assert_eq!(
+            got.head,
+            Some(Head {
+                status: 200,
+                headers: header_pairs(&[
+                    ("content-type", "text/plain"),
+                    ("content-length", "11"),
+                    ("x-n", "padded")
+                ])
+            })
+        );
         assert!(!got.ended);
         h.data(1, b"hello ", false).unwrap();
         assert_eq!(h.got(id).body, b"hello ");
@@ -2108,7 +2849,8 @@ mod tests {
         let mut h = Harness::new();
         let id = h.open("GET", "/");
         h.respond(1, "200", &[], false).unwrap();
-        h.data(1, &(0..1000u32).map(|i| i as u8).collect::<Vec<u8>>(), true).unwrap();
+        h.data(1, &(0..1000u32).map(|i| i as u8).collect::<Vec<u8>>(), true)
+            .unwrap();
         let got = h.got_with(id, 7);
         assert_eq!(got.body, (0..1000u32).map(|i| i as u8).collect::<Vec<u8>>());
         assert!(got.ended);
@@ -2116,7 +2858,10 @@ mod tests {
         let id2 = h.open("GET", "/");
         h.respond(id2, "200", &[], false).unwrap();
         h.data(id2, b"xyz", true).unwrap();
-        assert!(matches!(h.c.poll_stream(id2, &mut []), StreamEvent::Head(_)));
+        assert!(matches!(
+            h.c.poll_stream(id2, &mut []),
+            StreamEvent::Head(_)
+        ));
         assert_eq!(h.c.poll_stream(id2, &mut []), StreamEvent::Pending);
         assert_eq!(h.got(id2).body, b"xyz");
     }
@@ -2127,30 +2872,46 @@ mod tests {
         let id = h.open("GET", "/");
         h.respond(1, "200", &[("trailer", "x-sum")], false).unwrap();
         h.data(1, b"body", false).unwrap();
-        h.send_fields(1, &[("x-sum", "42"), ("x-other", "o")], true).unwrap();
+        h.send_fields(1, &[("x-sum", "42"), ("x-other", "o")], true)
+            .unwrap();
         let got = h.got(id);
         assert_eq!(got.body, b"body");
-        assert_eq!(got.trailers, Some(header_pairs(&[("x-sum", "42"), ("x-other", "o")])));
+        assert_eq!(
+            got.trailers,
+            Some(header_pairs(&[("x-sum", "42"), ("x-other", "o")]))
+        );
         assert!(got.ended);
     }
 
     #[test]
     fn trailers_are_checked_too() {
-        for bad in [vec![(":status", "200")], vec![("X-Upper", "1")], vec![("connection", "close")], vec![("x", "a\nb")]] {
+        for bad in [
+            vec![(":status", "200")],
+            vec![("X-Upper", "1")],
+            vec![("connection", "close")],
+            vec![("x", "a\nb")],
+        ] {
             let mut h = Harness::new();
             let id = h.open("GET", "/");
             h.respond(1, "200", &[], false).unwrap();
             h.send_fields(1, &bad, true).unwrap();
             h.take();
             let got = h.got(id);
-            assert_eq!(got.failed.as_ref().map(|e| e.code), Some(ErrorCode::PROTOCOL_ERROR), "{bad:?}");
+            assert_eq!(
+                got.failed.as_ref().map(|e| e.code),
+                Some(ErrorCode::PROTOCOL_ERROR),
+                "{bad:?}"
+            );
         }
         // trailers that do not end the stream
         let mut h = Harness::new();
         let id = h.open("GET", "/");
         h.respond(1, "200", &[], false).unwrap();
         h.send_fields(1, &[("x", "1")], false).unwrap();
-        assert_eq!(h.got(id).failed.map(|e| e.code), Some(ErrorCode::PROTOCOL_ERROR));
+        assert_eq!(
+            h.got(id).failed.map(|e| e.code),
+            Some(ErrorCode::PROTOCOL_ERROR)
+        );
     }
 
     #[test]
@@ -2158,15 +2919,28 @@ mod tests {
         let mut h = Harness::new();
         let id = h.open("GET", "/");
         let long = "v".repeat(3000);
-        let block = h.block(&[(":status", "200"), ("x-a", "1"), ("x-long", &long), ("x-z", "last")]);
+        let block = h.block(&[
+            (":status", "200"),
+            ("x-a", "1"),
+            ("x-long", &long),
+            ("x-z", "last"),
+        ]);
         // HEADERS with a third of it, a CONTINUATION with another third, and the rest
         let third = block.len() / 3;
         let mut wire = raw(kind::HEADERS, flag::END_STREAM, 1, &block[..third]);
         wire.extend(raw(kind::CONTINUATION, 0, 1, &block[third..2 * third]));
-        wire.extend(raw(kind::CONTINUATION, flag::END_HEADERS, 1, &block[2 * third..]));
+        wire.extend(raw(
+            kind::CONTINUATION,
+            flag::END_HEADERS,
+            1,
+            &block[2 * third..],
+        ));
         h.feed(&wire).unwrap();
         let got = h.got(id);
-        assert_eq!(got.head.unwrap().headers, header_pairs(&[("x-a", "1"), ("x-long", &long), ("x-z", "last")]));
+        assert_eq!(
+            got.head.unwrap().headers,
+            header_pairs(&[("x-a", "1"), ("x-long", &long), ("x-z", "last")])
+        );
         assert!(got.ended);
     }
 
@@ -2175,9 +2949,11 @@ mod tests {
         let mut h = Harness::new();
         let id = h.open("GET", "/");
         h.respond(1, "100", &[], false).unwrap();
-        h.respond(1, "103", &[("link", "</a>; rel=preload")], false).unwrap();
+        h.respond(1, "103", &[("link", "</a>; rel=preload")], false)
+            .unwrap();
         assert_eq!(h.got(id).head, None);
-        h.respond(1, "200", &[("content-length", "2")], false).unwrap();
+        h.respond(1, "200", &[("content-length", "2")], false)
+            .unwrap();
         h.data(1, b"ok", true).unwrap();
         let got = h.got(id);
         assert_eq!(got.head.unwrap().status, 200);
@@ -2187,7 +2963,10 @@ mod tests {
             let mut h = Harness::new();
             let id = h.open("GET", "/");
             h.respond(1, status, &[], status == "100").unwrap();
-            assert_eq!(h.got(id).failed.map(|e| e.code), Some(ErrorCode::PROTOCOL_ERROR));
+            assert_eq!(
+                h.got(id).failed.map(|e| e.code),
+                Some(ErrorCode::PROTOCOL_ERROR)
+            );
         }
         let mut h = Harness::new();
         let id = h.open("GET", "/");
@@ -2204,14 +2983,19 @@ mod tests {
         let mut h = Harness::new();
         // HEAD: Content-Length is the length a GET would have, and there is no DATA
         let id = h.open("HEAD", "/");
-        h.respond(1, "200", &[("content-length", "5000")], true).unwrap();
+        h.respond(1, "200", &[("content-length", "5000")], true)
+            .unwrap();
         let got = h.got(id);
-        assert_eq!(got.head.unwrap().headers, header_pairs(&[("content-length", "5000")]));
+        assert_eq!(
+            got.head.unwrap().headers,
+            header_pairs(&[("content-length", "5000")])
+        );
         assert!(got.ended && got.body.is_empty() && got.failed.is_none());
         // 204 and 304 the same, and an empty body that was promised empty
         for (status, length) in [("204", None), ("304", Some("100")), ("200", Some("0"))] {
             let id = h.open("GET", "/");
-            let extra: Vec<(&str, &str)> = length.map(|l| ("content-length", l)).into_iter().collect();
+            let extra: Vec<(&str, &str)> =
+                length.map(|l| ("content-length", l)).into_iter().collect();
             h.respond(id, status, &extra, true).unwrap();
             let got = h.got(id);
             assert!(got.ended && got.failed.is_none(), "{status}");
@@ -2221,7 +3005,11 @@ mod tests {
             let id = h.open(method, "/");
             h.respond(id, status, &[], false).unwrap();
             h.data(id, b"x", true).unwrap();
-            assert_eq!(h.got(id).failed.map(|e| e.code), Some(ErrorCode::PROTOCOL_ERROR), "{method} {status}");
+            assert_eq!(
+                h.got(id).failed.map(|e| e.code),
+                Some(ErrorCode::PROTOCOL_ERROR),
+                "{method} {status}"
+            );
         }
     }
 
@@ -2230,14 +3018,19 @@ mod tests {
         // more than it says
         let mut h = Harness::new();
         let id = h.open("GET", "/");
-        h.respond(1, "200", &[("content-length", "3")], false).unwrap();
+        h.respond(1, "200", &[("content-length", "3")], false)
+            .unwrap();
         h.data(1, b"abcd", false).unwrap();
-        assert_eq!(h.got(id).failed.map(|e| e.code), Some(ErrorCode::PROTOCOL_ERROR));
+        assert_eq!(
+            h.got(id).failed.map(|e| e.code),
+            Some(ErrorCode::PROTOCOL_ERROR)
+        );
         // less than it says, with the end in DATA, in an empty DATA and in trailers
         for how in 0..3 {
             let mut h = Harness::new();
             let id = h.open("GET", "/");
-            h.respond(1, "200", &[("content-length", "10")], false).unwrap();
+            h.respond(1, "200", &[("content-length", "10")], false)
+                .unwrap();
             h.data(1, b"abc", how == 0).unwrap();
             match how {
                 1 => h.data(1, b"", true).unwrap(),
@@ -2245,17 +3038,26 @@ mod tests {
                 _ => {}
             }
             let got = h.got(id);
-            assert_eq!(got.failed.map(|e| e.code), Some(ErrorCode::PROTOCOL_ERROR), "{how}");
+            assert_eq!(
+                got.failed.map(|e| e.code),
+                Some(ErrorCode::PROTOCOL_ERROR),
+                "{how}"
+            );
         }
         // headers that end the stream without the promised body
         let mut h = Harness::new();
         let id = h.open("GET", "/");
-        h.respond(1, "200", &[("content-length", "10")], true).unwrap();
-        assert_eq!(h.got(id).failed.map(|e| e.code), Some(ErrorCode::PROTOCOL_ERROR));
+        h.respond(1, "200", &[("content-length", "10")], true)
+            .unwrap();
+        assert_eq!(
+            h.got(id).failed.map(|e| e.code),
+            Some(ErrorCode::PROTOCOL_ERROR)
+        );
         // exactly right
         let mut h = Harness::new();
         let id = h.open("GET", "/");
-        h.respond(1, "200", &[("content-length", "10")], false).unwrap();
+        h.respond(1, "200", &[("content-length", "10")], false)
+            .unwrap();
         h.data(1, b"abcde", false).unwrap();
         h.data(1, b"fghij", true).unwrap();
         let got = h.got(id);
@@ -2277,32 +3079,81 @@ mod tests {
             ("no status", vec![("content-type", "x")]),
             ("two statuses", vec![(":status", "200"), (":status", "200")]),
             ("status after a field", vec![("x", "y"), (":status", "200")]),
-            ("a request pseudo-header", vec![(":status", "200"), (":path", "/")]),
-            ("an unknown pseudo-header", vec![(":status", "200"), (":nope", "1")]),
-            ("a pseudo-header after a field", vec![(":status", "200"), ("x", "y"), (":scheme", "https")]),
+            (
+                "a request pseudo-header",
+                vec![(":status", "200"), (":path", "/")],
+            ),
+            (
+                "an unknown pseudo-header",
+                vec![(":status", "200"), (":nope", "1")],
+            ),
+            (
+                "a pseudo-header after a field",
+                vec![(":status", "200"), ("x", "y"), (":scheme", "https")],
+            ),
             ("status of two digits", vec![(":status", "20")]),
             ("status of four digits", vec![(":status", "2000")]),
             ("status with a letter", vec![(":status", "2x0")]),
             ("status below 100", vec![(":status", "099")]),
             ("status with a sign", vec![(":status", "+20")]),
-            ("a capital in a name", vec![(":status", "200"), ("Content-Type", "x")]),
+            (
+                "a capital in a name",
+                vec![(":status", "200"), ("Content-Type", "x")],
+            ),
             ("a space in a name", vec![(":status", "200"), ("a b", "c")]),
             ("a colon in a name", vec![(":status", "200"), ("a:b", "c")]),
             ("an empty name", vec![(":status", "200"), ("", "c")]),
-            ("connection", vec![(":status", "200"), ("connection", "close")]),
-            ("keep-alive", vec![(":status", "200"), ("keep-alive", "timeout=5")]),
-            ("proxy-connection", vec![(":status", "200"), ("proxy-connection", "x")]),
-            ("transfer-encoding", vec![(":status", "200"), ("transfer-encoding", "chunked")]),
+            (
+                "connection",
+                vec![(":status", "200"), ("connection", "close")],
+            ),
+            (
+                "keep-alive",
+                vec![(":status", "200"), ("keep-alive", "timeout=5")],
+            ),
+            (
+                "proxy-connection",
+                vec![(":status", "200"), ("proxy-connection", "x")],
+            ),
+            (
+                "transfer-encoding",
+                vec![(":status", "200"), ("transfer-encoding", "chunked")],
+            ),
             ("upgrade", vec![(":status", "200"), ("upgrade", "h2c")]),
             ("a CR in a value", vec![(":status", "200"), ("x", "a\rb")]),
             ("an LF in a value", vec![(":status", "200"), ("x", "a\nb")]),
             ("a NUL in a value", vec![(":status", "200"), ("x", "a\0b")]),
-            ("a Content-Length that is not a number", vec![(":status", "200"), ("content-length", "abc")]),
-            ("a negative Content-Length", vec![(":status", "200"), ("content-length", "-1")]),
-            ("an empty Content-Length", vec![(":status", "200"), ("content-length", "")]),
-            ("a list as Content-Length", vec![(":status", "200"), ("content-length", "1, 1")]),
-            ("a Content-Length too large", vec![(":status", "200"), ("content-length", "99999999999999999999999")]),
-            ("two different Content-Lengths", vec![(":status", "200"), ("content-length", "1"), ("content-length", "2")]),
+            (
+                "a Content-Length that is not a number",
+                vec![(":status", "200"), ("content-length", "abc")],
+            ),
+            (
+                "a negative Content-Length",
+                vec![(":status", "200"), ("content-length", "-1")],
+            ),
+            (
+                "an empty Content-Length",
+                vec![(":status", "200"), ("content-length", "")],
+            ),
+            (
+                "a list as Content-Length",
+                vec![(":status", "200"), ("content-length", "1, 1")],
+            ),
+            (
+                "a Content-Length too large",
+                vec![
+                    (":status", "200"),
+                    ("content-length", "99999999999999999999999"),
+                ],
+            ),
+            (
+                "two different Content-Lengths",
+                vec![
+                    (":status", "200"),
+                    ("content-length", "1"),
+                    ("content-length", "2"),
+                ],
+            ),
         ];
         for (what, mut bad) in cases {
             let mut h = Harness::new();
@@ -2314,16 +3165,27 @@ mod tests {
             h.send_fields(first, &bad, false).unwrap();
             let sent = h.take();
             assert_eq!(sent.len(), 1, "{what}: {sent:?}");
-            assert_eq!((sent[0].kind, sent[0].stream, sent[0].number()), (kind::RST_STREAM, first, ErrorCode::PROTOCOL_ERROR.0), "{what}");
+            assert_eq!(
+                (sent[0].kind, sent[0].stream, sent[0].number()),
+                (kind::RST_STREAM, first, ErrorCode::PROTOCOL_ERROR.0),
+                "{what}"
+            );
             let got = h.got(first);
-            let failed = got.failed.unwrap_or_else(|| panic!("{what}: the stream did not fail"));
+            let failed = got
+                .failed
+                .unwrap_or_else(|| panic!("{what}: the stream did not fail"));
             assert_eq!(failed.code, ErrorCode::PROTOCOL_ERROR, "{what}");
             assert!(!failed.retry_safe);
             assert!(h.c.error().is_none(), "{what}");
             // the other stream, and the table, are fine
-            h.respond(second, "200", &[("x-keep", "kept value")], true).unwrap();
+            h.respond(second, "200", &[("x-keep", "kept value")], true)
+                .unwrap();
             let got = h.got(second);
-            assert_eq!(got.head.unwrap().headers, header_pairs(&[("x-keep", "kept value")]), "{what}");
+            assert_eq!(
+                got.head.unwrap().headers,
+                header_pairs(&[("x-keep", "kept value")]),
+                "{what}"
+            );
             // and what the server sends for the lost stream afterwards is thrown away
             h.data(first, b"late", false).unwrap();
             check_windows(&h.c);
@@ -2332,7 +3194,11 @@ mod tests {
 
     #[test]
     fn a_response_for_a_stream_that_was_never_opened_is_a_connection_error() {
-        for (stream, what) in [(2, "an even stream"), (5, "a stream that was never opened"), (1, "a stream that was never opened")] {
+        for (stream, what) in [
+            (2, "an even stream"),
+            (5, "a stream that was never opened"),
+            (1, "a stream that was never opened"),
+        ] {
             let mut h = Harness::new();
             if stream == 5 {
                 h.open("GET", "/");
@@ -2341,7 +3207,11 @@ mod tests {
             assert_eq!(e.code, ErrorCode::PROTOCOL_ERROR, "{what}");
             let sent = h.take();
             let last = sent.last().unwrap();
-            assert_eq!((last.kind, last.number()), (kind::GOAWAY, ErrorCode::PROTOCOL_ERROR.0), "{what}");
+            assert_eq!(
+                (last.kind, last.number()),
+                (kind::GOAWAY, ErrorCode::PROTOCOL_ERROR.0),
+                "{what}"
+            );
         }
     }
 
@@ -2358,11 +3228,24 @@ mod tests {
             fields.push(("x-big", big.as_str()));
         }
         h.send_fields(first, &fields, true).unwrap();
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream)).collect::<Vec<_>>(), vec![(kind::RST_STREAM, first)]);
-        assert_eq!(h.got(first).failed.map(|e| e.code), Some(ErrorCode::PROTOCOL_ERROR));
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, first)]
+        );
+        assert_eq!(
+            h.got(first).failed.map(|e| e.code),
+            Some(ErrorCode::PROTOCOL_ERROR)
+        );
         // the entry that block added is there for the next one
-        h.respond(second, "200", &[("x-big", big.as_str())], true).unwrap();
-        assert_eq!(h.got(second).head.unwrap().headers, header_pairs(&[("x-big", big.as_str())]));
+        h.respond(second, "200", &[("x-big", big.as_str())], true)
+            .unwrap();
+        assert_eq!(
+            h.got(second).head.unwrap().headers,
+            header_pairs(&[("x-big", big.as_str())])
+        );
     }
 
     #[test]
@@ -2375,7 +3258,10 @@ mod tests {
             wire.extend(raw(kind::CONTINUATION, 0, 1, &[0x88]));
         }
         wire.extend(raw(kind::CONTINUATION, flag::END_HEADERS, 1, &[0x88]));
-        assert_eq!(h.feed(&wire).unwrap_err().code, ErrorCode::ENHANCE_YOUR_CALM);
+        assert_eq!(
+            h.feed(&wire).unwrap_err().code,
+            ErrorCode::ENHANCE_YOUR_CALM
+        );
         // too many bytes
         let mut h = Harness::new();
         h.open("GET", "/");
@@ -2383,7 +3269,10 @@ mod tests {
         for _ in 0..5 {
             wire.extend(raw(kind::CONTINUATION, 0, 1, &[0x88; 16_384]));
         }
-        assert_eq!(h.feed(&wire).unwrap_err().code, ErrorCode::ENHANCE_YOUR_CALM);
+        assert_eq!(
+            h.feed(&wire).unwrap_err().code,
+            ErrorCode::ENHANCE_YOUR_CALM
+        );
     }
 
     #[test]
@@ -2396,7 +3285,15 @@ mod tests {
             block
         };
         // another kind of frame, or another stream's CONTINUATION, in the middle
-        for (kind, stream, payload) in [(kind::DATA, 1, vec![1]), (kind::PING, 0, vec![0; 8]), (kind::SETTINGS, 0, vec![]), (kind::WINDOW_UPDATE, 1, vec![0, 0, 0, 1]), (kind::CONTINUATION, 3, vec![0x88]), (kind::HEADERS, 3, vec![0x88]), (kind::RST_STREAM, 1, vec![0; 4])] {
+        for (kind, stream, payload) in [
+            (kind::DATA, 1, vec![1]),
+            (kind::PING, 0, vec![0; 8]),
+            (kind::SETTINGS, 0, vec![]),
+            (kind::WINDOW_UPDATE, 1, vec![0, 0, 0, 1]),
+            (kind::CONTINUATION, 3, vec![0x88]),
+            (kind::HEADERS, 3, vec![0x88]),
+            (kind::RST_STREAM, 1, vec![0; 4]),
+        ] {
             let mut h = Harness::new();
             first_half(&mut h);
             let e = h.feed_frame(kind, 0, stream, &payload).unwrap_err();
@@ -2405,31 +3302,54 @@ mod tests {
         // CONTINUATION with nothing to continue, and after a block that has ended
         let mut h = Harness::new();
         h.open("GET", "/");
-        assert_eq!(h.feed_frame(kind::CONTINUATION, flag::END_HEADERS, 1, &[0x88]).unwrap_err().code, ErrorCode::PROTOCOL_ERROR);
+        assert_eq!(
+            h.feed_frame(kind::CONTINUATION, flag::END_HEADERS, 1, &[0x88])
+                .unwrap_err()
+                .code,
+            ErrorCode::PROTOCOL_ERROR
+        );
         let mut h = Harness::new();
         let id = h.open("GET", "/");
         h.respond(1, "200", &[], false).unwrap();
-        assert_eq!(h.feed_frame(kind::CONTINUATION, flag::END_HEADERS, 1, &[0x88]).unwrap_err().code, ErrorCode::PROTOCOL_ERROR);
+        assert_eq!(
+            h.feed_frame(kind::CONTINUATION, flag::END_HEADERS, 1, &[0x88])
+                .unwrap_err()
+                .code,
+            ErrorCode::PROTOCOL_ERROR
+        );
         let _ = id;
         // and the continuation completes it
         let mut h = Harness::new();
         let id = h.open("GET", "/");
         h.open("GET", "/");
         let block = h.block(&[(":status", "200"), ("x", "y")]);
-        h.feed(&raw(kind::HEADERS, flag::END_STREAM, 1, &block[..2])).unwrap();
+        h.feed(&raw(kind::HEADERS, flag::END_STREAM, 1, &block[..2]))
+            .unwrap();
         assert_eq!(h.got(id).head, None);
-        h.feed(&raw(kind::CONTINUATION, flag::END_HEADERS, 1, &block[2..])).unwrap();
+        h.feed(&raw(kind::CONTINUATION, flag::END_HEADERS, 1, &block[2..]))
+            .unwrap();
         assert_eq!(h.got(id).head.unwrap().headers, header_pairs(&[("x", "y")]));
     }
 
     #[test]
     fn a_header_block_that_does_not_decode_is_a_compression_error() {
-        for block in [vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], vec![0x80 | 62], vec![0x80], vec![0x40, 0x05, b'a'], vec![0x88, 0x20 | 0x1f, 0xff, 0xff, 0xff, 0xff, 0x7f]] {
+        for block in [
+            vec![0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+            vec![0x80 | 62],
+            vec![0x80],
+            vec![0x40, 0x05, b'a'],
+            vec![0x88, 0x20 | 0x1f, 0xff, 0xff, 0xff, 0xff, 0x7f],
+        ] {
             let mut h = Harness::new();
             h.open("GET", "/");
-            let e = h.feed_frame(kind::HEADERS, flag::END_HEADERS, 1, &block).unwrap_err();
+            let e = h
+                .feed_frame(kind::HEADERS, flag::END_HEADERS, 1, &block)
+                .unwrap_err();
             assert_eq!(e.code, ErrorCode::COMPRESSION_ERROR, "{block:?}");
-            assert!(h.take().iter().any(|f| f.kind == kind::GOAWAY && f.number() == ErrorCode::COMPRESSION_ERROR.0));
+            assert!(h
+                .take()
+                .iter()
+                .any(|f| f.kind == kind::GOAWAY && f.number() == ErrorCode::COMPRESSION_ERROR.0));
         }
     }
 
@@ -2440,11 +3360,22 @@ mod tests {
         let second = h.open("GET", "/");
         h.take();
         h.c.release_stream(first);
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::RST_STREAM, first, ErrorCode::CANCEL.0)]);
-        h.respond(first, "200", &[("x-late", "in the table now")], false).unwrap();
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, first, ErrorCode::CANCEL.0)]
+        );
+        h.respond(first, "200", &[("x-late", "in the table now")], false)
+            .unwrap();
         h.data(first, b"nobody wants this", true).unwrap();
-        h.respond(second, "200", &[("x-late", "in the table now")], true).unwrap();
-        assert_eq!(h.got(second).head.unwrap().headers, header_pairs(&[("x-late", "in the table now")]));
+        h.respond(second, "200", &[("x-late", "in the table now")], true)
+            .unwrap();
+        assert_eq!(
+            h.got(second).head.unwrap().headers,
+            header_pairs(&[("x-late", "in the table now")])
+        );
         assert!(h.take().is_empty());
         check_windows(&h.c);
     }
@@ -2452,7 +3383,11 @@ mod tests {
     // ---------------------------------------------------------------------------------------- flow control, in
 
     fn small_windows() -> Config {
-        Config { stream_window: 1000, connection_window: 65_535, max_header_list: 64 << 10 }
+        Config {
+            stream_window: 1000,
+            connection_window: 65_535,
+            max_header_list: 64 << 10,
+        }
     }
 
     #[test]
@@ -2462,16 +3397,27 @@ mod tests {
         h.take();
         h.respond(1, "200", &[], false).unwrap();
         h.data(1, &[7u8; 900], false).unwrap();
-        assert!(h.take().is_empty(), "nothing has been read, so nothing is given back");
+        assert!(
+            h.take().is_empty(),
+            "nothing has been read, so nothing is given back"
+        );
         check_windows(&h.c);
         // reading 600 is past half of the window of 1000: the stream gets it back at once
         let mut buf = [0u8; 300];
-        assert!(matches!(h.c.poll_stream(id, &mut buf), StreamEvent::Head(_)));
+        assert!(matches!(
+            h.c.poll_stream(id, &mut buf),
+            StreamEvent::Head(_)
+        ));
         assert_eq!(h.c.poll_stream(id, &mut buf), StreamEvent::Data(300));
         assert!(h.take().is_empty(), "300 is less than half");
         assert_eq!(h.c.poll_stream(id, &mut buf), StreamEvent::Data(300));
         let out = h.take();
-        assert_eq!(out.iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::WINDOW_UPDATE, 1, 600)]);
+        assert_eq!(
+            out.iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::WINDOW_UPDATE, 1, 600)]
+        );
         assert_eq!(h.c.poll_stream(id, &mut buf), StreamEvent::Data(300));
         assert!(h.take().is_empty());
         check_windows(&h.c);
@@ -2481,7 +3427,11 @@ mod tests {
 
     #[test]
     fn the_connection_window_is_given_back_in_halves() {
-        let config = Config { stream_window: 1 << 20, connection_window: 65_535, max_header_list: 64 << 10 };
+        let config = Config {
+            stream_window: 1 << 20,
+            connection_window: 65_535,
+            max_header_list: 64 << 10,
+        };
         let mut h = Harness::with(config);
         let id = h.open("GET", "/");
         let other = h.open("GET", "/");
@@ -2507,7 +3457,12 @@ mod tests {
         // 30000 more is over it: the connection gets 60000 back in one update
         assert_eq!(h.got(other).body.len(), 30_000);
         let out = h.take();
-        assert_eq!(out.iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::WINDOW_UPDATE, 0, 60_000)]);
+        assert_eq!(
+            out.iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::WINDOW_UPDATE, 0, 60_000)]
+        );
         check_windows(&h.c);
         // and the server may send again
         h.data(id, &vec![3u8; 40_000], false).unwrap();
@@ -2533,13 +3488,30 @@ mod tests {
             updates.extend(h.take().iter().map(|f| (f.kind, f.stream, f.number())));
         }
         // each window (the stream's and the connection's) was given back as soon as a megabyte or more was read
-        let credit = |stream: u32| updates.iter().filter(|u| u.0 == kind::WINDOW_UPDATE && u.1 == stream).map(|u| u.2 as usize).collect::<Vec<_>>();
+        let credit = |stream: u32| {
+            updates
+                .iter()
+                .filter(|u| u.0 == kind::WINDOW_UPDATE && u.1 == stream)
+                .map(|u| u.2 as usize)
+                .collect::<Vec<_>>()
+        };
         for given in [credit(id), credit(0)] {
             assert_eq!(given.len(), 2, "{given:?}");
-            assert!(given.iter().all(|g| *g >= 1 << 20 && *g < (1 << 20) + 16_000), "{given:?}");
+            assert!(
+                given
+                    .iter()
+                    .all(|g| *g >= 1 << 20 && *g < (1 << 20) + 16_000),
+                "{given:?}"
+            );
         }
-        assert_eq!(credit(id).iter().sum::<usize>() + h.c.streams[&id].unannounced as usize, read);
-        assert_eq!(credit(0).iter().sum::<usize>() + h.c.unannounced as usize, read);
+        assert_eq!(
+            credit(id).iter().sum::<usize>() + h.c.streams[&id].unannounced as usize,
+            read
+        );
+        assert_eq!(
+            credit(0).iter().sum::<usize>() + h.c.unannounced as usize,
+            read
+        );
         check_windows(&h.c);
     }
 
@@ -2567,11 +3539,14 @@ mod tests {
         assert_eq!(news_of(&mut h), (vec![b, a], false));
         assert_eq!(news_of(&mut h), (vec![], false), "taken news is gone");
         // a stream reset, a window for one stream, a window for the connection
-        h.feed_frame(kind::RST_STREAM, 0, c, &ErrorCode::CANCEL.0.to_be_bytes()).unwrap();
+        h.feed_frame(kind::RST_STREAM, 0, c, &ErrorCode::CANCEL.0.to_be_bytes())
+            .unwrap();
         assert_eq!(news_of(&mut h), (vec![c], false));
-        h.feed_frame(kind::WINDOW_UPDATE, 0, b, &1000u32.to_be_bytes()).unwrap();
+        h.feed_frame(kind::WINDOW_UPDATE, 0, b, &1000u32.to_be_bytes())
+            .unwrap();
         assert_eq!(news_of(&mut h), (vec![b], false));
-        h.feed_frame(kind::WINDOW_UPDATE, 0, 0, &1000u32.to_be_bytes()).unwrap();
+        h.feed_frame(kind::WINDOW_UPDATE, 0, 0, &1000u32.to_be_bytes())
+            .unwrap();
         assert_eq!(news_of(&mut h), (vec![], true));
         // SETTINGS and GOAWAY are for everyone, PING for nobody
         let mut settings = Vec::new();
@@ -2634,7 +3609,11 @@ mod tests {
                     sent += piece.len();
                 }
                 loop {
-                    let event = if take { h.c.take_stream_data(id, &mut carry) } else { h.c.poll_stream(id, &mut buf) };
+                    let event = if take {
+                        h.c.take_stream_data(id, &mut carry)
+                    } else {
+                        h.c.poll_stream(id, &mut buf)
+                    };
                     match event {
                         StreamEvent::Data(n) if take => {
                             assert_eq!(carry.len(), n);
@@ -2656,11 +3635,23 @@ mod tests {
         // given and not yet given add up to the same
         let (read_updates, read_s, read_c, sent) = run(false);
         let (take_updates, take_s, take_c, _) = run(true);
-        let total = |u: &[(u8, u32, u32)], stream: u32, rest: u32| u.iter().filter(|x| x.0 == kind::WINDOW_UPDATE && x.1 == stream).map(|x| x.2 as u64).sum::<u64>() + rest as u64;
+        let total = |u: &[(u8, u32, u32)], stream: u32, rest: u32| {
+            u.iter()
+                .filter(|x| x.0 == kind::WINDOW_UPDATE && x.1 == stream)
+                .map(|x| x.2 as u64)
+                .sum::<u64>()
+                + rest as u64
+        };
         assert_eq!(total(&read_updates, 1, read_s), sent as u64);
         assert_eq!(total(&read_updates, 0, read_c), sent as u64);
-        assert_eq!(total(&take_updates, 1, take_s), total(&read_updates, 1, read_s));
-        assert_eq!(total(&take_updates, 0, take_c), total(&read_updates, 0, read_c));
+        assert_eq!(
+            total(&take_updates, 1, take_s),
+            total(&read_updates, 1, read_s)
+        );
+        assert_eq!(
+            total(&take_updates, 0, take_c),
+            total(&read_updates, 0, read_c)
+        );
     }
 
     #[test]
@@ -2679,13 +3670,19 @@ mod tests {
             sent += n;
         }
         let mut carry = vec![9u8; 10]; // not empty: it is emptied first
-        assert_eq!(h.c.take_stream_data(id, &mut carry), StreamEvent::Data(TAKE_MAX));
+        assert_eq!(
+            h.c.take_stream_data(id, &mut carry),
+            StreamEvent::Data(TAKE_MAX)
+        );
         assert_eq!(carry.len(), TAKE_MAX);
         assert!(carry.iter().enumerate().all(|(i, b)| *b == (i % 253) as u8));
         check_windows(&h.c);
         let mut got = std::mem::take(&mut carry);
         // what is left comes in the next take
-        assert_eq!(h.c.take_stream_data(id, &mut carry), StreamEvent::Data(total - TAKE_MAX));
+        assert_eq!(
+            h.c.take_stream_data(id, &mut carry),
+            StreamEvent::Data(total - TAKE_MAX)
+        );
         got.extend_from_slice(&carry);
         assert!(got.iter().enumerate().all(|(i, b)| *b == (i % 253) as u8));
         assert_eq!(got.len(), total);
@@ -2706,12 +3703,24 @@ mod tests {
         h.take();
         h.respond(id, "200", &[], false).unwrap();
         h.data(id, b"partial", false).unwrap();
-        h.feed_frame(kind::RST_STREAM, 0, id, &ErrorCode::INTERNAL_ERROR.0.to_be_bytes()).unwrap();
+        h.feed_frame(
+            kind::RST_STREAM,
+            0,
+            id,
+            &ErrorCode::INTERNAL_ERROR.0.to_be_bytes(),
+        )
+        .unwrap();
         let mut carry = Vec::new();
-        assert!(matches!(h.c.take_stream_data(id, &mut carry), StreamEvent::Head(_)));
+        assert!(matches!(
+            h.c.take_stream_data(id, &mut carry),
+            StreamEvent::Head(_)
+        ));
         assert_eq!(h.c.take_stream_data(id, &mut carry), StreamEvent::Data(7));
         assert_eq!(carry, b"partial");
-        assert!(matches!(h.c.take_stream_data(id, &mut carry), StreamEvent::Failed(_)));
+        assert!(matches!(
+            h.c.take_stream_data(id, &mut carry),
+            StreamEvent::Failed(_)
+        ));
         assert!(carry.is_empty());
     }
 
@@ -2735,7 +3744,12 @@ mod tests {
             }
             let s = &h.c.streams[&id];
             biggest = biggest.max(s.body.len());
-            assert!(s.body.len() <= 2 * s.unread() + 64 * 1024, "{} bytes held for {} unread", s.body.len(), s.unread());
+            assert!(
+                s.body.len() <= 2 * s.unread() + 64 * 1024,
+                "{} bytes held for {} unread",
+                s.body.len(),
+                s.unread()
+            );
         }
         // 4.8 MB were sent in the 300 rounds and 3.6 MB read, so 1.2 MB were unread at the end: the buffer never held much
         // more than twice that, nowhere near the 4.8 MB that went through it
@@ -2768,9 +3782,18 @@ mod tests {
         h.respond(1, "200", &[], false).unwrap();
         h.data(1, &[1u8; 600], false).unwrap();
         h.data(1, &[1u8; 401], false).unwrap();
-        assert_eq!(h.got(id).failed.map(|e| e.code), Some(ErrorCode::FLOW_CONTROL_ERROR));
+        assert_eq!(
+            h.got(id).failed.map(|e| e.code),
+            Some(ErrorCode::FLOW_CONTROL_ERROR)
+        );
         let out = h.take();
-        assert_eq!(out.iter().filter(|f| f.kind == kind::RST_STREAM).map(|f| f.number()).collect::<Vec<_>>(), vec![ErrorCode::FLOW_CONTROL_ERROR.0]);
+        assert_eq!(
+            out.iter()
+                .filter(|f| f.kind == kind::RST_STREAM)
+                .map(|f| f.number())
+                .collect::<Vec<_>>(),
+            vec![ErrorCode::FLOW_CONTROL_ERROR.0]
+        );
         assert!(h.c.error().is_none());
         // what it held was given back, and so was the frame that did it
         check_windows(&h.c);
@@ -2779,13 +3802,20 @@ mod tests {
 
     #[test]
     fn a_server_that_sends_more_than_the_connection_window_loses_the_connection() {
-        let mut h = Harness::with(Config { stream_window: 1 << 20, connection_window: 65_535, max_header_list: 64 << 10 });
+        let mut h = Harness::with(Config {
+            stream_window: 1 << 20,
+            connection_window: 65_535,
+            max_header_list: 64 << 10,
+        });
         h.open("GET", "/");
         h.respond(1, "200", &[], false).unwrap();
         for _ in 0..3 {
             h.data(1, &[0u8; 16_384], false).unwrap();
         }
-        assert_eq!(h.data(1, &[0u8; 16_384], false).unwrap_err().code, ErrorCode::FLOW_CONTROL_ERROR);
+        assert_eq!(
+            h.data(1, &[0u8; 16_384], false).unwrap_err().code,
+            ErrorCode::FLOW_CONTROL_ERROR
+        );
     }
 
     #[test]
@@ -2815,7 +3845,12 @@ mod tests {
             h.feed_frame(kind::DATA, flag::PADDED, 1, &payload).unwrap();
         }
         let out = h.take();
-        assert_eq!(out.iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::WINDOW_UPDATE, 1, 31 + 256 + 256)]);
+        assert_eq!(
+            out.iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::WINDOW_UPDATE, 1, 31 + 256 + 256)]
+        );
         check_windows(&h.c);
     }
 
@@ -2831,7 +3866,13 @@ mod tests {
         assert_eq!(h.c.unannounced, 700);
         assert_eq!(h.c.active_streams(), 0);
         // the server was told to stop; and what it sends before it hears is dropped, but credited
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::RST_STREAM, 1, ErrorCode::CANCEL.0)]);
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, 1, ErrorCode::CANCEL.0)]
+        );
         h.data(1, &[1u8; 200], false).unwrap();
         assert_eq!(h.c.unannounced, 900);
         check_windows(&h.c);
@@ -2858,22 +3899,41 @@ mod tests {
         let c = h.open("GET", "/");
         h.respond(a, "200", &[], false).unwrap();
         h.data(a, b"partly", false).unwrap();
-        h.feed_frame(kind::RST_STREAM, 0, a, &ErrorCode::INTERNAL_ERROR.0.to_be_bytes()).unwrap();
-        h.feed_frame(kind::RST_STREAM, 0, b, &ErrorCode::REFUSED_STREAM.0.to_be_bytes()).unwrap();
+        h.feed_frame(
+            kind::RST_STREAM,
+            0,
+            a,
+            &ErrorCode::INTERNAL_ERROR.0.to_be_bytes(),
+        )
+        .unwrap();
+        h.feed_frame(
+            kind::RST_STREAM,
+            0,
+            b,
+            &ErrorCode::REFUSED_STREAM.0.to_be_bytes(),
+        )
+        .unwrap();
         let got = h.got(a);
         let failed = got.failed.unwrap();
-        assert_eq!((failed.code, failed.retry_safe), (ErrorCode::INTERNAL_ERROR, false));
+        assert_eq!(
+            (failed.code, failed.retry_safe),
+            (ErrorCode::INTERNAL_ERROR, false)
+        );
         // what arrived before the reset is there to read, and the failure comes after it
         assert_eq!(got.head.unwrap().status, 200);
         assert_eq!(got.body, b"partly");
         let failed = h.got(b).failed.unwrap();
-        assert_eq!((failed.code, failed.retry_safe), (ErrorCode::REFUSED_STREAM, true));
+        assert_eq!(
+            (failed.code, failed.retry_safe),
+            (ErrorCode::REFUSED_STREAM, true)
+        );
         assert_eq!(h.got(c).failed, None);
         assert_eq!(h.c.active_streams(), 1);
         check_windows(&h.c);
         // a reset for a stream that is gone is nothing
         h.c.release_stream(a);
-        h.feed_frame(kind::RST_STREAM, 0, a, &ErrorCode::CANCEL.0.to_be_bytes()).unwrap();
+        h.feed_frame(kind::RST_STREAM, 0, a, &ErrorCode::CANCEL.0.to_be_bytes())
+            .unwrap();
     }
 
     #[test]
@@ -2883,7 +3943,13 @@ mod tests {
         let id = h.open_with("POST", "/", &[], false);
         h.respond(id, "413", &[], false).unwrap();
         h.data(id, b"too big", true).unwrap();
-        h.feed_frame(kind::RST_STREAM, 0, id, &ErrorCode::NO_ERROR.0.to_be_bytes()).unwrap();
+        h.feed_frame(
+            kind::RST_STREAM,
+            0,
+            id,
+            &ErrorCode::NO_ERROR.0.to_be_bytes(),
+        )
+        .unwrap();
         let got = h.got(id);
         assert_eq!(got.head.unwrap().status, 413);
         assert_eq!(got.body, b"too big");
@@ -2897,7 +3963,9 @@ mod tests {
         for stream in [2, 3, 99] {
             let mut h = Harness::new();
             h.open("GET", "/");
-            let e = h.feed_frame(kind::RST_STREAM, 0, stream, &[0; 4]).unwrap_err();
+            let e = h
+                .feed_frame(kind::RST_STREAM, 0, stream, &[0; 4])
+                .unwrap_err();
             assert_eq!(e.code, ErrorCode::PROTOCOL_ERROR, "stream {stream}");
         }
     }
@@ -2917,7 +3985,20 @@ mod tests {
         h.feed(&goaway).unwrap();
         assert!(!h.c.usable());
         assert!(!h.c.can_open_stream());
-        assert_eq!(h.c.open_stream(&Request { method: "GET", scheme: "https", authority: "a", path: "/", headers: &[], secret: &[] }, true), Err(OpenError::Unavailable));
+        assert_eq!(
+            h.c.open_stream(
+                &Request {
+                    method: "GET",
+                    scheme: "https",
+                    authority: "a",
+                    path: "/",
+                    headers: &[],
+                    secret: &[]
+                },
+                true
+            ),
+            Err(OpenError::Unavailable)
+        );
         let failed = h.got(s5).failed.unwrap();
         assert!(failed.retry_safe, "the server did not get to it");
         assert_eq!(h.got(s1).failed, None);
@@ -2926,7 +4007,10 @@ mod tests {
         assert!(h.got(s1).ended);
         assert!(h.got(s3).ended);
         assert_eq!(h.c.active_streams(), 0);
-        assert!(h.c.error().is_none(), "the connection is not broken, only finishing");
+        assert!(
+            h.c.error().is_none(),
+            "the connection is not broken, only finishing"
+        );
     }
 
     #[test]
@@ -2946,7 +4030,11 @@ mod tests {
         let failed = h.got(s3).failed.unwrap();
         assert!(failed.retry_safe, "but not on this one");
         assert!(h.c.error().is_some());
-        assert_eq!(h.feed(b"more").unwrap_err().code, ErrorCode::ENHANCE_YOUR_CALM, "the error stays");
+        assert_eq!(
+            h.feed(b"more").unwrap_err().code,
+            ErrorCode::ENHANCE_YOUR_CALM,
+            "the error stays"
+        );
     }
 
     #[test]
@@ -2988,14 +4076,30 @@ mod tests {
         h.c.peer_closed();
         assert!(!h.c.usable());
         let got = h.got(done);
-        assert_eq!(got.body, b"complete", "a finished response can still be read");
+        assert_eq!(
+            got.body, b"complete",
+            "a finished response can still be read"
+        );
         assert!(got.ended);
         let failed = h.got(open).failed.unwrap();
         assert!(!failed.retry_safe);
         assert!(h.c.error().is_some());
         // asking again changes nothing
         h.c.peer_closed();
-        assert_eq!(h.c.open_stream(&Request { method: "GET", scheme: "https", authority: "a", path: "/", headers: &[], secret: &[] }, true), Err(OpenError::Unavailable));
+        assert_eq!(
+            h.c.open_stream(
+                &Request {
+                    method: "GET",
+                    scheme: "https",
+                    authority: "a",
+                    path: "/",
+                    headers: &[],
+                    secret: &[]
+                },
+                true
+            ),
+            Err(OpenError::Unavailable)
+        );
     }
 
     #[test]
@@ -3005,7 +4109,10 @@ mod tests {
         h.take();
         h.c.close();
         let out = h.take();
-        assert_eq!(out.iter().map(|f| (f.kind, f.number())).collect::<Vec<_>>(), vec![(kind::GOAWAY, 0)]);
+        assert_eq!(
+            out.iter().map(|f| (f.kind, f.number())).collect::<Vec<_>>(),
+            vec![(kind::GOAWAY, 0)]
+        );
         assert!(!h.c.usable());
         assert!(h.got(id).failed.is_some());
         h.c.close();
@@ -3025,8 +4132,14 @@ mod tests {
         h.feed(&wire).unwrap();
         let out = h.take();
         assert_eq!(out.len(), 2, "an acknowledgement is not acknowledged");
-        assert_eq!((out[0].flags, out[0].payload.clone()), (flag::ACK, vec![1, 2, 3, 4, 5, 6, 7, 8]));
-        assert_eq!((out[1].flags, out[1].payload.clone()), (flag::ACK, vec![8, 7, 6, 5, 4, 3, 2, 1]));
+        assert_eq!(
+            (out[0].flags, out[0].payload.clone()),
+            (flag::ACK, vec![1, 2, 3, 4, 5, 6, 7, 8])
+        );
+        assert_eq!(
+            (out[1].flags, out[1].payload.clone()),
+            (flag::ACK, vec![8, 7, 6, 5, 4, 3, 2, 1])
+        );
     }
 
     #[test]
@@ -3047,7 +4160,10 @@ mod tests {
         let mut settings = Vec::new();
         frame::write_settings(&mut settings, &[]);
         let mut h = Harness::new();
-        assert_eq!(h.feed(&settings.repeat(130_000)).unwrap_err().code, ErrorCode::ENHANCE_YOUR_CALM);
+        assert_eq!(
+            h.feed(&settings.repeat(130_000)).unwrap_err().code,
+            ErrorCode::ENHANCE_YOUR_CALM
+        );
     }
 
     #[test]
@@ -3060,7 +4176,10 @@ mod tests {
         // a frame of another kind starts the count again
         h.feed(&raw(kind::PING, 0, 0, &[0; 8])).unwrap();
         h.feed(&empty.repeat(EMPTY_FRAMES as usize)).unwrap();
-        assert_eq!(h.feed(&empty.repeat(2)).unwrap_err().code, ErrorCode::ENHANCE_YOUR_CALM);
+        assert_eq!(
+            h.feed(&empty.repeat(2)).unwrap_err().code,
+            ErrorCode::ENHANCE_YOUR_CALM
+        );
         // an empty frame that ends the stream is not part of a flood
         let mut h = Harness::new();
         let id = h.open("GET", "/");
@@ -3072,31 +4191,133 @@ mod tests {
     #[test]
     fn frames_a_client_has_no_use_for_are_connection_errors() {
         let cases: Vec<(&str, u8, u8, u32, Vec<u8>, ErrorCode)> = vec![
-            ("PUSH_PROMISE", kind::PUSH_PROMISE, flag::END_HEADERS, 1, vec![0, 0, 0, 2, 0x88], ErrorCode::PROTOCOL_ERROR),
-            ("DATA on a stream never opened", kind::DATA, 0, 7, vec![1], ErrorCode::PROTOCOL_ERROR),
-            ("DATA on an even stream", kind::DATA, 0, 2, vec![1], ErrorCode::PROTOCOL_ERROR),
-            ("HEADERS on an even stream", kind::HEADERS, flag::END_HEADERS, 2, vec![0x88], ErrorCode::PROTOCOL_ERROR),
-            ("WINDOW_UPDATE on a stream never opened", kind::WINDOW_UPDATE, 0, 7, vec![0, 0, 0, 1], ErrorCode::PROTOCOL_ERROR),
-            ("a frame larger than the size allowed", kind::DATA, 0, 1, vec![0; 16_385], ErrorCode::FRAME_SIZE_ERROR),
-            ("a window update of nothing for the connection", kind::WINDOW_UPDATE, 0, 0, vec![0, 0, 0, 0], ErrorCode::PROTOCOL_ERROR),
-            ("a connection window past the limit", kind::WINDOW_UPDATE, 0, 0, vec![0x7f, 0xff, 0xff, 0xff], ErrorCode::FLOW_CONTROL_ERROR),
-            ("PING of the wrong length", kind::PING, 0, 0, vec![0; 7], ErrorCode::FRAME_SIZE_ERROR),
-            ("SETTINGS on a stream", kind::SETTINGS, 0, 1, vec![], ErrorCode::PROTOCOL_ERROR),
-            ("SETTINGS of the wrong length", kind::SETTINGS, 0, 0, vec![0; 5], ErrorCode::FRAME_SIZE_ERROR),
-            ("GOAWAY on a stream", kind::GOAWAY, 0, 1, vec![0; 8], ErrorCode::PROTOCOL_ERROR),
-            ("padding as long as the frame", kind::DATA, flag::PADDED, 1, vec![5, 0, 0, 0, 0], ErrorCode::PROTOCOL_ERROR),
+            (
+                "PUSH_PROMISE",
+                kind::PUSH_PROMISE,
+                flag::END_HEADERS,
+                1,
+                vec![0, 0, 0, 2, 0x88],
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "DATA on a stream never opened",
+                kind::DATA,
+                0,
+                7,
+                vec![1],
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "DATA on an even stream",
+                kind::DATA,
+                0,
+                2,
+                vec![1],
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "HEADERS on an even stream",
+                kind::HEADERS,
+                flag::END_HEADERS,
+                2,
+                vec![0x88],
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "WINDOW_UPDATE on a stream never opened",
+                kind::WINDOW_UPDATE,
+                0,
+                7,
+                vec![0, 0, 0, 1],
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "a frame larger than the size allowed",
+                kind::DATA,
+                0,
+                1,
+                vec![0; 16_385],
+                ErrorCode::FRAME_SIZE_ERROR,
+            ),
+            (
+                "a window update of nothing for the connection",
+                kind::WINDOW_UPDATE,
+                0,
+                0,
+                vec![0, 0, 0, 0],
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "a connection window past the limit",
+                kind::WINDOW_UPDATE,
+                0,
+                0,
+                vec![0x7f, 0xff, 0xff, 0xff],
+                ErrorCode::FLOW_CONTROL_ERROR,
+            ),
+            (
+                "PING of the wrong length",
+                kind::PING,
+                0,
+                0,
+                vec![0; 7],
+                ErrorCode::FRAME_SIZE_ERROR,
+            ),
+            (
+                "SETTINGS on a stream",
+                kind::SETTINGS,
+                0,
+                1,
+                vec![],
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "SETTINGS of the wrong length",
+                kind::SETTINGS,
+                0,
+                0,
+                vec![0; 5],
+                ErrorCode::FRAME_SIZE_ERROR,
+            ),
+            (
+                "GOAWAY on a stream",
+                kind::GOAWAY,
+                0,
+                1,
+                vec![0; 8],
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "padding as long as the frame",
+                kind::DATA,
+                flag::PADDED,
+                1,
+                vec![5, 0, 0, 0, 0],
+                ErrorCode::PROTOCOL_ERROR,
+            ),
         ];
         for (what, kind, flags, stream, payload, code) in cases {
             let mut h = Harness::new();
             h.open("GET", "/");
             h.respond(1, "200", &[], false).unwrap();
             h.take();
-            let e = h.feed(&raw(kind, flags, stream, &payload[..payload.len().min(16_385)])).unwrap_err();
+            let e = h
+                .feed(&raw(
+                    kind,
+                    flags,
+                    stream,
+                    &payload[..payload.len().min(16_385)],
+                ))
+                .unwrap_err();
             assert_eq!(e.code, code, "{what}");
             assert!(e.local);
             let out = h.take();
             assert_eq!(out.len(), 1, "{what}");
-            assert_eq!((out[0].kind, out[0].number()), (kind::GOAWAY, code.0), "{what}");
+            assert_eq!(
+                (out[0].kind, out[0].number()),
+                (kind::GOAWAY, code.0),
+                "{what}"
+            );
             // everything is lost with it
             assert!(h.got(1).failed.is_some(), "{what}");
         }
@@ -3112,7 +4333,10 @@ mod tests {
         h.feed_frame(kind::WINDOW_UPDATE, 0, a, &[0; 4]).unwrap();
         h.feed_frame(kind::PRIORITY, 0, b, &[0; 4]).unwrap();
         let out = h.take();
-        assert_eq!(out.iter().map(|f| (f.kind, f.stream)).collect::<Vec<_>>(), vec![(kind::RST_STREAM, a), (kind::RST_STREAM, b)]);
+        assert_eq!(
+            out.iter().map(|f| (f.kind, f.stream)).collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, a), (kind::RST_STREAM, b)]
+        );
         assert_eq!(out[0].number(), ErrorCode::PROTOCOL_ERROR.0);
         assert_eq!(out[1].number(), ErrorCode::FRAME_SIZE_ERROR.0);
         assert!(h.got(a).failed.is_some() && h.got(b).failed.is_some());
@@ -3120,8 +4344,15 @@ mod tests {
         // a stream window pushed past the limit
         let c = h.open("GET", "/");
         h.take();
-        h.feed_frame(kind::WINDOW_UPDATE, 0, c, &0x7fff_ffffu32.to_be_bytes()).unwrap();
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.number())).collect::<Vec<_>>(), vec![(kind::RST_STREAM, ErrorCode::FLOW_CONTROL_ERROR.0)]);
+        h.feed_frame(kind::WINDOW_UPDATE, 0, c, &0x7fff_ffffu32.to_be_bytes())
+            .unwrap();
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, ErrorCode::FLOW_CONTROL_ERROR.0)]
+        );
         // unknown frames and priorities are ignored
         h.feed_frame(0x42, 0xff, 0, b"whatever").unwrap();
         h.feed_frame(0x42, 0, 3, b"").unwrap();
@@ -3132,10 +4363,30 @@ mod tests {
     #[test]
     fn bad_settings_are_connection_errors() {
         for (what, id, value, code) in [
-            ("ENABLE_PUSH of 2", setting::ENABLE_PUSH, 2, ErrorCode::PROTOCOL_ERROR),
-            ("an initial window over 2^31 - 1", setting::INITIAL_WINDOW_SIZE, 0x8000_0000, ErrorCode::FLOW_CONTROL_ERROR),
-            ("a frame size under 16384", setting::MAX_FRAME_SIZE, 16_383, ErrorCode::PROTOCOL_ERROR),
-            ("a frame size over 2^24 - 1", setting::MAX_FRAME_SIZE, 1 << 24, ErrorCode::PROTOCOL_ERROR),
+            (
+                "ENABLE_PUSH of 2",
+                setting::ENABLE_PUSH,
+                2,
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "an initial window over 2^31 - 1",
+                setting::INITIAL_WINDOW_SIZE,
+                0x8000_0000,
+                ErrorCode::FLOW_CONTROL_ERROR,
+            ),
+            (
+                "a frame size under 16384",
+                setting::MAX_FRAME_SIZE,
+                16_383,
+                ErrorCode::PROTOCOL_ERROR,
+            ),
+            (
+                "a frame size over 2^24 - 1",
+                setting::MAX_FRAME_SIZE,
+                1 << 24,
+                ErrorCode::PROTOCOL_ERROR,
+            ),
         ] {
             let mut h = Harness::unsettled(Config::default());
             h.take();
@@ -3146,15 +4397,28 @@ mod tests {
         // an initial window that takes a stream window past the limit
         let mut h = Harness::new();
         let id = h.open_with("POST", "/", &[], false);
-        h.feed_frame(kind::WINDOW_UPDATE, 0, id, &0x7fff_0000u32.to_be_bytes()).unwrap();
+        h.feed_frame(kind::WINDOW_UPDATE, 0, id, &0x7fff_0000u32.to_be_bytes())
+            .unwrap();
         let mut wire = Vec::new();
         frame::write_settings(&mut wire, &[(setting::INITIAL_WINDOW_SIZE, 0x7fff_ffff)]);
-        assert_eq!(h.feed(&wire).unwrap_err().code, ErrorCode::FLOW_CONTROL_ERROR);
+        assert_eq!(
+            h.feed(&wire).unwrap_err().code,
+            ErrorCode::FLOW_CONTROL_ERROR
+        );
         // values at the edges are fine
         let mut h = Harness::unsettled(Config::default());
         h.take();
         let mut wire = Vec::new();
-        frame::write_settings(&mut wire, &[(setting::ENABLE_PUSH, 1), (setting::MAX_FRAME_SIZE, 16_777_215), (setting::INITIAL_WINDOW_SIZE, 0x7fff_ffff), (setting::MAX_CONCURRENT_STREAMS, 0), (setting::HEADER_TABLE_SIZE, 0)]);
+        frame::write_settings(
+            &mut wire,
+            &[
+                (setting::ENABLE_PUSH, 1),
+                (setting::MAX_FRAME_SIZE, 16_777_215),
+                (setting::INITIAL_WINDOW_SIZE, 0x7fff_ffff),
+                (setting::MAX_CONCURRENT_STREAMS, 0),
+                (setting::HEADER_TABLE_SIZE, 0),
+            ],
+        );
         h.feed(&wire).unwrap();
     }
 
@@ -3176,11 +4440,25 @@ mod tests {
 
     #[test]
     fn no_more_streams_than_the_server_allows() {
-        let mut h = Harness::with_settings(Config::default(), &[(setting::MAX_CONCURRENT_STREAMS, 2)]);
+        let mut h =
+            Harness::with_settings(Config::default(), &[(setting::MAX_CONCURRENT_STREAMS, 2)]);
         let a = h.open("GET", "/");
         let b = h.open("GET", "/");
         assert!(!h.c.can_open_stream());
-        assert_eq!(h.c.open_stream(&Request { method: "GET", scheme: "https", authority: "a", path: "/", headers: &[], secret: &[] }, true), Err(OpenError::Full));
+        assert_eq!(
+            h.c.open_stream(
+                &Request {
+                    method: "GET",
+                    scheme: "https",
+                    authority: "a",
+                    path: "/",
+                    headers: &[],
+                    secret: &[]
+                },
+                true
+            ),
+            Err(OpenError::Full)
+        );
         // a stream whose exchange is over makes room, read or not, let go of or not
         h.respond(a, "200", &[], true).unwrap();
         assert!(h.c.can_open_stream());
@@ -3192,7 +4470,8 @@ mod tests {
         // a failed stream too
         let d = h.open("GET", "/");
         assert!(!h.c.can_open_stream());
-        h.feed_frame(kind::RST_STREAM, 0, d, &ErrorCode::CANCEL.0.to_be_bytes()).unwrap();
+        h.feed_frame(kind::RST_STREAM, 0, d, &ErrorCode::CANCEL.0.to_be_bytes())
+            .unwrap();
         assert!(h.c.can_open_stream());
         let _ = c;
     }
@@ -3204,7 +4483,20 @@ mod tests {
         assert!(h.c.usable());
         assert_eq!(h.open("GET", "/"), MAX_STREAM_ID);
         assert!(!h.c.usable());
-        assert_eq!(h.c.open_stream(&Request { method: "GET", scheme: "https", authority: "a", path: "/", headers: &[], secret: &[] }, true), Err(OpenError::Unavailable));
+        assert_eq!(
+            h.c.open_stream(
+                &Request {
+                    method: "GET",
+                    scheme: "https",
+                    authority: "a",
+                    path: "/",
+                    headers: &[],
+                    secret: &[]
+                },
+                true
+            ),
+            Err(OpenError::Unavailable)
+        );
     }
 
     #[test]
@@ -3213,13 +4505,20 @@ mod tests {
         assert!(h.c.send_data(99, b"x", false).is_err(), "no such stream");
         assert_eq!(h.c.send_capacity(99), 0);
         let id = h.open_with("POST", "/", &[], false);
-        h.feed_frame(kind::RST_STREAM, 0, id, &ErrorCode::CANCEL.0.to_be_bytes()).unwrap();
+        h.feed_frame(kind::RST_STREAM, 0, id, &ErrorCode::CANCEL.0.to_be_bytes())
+            .unwrap();
         assert_eq!(h.c.send_capacity(id), 0);
-        assert_eq!(h.c.send_data(id, b"x", false).unwrap_err().code, ErrorCode::CANCEL);
+        assert_eq!(
+            h.c.send_data(id, b"x", false).unwrap_err().code,
+            ErrorCode::CANCEL
+        );
         let id = h.open_with("POST", "/", &[], false);
         h.c.peer_closed();
         assert!(h.c.send_data(id, b"x", false).is_err());
-        assert!(h.c.poll_stream(1234, &mut [0; 4]) != StreamEvent::Pending, "a stream that is not there is an error, not a wait");
+        assert!(
+            h.c.poll_stream(1234, &mut [0; 4]) != StreamEvent::Pending,
+            "a stream that is not there is an error, not a wait"
+        );
     }
 
     #[test]
@@ -3227,19 +4526,24 @@ mod tests {
         let mut h = Harness::new();
         let ids: Vec<u32> = (0..50).map(|_| h.open("GET", "/")).collect();
         for &id in &ids {
-            h.respond(id, "200", &[("x-id", &id.to_string())], false).unwrap();
+            h.respond(id, "200", &[("x-id", &id.to_string())], false)
+                .unwrap();
         }
         // the data of all of them in small pieces, round and round
         let body = |id: u32| -> Vec<u8> { (0..5000u32).map(|i| (i as u8) ^ (id as u8)).collect() };
         for round in 0..5 {
             for &id in &ids {
                 let b = body(id);
-                h.data(id, &b[round * 1000..(round + 1) * 1000], round == 4).unwrap();
+                h.data(id, &b[round * 1000..(round + 1) * 1000], round == 4)
+                    .unwrap();
             }
         }
         for &id in &ids {
             let got = h.got(id);
-            assert_eq!(got.head.unwrap().headers, header_pairs(&[("x-id", &id.to_string())]));
+            assert_eq!(
+                got.head.unwrap().headers,
+                header_pairs(&[("x-id", &id.to_string())])
+            );
             assert_eq!(got.body, body(id), "stream {id}");
             assert!(got.ended);
             check_windows(&h.c);
@@ -3265,7 +4569,8 @@ mod tests {
     fn the_payload_of_a_frame_that_is_cut_off_is_the_body_as_it_comes() {
         let mut h = Harness::new();
         let id = h.open("GET", "/");
-        h.respond(id, "200", &[("content-length", "3000")], false).unwrap();
+        h.respond(id, "200", &[("content-length", "3000")], false)
+            .unwrap();
         h.take();
         let body = pattern(3000);
         let wire = raw(kind::DATA, flag::END_STREAM, id, &body);
@@ -3280,15 +4585,25 @@ mod tests {
         assert_eq!(first.body, body[..100]);
         assert!(!first.ended);
         h.c.take_news(&mut news);
-        assert!(news.streams().contains(&id) || news.is_for_everyone(), "the reader is told there is something to read");
-        assert!(h.c.inbound.is_empty(), "nothing is kept: it has gone where it belongs");
+        assert!(
+            news.streams().contains(&id) || news.is_for_everyone(),
+            "the reader is told there is something to read"
+        );
+        assert!(
+            h.c.inbound.is_empty(),
+            "nothing is kept: it has gone where it belongs"
+        );
 
         // more, and the frame is still not complete
-        h.c.feed(&wire[HEADER_LEN + 100..HEADER_LEN + 1100]).unwrap();
+        h.c.feed(&wire[HEADER_LEN + 100..HEADER_LEN + 1100])
+            .unwrap();
         h.c.assert_books();
         let second = h.got(id);
         assert_eq!(second.body, body[100..1100]);
-        assert!(!second.ended, "the end of the response is not the end of a frame that has not ended");
+        assert!(
+            !second.ended,
+            "the end of the response is not the end of a frame that has not ended"
+        );
 
         // the rest: the response ends with the frame
         h.c.feed(&wire[HEADER_LEN + 1100..]).unwrap();
@@ -3313,8 +4628,17 @@ mod tests {
         let (mut srv, _) = build();
         let mut wire = Vec::new();
         for (i, &id) in ids.iter().enumerate() {
-            let length = if i == 2 { vec![("content-length", "5000")] } else { vec![] };
-            let block = srv.block(&[(":status", "200")].into_iter().chain(length).collect::<Vec<_>>());
+            let length = if i == 2 {
+                vec![("content-length", "5000")]
+            } else {
+                vec![]
+            };
+            let block = srv.block(
+                &[(":status", "200")]
+                    .into_iter()
+                    .chain(length)
+                    .collect::<Vec<_>>(),
+            );
             wire.extend(raw(kind::HEADERS, flag::END_HEADERS, id, &block));
         }
         let mut padded = vec![40u8];
@@ -3332,16 +4656,25 @@ mod tests {
         wire.extend(raw(kind::DATA, flag::END_STREAM, ids[0], &pattern(1)));
         wire.extend(raw(kind::DATA, flag::END_STREAM, ids[1], &[]));
         feed_in_pieces(&mut whole, &wire, wire.len()).unwrap();
-        let (expected_out, expected_in): (Vec<Sent>, Vec<Got>) = (whole.take(), ids.iter().map(|&id| whole.got(id)).collect());
-        assert!(expected_in.iter().all(|g| g.ended && g.failed.is_none()), "{expected_in:?}");
+        let (expected_out, expected_in): (Vec<Sent>, Vec<Got>) =
+            (whole.take(), ids.iter().map(|&id| whole.got(id)).collect());
+        assert!(
+            expected_in.iter().all(|g| g.ended && g.failed.is_none()),
+            "{expected_in:?}"
+        );
         assert_eq!(expected_in[0].body.len(), 1000 + 700 + 1);
         assert_eq!(expected_in[1].body.len(), 16_384 + 9);
         assert_eq!(expected_in[2].body.len(), 5000);
-        for n in [1, 2, 3, 8, 9, 10, 17, 100, 999, 1000, 1009, 1010, 5000, 16_393] {
+        for n in [
+            1, 2, 3, 8, 9, 10, 17, 100, 999, 1000, 1009, 1010, 5000, 16_393,
+        ] {
             let (mut h, ids) = build();
             // (the server's encoder is the same, so the blocks are the same: only the pieces differ)
             feed_in_pieces(&mut h, &wire, n).unwrap();
-            assert!(h.c.inbound.len() < HEADER_LEN + 1, "{n}: only the start of a frame that is not DATA, or its header, may be kept");
+            assert!(
+                h.c.inbound.len() < HEADER_LEN + 1,
+                "{n}: only the start of a frame that is not DATA, or its header, may be kept"
+            );
             assert_eq!(h.take(), expected_out, "pieces of {n}");
             let got: Vec<Got> = ids.iter().map(|&id| h.got(id)).collect();
             assert_eq!(got, expected_in, "pieces of {n}");
@@ -3386,13 +4719,25 @@ mod tests {
         h.c.feed(&next).unwrap();
         assert!(h.c.inbound.is_empty());
         assert_eq!(h.c.inbound.capacity(), capacity, "no more room was needed");
-        assert_eq!(h.take(), vec![Sent { kind: kind::PING, flags: flag::ACK, stream: 0, payload: b"abcdefgh".to_vec() }]);
+        assert_eq!(
+            h.take(),
+            vec![Sent {
+                kind: kind::PING,
+                flags: flag::ACK,
+                stream: 0,
+                payload: b"abcdefgh".to_vec()
+            }]
+        );
         assert_eq!(h.got(id).body, pattern(2000));
     }
 
     #[test]
     fn the_rest_of_a_frame_for_a_stream_that_was_let_go_is_credited_at_once() {
-        let mut h = Harness::with(Config { stream_window: 1 << 20, connection_window: 65_535, max_header_list: 64 << 10 });
+        let mut h = Harness::with(Config {
+            stream_window: 1 << 20,
+            connection_window: 65_535,
+            max_header_list: 64 << 10,
+        });
         let id = h.open("GET", "/");
         h.respond(id, "200", &[], false).unwrap();
         h.take();
@@ -3402,7 +4747,8 @@ mod tests {
         h.c.release_stream(id);
         h.c.assert_books();
         assert_eq!(h.c.unannounced, 4000 + 0);
-        h.c.feed(&wire[HEADER_LEN + 4000..HEADER_LEN + 10_000]).unwrap();
+        h.c.feed(&wire[HEADER_LEN + 4000..HEADER_LEN + 10_000])
+            .unwrap();
         h.c.assert_books();
         assert_eq!(h.c.unannounced, 10_000);
         h.c.feed(&wire[HEADER_LEN + 10_000..]).unwrap();
@@ -3420,14 +4766,24 @@ mod tests {
         let (a, b) = (h.open("GET", "/a"), h.open("GET", "/b"));
         h.take();
         // b has its head; a has not: DATA for a is wrong, and is known to be as soon as its header is here
-        h.respond(b, "200", &[("content-length", "100")], false).unwrap();
+        h.respond(b, "200", &[("content-length", "100")], false)
+            .unwrap();
         let mut wire = raw(kind::DATA, 0, a, &pattern(5000));
         wire.extend(raw(kind::DATA, 0, b, &pattern(100)));
         feed_in_pieces(&mut h, &wire[..HEADER_LEN + 7], 3).unwrap();
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::RST_STREAM, a, ErrorCode::PROTOCOL_ERROR.0)]);
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, a, ErrorCode::PROTOCOL_ERROR.0)]
+        );
         feed_in_pieces(&mut h, &wire[HEADER_LEN + 7..], 700).unwrap();
         assert!(h.take().is_empty(), "nothing more is said about it");
-        assert_eq!(h.got(a).failed.unwrap().reason, "DATA before the response headers");
+        assert_eq!(
+            h.got(a).failed.unwrap().reason,
+            "DATA before the response headers"
+        );
         let got = h.got(b);
         assert_eq!(got.body, pattern(100));
         assert!(!got.ended);
@@ -3439,13 +4795,19 @@ mod tests {
     fn more_than_the_content_length_says_is_known_when_the_frame_begins() {
         let mut h = Harness::new();
         let id = h.open("GET", "/");
-        h.respond(id, "200", &[("content-length", "1000")], false).unwrap();
+        h.respond(id, "200", &[("content-length", "1000")], false)
+            .unwrap();
         h.take();
         let wire = raw(kind::DATA, flag::END_STREAM, id, &pattern(1500));
         // 1500 bytes of a body that is to be 1000: the stream is lost with the frame's header, not at its end
         h.c.feed(&wire[..HEADER_LEN + 10]).unwrap();
         let out = h.take();
-        assert_eq!(out.iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::RST_STREAM, id, ErrorCode::PROTOCOL_ERROR.0)]);
+        assert_eq!(
+            out.iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, id, ErrorCode::PROTOCOL_ERROR.0)]
+        );
         h.c.feed(&wire[HEADER_LEN + 10..]).unwrap();
         h.c.assert_books();
         let got = h.got(id);
@@ -3453,15 +4815,26 @@ mod tests {
         // and a last frame that is short of it
         let id = h.open("GET", "/");
         h.take();
-        h.respond(id, "200", &[("content-length", "1000")], false).unwrap();
+        h.respond(id, "200", &[("content-length", "1000")], false)
+            .unwrap();
         let wire = raw(kind::DATA, flag::END_STREAM, id, &pattern(900));
         h.c.feed(&wire[..HEADER_LEN + 10]).unwrap();
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream)).collect::<Vec<_>>(), vec![(kind::RST_STREAM, id)]);
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, id)]
+        );
     }
 
     #[test]
     fn a_frame_that_does_not_fit_the_connection_window_is_refused_when_its_header_comes() {
-        let mut h = Harness::with(Config { stream_window: 1 << 20, connection_window: 65_535, max_header_list: 64 << 10 });
+        let mut h = Harness::with(Config {
+            stream_window: 1 << 20,
+            connection_window: 65_535,
+            max_header_list: 64 << 10,
+        });
         let id = h.open("GET", "/");
         h.respond(id, "200", &[], false).unwrap();
         for _ in 0..3 {
@@ -3472,7 +4845,11 @@ mod tests {
         let e = h.c.feed(&wire[..HEADER_LEN + 1]).unwrap_err();
         assert_eq!(e.code, ErrorCode::FLOW_CONTROL_ERROR);
         // a frame of 16383 is within it
-        let mut h = Harness::with(Config { stream_window: 1 << 20, connection_window: 65_535, max_header_list: 64 << 10 });
+        let mut h = Harness::with(Config {
+            stream_window: 1 << 20,
+            connection_window: 65_535,
+            max_header_list: 64 << 10,
+        });
         let id = h.open("GET", "/");
         h.respond(id, "200", &[], false).unwrap();
         for _ in 0..3 {
@@ -3539,7 +4916,10 @@ mod tests {
         next.extend(raw(kind::DATA, flag::END_STREAM, b, b"hello"));
         h.c.feed(&next).unwrap();
         h.c.assert_books();
-        assert_eq!(h.take().iter().map(|f| f.kind).collect::<Vec<_>>(), vec![kind::PING]);
+        assert_eq!(
+            h.take().iter().map(|f| f.kind).collect::<Vec<_>>(),
+            vec![kind::PING]
+        );
         assert_eq!(h.got(a).body, pattern(2000));
         let got = h.got(b);
         assert_eq!(got.body, b"hello");
@@ -3586,7 +4966,13 @@ mod tests {
     /// Feeds `bytes` in pieces of `n` as the reader of `id` does when it reads the socket itself, with a buffer of `size`
     /// bytes (B-87), and after each piece polls with a buffer as big; the books must balance after every step. The body in
     /// the order the reader got it, how much of it went straight into the buffer, and the last event of the polls.
-    fn read_straight(h: &mut Harness, id: u32, bytes: &[u8], n: usize, size: usize) -> (Vec<u8>, usize, StreamEvent) {
+    fn read_straight(
+        h: &mut Harness,
+        id: u32,
+        bytes: &[u8],
+        n: usize,
+        size: usize,
+    ) -> (Vec<u8>, usize, StreamEvent) {
         let mut body = Vec::new();
         let mut straight = 0;
         let mut buf = vec![0u8; size];
@@ -3621,7 +5007,14 @@ mod tests {
         let body = pattern(100_000);
         let wire = data_frames(1, &body, true);
         // (pieces that cut frames anywhere, buffers smaller and larger than a frame and than a piece)
-        for (n, size) in [(1, 7), (100, 1000), (777, 300), (16_393, 16_384), (5000, 65_536), (wire.len(), 1 << 20)] {
+        for (n, size) in [
+            (1, 7),
+            (100, 1000),
+            (777, 300),
+            (16_393, 16_384),
+            (5000, 65_536),
+            (wire.len(), 1 << 20),
+        ] {
             let mut h = Harness::new();
             let id = reading(&mut h, &[("content-length", "100000")]);
             let (got, straight, last) = read_straight(&mut h, id, &wire, n, size);
@@ -3630,7 +5023,11 @@ mod tests {
             assert!(straight > 0);
             if n <= size {
                 assert_eq!(straight, body.len(), "pieces of {n} fit a buffer of {size}");
-                assert_eq!(h.c.streams[&id].body.capacity(), 0, "the stream's own buffer was used");
+                assert_eq!(
+                    h.c.streams[&id].body.capacity(),
+                    0,
+                    "the stream's own buffer was used"
+                );
             }
         }
     }
@@ -3642,13 +5039,23 @@ mod tests {
         news_of(&mut h);
         let mut buf = [0u8; 4000];
         let mut direct = Direct::new(id, &mut buf);
-        h.c.feed_direct(&raw(kind::DATA, 0, id, &pattern(3000)), Some(&mut direct)).unwrap();
+        h.c.feed_direct(&raw(kind::DATA, 0, id, &pattern(3000)), Some(&mut direct))
+            .unwrap();
         assert_eq!(direct.written(), 3000);
-        assert_eq!(news_of(&mut h), (vec![], false), "the reader has what came: nobody is to be woken for it");
+        assert_eq!(
+            news_of(&mut h),
+            (vec![], false),
+            "the reader has what came: nobody is to be woken for it"
+        );
         let mut direct = Direct::new(id, &mut buf[..1000]);
-        h.c.feed_direct(&raw(kind::DATA, 0, id, &pattern(3000)), Some(&mut direct)).unwrap();
+        h.c.feed_direct(&raw(kind::DATA, 0, id, &pattern(3000)), Some(&mut direct))
+            .unwrap();
         assert_eq!(direct.written(), 1000);
-        assert_eq!(news_of(&mut h), (vec![id], false), "what did not fit is waiting for a read");
+        assert_eq!(
+            news_of(&mut h),
+            (vec![id], false),
+            "what did not fit is waiting for a read"
+        );
     }
 
     #[test]
@@ -3658,7 +5065,8 @@ mod tests {
         let body = pattern(6000);
         let mut buf = [0u8; 1000];
         let mut direct = Direct::new(id, &mut buf);
-        h.c.feed_direct(&raw(kind::DATA, 0, id, &body[..3000]), Some(&mut direct)).unwrap();
+        h.c.feed_direct(&raw(kind::DATA, 0, id, &body[..3000]), Some(&mut direct))
+            .unwrap();
         assert_eq!(direct.written(), 1000);
         assert_eq!(buf[..], body[..1000]);
         assert_eq!(h.c.streams[&id].unread(), 2000);
@@ -3666,13 +5074,15 @@ mod tests {
         // the stream holds bytes that were not read: the next ones go behind them, not to the reader
         let mut buf = [0u8; 1000];
         let mut direct = Direct::new(id, &mut buf);
-        h.c.feed_direct(&raw(kind::DATA, 0, id, &body[3000..]), Some(&mut direct)).unwrap();
+        h.c.feed_direct(&raw(kind::DATA, 0, id, &body[3000..]), Some(&mut direct))
+            .unwrap();
         assert_eq!(direct.written(), 0);
         h.c.assert_books();
         assert!(h.got(id).body == body[1000..]);
         // and once they are read, the reader gets the next straight again
         let mut direct = Direct::new(id, &mut buf);
-        h.c.feed_direct(&raw(kind::DATA, 0, id, b"more"), Some(&mut direct)).unwrap();
+        h.c.feed_direct(&raw(kind::DATA, 0, id, b"more"), Some(&mut direct))
+            .unwrap();
         assert_eq!(direct.written(), 4);
         h.c.assert_books();
     }
@@ -3736,7 +5146,8 @@ mod tests {
         let mut buf = [0u8; 300];
         let mut feed = |h: &mut Harness| {
             let mut direct = Direct::new(id, &mut buf);
-            h.c.feed_direct(&raw(kind::DATA, 0, id, &[7u8; 300]), Some(&mut direct)).unwrap();
+            h.c.feed_direct(&raw(kind::DATA, 0, id, &[7u8; 300]), Some(&mut direct))
+                .unwrap();
             assert_eq!(direct.written(), 300);
             h.c.assert_books();
         };
@@ -3744,18 +5155,27 @@ mod tests {
         assert!(h.take().is_empty(), "300 is less than half");
         feed(&mut h);
         let out = h.take();
-        assert_eq!(out.iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::WINDOW_UPDATE, 1, 600)]);
+        assert_eq!(
+            out.iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::WINDOW_UPDATE, 1, 600)]
+        );
         feed(&mut h);
         assert!(h.take().is_empty());
         assert_eq!(h.c.unannounced, 900);
         // the window is as the reads left it: 1000 - 900 + 600 is room for 700 more, and no more (fed with no room to read)
         let mut direct = Direct::new(id, &mut []);
-        h.c.feed_direct(&raw(kind::DATA, 0, id, &[7u8; 700]), Some(&mut direct)).unwrap();
+        h.c.feed_direct(&raw(kind::DATA, 0, id, &[7u8; 700]), Some(&mut direct))
+            .unwrap();
         assert_eq!(direct.written(), 0);
         h.c.assert_books();
         assert_eq!(h.c.streams[&id].recv_window, 0);
         h.c.feed(&raw(kind::DATA, 0, id, &[7u8; 1])).unwrap();
-        assert_eq!(h.got(id).failed.map(|e| e.code), Some(ErrorCode::FLOW_CONTROL_ERROR));
+        assert_eq!(
+            h.got(id).failed.map(|e| e.code),
+            Some(ErrorCode::FLOW_CONTROL_ERROR)
+        );
     }
 
     #[test]
@@ -3766,25 +5186,52 @@ mod tests {
         let id = reading(&mut h, &[]);
         news_of(&mut h);
         let mut direct = Direct::new(id, &mut buf);
-        h.c.feed_direct(&raw(kind::DATA, flag::END_STREAM, id, &pattern(500)), Some(&mut direct)).unwrap();
+        h.c.feed_direct(
+            &raw(kind::DATA, flag::END_STREAM, id, &pattern(500)),
+            Some(&mut direct),
+        )
+        .unwrap();
         assert_eq!(direct.written(), 500);
         assert_eq!(news_of(&mut h), (vec![id], false), "the end is news");
-        assert_eq!(h.got(id), Got { ended: true, ..Got::default() });
+        assert_eq!(
+            h.got(id),
+            Got {
+                ended: true,
+                ..Got::default()
+            }
+        );
         // trailers
         let mut h = Harness::new();
         let id = reading(&mut h, &[]);
         let mut wire = raw(kind::DATA, 0, id, &pattern(500));
         let block = h.block(&[("x-check", "1")]);
-        wire.extend(raw(kind::HEADERS, flag::END_HEADERS | flag::END_STREAM, id, &block));
+        wire.extend(raw(
+            kind::HEADERS,
+            flag::END_HEADERS | flag::END_STREAM,
+            id,
+            &block,
+        ));
         let mut direct = Direct::new(id, &mut buf);
         h.c.feed_direct(&wire, Some(&mut direct)).unwrap();
         assert_eq!(direct.written(), 500);
-        assert_eq!(h.got(id), Got { trailers: Some(header_pairs(&[("x-check", "1")])), ended: true, ..Got::default() });
+        assert_eq!(
+            h.got(id),
+            Got {
+                trailers: Some(header_pairs(&[("x-check", "1")])),
+                ended: true,
+                ..Got::default()
+            }
+        );
         // a reset
         let mut h = Harness::new();
         let id = reading(&mut h, &[]);
         let mut wire = raw(kind::DATA, 0, id, &pattern(500));
-        wire.extend(raw(kind::RST_STREAM, 0, id, &ErrorCode::INTERNAL_ERROR.0.to_be_bytes()));
+        wire.extend(raw(
+            kind::RST_STREAM,
+            0,
+            id,
+            &ErrorCode::INTERNAL_ERROR.0.to_be_bytes(),
+        ));
         let mut direct = Direct::new(id, &mut buf);
         h.c.feed_direct(&wire, Some(&mut direct)).unwrap();
         assert_eq!(direct.written(), 500);
@@ -3798,7 +5245,11 @@ mod tests {
         payload.extend(pattern(500));
         payload.extend([0u8; 200]);
         let mut direct = Direct::new(id, &mut buf);
-        h.c.feed_direct(&raw(kind::DATA, flag::PADDED, id, &payload), Some(&mut direct)).unwrap();
+        h.c.feed_direct(
+            &raw(kind::DATA, flag::PADDED, id, &payload),
+            Some(&mut direct),
+        )
+        .unwrap();
         let w = direct.written();
         assert_eq!(&buf[..w], &pattern(500)[..]);
         h.c.assert_books();
@@ -3826,8 +5277,17 @@ mod tests {
             sent.extend(chunk);
             h.c.assert_books();
             let out = h.take();
-            assert_eq!(out.iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::WINDOW_UPDATE, id, 900)], "round {round}");
-            assert_eq!(h.c.collected(id, &mut body), Collected::Pending(sent.len() as u64 + 1));
+            assert_eq!(
+                out.iter()
+                    .map(|f| (f.kind, f.stream, f.number()))
+                    .collect::<Vec<_>>(),
+                vec![(kind::WINDOW_UPDATE, id, 900)],
+                "round {round}"
+            );
+            assert_eq!(
+                h.c.collected(id, &mut body),
+                Collected::Pending(sent.len() as u64 + 1)
+            );
         }
         // 27000 bytes have come and nobody has read any: the connection has been given back what is past half of its window
         assert!(h.c.unannounced < 32_767);
@@ -3848,10 +5308,14 @@ mod tests {
         let mut h = Harness::with(small_windows());
         let id = h.open("GET", "/");
         h.take();
-        h.respond(id, "200", &[("content-length", "1000")], false).unwrap();
+        h.respond(id, "200", &[("content-length", "1000")], false)
+            .unwrap();
         h.data(id, &pattern(1000)[..400], false).unwrap();
         let mut buf = [0u8; 100];
-        assert!(matches!(h.c.poll_stream(id, &mut buf), StreamEvent::Head(_)));
+        assert!(matches!(
+            h.c.poll_stream(id, &mut buf),
+            StreamEvent::Head(_)
+        ));
         assert_eq!(h.c.poll_stream(id, &mut buf), StreamEvent::Data(100));
         assert!(h.take().is_empty());
         // 300 are unread: they are the start of what is collected, and as good as read: with the 100 that were, the stream
@@ -3864,10 +5328,20 @@ mod tests {
         assert_eq!(h.c.collected(id, &mut body), Collected::Pending(401));
         // 300 more come, and are as good as read at once: 700 are given back
         h.data(id, &pattern(1000)[400..700], false).unwrap();
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::WINDOW_UPDATE, id, 700)]);
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::WINDOW_UPDATE, id, 700)]
+        );
         h.data(id, &pattern(1000)[700..], true).unwrap();
         assert_eq!(h.c.collected(id, &mut body), Collected::Done(None));
-        assert_eq!(body, &pattern(1000)[100..], "what was read is not in it, the rest is, whole");
+        assert_eq!(
+            body,
+            &pattern(1000)[100..],
+            "what was read is not in it, the rest is, whole"
+        );
         h.c.assert_books();
     }
 
@@ -3876,7 +5350,8 @@ mod tests {
         let mut h = Harness::new();
         let id = h.open("GET", "/");
         h.take();
-        h.respond(id, "200", &[("content-length", "5000")], false).unwrap();
+        h.respond(id, "200", &[("content-length", "5000")], false)
+            .unwrap();
         h.c.collect_stream(id, u64::MAX);
         assert!(h.c.streams[&id].body.capacity() >= 5000);
         // collecting began before the head came: the room is made when it does
@@ -3884,11 +5359,16 @@ mod tests {
         h.take();
         h.c.collect_stream(id, 8000);
         assert_eq!(h.c.streams[&id].body.capacity(), 0);
-        h.respond(id, "200", &[("content-length", "6000")], false).unwrap();
+        h.respond(id, "200", &[("content-length", "6000")], false)
+            .unwrap();
         assert!(h.c.streams[&id].body.capacity() >= 6000);
         let mut body = Vec::new();
         assert_eq!(h.c.collected(id, &mut body), Collected::Pending(1));
-        assert_eq!(h.c.streams[&id].head.is_some(), true, "the head is for whoever collects");
+        assert_eq!(
+            h.c.streams[&id].head.is_some(),
+            true,
+            "the head is for whoever collects"
+        );
     }
 
     #[test]
@@ -3898,21 +5378,43 @@ mod tests {
         h.take();
         // the head comes after collecting began
         h.c.collect_stream(a, 3000);
-        h.respond(a, "200", &[("content-length", "9000")], false).unwrap();
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::RST_STREAM, a, ErrorCode::CANCEL.0)]);
+        h.respond(a, "200", &[("content-length", "9000")], false)
+            .unwrap();
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, a, ErrorCode::CANCEL.0)]
+        );
         let mut body = Vec::new();
-        assert!(matches!(h.c.collected(a, &mut body), Collected::Failed { error, got_head: true } if error.reason == BODY_TOO_BIG));
+        assert!(
+            matches!(h.c.collected(a, &mut body), Collected::Failed { error, got_head: true } if error.reason == BODY_TOO_BIG)
+        );
         // the head comes before
-        h.respond(b, "200", &[("content-length", "9000")], false).unwrap();
+        h.respond(b, "200", &[("content-length", "9000")], false)
+            .unwrap();
         h.c.collect_stream(b, 3000);
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::RST_STREAM, b, ErrorCode::CANCEL.0)]);
-        assert!(matches!(h.c.collected(b, &mut body), Collected::Failed { error, .. } if error.reason == BODY_TOO_BIG));
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, b, ErrorCode::CANCEL.0)]
+        );
+        assert!(
+            matches!(h.c.collected(b, &mut body), Collected::Failed { error, .. } if error.reason == BODY_TOO_BIG)
+        );
         // a response to HEAD says what a GET would have: it has no body, and is not too big
         let c = h.open("HEAD", "/c");
         h.take();
         h.c.collect_stream(c, 3000);
-        h.respond(c, "200", &[("content-length", "9000")], true).unwrap();
-        assert!(matches!(h.c.collected(c, &mut body), Collected::Done(Some(_))));
+        h.respond(c, "200", &[("content-length", "9000")], true)
+            .unwrap();
+        assert!(matches!(
+            h.c.collected(c, &mut body),
+            Collected::Done(Some(_))
+        ));
         assert!(h.c.error().is_none());
         h.c.assert_books();
     }
@@ -3931,10 +5433,18 @@ mod tests {
         // the frame that takes it past the limit is refused as it begins, and what it brings is thrown away
         let wire = raw(kind::DATA, 0, a, &pattern(600));
         feed_in_pieces(&mut h, &wire[..HEADER_LEN + 10], 4).unwrap();
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::RST_STREAM, a, ErrorCode::CANCEL.0)]);
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, a, ErrorCode::CANCEL.0)]
+        );
         feed_in_pieces(&mut h, &wire[HEADER_LEN + 10..], 100).unwrap();
         match h.c.collected(a, &mut body) {
-            Collected::Failed { error, got_head } => assert_eq!((error.reason.as_str(), got_head), (BODY_TOO_BIG, true)),
+            Collected::Failed { error, got_head } => {
+                assert_eq!((error.reason.as_str(), got_head), (BODY_TOO_BIG, true))
+            }
             other => panic!("{other:?}"),
         }
         h.c.assert_books();
@@ -3948,7 +5458,10 @@ mod tests {
         h.respond(c, "200", &[], false).unwrap();
         h.data(c, &pattern(300), false).unwrap();
         h.c.collect_stream(c, 200);
-        assert!(matches!(h.c.collected(c, &mut body), Collected::Failed { .. }));
+        assert!(matches!(
+            h.c.collected(c, &mut body),
+            Collected::Failed { .. }
+        ));
         h.c.assert_books();
     }
 
@@ -3964,10 +5477,18 @@ mod tests {
         let wire = raw(kind::DATA, 0, a, &pattern(600));
         feed_in_pieces(&mut h, &wire[..HEADER_LEN + 100], 50).unwrap();
         h.c.collect_stream(a, 400);
-        assert_eq!(h.take().iter().map(|f| (f.kind, f.stream, f.number())).collect::<Vec<_>>(), vec![(kind::RST_STREAM, a, ErrorCode::CANCEL.0)]);
+        assert_eq!(
+            h.take()
+                .iter()
+                .map(|f| (f.kind, f.stream, f.number()))
+                .collect::<Vec<_>>(),
+            vec![(kind::RST_STREAM, a, ErrorCode::CANCEL.0)]
+        );
         feed_in_pieces(&mut h, &wire[HEADER_LEN + 100..], 100).unwrap();
         let mut body = Vec::new();
-        assert!(matches!(h.c.collected(a, &mut body), Collected::Failed { error, .. } if error.reason == BODY_TOO_BIG));
+        assert!(
+            matches!(h.c.collected(a, &mut body), Collected::Failed { error, .. } if error.reason == BODY_TOO_BIG)
+        );
         h.c.assert_books();
         // with a limit the whole frame fits in, it is collected whole
         let wire = raw(kind::DATA, flag::END_STREAM, b, &pattern(600));
@@ -3998,7 +5519,8 @@ mod tests {
         h.c.take_news(&mut news);
         assert_eq!(news.streams(), &[b]);
         // the end of a is news
-        h.c.feed(&raw(kind::DATA, flag::END_STREAM, a, b"last")).unwrap();
+        h.c.feed(&raw(kind::DATA, flag::END_STREAM, a, b"last"))
+            .unwrap();
         h.c.take_news(&mut news);
         assert_eq!(news.streams(), &[a]);
         // and so is a failure
@@ -4007,11 +5529,20 @@ mod tests {
         h.respond(c, "200", &[], false).unwrap();
         h.c.collect_stream(c, u64::MAX);
         h.c.take_news(&mut news);
-        h.c.feed(&raw(kind::RST_STREAM, 0, c, &ErrorCode::CANCEL.0.to_be_bytes())).unwrap();
+        h.c.feed(&raw(
+            kind::RST_STREAM,
+            0,
+            c,
+            &ErrorCode::CANCEL.0.to_be_bytes(),
+        ))
+        .unwrap();
         h.c.take_news(&mut news);
         assert_eq!(news.streams(), &[c]);
         let mut body = Vec::new();
-        assert!(matches!(h.c.collected(c, &mut body), Collected::Failed { .. }));
+        assert!(matches!(
+            h.c.collected(c, &mut body),
+            Collected::Failed { .. }
+        ));
     }
 
     #[test]
@@ -4023,11 +5554,17 @@ mod tests {
         let mut news = News::default();
         h.c.take_news(&mut news);
         // an interim response and the head, in pieces, and a stream that does not collect for comparison
-        h.send_fields(a, &[(":status", "103"), ("link", "x")], false).unwrap();
-        h.respond(a, "200", &[("content-length", "4")], false).unwrap();
+        h.send_fields(a, &[(":status", "103"), ("link", "x")], false)
+            .unwrap();
+        h.respond(a, "200", &[("content-length", "4")], false)
+            .unwrap();
         h.respond(b, "200", &[], false).unwrap();
         h.c.take_news(&mut news);
-        assert_eq!(news.streams(), &[b], "the head of a stream that does not collect is news");
+        assert_eq!(
+            news.streams(),
+            &[b],
+            "the head of a stream that does not collect is news"
+        );
         // the whole of the response, in a head with its end, is news at once
         let c = h.open("GET", "/c");
         h.take();
@@ -4043,7 +5580,10 @@ mod tests {
         h.c.take_news(&mut news);
         assert_eq!(news.streams(), &[a]);
         let mut body = Vec::new();
-        assert!(matches!(h.c.collected(a, &mut body), Collected::Done(Some(_))));
+        assert!(matches!(
+            h.c.collected(a, &mut body),
+            Collected::Done(Some(_))
+        ));
         assert_eq!(body, b"body");
     }
 
@@ -4052,13 +5592,20 @@ mod tests {
         let mut h = Harness::new();
         let id = h.open("GET", "/");
         h.take();
-        h.respond(id, "200", &[("content-length", "100000")], false).unwrap();
+        h.respond(id, "200", &[("content-length", "100000")], false)
+            .unwrap();
         h.c.collect_stream(id, u64::MAX);
         h.data(id, &pattern(5000), false).unwrap();
         h.c.peer_closed();
         let mut body = Vec::new();
-        assert!(matches!(h.c.collected(id, &mut body), Collected::Failed { .. }));
-        assert!(h.c.streams[&id].body.capacity() < 100_000, "the room made for a body that will not come is given up");
+        assert!(matches!(
+            h.c.collected(id, &mut body),
+            Collected::Failed { .. }
+        ));
+        assert!(
+            h.c.streams[&id].body.capacity() < 100_000,
+            "the room made for a body that will not come is given up"
+        );
         h.c.release_stream(id);
         assert_eq!(h.c.active_streams(), 0);
     }
@@ -4070,13 +5617,22 @@ mod tests {
         h.take();
         h.respond(id, "200", &[], true).unwrap();
         let mut body = Vec::new();
-        assert!(matches!(h.c.collected(id, &mut body), Collected::Failed { .. }));
-        assert!(matches!(h.c.collected(99, &mut body), Collected::Failed { .. }));
+        assert!(matches!(
+            h.c.collected(id, &mut body),
+            Collected::Failed { .. }
+        ));
+        assert!(matches!(
+            h.c.collected(99, &mut body),
+            Collected::Failed { .. }
+        ));
         // (and collecting twice does no harm)
         h.c.collect_stream(id, 10);
         h.c.collect_stream(id, 10);
         // (the head, which nobody has taken, is with it)
-        assert!(matches!(h.c.collected(id, &mut body), Collected::Done(Some(_))));
+        assert!(matches!(
+            h.c.collected(id, &mut body),
+            Collected::Done(Some(_))
+        ));
         assert!(body.is_empty());
     }
 
@@ -4086,7 +5642,15 @@ mod tests {
     fn feeding_a_byte_at_a_time_changes_nothing() {
         let build = || {
             let mut h = Harness::new();
-            let ids: Vec<u32> = (0..4).map(|i| if i == 3 { h.open_with("POST", "/up", &[], false) } else { h.open("GET", "/") }).collect();
+            let ids: Vec<u32> = (0..4)
+                .map(|i| {
+                    if i == 3 {
+                        h.open_with("POST", "/up", &[], false)
+                    } else {
+                        h.open("GET", "/")
+                    }
+                })
+                .collect();
             h.take();
             (h, ids)
         };
@@ -4098,13 +5662,31 @@ mod tests {
         let mut add = |bytes: Vec<u8>| wire.extend(bytes);
         let long = "x".repeat(5000);
         for (i, &id) in ids.iter().enumerate() {
-            let block = srv.block(&[(":status", "200"), ("x-n", &i.to_string()), ("x-long", &long), ("content-length", "3000")]);
+            let block = srv.block(&[
+                (":status", "200"),
+                ("x-n", &i.to_string()),
+                ("x-long", &long),
+                ("content-length", "3000"),
+            ]);
             // the block in frames of 100 bytes
             let mut pieces = block.chunks(100).peekable();
             let mut first = true;
             while let Some(piece) = pieces.next() {
-                let end = if pieces.peek().is_none() { flag::END_HEADERS } else { 0 };
-                add(raw(if first { kind::HEADERS } else { kind::CONTINUATION }, end, id, piece));
+                let end = if pieces.peek().is_none() {
+                    flag::END_HEADERS
+                } else {
+                    0
+                };
+                add(raw(
+                    if first {
+                        kind::HEADERS
+                    } else {
+                        kind::CONTINUATION
+                    },
+                    end,
+                    id,
+                    piece,
+                ));
                 first = false;
             }
         }
@@ -4116,7 +5698,12 @@ mod tests {
             }
         }
         add(raw(kind::WINDOW_UPDATE, 0, 7 - 4, &[0, 0, 1, 0]));
-        add(raw(kind::RST_STREAM, 0, ids[1], &ErrorCode::CANCEL.0.to_be_bytes()));
+        add(raw(
+            kind::RST_STREAM,
+            0,
+            ids[1],
+            &ErrorCode::CANCEL.0.to_be_bytes(),
+        ));
         add(raw(kind::GOAWAY, 0, 0, &[0, 0, 0, 5, 0, 0, 0, 0]));
         a.feed(&wire).unwrap();
         for byte in &wire {
@@ -4161,13 +5748,22 @@ mod tests {
 
     /// A frame the server might send, well formed or not, for a stream that is probably one of `ids`.
     fn random_frame(rng: &mut Rng, h: &mut Harness, ids: &[u32]) -> Vec<u8> {
-        let stream = if ids.is_empty() || rng.below(10) == 0 { rng.below(10) as u32 } else { rng.pick(ids) };
+        let stream = if ids.is_empty() || rng.below(10) == 0 {
+            rng.below(10) as u32
+        } else {
+            rng.pick(ids)
+        };
         match rng.below(16) {
             0..=2 => {
-                let status = rng.pick(&["200", "200", "204", "304", "404", "100", "103", "101", "20x"]);
+                let status = rng.pick(&[
+                    "200", "200", "204", "304", "404", "100", "103", "101", "20x",
+                ]);
                 let mut owned: Vec<(String, String)> = vec![(":status".into(), status.into())];
                 if rng.below(3) == 0 {
-                    owned.push(("content-length".into(), rng.pick(&["0", "5", "300", "x"]).into()));
+                    owned.push((
+                        "content-length".into(),
+                        rng.pick(&["0", "5", "300", "x"]).into(),
+                    ));
                 }
                 if rng.below(3) == 0 {
                     owned.push(("x-v".into(), "value".repeat(rng.below(5) as usize + 1)));
@@ -4175,7 +5771,10 @@ mod tests {
                 if rng.below(12) == 0 {
                     owned.push(("connection".into(), "close".into()));
                 }
-                let pairs: Vec<(&str, &str)> = owned.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+                let pairs: Vec<(&str, &str)> = owned
+                    .iter()
+                    .map(|(a, b)| (a.as_str(), b.as_str()))
+                    .collect();
                 let block = h.block(&pairs);
                 let mut flags = 0;
                 if rng.below(6) != 0 {
@@ -4193,7 +5792,11 @@ mod tests {
                 raw(kind::HEADERS, flags, stream, &payload)
             }
             3..=6 => {
-                let len = if rng.below(4) == 0 { 0 } else { rng.below(3000) as usize };
+                let len = if rng.below(4) == 0 {
+                    0
+                } else {
+                    rng.below(3000) as usize
+                };
                 let mut flags = 0;
                 if rng.below(6) == 0 {
                     flags |= flag::END_STREAM;
@@ -4207,10 +5810,20 @@ mod tests {
                 };
                 raw(kind::DATA, flags, stream, &payload)
             }
-            7 => raw(kind::RST_STREAM, 0, stream, &(rng.below(15) as u32).to_be_bytes()),
+            7 => raw(
+                kind::RST_STREAM,
+                0,
+                stream,
+                &(rng.below(15) as u32).to_be_bytes(),
+            ),
             8 => {
                 let stream = if rng.below(3) == 0 { 0 } else { stream };
-                raw(kind::WINDOW_UPDATE, 0, stream, &rng.pick(&[1u32, 100, 65_535, 0, 0x7fff_ffff]).to_be_bytes())
+                raw(
+                    kind::WINDOW_UPDATE,
+                    0,
+                    stream,
+                    &rng.pick(&[1u32, 100, 65_535, 0, 0x7fff_ffff]).to_be_bytes(),
+                )
             }
             9 => raw(kind::PING, rng.pick(&[0, 0, flag::ACK]), 0, &[0; 8]),
             10 => {
@@ -4237,20 +5850,43 @@ mod tests {
                 raw(kind::SETTINGS, 0, 0, &fixed)
             }
             11 => {
-                let (last, code) = if rng.below(3) == 0 { (rng.below(8) as u32, rng.pick(&[0u32, 0, 2, 11])) } else { return raw(kind::PING, 0, 0, &[1; 8]) };
+                let (last, code) = if rng.below(3) == 0 {
+                    (rng.below(8) as u32, rng.pick(&[0u32, 0, 2, 11]))
+                } else {
+                    return raw(kind::PING, 0, 0, &[1; 8]);
+                };
                 let mut payload = last.to_be_bytes().to_vec();
                 payload.extend_from_slice(&code.to_be_bytes());
                 raw(kind::GOAWAY, 0, 0, &payload)
             }
-            12 => raw(kind::CONTINUATION, if rng.below(2) == 0 { flag::END_HEADERS } else { 0 }, stream, &[0x88, 0x40, 0x01, b'a', 0x01, b'b']),
+            12 => raw(
+                kind::CONTINUATION,
+                if rng.below(2) == 0 {
+                    flag::END_HEADERS
+                } else {
+                    0
+                },
+                stream,
+                &[0x88, 0x40, 0x01, b'a', 0x01, b'b'],
+            ),
             13 => {
                 if rng.below(4) == 0 {
-                    raw(kind::PUSH_PROMISE, flag::END_HEADERS, stream, &[0, 0, 0, 2, 0x88])
+                    raw(
+                        kind::PUSH_PROMISE,
+                        flag::END_HEADERS,
+                        stream,
+                        &[0, 0, 0, 2, 0x88],
+                    )
                 } else {
                     raw(kind::PRIORITY, 0, stream, &[0; 5])
                 }
             }
-            14 => raw(0x20 + rng.below(100) as u8, rng.below(256) as u8, stream, &vec![1; rng.below(20) as usize]),
+            14 => raw(
+                0x20 + rng.below(100) as u8,
+                rng.below(256) as u8,
+                stream,
+                &vec![1; rng.below(20) as usize],
+            ),
             _ => (0..rng.below(30)).map(|_| rng.below(256) as u8).collect(),
         }
     }
@@ -4258,10 +5894,22 @@ mod tests {
     /// DATA that fits the windows.
     fn polite_data(rng: &mut Rng, h: &mut Harness, stream: u32) -> Vec<u8> {
         let conn = h.c.recv_window;
-        let room = h.c.streams.get(&stream).map_or(conn, |s| s.recv_window.min(conn)).clamp(0, 3000) as u64;
+        let room =
+            h.c.streams
+                .get(&stream)
+                .map_or(conn, |s| s.recv_window.min(conn))
+                .clamp(0, 3000) as u64;
         let padded_frame = rng.below(8) == 0 && room > 12;
-        let len = if padded_frame { rng.below(room - 11) as usize } else { rng.below(room + 1) as usize };
-        let mut flags = if rng.below(8) == 0 { flag::END_STREAM } else { 0 };
+        let len = if padded_frame {
+            rng.below(room - 11) as usize
+        } else {
+            rng.below(room + 1) as usize
+        };
+        let mut flags = if rng.below(8) == 0 {
+            flag::END_STREAM
+        } else {
+            0
+        };
         let body = vec![0xcd; len];
         let payload = if padded_frame {
             flags |= flag::PADDED;
@@ -4280,13 +5928,21 @@ mod tests {
         }
         let stream = rng.pick(known);
         // where the exchange on that stream is: the head still to come, the body going, or over (or the stream gone)
-        let state = h.c.streams.get(&stream).map(|s| (s.got_head, s.remote_ended || s.failure.is_some()));
+        let state =
+            h.c.streams
+                .get(&stream)
+                .map(|s| (s.got_head, s.remote_ended || s.failure.is_some()));
         match (rng.below(12), state) {
             (0..=2, Some((true, false))) => {
                 if rng.below(6) == 0 {
                     // trailers
                     let block = h.block(&[("x-trailer", "t")]);
-                    raw(kind::HEADERS, flag::END_HEADERS | flag::END_STREAM, stream, &block)
+                    raw(
+                        kind::HEADERS,
+                        flag::END_HEADERS | flag::END_STREAM,
+                        stream,
+                        &block,
+                    )
                 } else {
                     polite_data(rng, h, stream)
                 }
@@ -4300,22 +5956,40 @@ mod tests {
                 if rng.below(3) == 0 {
                     owned.push(("x-v".into(), "value".repeat(rng.below(5) as usize + 1)));
                 }
-                let pairs: Vec<(&str, &str)> = owned.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+                let pairs: Vec<(&str, &str)> = owned
+                    .iter()
+                    .map(|(a, b)| (a.as_str(), b.as_str()))
+                    .collect();
                 let block = h.block(&pairs);
-                let flags = flag::END_HEADERS | if rng.below(6) == 0 { flag::END_STREAM } else { 0 };
+                let flags = flag::END_HEADERS
+                    | if rng.below(6) == 0 {
+                        flag::END_STREAM
+                    } else {
+                        0
+                    };
                 raw(kind::HEADERS, flags, stream, &block)
             }
             (3..=7, Some((true, false)) | None) => polite_data(rng, h, stream),
             (8, _) => {
                 if rng.below(8) == 0 {
-                    raw(kind::RST_STREAM, 0, stream, &ErrorCode::CANCEL.0.to_be_bytes())
+                    raw(
+                        kind::RST_STREAM,
+                        0,
+                        stream,
+                        &ErrorCode::CANCEL.0.to_be_bytes(),
+                    )
                 } else {
                     raw(kind::PING, 0, 0, &[4; 8])
                 }
             }
             (9 | 10, _) => {
                 let stream = if rng.below(2) == 0 { 0 } else { stream };
-                raw(kind::WINDOW_UPDATE, 0, stream, &(rng.below(70_000) as u32 + 1).to_be_bytes())
+                raw(
+                    kind::WINDOW_UPDATE,
+                    0,
+                    stream,
+                    &(rng.below(70_000) as u32 + 1).to_be_bytes(),
+                )
             }
             (11, _) => {
                 if rng.below(30) == 0 {
@@ -4323,7 +5997,12 @@ mod tests {
                     payload.extend_from_slice(&0u32.to_be_bytes());
                     raw(kind::GOAWAY, 0, 0, &payload)
                 } else {
-                    raw(kind::SETTINGS, 0, 0, &[0, 3, 0, 0, 0, rng.below(50) as u8 + 1])
+                    raw(
+                        kind::SETTINGS,
+                        0,
+                        0,
+                        &[0, 3, 0, 0, 0, rng.below(50) as u8 + 1],
+                    )
                 }
             }
             _ => raw(kind::PING, 0, 0, &[5; 8]),
@@ -4333,11 +6012,20 @@ mod tests {
     /// Every frame the client wrote must be one a peer would accept.
     fn check_output(h: &mut Harness) {
         for f in h.take() {
-            let header = Header { length: f.payload.len() as u32, kind: f.kind, flags: f.flags, stream: f.stream };
+            let header = Header {
+                length: f.payload.len() as u32,
+                kind: f.kind,
+                flags: f.flags,
+                stream: f.stream,
+            };
             if let Err(e) = frame::parse(&header, &f.payload) {
                 panic!("the client wrote a frame that does not parse ({e}): {f:?}");
             }
-            assert!(f.payload.len() <= 40_000 || f.kind == kind::GOAWAY, "a frame of {} bytes", f.payload.len());
+            assert!(
+                f.payload.len() <= 40_000 || f.kind == kind::GOAWAY,
+                "a frame of {} bytes",
+                f.payload.len()
+            );
         }
     }
 
@@ -4356,8 +6044,16 @@ mod tests {
         let mut rng = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
         let config = match rng.below(3) {
             0 => Config::default(),
-            1 => Config { stream_window: 3000, connection_window: 65_535, max_header_list: 4096 },
-            _ => Config { stream_window: 70_000, connection_window: 200_000, max_header_list: 64 << 10 },
+            1 => Config {
+                stream_window: 3000,
+                connection_window: 65_535,
+                max_header_list: 4096,
+            },
+            _ => Config {
+                stream_window: 70_000,
+                connection_window: 200_000,
+                max_header_list: 64 << 10,
+            },
         };
         let mut h = Harness::with(config);
         // most sessions have a server that behaves, so that they get somewhere; some have one that does not
@@ -4370,7 +6066,11 @@ mod tests {
                 0..=4 => {
                     let mut wire = Vec::new();
                     for _ in 0..rng.below(3) + 1 {
-                        wire.extend(if polite && rng.below(100) != 0 { polite_frame(&mut rng, &mut h, &known) } else { random_frame(&mut rng, &mut h, &known) });
+                        wire.extend(if polite && rng.below(100) != 0 {
+                            polite_frame(&mut rng, &mut h, &known)
+                        } else {
+                            random_frame(&mut rng, &mut h, &known)
+                        });
                     }
                     // in pieces of whatever size
                     let mut rest = &wire[..];
@@ -4386,7 +6086,17 @@ mod tests {
                     let method = rng.pick(&["GET", "POST", "HEAD"]);
                     let end = method != "POST" || rng.below(3) == 0;
                     let headers = vec![("x-n".to_string(), step.to_string())];
-                    if let Ok(id) = h.c.open_stream(&Request { method, scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] }, end) {
+                    if let Ok(id) = h.c.open_stream(
+                        &Request {
+                            method,
+                            scheme: "https",
+                            authority: "example.com",
+                            path: "/",
+                            headers: &headers,
+                            secret: &[],
+                        },
+                        end,
+                    ) {
                         ids.push(id);
                         known.push(id);
                     }
@@ -4427,7 +6137,12 @@ mod tests {
             }
         }
         seen.lost_connections += h.c.error().is_some() as usize;
-        seen.sent_bytes += h.all.iter().filter(|f| f.kind == kind::DATA).map(|f| f.payload.len()).sum::<usize>();
+        seen.sent_bytes += h
+            .all
+            .iter()
+            .filter(|f| f.kind == kind::DATA)
+            .map(|f| f.payload.len())
+            .sum::<usize>();
         check_output(&mut h);
     }
 
@@ -4438,8 +6153,14 @@ mod tests {
             fuzz_session(seed, 300, &mut seen);
         }
         // the fuzzing got somewhere: responses came, were read to the end, and streams and connections were lost
-        assert!(seen.heads > 500 && seen.body_bytes > 100_000 && seen.ends > 100, "{seen:?}");
-        assert!(seen.failures > 100 && seen.lost_connections > 20 && seen.lost_connections < 380, "{seen:?}");
+        assert!(
+            seen.heads > 500 && seen.body_bytes > 100_000 && seen.ends > 100,
+            "{seen:?}"
+        );
+        assert!(
+            seen.failures > 100 && seen.lost_connections > 20 && seen.lost_connections < 380,
+            "{seen:?}"
+        );
         assert!(seen.sent_bytes > 100_000, "{seen:?}");
     }
 
@@ -4447,7 +6168,11 @@ mod tests {
     fn garbage_on_the_wire_never_panics() {
         for seed in 1..=300u64 {
             let mut rng = Rng(seed.wrapping_mul(0x2545_f491_4f6c_dd1d) | 1);
-            let mut h = if seed % 2 == 0 { Harness::new() } else { Harness::unsettled(Config::default()) };
+            let mut h = if seed % 2 == 0 {
+                Harness::new()
+            } else {
+                Harness::unsettled(Config::default())
+            };
             h.open("GET", "/");
             for _ in 0..100 {
                 let n = rng.below(60) as usize;
@@ -4456,7 +6181,13 @@ mod tests {
                     (0..n).map(|_| rng.below(256) as u8).collect()
                 } else {
                     let mut c = Vec::new();
-                    Header { length: rng.below(40) as u32, kind: rng.below(11) as u8, flags: rng.below(256) as u8, stream: rng.below(6) as u32 }.write(&mut c);
+                    Header {
+                        length: rng.below(40) as u32,
+                        kind: rng.below(11) as u8,
+                        flags: rng.below(256) as u8,
+                        stream: rng.below(6) as u32,
+                    }
+                    .write(&mut c);
                     c.extend((0..rng.below(40)).map(|_| rng.below(256) as u8));
                     c
                 };

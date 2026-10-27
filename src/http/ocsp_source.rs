@@ -44,12 +44,19 @@ impl HttpOcspSource {
             .total_timeout(Duration::from_secs(20))
             .max_redirects(3)
             .max_body_bytes(MAX_RESPONSE as u64);
-        HttpOcspSource { client, cache: Mutex::new(Cache::default()) }
+        HttpOcspSource {
+            client,
+            cache: Mutex::new(Cache::default()),
+        }
     }
 
     /// How many responses are cached.
     pub fn cached(&self) -> usize {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner()).entries.len()
+        self.cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entries
+            .len()
     }
 }
 
@@ -62,7 +69,10 @@ impl Default for HttpOcspSource {
 impl OcspSource for HttpOcspSource {
     fn fetch(&self, url: &str, request: &[u8]) -> Result<Vec<u8>> {
         if !url.starts_with("http://") {
-            return Err(Error::Unavailable(format!("not asking the OCSP responder at {:?}: only http:// URLs are used", url)));
+            return Err(Error::Unavailable(format!(
+                "not asking the OCSP responder at {:?}: only http:// URLs are used",
+                url
+            )));
         }
         let now = crate::sys::now_unix();
         let key = (url.to_string(), request.to_vec());
@@ -86,7 +96,10 @@ impl OcspSource for HttpOcspSource {
             .send()
             .map_err(|e| Error::Unavailable(format!("{}: {}", url, e)))?;
         if response.status != 200 {
-            return Err(Error::Unavailable(format!("the OCSP responder answered {}", response.status)));
+            return Err(Error::Unavailable(format!(
+                "the OCSP responder answered {}",
+                response.status
+            )));
         }
         let body = response.body;
         // kept only if it is a successful response with a window that has not ended (it is verified when it is used)
@@ -95,7 +108,12 @@ impl OcspSource for HttpOcspSource {
             cache.clock += 1;
             let clock = cache.clock;
             if cache.entries.len() >= MAX_CACHED && !cache.entries.contains_key(&key) {
-                if let Some(oldest) = cache.entries.iter().min_by_key(|(_, (_, _, used))| *used).map(|(k, _)| k.clone()) {
+                if let Some(oldest) = cache
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, (_, _, used))| *used)
+                    .map(|(k, _)| k.clone())
+                {
                     cache.entries.remove(&oldest);
                 }
             }

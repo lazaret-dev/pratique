@@ -16,10 +16,10 @@
 //! certificate from ACME, a refreshed staple. A handshake under way keeps what it picked. The scanning proxy (B-78)
 //! brings a resolver of its own that makes a certificate for each host.
 
+use crate::crypto::sha2::HashAlg;
 use crate::error::{Error, Result};
 use crate::sign::{scheme, SigningKey};
 use crate::x509::{dns_pattern_matches, Certificate, SigAlg};
-use crate::crypto::sha2::HashAlg;
 use std::net::IpAddr;
 use std::sync::{Arc, RwLock};
 
@@ -43,7 +43,13 @@ pub struct CertifiedKey {
 
 impl std::fmt::Debug for CertifiedKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CertifiedKey({:?}, {}, {} certificates)", self.dns_names, self.key.algorithm(), self.chain.len())
+        write!(
+            f,
+            "CertifiedKey({:?}, {}, {} certificates)",
+            self.dns_names,
+            self.key.algorithm(),
+            self.chain.len()
+        )
     }
 }
 
@@ -77,7 +83,10 @@ impl CertifiedKey {
             return Err(Error::Key("an empty certificate chain".into()));
         };
         if !key.matches_certificate(leaf_der)? {
-            return Err(Error::Key(format!("the {} private key is not the key of the first certificate in the chain", key.algorithm())));
+            return Err(Error::Key(format!(
+                "the {} private key is not the key of the first certificate in the chain",
+                key.algorithm()
+            )));
         }
         Self::build(chain, key)
     }
@@ -92,7 +101,10 @@ impl CertifiedKey {
     }
 
     fn build(chain: Vec<Vec<u8>>, key: SigningKey) -> Result<CertifiedKey> {
-        let certs = chain.iter().map(|d| Certificate::from_der(d)).collect::<std::result::Result<Vec<_>, _>>()?;
+        let certs = chain
+            .iter()
+            .map(|d| Certificate::from_der(d))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         let leaf = &certs[0];
         let chain_schemes = certs
             .iter()
@@ -100,7 +112,11 @@ impl CertifiedKey {
             .filter_map(|c| c.signature_algorithm().and_then(scheme_of))
             .collect();
         Ok(CertifiedKey {
-            dns_names: leaf.dns_names.iter().map(|n| n.to_ascii_lowercase()).collect(),
+            dns_names: leaf
+                .dns_names
+                .iter()
+                .map(|n| n.to_ascii_lowercase())
+                .collect(),
             ip_addrs: leaf.ip_addrs.clone(),
             not_after: leaf.not_after,
             chain_schemes,
@@ -120,10 +136,16 @@ impl CertifiedKey {
         let c = Certificate::parse(&der)?;
         let oid = crate::asn1::oid_from_string(OID_ACME_IDENTIFIER).expect("a valid OID");
         if !c.extension(&oid).is_some_and(|e| e.critical) {
-            return Err(Error::Key("not a TLS-ALPN-01 challenge certificate: no critical acmeIdentifier extension".into()));
+            return Err(Error::Key(
+                "not a TLS-ALPN-01 challenge certificate: no critical acmeIdentifier extension"
+                    .into(),
+            ));
         }
         if c.spki_der() != key.public_key_spki() {
-            return Err(Error::Key(format!("the {} private key is not the challenge certificate's key", key.algorithm())));
+            return Err(Error::Key(format!(
+                "the {} private key is not the challenge certificate's key",
+                key.algorithm()
+            )));
         }
         Ok(CertifiedKey {
             dns_names: c.dns_names.iter().map(|n| n.to_ascii_lowercase()).collect(),
@@ -145,9 +167,15 @@ impl CertifiedKey {
     /// A CA's "fullchain" PEM (the leaf first, then the intermediates) and the leaf's private key in PEM (see
     /// [`SigningKey::from_pem`]).
     pub fn from_pem(chain_pem: &str, key_pem: &str) -> Result<CertifiedKey> {
-        let chain: Vec<Vec<u8>> = crate::pem::parse(chain_pem).into_iter().filter(|b| b.label == "CERTIFICATE").map(|b| b.data).collect();
+        let chain: Vec<Vec<u8>> = crate::pem::parse(chain_pem)
+            .into_iter()
+            .filter(|b| b.label == "CERTIFICATE")
+            .map(|b| b.data)
+            .collect();
         if chain.is_empty() {
-            return Err(Error::Key("no CERTIFICATE block in the certificate chain's PEM".into()));
+            return Err(Error::Key(
+                "no CERTIFICATE block in the certificate chain's PEM".into(),
+            ));
         }
         CertifiedKey::new(chain, SigningKey::from_pem(key_pem)?)
     }
@@ -188,11 +216,19 @@ impl CertifiedKey {
                 IpAddr::V4(a) => a.octets().to_vec(),
                 IpAddr::V6(a) => a.octets().to_vec(),
             };
-            return if self.ip_addrs.contains(&octets) { 2 } else { 0 };
+            return if self.ip_addrs.contains(&octets) {
+                2
+            } else {
+                0
+            };
         }
         if self.dns_names.iter().any(|n| *n == name) {
             2
-        } else if self.dns_names.iter().any(|n| n.starts_with("*.") && dns_pattern_matches(n, &name)) {
+        } else if self
+            .dns_names
+            .iter()
+            .any(|n| n.starts_with("*.") && dns_pattern_matches(n, &name))
+        {
             1
         } else {
             0
@@ -248,12 +284,16 @@ impl CertStore {
 
     /// Adds a certificate; the first one added is the default.
     pub fn add(&self, cert: CertifiedKey) {
-        self.certs.write().unwrap_or_else(|e| e.into_inner()).push(Arc::new(cert));
+        self.certs
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(Arc::new(cert));
     }
 
     /// Replaces all the certificates (a renewal, a reload): handshakes from now on use the new ones.
     pub fn replace(&self, certs: Vec<CertifiedKey>) {
-        *self.certs.write().unwrap_or_else(|e| e.into_inner()) = certs.into_iter().map(Arc::new).collect();
+        *self.certs.write().unwrap_or_else(|e| e.into_inner()) =
+            certs.into_iter().map(Arc::new).collect();
     }
 
     /// Sets the OCSP response stapled for the certificate at `index` (in the order added).
@@ -276,13 +316,25 @@ impl ResolvesServerCert for CertStore {
     fn resolve(&self, hello: &ClientHelloInfo) -> Option<Arc<CertifiedKey>> {
         let certs = self.certs.read().unwrap_or_else(|e| e.into_inner());
         // the client must be able to verify the key's signature
-        let usable: Vec<&Arc<CertifiedKey>> = certs.iter().filter(|c| c.key.tls_schemes().iter().any(|s| hello.signature_schemes.contains(s))).collect();
+        let usable: Vec<&Arc<CertifiedKey>> = certs
+            .iter()
+            .filter(|c| {
+                c.key
+                    .tls_schemes()
+                    .iter()
+                    .any(|s| hello.signature_schemes.contains(s))
+            })
+            .collect();
         // by name: exact before wildcard; nothing matching: the default (all of them, in order), unless strict
         let candidates: Vec<&Arc<CertifiedKey>> = match hello.server_name {
             Some(name) => {
                 let best = usable.iter().map(|c| c.name_match(name)).max().unwrap_or(0);
                 if best > 0 {
-                    usable.iter().copied().filter(|c| c.name_match(name) == best).collect()
+                    usable
+                        .iter()
+                        .copied()
+                        .filter(|c| c.name_match(name) == best)
+                        .collect()
                 } else if self.strict {
                     return None;
                 } else {
@@ -292,7 +344,9 @@ impl ResolvesServerCert for CertStore {
             None => usable,
         };
         // a chain the client says it can check, then the order of addition
-        let cert_schemes = hello.signature_schemes_cert.unwrap_or(hello.signature_schemes);
+        let cert_schemes = hello
+            .signature_schemes_cert
+            .unwrap_or(hello.signature_schemes);
         candidates
             .iter()
             .find(|c| c.chain_schemes.iter().all(|s| cert_schemes.contains(s)))
@@ -313,7 +367,12 @@ mod tests {
     }
 
     fn hello<'a>(name: Option<&'a str>, schemes: &'a [u16]) -> ClientHelloInfo<'a> {
-        ClientHelloInfo { server_name: name, signature_schemes: schemes, signature_schemes_cert: None, alpn: None }
+        ClientHelloInfo {
+            server_name: name,
+            signature_schemes: schemes,
+            signature_schemes_cert: None,
+            alpn: None,
+        }
     }
 
     const ALL: [u16; 6] = [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806];
@@ -322,21 +381,42 @@ mod tests {
     fn names_choose_exact_then_wildcard_then_the_default() {
         let root = KeyPair::generate().unwrap();
         let store = CertStore::new();
-        store.add(cert(&["default.test"], &KeyPair::generate().unwrap(), &root));
+        store.add(cert(
+            &["default.test"],
+            &KeyPair::generate().unwrap(),
+            &root,
+        ));
         store.add(cert(&["*.wild.test"], &KeyPair::generate().unwrap(), &root));
-        store.add(cert(&["a.wild.test", "127.0.0.1"], &KeyPair::generate().unwrap(), &root));
-        let pick = |name: Option<&str>| store.resolve(&hello(name, &ALL)).unwrap().dns_names()[0].clone();
+        store.add(cert(
+            &["a.wild.test", "127.0.0.1"],
+            &KeyPair::generate().unwrap(),
+            &root,
+        ));
+        let pick =
+            |name: Option<&str>| store.resolve(&hello(name, &ALL)).unwrap().dns_names()[0].clone();
         assert_eq!(pick(Some("a.wild.test")), "a.wild.test");
-        assert_eq!(pick(Some("A.Wild.Test.")), "a.wild.test", "case and a trailing dot do not matter");
+        assert_eq!(
+            pick(Some("A.Wild.Test.")),
+            "a.wild.test",
+            "case and a trailing dot do not matter"
+        );
         assert_eq!(pick(Some("b.wild.test")), "*.wild.test");
-        assert_eq!(pick(Some("x.b.wild.test")), "default.test", "a wildcard covers one label");
+        assert_eq!(
+            pick(Some("x.b.wild.test")),
+            "default.test",
+            "a wildcard covers one label"
+        );
         assert_eq!(pick(Some("nothing.test")), "default.test");
         assert_eq!(pick(None), "default.test");
         assert_eq!(pick(Some("127.0.0.1")), "a.wild.test");
-        let strict = CertStore::single(cert(&["only.test"], &KeyPair::generate().unwrap(), &root)).strict();
+        let strict =
+            CertStore::single(cert(&["only.test"], &KeyPair::generate().unwrap(), &root)).strict();
         assert!(strict.resolve(&hello(Some("other.test"), &ALL)).is_none());
         assert!(strict.resolve(&hello(Some("only.test"), &ALL)).is_some());
-        assert!(strict.resolve(&hello(None, &ALL)).is_some(), "no name: the default, even when strict");
+        assert!(
+            strict.resolve(&hello(None, &ALL)).is_some(),
+            "no name: the default, even when strict"
+        );
     }
 
     #[test]
@@ -344,19 +424,34 @@ mod tests {
         let ec_root = KeyPair::generate_ecdsa(Curve::P256).unwrap();
         let ed_root = KeyPair::generate().unwrap();
         let store = CertStore::new();
-        store.add(cert(&["s.test"], &KeyPair::generate_ecdsa(Curve::P384).unwrap(), &ec_root)); // ECDSA P-384 key, ECDSA chain
+        store.add(cert(
+            &["s.test"],
+            &KeyPair::generate_ecdsa(Curve::P384).unwrap(),
+            &ec_root,
+        )); // ECDSA P-384 key, ECDSA chain
         store.add(cert(&["s.test"], &KeyPair::generate().unwrap(), &ed_root)); // Ed25519 key, Ed25519 chain
         store.add(cert(&["s.test"], &KeyPair::generate().unwrap(), &ec_root)); // Ed25519 key, ECDSA chain
         let alg = |schemes: &[u16], cert_schemes: Option<&[u16]>| {
             store
-                .resolve(&ClientHelloInfo { server_name: Some("s.test"), signature_schemes: schemes, signature_schemes_cert: cert_schemes, alpn: None })
+                .resolve(&ClientHelloInfo {
+                    server_name: Some("s.test"),
+                    signature_schemes: schemes,
+                    signature_schemes_cert: cert_schemes,
+                    alpn: None,
+                })
                 .map(|c| (c.key().algorithm(), c.chain_schemes.clone()))
         };
         assert_eq!(alg(&ALL, None).unwrap().0, "ECDSA P-384");
         // only Ed25519 signatures: the second, whose chain is Ed25519 too
-        assert_eq!(alg(&[0x0807], None).unwrap(), ("Ed25519".to_string(), vec![0x0807]));
+        assert_eq!(
+            alg(&[0x0807], None).unwrap(),
+            ("Ed25519".to_string(), vec![0x0807])
+        );
         // Ed25519 handshake signatures, ECDSA SHA-256 chains only
-        assert_eq!(alg(&[0x0807, 0x0403], Some(&[0x0403])).unwrap(), ("Ed25519".to_string(), vec![0x0403]));
+        assert_eq!(
+            alg(&[0x0807, 0x0403], Some(&[0x0403])).unwrap(),
+            ("Ed25519".to_string(), vec![0x0403])
+        );
         // nothing the keys can make: none
         assert!(alg(&[0x0804], None).is_none());
     }
@@ -366,13 +461,32 @@ mod tests {
         let root = KeyPair::generate().unwrap();
         let k = KeyPair::generate().unwrap();
         let der = issue(&CertSpec::server(&["k.test"]), &k, Some(("root", &root)));
-        let err = CertifiedKey::new(vec![der.clone()], KeyPair::generate().unwrap().signing_key().clone()).unwrap_err().to_string();
+        let err = CertifiedKey::new(
+            vec![der.clone()],
+            KeyPair::generate().unwrap().signing_key().clone(),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(err.contains("not the key"), "{err}");
         assert!(CertifiedKey::new(vec![], k.signing_key().clone()).is_err());
-        let store = CertStore::single(CertifiedKey::new(vec![der], k.signing_key().clone()).unwrap());
+        let store =
+            CertStore::single(CertifiedKey::new(vec![der], k.signing_key().clone()).unwrap());
         store.set_ocsp_staple(0, Some(vec![1, 2, 3]));
-        assert_eq!(store.resolve(&hello(None, &ALL)).unwrap().ocsp_staple(), Some(&[1u8, 2, 3][..]));
-        store.replace(vec![cert(&["new.test"], &KeyPair::generate().unwrap(), &root)]);
-        assert_eq!(store.resolve(&hello(Some("k.test"), &ALL)).unwrap().dns_names(), ["new.test"]);
+        assert_eq!(
+            store.resolve(&hello(None, &ALL)).unwrap().ocsp_staple(),
+            Some(&[1u8, 2, 3][..])
+        );
+        store.replace(vec![cert(
+            &["new.test"],
+            &KeyPair::generate().unwrap(),
+            &root,
+        )]);
+        assert_eq!(
+            store
+                .resolve(&hello(Some("k.test"), &ALL))
+                .unwrap()
+                .dns_names(),
+            ["new.test"]
+        );
     }
 }

@@ -143,7 +143,8 @@ impl Partial {
             self.have += 1;
             *pos += 1;
         }
-        let (v, n) = wire::get_varint(&self.bytes[..need]).expect("a whole variable-length integer");
+        let (v, n) =
+            wire::get_varint(&self.bytes[..need]).expect("a whole variable-length integer");
         debug_assert_eq!(n, need);
         *self = Partial::default();
         Some(v)
@@ -169,7 +170,13 @@ pub(crate) const MAX_WHOLE: u64 = 16 << 10;
 
 impl FrameReader {
     pub(crate) fn new(kind: Kind, max_headers: usize) -> FrameReader {
-        FrameReader { kind, state: State::Type(Partial::default()), max_headers, settings_seen: false, started: false }
+        FrameReader {
+            kind,
+            state: State::Type(Partial::default()),
+            max_headers,
+            settings_seen: false,
+            started: false,
+        }
     }
 
     /// Whether the stream is between frames (so that it may end here).
@@ -183,9 +190,16 @@ impl FrameReader {
         let mut pos = 0;
         loop {
             match &mut self.state {
-                State::Failed => return Err(FrameError::conn(code::H3_INTERNAL_ERROR, "the stream is not read after an error")),
+                State::Failed => {
+                    return Err(FrameError::conn(
+                        code::H3_INTERNAL_ERROR,
+                        "the stream is not read after an error",
+                    ))
+                }
                 State::Type(p) => {
-                    let Some(t) = p.take(input, &mut pos) else { return Ok(()) };
+                    let Some(t) = p.take(input, &mut pos) else {
+                        return Ok(());
+                    };
                     if let Err(e) = self.check_type(t) {
                         self.state = State::Failed;
                         return Err(e);
@@ -195,7 +209,9 @@ impl FrameReader {
                 }
                 State::Length(t, p) => {
                     let t = *t;
-                    let Some(len) = p.take(input, &mut pos) else { return Ok(()) };
+                    let Some(len) = p.take(input, &mut pos) else {
+                        return Ok(());
+                    };
                     match self.begin(t, len) {
                         Ok(state) => self.state = state,
                         Err(e) => {
@@ -248,24 +264,55 @@ impl FrameReader {
     /// Whether a frame of this type may be here.
     fn check_type(&mut self, t: u64) -> Result<(), FrameError> {
         if ty::is_http2_reserved(t) {
-            return Err(FrameError::conn(code::H3_FRAME_UNEXPECTED, "a frame type of HTTP/2 that HTTP/3 does not have"));
+            return Err(FrameError::conn(
+                code::H3_FRAME_UNEXPECTED,
+                "a frame type of HTTP/2 that HTTP/3 does not have",
+            ));
         }
         match self.kind {
             Kind::Request => match t {
                 ty::DATA | ty::HEADERS => {}
-                ty::PUSH_PROMISE => return Err(FrameError::conn(code::H3_ID_ERROR, "a push promise, when no push was allowed")),
-                ty::SETTINGS | ty::GOAWAY | ty::CANCEL_PUSH | ty::MAX_PUSH_ID => return Err(FrameError::conn(code::H3_FRAME_UNEXPECTED, "a frame of the control stream on a request stream")),
+                ty::PUSH_PROMISE => {
+                    return Err(FrameError::conn(
+                        code::H3_ID_ERROR,
+                        "a push promise, when no push was allowed",
+                    ))
+                }
+                ty::SETTINGS | ty::GOAWAY | ty::CANCEL_PUSH | ty::MAX_PUSH_ID => {
+                    return Err(FrameError::conn(
+                        code::H3_FRAME_UNEXPECTED,
+                        "a frame of the control stream on a request stream",
+                    ))
+                }
                 _ => {}
             },
             Kind::Control => {
                 if !self.started && t != ty::SETTINGS {
-                    return Err(FrameError::conn(code::H3_MISSING_SETTINGS, "the control stream does not begin with SETTINGS"));
+                    return Err(FrameError::conn(
+                        code::H3_MISSING_SETTINGS,
+                        "the control stream does not begin with SETTINGS",
+                    ));
                 }
                 match t {
-                    ty::SETTINGS if self.settings_seen => return Err(FrameError::conn(code::H3_FRAME_UNEXPECTED, "a second SETTINGS frame")),
-                    ty::DATA | ty::HEADERS | ty::PUSH_PROMISE => return Err(FrameError::conn(code::H3_FRAME_UNEXPECTED, "a frame of a request stream on the control stream")),
+                    ty::SETTINGS if self.settings_seen => {
+                        return Err(FrameError::conn(
+                            code::H3_FRAME_UNEXPECTED,
+                            "a second SETTINGS frame",
+                        ))
+                    }
+                    ty::DATA | ty::HEADERS | ty::PUSH_PROMISE => {
+                        return Err(FrameError::conn(
+                            code::H3_FRAME_UNEXPECTED,
+                            "a frame of a request stream on the control stream",
+                        ))
+                    }
                     // a client does not accept MAX_PUSH_ID (RFC 9114 section 7.2.7)
-                    ty::MAX_PUSH_ID => return Err(FrameError::conn(code::H3_FRAME_UNEXPECTED, "MAX_PUSH_ID sent to a client")),
+                    ty::MAX_PUSH_ID => {
+                        return Err(FrameError::conn(
+                            code::H3_FRAME_UNEXPECTED,
+                            "MAX_PUSH_ID sent to a client",
+                        ))
+                    }
                     _ => {}
                 }
             }
@@ -291,7 +338,10 @@ impl FrameReader {
             }
             ty::SETTINGS | ty::GOAWAY | ty::CANCEL_PUSH => {
                 if len > MAX_WHOLE {
-                    return Err(FrameError::conn(code::H3_EXCESSIVE_LOAD, "a control frame that is too long"));
+                    return Err(FrameError::conn(
+                        code::H3_EXCESSIVE_LOAD,
+                        "a control frame that is too long",
+                    ));
                 }
                 State::Whole(t, len, Vec::with_capacity(len as usize))
             }
@@ -307,20 +357,36 @@ impl FrameReader {
                 let mut pairs = vec![];
                 let mut pos = 0;
                 while pos < payload.len() {
-                    let (id, n) = wire::get_varint(&payload[pos..]).ok_or(FrameError::conn(code::H3_FRAME_ERROR, "a SETTINGS frame that ends inside a setting"))?;
+                    let (id, n) = wire::get_varint(&payload[pos..]).ok_or(FrameError::conn(
+                        code::H3_FRAME_ERROR,
+                        "a SETTINGS frame that ends inside a setting",
+                    ))?;
                     pos += n;
-                    let (value, n) = wire::get_varint(&payload[pos..]).ok_or(FrameError::conn(code::H3_FRAME_ERROR, "a SETTINGS frame that ends inside a setting"))?;
+                    let (value, n) = wire::get_varint(&payload[pos..]).ok_or(FrameError::conn(
+                        code::H3_FRAME_ERROR,
+                        "a SETTINGS frame that ends inside a setting",
+                    ))?;
                     pos += n;
                     pairs.push((id, value));
                 }
                 out.push(Event::Settings(pairs));
             }
             ty::GOAWAY | ty::CANCEL_PUSH => {
-                let (v, n) = wire::get_varint(payload).ok_or(FrameError::conn(code::H3_FRAME_ERROR, "a frame that should hold one integer and does not"))?;
+                let (v, n) = wire::get_varint(payload).ok_or(FrameError::conn(
+                    code::H3_FRAME_ERROR,
+                    "a frame that should hold one integer and does not",
+                ))?;
                 if n != payload.len() {
-                    return Err(FrameError::conn(code::H3_FRAME_ERROR, "a frame that should hold one integer and holds more"));
+                    return Err(FrameError::conn(
+                        code::H3_FRAME_ERROR,
+                        "a frame that should hold one integer and holds more",
+                    ));
                 }
-                out.push(if t == ty::GOAWAY { Event::GoAway(v) } else { Event::CancelPush(v) });
+                out.push(if t == ty::GOAWAY {
+                    Event::GoAway(v)
+                } else {
+                    Event::CancelPush(v)
+                });
             }
             _ => unreachable!("only the frames that are kept whole are completed"),
         }
@@ -361,7 +427,15 @@ pub(crate) struct Settings {
 /// The first bytes of our control stream: its type and the SETTINGS frame.
 pub(crate) fn control_stream_start(s: &Settings) -> Vec<u8> {
     let mut payload = vec![];
-    for (id, v) in [(setting::QPACK_MAX_TABLE_CAPACITY, s.qpack_max_table_capacity), (setting::QPACK_BLOCKED_STREAMS, s.qpack_blocked_streams), (setting::MAX_FIELD_SECTION_SIZE, s.max_field_section_size), (0x1f * 7 + 0x21, 0)] {
+    for (id, v) in [
+        (
+            setting::QPACK_MAX_TABLE_CAPACITY,
+            s.qpack_max_table_capacity,
+        ),
+        (setting::QPACK_BLOCKED_STREAMS, s.qpack_blocked_streams),
+        (setting::MAX_FIELD_SECTION_SIZE, s.max_field_section_size),
+        (0x1f * 7 + 0x21, 0),
+    ] {
         wire::put_varint(&mut payload, id);
         wire::put_varint(&mut payload, v);
     }
@@ -384,14 +458,24 @@ pub(crate) struct PeerSettings {
 
 impl PeerSettings {
     pub(crate) fn from_pairs(pairs: &[(u64, u64)]) -> Result<PeerSettings, FrameError> {
-        let mut s = PeerSettings { qpack_max_table_capacity: 0, qpack_blocked_streams: 0, max_field_section_size: None };
+        let mut s = PeerSettings {
+            qpack_max_table_capacity: 0,
+            qpack_blocked_streams: 0,
+            max_field_section_size: None,
+        };
         let mut seen: Vec<u64> = vec![];
         for &(id, v) in pairs {
             if setting::is_http2_reserved(id) {
-                return Err(FrameError::conn(code::H3_SETTINGS_ERROR, "a setting of HTTP/2 that HTTP/3 does not have"));
+                return Err(FrameError::conn(
+                    code::H3_SETTINGS_ERROR,
+                    "a setting of HTTP/2 that HTTP/3 does not have",
+                ));
             }
             if seen.contains(&id) {
-                return Err(FrameError::conn(code::H3_SETTINGS_ERROR, "a setting that is given twice"));
+                return Err(FrameError::conn(
+                    code::H3_SETTINGS_ERROR,
+                    "a setting that is given twice",
+                ));
             }
             seen.push(id);
             match id {
@@ -405,9 +489,9 @@ impl PeerSettings {
     }
 }
 
-#[cfg(test)]
-#[path = "frame_tests.rs"]
-mod tests;
 #[cfg(any(test, pratique_fuzzing))]
 #[path = "frame_harness.rs"]
 pub(crate) mod harness;
+#[cfg(test)]
+#[path = "frame_tests.rs"]
+mod tests;

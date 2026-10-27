@@ -108,15 +108,39 @@ pub enum StreamEvent {
 /// when the packet is lost, and to be forgotten when it is acknowledged.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamFrame {
-    Stream { id: u64, offset: u64, len: usize, fin: bool },
-    ResetStream { id: u64, error: u64, final_size: u64 },
-    StopSending { id: u64, error: u64 },
+    Stream {
+        id: u64,
+        offset: u64,
+        len: usize,
+        fin: bool,
+    },
+    ResetStream {
+        id: u64,
+        error: u64,
+        final_size: u64,
+    },
+    StopSending {
+        id: u64,
+        error: u64,
+    },
     MaxData(u64),
-    MaxStreamData { id: u64, max: u64 },
-    MaxStreams { bidirectional: bool, max: u64 },
+    MaxStreamData {
+        id: u64,
+        max: u64,
+    },
+    MaxStreams {
+        bidirectional: bool,
+        max: u64,
+    },
     DataBlocked(u64),
-    StreamDataBlocked { id: u64, limit: u64 },
-    StreamsBlocked { bidirectional: bool, limit: u64 },
+    StreamDataBlocked {
+        id: u64,
+        limit: u64,
+    },
+    StreamsBlocked {
+        bidirectional: bool,
+        limit: u64,
+    },
 }
 
 /// What the streams are to be given to start with: our limits, which are told to the peer in the transport parameters.
@@ -260,14 +284,18 @@ impl Recv {
     fn readable(&self) -> bool {
         match self.state {
             RecvState::Reset(_) => true,
-            RecvState::Open => !self.discard && (self.buf.readable() > 0 || self.final_size == Some(self.buf.read_offset())),
+            RecvState::Open => {
+                !self.discard
+                    && (self.buf.readable() > 0 || self.final_size == Some(self.buf.read_offset()))
+            }
             _ => false,
         }
     }
 
     /// All of the stream up to its end has come (it may not have been read).
     fn all_received(&self) -> bool {
-        self.final_size.is_some_and(|fs| self.buf.read_offset() + self.buf.readable() as u64 == fs)
+        self.final_size
+            .is_some_and(|fs| self.buf.read_offset() + self.buf.readable() as u64 == fs)
     }
 }
 
@@ -393,7 +421,10 @@ impl Streams {
             uni: p.initial_max_stream_data_uni,
         });
         self.send_max_data = p.initial_max_data;
-        self.peer_max_streams = [p.initial_max_streams_bidi.min(MAX_STREAMS_LIMIT), p.initial_max_streams_uni.min(MAX_STREAMS_LIMIT)];
+        self.peer_max_streams = [
+            p.initial_max_streams_bidi.min(MAX_STREAMS_LIMIT),
+            p.initial_max_streams_uni.min(MAX_STREAMS_LIMIT),
+        ];
     }
 
     pub fn poll_event(&mut self) -> Option<StreamEvent> {
@@ -408,7 +439,14 @@ impl Streams {
 
     /// What the receiving side of a stream holds, in words: for the tests and the fuzzer when something is wrong.
     pub fn describe_recv(&self, id: u64) -> String {
-        let conn = format!("connection: limit {} (window {}), received {}, consumed {}, update pending {}", self.recv_limit, self.cfg.max_data, self.recv_total, self.consumed, self.max_data_pending);
+        let conn = format!(
+            "connection: limit {} (window {}), received {}, consumed {}, update pending {}",
+            self.recv_limit,
+            self.cfg.max_data,
+            self.recv_total,
+            self.consumed,
+            self.max_data_pending
+        );
         match self.streams.get(&id).and_then(|s| s.recv.as_ref()) {
             None => format!("no receiving side; {conn}"),
             Some(r) => format!(
@@ -430,7 +468,10 @@ impl Streams {
 
     /// What the sending side of a stream, and the connection's flow control, hold, in words: for the tests and the fuzzer.
     pub fn describe_send(&self, id: u64) -> String {
-        let conn = format!("connection: limit {} sent {} parked {:?} queue {:?} control {:?}", self.send_max_data, self.sent_total, self.parked, self.send_queue, self.control);
+        let conn = format!(
+            "connection: limit {} sent {} parked {:?} queue {:?} control {:?}",
+            self.send_max_data, self.sent_total, self.parked, self.send_queue, self.control
+        );
         match self.streams.get(&id).and_then(|s| s.send.as_ref()) {
             None => format!("no sending side; {conn}"),
             Some(s) => format!(
@@ -465,7 +506,9 @@ impl Streams {
     /// Opens a stream and gives its id. Blocked if the peer's limit on the streams we open is reached (or its parameters are not
     /// known yet): there is an event when it is raised.
     pub fn open(&mut self, bidirectional: bool) -> Result<u64, StreamError> {
-        let Some(peer) = self.peer else { return Err(StreamError::Blocked) };
+        let Some(peer) = self.peer else {
+            return Err(StreamError::Blocked);
+        };
         let k = if bidirectional { 0 } else { 1 };
         if self.opened[k] >= self.peer_max_streams[k] {
             self.open_blocked[k] = true;
@@ -477,9 +520,19 @@ impl Streams {
         }
         let id = make_id(self.opened[k], k, self.cfg.client);
         self.opened[k] += 1;
-        let send = Send::new(if bidirectional { peer.bidi_remote } else { peer.uni });
+        let send = Send::new(if bidirectional {
+            peer.bidi_remote
+        } else {
+            peer.uni
+        });
         let recv = bidirectional.then(|| Recv::new(self.cfg.bidi_local));
-        self.streams.insert(id, Stream { send: Some(send), recv });
+        self.streams.insert(
+            id,
+            Stream {
+                send: Some(send),
+                recv,
+            },
+        );
         Ok(id)
     }
 
@@ -488,7 +541,11 @@ impl Streams {
     /// after a [`StreamEvent::Writable`]); [`StreamError::Blocked`] if none was.
     pub fn write(&mut self, id: u64, data: &[u8], fin: bool) -> Result<usize, StreamError> {
         let room_limit = self.cfg.send_buffer;
-        let s = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()).ok_or(StreamError::Unknown)?;
+        let s = self
+            .streams
+            .get_mut(&id)
+            .and_then(|s| s.send.as_mut())
+            .ok_or(StreamError::Unknown)?;
         if s.state != SendState::Open {
             return Err(match (s.stopped, s.state) {
                 (Some(c), SendState::Reset | SendState::Done) => StreamError::Stopped(c),
@@ -516,7 +573,11 @@ impl Streams {
     /// the bytes read were the last). [`StreamError::Blocked`] if there is nothing now; [`StreamError::Reset`] if the peer reset
     /// the stream.
     pub fn read(&mut self, id: u64, buf: &mut [u8]) -> Result<(usize, bool), StreamError> {
-        let r = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()).ok_or(StreamError::Unknown)?;
+        let r = self
+            .streams
+            .get_mut(&id)
+            .and_then(|s| s.recv.as_mut())
+            .ok_or(StreamError::Unknown)?;
         match r.state {
             RecvState::Reset(c) => {
                 r.state = RecvState::ResetRead(c);
@@ -535,7 +596,11 @@ impl Streams {
         let fin = r.final_size == Some(r.buf.read_offset());
         if n == 0 && !fin {
             r.queued = false;
-            return if buf.is_empty() { Ok((0, false)) } else { Err(StreamError::Blocked) };
+            return if buf.is_empty() {
+                Ok((0, false))
+            } else {
+                Err(StreamError::Blocked)
+            };
         }
         if fin {
             r.state = RecvState::Fin;
@@ -553,7 +618,11 @@ impl Streams {
     /// Gives up the sending side of the stream: what is not yet acknowledged is dropped, and the peer is told with RESET_STREAM
     /// and this error code (an application's, as HTTP/3 defines them).
     pub fn reset(&mut self, id: u64, error: u64) -> Result<(), StreamError> {
-        let s = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()).ok_or(StreamError::Unknown)?;
+        let s = self
+            .streams
+            .get_mut(&id)
+            .and_then(|s| s.send.as_mut())
+            .ok_or(StreamError::Unknown)?;
         if matches!(s.state, SendState::Open | SendState::Finished) {
             self.do_reset(id, error);
         }
@@ -563,14 +632,21 @@ impl Streams {
     /// Asks the peer to stop sending on the stream (STOP_SENDING, with this error code): what comes after this is thrown away, and
     /// the peer is expected to reset the stream.
     pub fn stop_sending(&mut self, id: u64, error: u64) -> Result<(), StreamError> {
-        let r = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()).ok_or(StreamError::Unknown)?;
+        let r = self
+            .streams
+            .get_mut(&id)
+            .and_then(|s| s.recv.as_mut())
+            .ok_or(StreamError::Unknown)?;
         if r.state != RecvState::Open || r.discard {
             return Ok(());
         }
         r.discard = true;
         r.queued = false;
         if !r.all_received() {
-            r.stop = Some(Stop { error, pending: true });
+            r.stop = Some(Stop {
+                error,
+                pending: true,
+            });
             self.control.insert(id);
         }
         self.drain(id);
@@ -593,7 +669,9 @@ impl Streams {
 
     /// Throws away what has come on a stream that the application does not want, and finishes it if the end has come.
     fn drain(&mut self, id: u64) {
-        let Some(r) = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()) else { return };
+        let Some(r) = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()) else {
+            return;
+        };
         if !r.discard || r.state != RecvState::Open {
             return;
         }
@@ -634,7 +712,11 @@ impl Streams {
 
     /// A stream that the peer opened is finished and forgotten: it may open another.
     fn grow_stream_limit(&mut self, k: usize) {
-        let initial = if k == 0 { self.cfg.max_streams_bidi } else { self.cfg.max_streams_uni };
+        let initial = if k == 0 {
+            self.cfg.max_streams_bidi
+        } else {
+            self.cfg.max_streams_uni
+        };
         let new = (initial + self.peer_closed[k]).min(MAX_STREAMS_LIMIT);
         if new >= self.max_streams[k] + (initial / 2).max(1) {
             self.max_streams[k] = new;
@@ -644,9 +726,14 @@ impl Streams {
 
     /// Forgets the stream if nothing more can happen to it, and lets the peer open another if it was one of its.
     fn cleanup(&mut self, id: u64) {
-        let Some(st) = self.streams.get(&id) else { return };
+        let Some(st) = self.streams.get(&id) else {
+            return;
+        };
         let send_done = st.send.as_ref().is_none_or(|s| s.state == SendState::Done);
-        let recv_done = st.recv.as_ref().is_none_or(|r| matches!(r.state, RecvState::Fin | RecvState::ResetRead(_)));
+        let recv_done = st
+            .recv
+            .as_ref()
+            .is_none_or(|r| matches!(r.state, RecvState::Fin | RecvState::ResetRead(_)));
         if !(send_done && recv_done) {
             return;
         }
@@ -662,10 +749,16 @@ impl Streams {
 
     /// Gives up the sending side (the caller has checked that it is open or finished).
     fn do_reset(&mut self, id: u64, error: u64) {
-        let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else { return };
+        let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else {
+            return;
+        };
         let final_size = s.buf.sent();
         s.buf.clear();
-        s.reset = Some(Reset { error, final_size, pending: true });
+        s.reset = Some(Reset {
+            error,
+            final_size,
+            pending: true,
+        });
         s.state = SendState::Reset;
         s.blocked_pending = false;
         s.write_blocked = false;
@@ -682,7 +775,9 @@ impl Streams {
     /// credit, makes a note to say so.
     fn schedule(&mut self, id: u64) {
         let conn_room = self.send_max_data.saturating_sub(self.sent_total);
-        let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else { return };
+        let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else {
+            return;
+        };
         if s.queued {
             return;
         }
@@ -723,17 +818,29 @@ impl Streams {
     pub fn check(&self) -> Result<(), String> {
         let bad = |what: String| -> Result<(), String> { Err(what) };
         if self.sent_total > self.send_max_data {
-            return bad(format!("sent {} beyond the connection's limit {}", self.sent_total, self.send_max_data));
+            return bad(format!(
+                "sent {} beyond the connection's limit {}",
+                self.sent_total, self.send_max_data
+            ));
         }
         if self.recv_total > self.recv_limit || self.consumed > self.recv_total {
-            return bad(format!("received {} (limit {}), consumed {}", self.recv_total, self.recv_limit, self.consumed));
+            return bad(format!(
+                "received {} (limit {}), consumed {}",
+                self.recv_total, self.recv_limit, self.consumed
+            ));
         }
         for k in 0..2 {
             if self.opened[k] > self.peer_max_streams[k] {
-                return bad(format!("opened {} streams of kind {k}, the limit is {}", self.opened[k], self.peer_max_streams[k]));
+                return bad(format!(
+                    "opened {} streams of kind {k}, the limit is {}",
+                    self.opened[k], self.peer_max_streams[k]
+                ));
             }
             if self.peer_opened[k] > self.max_streams[k] {
-                return bad(format!("the peer opened {} streams of kind {k}, the limit is {}", self.peer_opened[k], self.max_streams[k]));
+                return bad(format!(
+                    "the peer opened {} streams of kind {k}, the limit is {}",
+                    self.peer_opened[k], self.max_streams[k]
+                ));
             }
         }
         let mut queued = 0;
@@ -742,8 +849,14 @@ impl Streams {
         for (id, st) in &self.streams {
             if let Some(s) = &st.send {
                 // (the buffer of a stream that was reset is cleared: its end is where the data ends, whatever was sent)
-                if matches!(s.state, SendState::Open | SendState::Finished) && s.buf.sent() > s.max_data {
-                    return bad(format!("stream {id}: sent {} beyond the limit {}", s.buf.sent(), s.max_data));
+                if matches!(s.state, SendState::Open | SendState::Finished)
+                    && s.buf.sent() > s.max_data
+                {
+                    return bad(format!(
+                        "stream {id}: sent {} beyond the limit {}",
+                        s.buf.sent(),
+                        s.max_data
+                    ));
                 }
                 sent_sum += s.buf.sent();
                 queued += usize::from(s.queued);
@@ -751,7 +864,8 @@ impl Streams {
                 if s.queued && s.parked {
                     return bad(format!("stream {id} is queued and parked"));
                 }
-                if s.queued != self.send_queue.contains(id) || s.parked != self.parked.contains(id) {
+                if s.queued != self.send_queue.contains(id) || s.parked != self.parked.contains(id)
+                {
                     return bad(format!("stream {id}: the queue and the stream disagree"));
                 }
                 if s.state == SendState::Reset && s.reset.is_none() {
@@ -761,15 +875,27 @@ impl Streams {
             if let Some(r) = &st.recv {
                 let read = r.buf.read_offset();
                 if read > r.high || r.high > r.max_data || r.buf.end_offset() > r.high {
-                    return bad(format!("stream {id}: read {read}, high {}, limit {}, end {}", r.high, r.max_data, r.buf.end_offset()));
+                    return bad(format!(
+                        "stream {id}: read {read}, high {}, limit {}, end {}",
+                        r.high,
+                        r.max_data,
+                        r.buf.end_offset()
+                    ));
                 }
                 if r.final_size.is_some_and(|f| f < r.high) {
-                    return bad(format!("stream {id}: final size {:?} below {}", r.final_size, r.high));
+                    return bad(format!(
+                        "stream {id}: final size {:?} below {}",
+                        r.final_size, r.high
+                    ));
                 }
             }
         }
         if queued != self.send_queue.len() || parked != self.parked.len() {
-            return bad(format!("{queued} queued, {} in the queue; {parked} parked, {} in the set", self.send_queue.len(), self.parked.len()));
+            return bad(format!(
+                "{queued} queued, {} in the queue; {parked} parked, {} in the set",
+                self.send_queue.len(),
+                self.parked.len()
+            ));
         }
         let _ = sent_sum;
         Ok(())
@@ -786,10 +912,16 @@ impl Streams {
         let k = kind_of(id);
         if local {
             if !is_bidirectional(id) {
-                return Err(TransportError::new(code::STREAM_STATE_ERROR, "a frame for a stream that only we send on"));
+                return Err(TransportError::new(
+                    code::STREAM_STATE_ERROR,
+                    "a frame for a stream that only we send on",
+                ));
             }
             if index_of(id) >= self.opened[k] {
-                return Err(TransportError::new(code::STREAM_STATE_ERROR, "a frame for a stream of ours that was not opened"));
+                return Err(TransportError::new(
+                    code::STREAM_STATE_ERROR,
+                    "a frame for a stream of ours that was not opened",
+                ));
             }
         } else {
             self.open_remote(id)?;
@@ -803,11 +935,17 @@ impl Streams {
         let k = kind_of(id);
         if local {
             if index_of(id) >= self.opened[k] {
-                return Err(TransportError::new(code::STREAM_STATE_ERROR, "a frame for a stream of ours that was not opened"));
+                return Err(TransportError::new(
+                    code::STREAM_STATE_ERROR,
+                    "a frame for a stream of ours that was not opened",
+                ));
             }
         } else {
             if !is_bidirectional(id) {
-                return Err(TransportError::new(code::STREAM_STATE_ERROR, "a frame for a stream that only the peer sends on"));
+                return Err(TransportError::new(
+                    code::STREAM_STATE_ERROR,
+                    "a frame for a stream that only the peer sends on",
+                ));
             }
             self.open_remote(id)?;
         }
@@ -819,7 +957,10 @@ impl Streams {
         let k = kind_of(id);
         let index = index_of(id);
         if index >= self.max_streams[k] {
-            return Err(TransportError::new(code::STREAM_LIMIT_ERROR, "a stream beyond the limit on the streams the peer may open"));
+            return Err(TransportError::new(
+                code::STREAM_LIMIT_ERROR,
+                "a stream beyond the limit on the streams the peer may open",
+            ));
         }
         let peer = self.peer;
         while self.peer_opened[k] <= index {
@@ -828,8 +969,18 @@ impl Streams {
             let sid = make_id(i, k, !self.cfg.client);
             let bidirectional = k == 0;
             let send = bidirectional.then(|| Send::new(peer.map_or(0, |p| p.bidi_local)));
-            let recv = Recv::new(if bidirectional { self.cfg.bidi_remote } else { self.cfg.uni });
-            self.streams.insert(sid, Stream { send, recv: Some(recv) });
+            let recv = Recv::new(if bidirectional {
+                self.cfg.bidi_remote
+            } else {
+                self.cfg.uni
+            });
+            self.streams.insert(
+                sid,
+                Stream {
+                    send,
+                    recv: Some(recv),
+                },
+            );
         }
         Ok(())
     }
@@ -837,8 +988,17 @@ impl Streams {
     /// A frame of streams or of flow control arrived. An error is for the connection to end with.
     pub fn on_frame(&mut self, f: &Frame<'_>) -> Result<(), TransportError> {
         match f {
-            Frame::Stream { id, offset, data, fin } => self.on_stream(*id, *offset, data, *fin),
-            Frame::ResetStream { id, error, final_size } => self.on_reset_stream(*id, *error, *final_size),
+            Frame::Stream {
+                id,
+                offset,
+                data,
+                fin,
+            } => self.on_stream(*id, *offset, data, *fin),
+            Frame::ResetStream {
+                id,
+                error,
+                final_size,
+            } => self.on_reset_stream(*id, *error, *final_size),
             Frame::StopSending { id, error } => self.on_stop_sending(*id, *error),
             Frame::MaxData(max) => {
                 if *max > self.send_max_data {
@@ -870,7 +1030,9 @@ impl Streams {
                 if *max > self.peer_max_streams[k] {
                     self.peer_max_streams[k] = *max;
                     if std::mem::take(&mut self.open_blocked[k]) {
-                        self.events.push_back(StreamEvent::Available { bidirectional: *bidirectional });
+                        self.events.push_back(StreamEvent::Available {
+                            bidirectional: *bidirectional,
+                        });
                     }
                 }
                 Ok(())
@@ -882,36 +1044,66 @@ impl Streams {
         }
     }
 
-    fn on_stream(&mut self, id: u64, offset: u64, data: &[u8], fin: bool) -> Result<(), TransportError> {
+    fn on_stream(
+        &mut self,
+        id: u64,
+        offset: u64,
+        data: &[u8],
+        fin: bool,
+    ) -> Result<(), TransportError> {
         if !self.check_recv(id)? {
             return Ok(());
         }
-        let Some(r) = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()) else { return Ok(()) };
+        let Some(r) = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()) else {
+            return Ok(());
+        };
         if r.state != RecvState::Open {
             return Ok(());
         }
         let end = offset + data.len() as u64;
         match r.final_size {
             Some(fs) if end > fs || (fin && end != fs) => {
-                return Err(TransportError::new(code::FINAL_SIZE_ERROR, "stream data that does not agree with the final size"));
+                return Err(TransportError::new(
+                    code::FINAL_SIZE_ERROR,
+                    "stream data that does not agree with the final size",
+                ));
             }
             None if fin && r.high > end => {
-                return Err(TransportError::new(code::FINAL_SIZE_ERROR, "the end of a stream below data that has come"));
+                return Err(TransportError::new(
+                    code::FINAL_SIZE_ERROR,
+                    "the end of a stream below data that has come",
+                ));
             }
             _ => {}
         }
         if end > r.max_data {
-            return Err(TransportError::new(code::FLOW_CONTROL_ERROR, "stream data beyond the limit of the stream"));
+            return Err(TransportError::new(
+                code::FLOW_CONTROL_ERROR,
+                "stream data beyond the limit of the stream",
+            ));
         }
         let delta = end.saturating_sub(r.high);
         if self.recv_total + delta > self.recv_limit {
-            return Err(TransportError::new(code::FLOW_CONTROL_ERROR, "stream data beyond the limit of the connection"));
+            return Err(TransportError::new(
+                code::FLOW_CONTROL_ERROR,
+                "stream data beyond the limit of the connection",
+            ));
         }
         let window = r.max_data - r.buf.read_offset();
         match r.buf.insert(offset, data, window) {
             Ok(()) => {}
-            Err(reassembly::Error::Exceeded) => return Err(TransportError::new(code::FLOW_CONTROL_ERROR, "stream data beyond the limit of the stream, or in too many pieces")),
-            Err(reassembly::Error::Inconsistent) => return Err(TransportError::new(code::PROTOCOL_VIOLATION, "stream data that differs from what came before")),
+            Err(reassembly::Error::Exceeded) => {
+                return Err(TransportError::new(
+                    code::FLOW_CONTROL_ERROR,
+                    "stream data beyond the limit of the stream, or in too many pieces",
+                ))
+            }
+            Err(reassembly::Error::Inconsistent) => {
+                return Err(TransportError::new(
+                    code::PROTOCOL_VIOLATION,
+                    "stream data that differs from what came before",
+                ))
+            }
         }
         r.high = r.high.max(end);
         self.recv_total += delta;
@@ -927,20 +1119,36 @@ impl Streams {
         Ok(())
     }
 
-    fn on_reset_stream(&mut self, id: u64, error: u64, final_size: u64) -> Result<(), TransportError> {
+    fn on_reset_stream(
+        &mut self,
+        id: u64,
+        error: u64,
+        final_size: u64,
+    ) -> Result<(), TransportError> {
         if !self.check_recv(id)? {
             return Ok(());
         }
-        let Some(r) = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()) else { return Ok(()) };
+        let Some(r) = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()) else {
+            return Ok(());
+        };
         if r.final_size.is_some_and(|fs| fs != final_size) || r.high > final_size {
-            return Err(TransportError::new(code::FINAL_SIZE_ERROR, "RESET_STREAM with a final size that does not agree with the data"));
+            return Err(TransportError::new(
+                code::FINAL_SIZE_ERROR,
+                "RESET_STREAM with a final size that does not agree with the data",
+            ));
         }
         if final_size > r.max_data {
-            return Err(TransportError::new(code::FLOW_CONTROL_ERROR, "RESET_STREAM with a final size beyond the limit of the stream"));
+            return Err(TransportError::new(
+                code::FLOW_CONTROL_ERROR,
+                "RESET_STREAM with a final size beyond the limit of the stream",
+            ));
         }
         let delta = final_size - r.high;
         if self.recv_total + delta > self.recv_limit {
-            return Err(TransportError::new(code::FLOW_CONTROL_ERROR, "RESET_STREAM with a final size beyond the limit of the connection"));
+            return Err(TransportError::new(
+                code::FLOW_CONTROL_ERROR,
+                "RESET_STREAM with a final size beyond the limit of the connection",
+            ));
         }
         if r.state != RecvState::Open {
             return Ok(()); // (a repeat, or after the end has been read)
@@ -974,7 +1182,9 @@ impl Streams {
         if !self.check_send(id)? {
             return Ok(());
         }
-        let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else { return Ok(()) };
+        let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else {
+            return Ok(());
+        };
         if matches!(s.state, SendState::Open | SendState::Finished) {
             s.stopped = Some(error);
             self.events.push_back(StreamEvent::Stopped(id, error));
@@ -1008,17 +1218,47 @@ impl Streams {
         }
         for k in 0..2 {
             let bidirectional = k == 0;
-            if self.max_streams_pending[k] && put(out, start, budget, &Frame::MaxStreams { bidirectional, max: self.max_streams[k] }) {
+            if self.max_streams_pending[k]
+                && put(
+                    out,
+                    start,
+                    budget,
+                    &Frame::MaxStreams {
+                        bidirectional,
+                        max: self.max_streams[k],
+                    },
+                )
+            {
                 self.max_streams_pending[k] = false;
-                record(sent, StreamFrame::MaxStreams { bidirectional, max: self.max_streams[k] });
+                record(
+                    sent,
+                    StreamFrame::MaxStreams {
+                        bidirectional,
+                        max: self.max_streams[k],
+                    },
+                );
             }
             if self.streams_blocked_pending[k] {
                 let limit = self.peer_max_streams[k];
                 if !self.open_blocked[k] {
                     self.streams_blocked_pending[k] = false; // (not blocked any more)
-                } else if put(out, start, budget, &Frame::StreamsBlocked { bidirectional, limit }) {
+                } else if put(
+                    out,
+                    start,
+                    budget,
+                    &Frame::StreamsBlocked {
+                        bidirectional,
+                        limit,
+                    },
+                ) {
                     self.streams_blocked_pending[k] = false;
-                    record(sent, StreamFrame::StreamsBlocked { bidirectional, limit });
+                    record(
+                        sent,
+                        StreamFrame::StreamsBlocked {
+                            bidirectional,
+                            limit,
+                        },
+                    );
                 }
             }
         }
@@ -1040,10 +1280,21 @@ impl Streams {
             let mut more = false;
             if let Some(s) = st.send.as_mut() {
                 if let Some(r) = s.reset.as_mut().filter(|r| r.pending) {
-                    let f = Frame::ResetStream { id, error: r.error, final_size: r.final_size };
+                    let f = Frame::ResetStream {
+                        id,
+                        error: r.error,
+                        final_size: r.final_size,
+                    };
                     if put(out, start, budget, &f) {
                         r.pending = false;
-                        record(sent, StreamFrame::ResetStream { id, error: r.error, final_size: r.final_size });
+                        record(
+                            sent,
+                            StreamFrame::ResetStream {
+                                id,
+                                error: r.error,
+                                final_size: r.final_size,
+                            },
+                        );
                     } else {
                         more = true;
                     }
@@ -1064,17 +1315,45 @@ impl Streams {
                     r.stop = None;
                 }
                 if let Some(stop) = r.stop.as_mut().filter(|s| s.pending) {
-                    if put(out, start, budget, &Frame::StopSending { id, error: stop.error }) {
+                    if put(
+                        out,
+                        start,
+                        budget,
+                        &Frame::StopSending {
+                            id,
+                            error: stop.error,
+                        },
+                    ) {
                         stop.pending = false;
-                        record(sent, StreamFrame::StopSending { id, error: stop.error });
+                        record(
+                            sent,
+                            StreamFrame::StopSending {
+                                id,
+                                error: stop.error,
+                            },
+                        );
                     } else {
                         more = true;
                     }
                 }
                 if r.max_data_pending {
-                    if put(out, start, budget, &Frame::MaxStreamData { id, max: r.max_data }) {
+                    if put(
+                        out,
+                        start,
+                        budget,
+                        &Frame::MaxStreamData {
+                            id,
+                            max: r.max_data,
+                        },
+                    ) {
                         r.max_data_pending = false;
-                        record(sent, StreamFrame::MaxStreamData { id, max: r.max_data });
+                        record(
+                            sent,
+                            StreamFrame::MaxStreamData {
+                                id,
+                                max: r.max_data,
+                            },
+                        );
                     } else {
                         more = true;
                     }
@@ -1090,9 +1369,15 @@ impl Streams {
             if room < 4 {
                 break;
             }
-            let Some(&id) = self.send_queue.front() else { break };
+            let Some(&id) = self.send_queue.front() else {
+                break;
+            };
             let conn_room = self.send_max_data.saturating_sub(self.sent_total);
-            let ready = self.streams.get(&id).and_then(|s| s.send.as_ref()).is_some_and(|s| matches!(gate(s, conn_room), Gate::Ready));
+            let ready = self
+                .streams
+                .get(&id)
+                .and_then(|s| s.send.as_ref())
+                .is_some_and(|s| matches!(gate(s, conn_room), Gate::Ready));
             if !ready {
                 // (it was reset, or the credit went to other streams)
                 self.send_queue.pop_front();
@@ -1102,7 +1387,9 @@ impl Streams {
                 self.schedule(id);
                 continue;
             }
-            let Some(f) = self.write_stream_frame(id, out, room) else { break };
+            let Some(f) = self.write_stream_frame(id, out, room) else {
+                break;
+            };
             sent.push(SentFrame::Stream(f));
             self.send_queue.pop_front();
             if let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) {
@@ -1114,7 +1401,12 @@ impl Streams {
 
     /// Writes a STREAM frame for the stream, using at most `room` bytes: with a Length field, or without if the data fills the
     /// room (the frame is then the last of the packet).
-    fn write_stream_frame(&mut self, id: u64, out: &mut Vec<u8>, room: usize) -> Option<StreamFrame> {
+    fn write_stream_frame(
+        &mut self,
+        id: u64,
+        out: &mut Vec<u8>,
+        room: usize,
+    ) -> Option<StreamFrame> {
         let conn_room = self.send_max_data.saturating_sub(self.sent_total);
         let s = self.streams.get_mut(&id)?.send.as_mut()?;
         let limit = s.max_data.min(s.buf.sent() + conn_room);
@@ -1147,7 +1439,12 @@ impl Streams {
         }
         s.buf.copy(c.offset, c.len, out);
         self.sent_total += c.new;
-        Some(StreamFrame::Stream { id, offset: c.offset, len: c.len, fin: c.fin })
+        Some(StreamFrame::Stream {
+            id,
+            offset: c.offset,
+            len: c.len,
+            fin: c.fin,
+        })
     }
 
     // -----------------------------------------------------------------------------------------------------------------------
@@ -1155,8 +1452,15 @@ impl Streams {
 
     pub fn on_acked(&mut self, f: &StreamFrame) {
         match *f {
-            StreamFrame::Stream { id, offset, len, fin } => {
-                let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else { return };
+            StreamFrame::Stream {
+                id,
+                offset,
+                len,
+                fin,
+            } => {
+                let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else {
+                    return;
+                };
                 if !matches!(s.state, SendState::Open | SendState::Finished) {
                     return;
                 }
@@ -1164,7 +1468,10 @@ impl Streams {
                 if s.state == SendState::Finished && s.buf.is_fully_acked() {
                     s.state = SendState::Done;
                 }
-                if s.write_blocked && s.state == SendState::Open && s.buf.buffered() <= self.cfg.send_buffer / 2 {
+                if s.write_blocked
+                    && s.state == SendState::Open
+                    && s.buf.buffered() <= self.cfg.send_buffer / 2
+                {
                     s.write_blocked = false;
                     self.events.push_back(StreamEvent::Writable(id));
                 }
@@ -1185,8 +1492,15 @@ impl Streams {
 
     pub fn on_lost(&mut self, f: &StreamFrame) {
         match *f {
-            StreamFrame::Stream { id, offset, len, fin } => {
-                let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else { return };
+            StreamFrame::Stream {
+                id,
+                offset,
+                len,
+                fin,
+            } => {
+                let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()) else {
+                    return;
+                };
                 if !matches!(s.state, SendState::Open | SendState::Finished) {
                     return;
                 }
@@ -1194,13 +1508,24 @@ impl Streams {
                 self.schedule(id);
             }
             StreamFrame::ResetStream { id, .. } => {
-                if let Some(r) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()).filter(|s| s.state == SendState::Reset).and_then(|s| s.reset.as_mut()) {
+                if let Some(r) = self
+                    .streams
+                    .get_mut(&id)
+                    .and_then(|s| s.send.as_mut())
+                    .filter(|s| s.state == SendState::Reset)
+                    .and_then(|s| s.reset.as_mut())
+                {
                     r.pending = true;
                     self.control.insert(id);
                 }
             }
             StreamFrame::StopSending { id, .. } => {
-                if let Some(r) = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()).filter(|r| r.state == RecvState::Open) {
+                if let Some(r) = self
+                    .streams
+                    .get_mut(&id)
+                    .and_then(|s| s.recv.as_mut())
+                    .filter(|r| r.state == RecvState::Open)
+                {
                     if let Some(stop) = r.stop.as_mut() {
                         stop.pending = true;
                         self.control.insert(id);
@@ -1214,7 +1539,12 @@ impl Streams {
                 }
             }
             StreamFrame::MaxStreamData { id, max } => {
-                if let Some(r) = self.streams.get_mut(&id).and_then(|s| s.recv.as_mut()).filter(|r| r.state == RecvState::Open && r.max_data == max) {
+                if let Some(r) = self
+                    .streams
+                    .get_mut(&id)
+                    .and_then(|s| s.recv.as_mut())
+                    .filter(|r| r.state == RecvState::Open && r.max_data == max)
+                {
                     r.max_data_pending = true;
                     self.control.insert(id);
                 }
@@ -1232,12 +1562,23 @@ impl Streams {
                 }
             }
             StreamFrame::StreamDataBlocked { id, limit } => {
-                if let Some(s) = self.streams.get_mut(&id).and_then(|s| s.send.as_mut()).filter(|s| s.max_data == limit && matches!(s.state, SendState::Open | SendState::Finished)) {
+                if let Some(s) = self
+                    .streams
+                    .get_mut(&id)
+                    .and_then(|s| s.send.as_mut())
+                    .filter(|s| {
+                        s.max_data == limit
+                            && matches!(s.state, SendState::Open | SendState::Finished)
+                    })
+                {
                     s.blocked_pending = true;
                     self.control.insert(id);
                 }
             }
-            StreamFrame::StreamsBlocked { bidirectional, limit } => {
+            StreamFrame::StreamsBlocked {
+                bidirectional,
+                limit,
+            } => {
                 let k = if bidirectional { 0 } else { 1 };
                 if self.open_blocked[k] && self.peer_max_streams[k] == limit {
                     self.streams_blocked_pending[k] = true;
@@ -1257,7 +1598,16 @@ mod tests {
     // a little harness: two endpoints, and packets between them that the test delivers, loses or acknowledges
 
     fn config(client: bool) -> StreamsConfig {
-        StreamsConfig { client, max_data: 20_000, bidi_local: 6_000, bidi_remote: 6_000, uni: 6_000, max_streams_bidi: 8, max_streams_uni: 8, send_buffer: 8_000 }
+        StreamsConfig {
+            client,
+            max_data: 20_000,
+            bidi_local: 6_000,
+            bidi_remote: 6_000,
+            uni: 6_000,
+            max_streams_bidi: 8,
+            max_streams_uni: 8,
+            send_buffer: 8_000,
+        }
     }
 
     /// The transport parameters that an endpoint with this configuration sends.
@@ -1289,7 +1639,11 @@ mod tests {
         let mut out = Vec::new();
         let mut sent = Vec::new();
         from.write_frames(&mut out, budget, &mut sent);
-        assert!(out.len() <= budget, "{} bytes in a budget of {budget}", out.len());
+        assert!(
+            out.len() <= budget,
+            "{} bytes in a budget of {budget}",
+            out.len()
+        );
         (out, sent)
     }
 
@@ -1304,7 +1658,9 @@ mod tests {
     }
 
     fn frames_of(bytes: &[u8]) -> Vec<Frame<'_>> {
-        frame::frames(bytes, PacketType::OneRtt).map(|f| f.expect("a frame that reads")).collect()
+        frame::frames(bytes, PacketType::OneRtt)
+            .map(|f| f.expect("a frame that reads"))
+            .collect()
     }
 
     fn acked(from: &mut Streams, sent: &[SentFrame]) {
@@ -1377,7 +1733,9 @@ mod tests {
     }
 
     fn pattern(n: usize, seed: u8) -> Vec<u8> {
-        (0..n).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)).collect()
+        (0..n)
+            .map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed))
+            .collect()
     }
 
     fn events(s: &mut Streams) -> Vec<StreamEvent> {
@@ -1407,7 +1765,15 @@ mod tests {
 
     #[test]
     fn the_id_says_who_opened_the_stream_and_which_way_it_goes() {
-        assert_eq!([make_id(0, 0, true), make_id(0, 1, true), make_id(0, 0, false), make_id(0, 1, false)], [0, 2, 1, 3]);
+        assert_eq!(
+            [
+                make_id(0, 0, true),
+                make_id(0, 1, true),
+                make_id(0, 0, false),
+                make_id(0, 1, false)
+            ],
+            [0, 2, 1, 3]
+        );
         assert_eq!(make_id(3, 0, true), 12);
         assert_eq!(make_id(2, 1, false), 11);
         assert!(is_bidirectional(12) && !is_bidirectional(11));
@@ -1418,21 +1784,55 @@ mod tests {
     #[test]
     fn streams_open_with_the_numbers_of_their_kind_and_only_when_the_peers_limits_are_known() {
         let mut c = Streams::new(config(true));
-        assert_eq!(c.open(true), Err(StreamError::Blocked), "the peer's parameters are not known");
+        assert_eq!(
+            c.open(true),
+            Err(StreamError::Blocked),
+            "the peer's parameters are not known"
+        );
         let (mut c, mut s) = pair();
-        assert_eq!([c.open(true), c.open(true), c.open(false), c.open(true), c.open(false)], [Ok(0), Ok(4), Ok(2), Ok(8), Ok(6)]);
-        assert_eq!([s.open(true), s.open(false), s.open(true)], [Ok(1), Ok(3), Ok(5)]);
+        assert_eq!(
+            [
+                c.open(true),
+                c.open(true),
+                c.open(false),
+                c.open(true),
+                c.open(false)
+            ],
+            [Ok(0), Ok(4), Ok(2), Ok(8), Ok(6)]
+        );
+        assert_eq!(
+            [s.open(true), s.open(false), s.open(true)],
+            [Ok(1), Ok(3), Ok(5)]
+        );
     }
 
     #[test]
     fn opening_beyond_the_peers_limit_is_blocked_and_says_so_once_and_the_peer_can_raise_it() {
-        let (mut c, _s) = pair_with(config(true), StreamsConfig { max_streams_bidi: 2, ..config(false) });
+        let (mut c, _s) = pair_with(
+            config(true),
+            StreamsConfig {
+                max_streams_bidi: 2,
+                ..config(false)
+            },
+        );
         assert_eq!([c.open(true), c.open(true)], [Ok(0), Ok(4)]);
         assert_eq!(c.open(true), Err(StreamError::Blocked));
         assert_eq!(c.open(true), Err(StreamError::Blocked));
         let (bytes, sent) = packet(&mut c, 100);
-        assert_eq!(frames_of(&bytes), vec![Frame::StreamsBlocked { bidirectional: true, limit: 2 }]);
-        assert_eq!(sent, vec![SentFrame::Stream(StreamFrame::StreamsBlocked { bidirectional: true, limit: 2 })]);
+        assert_eq!(
+            frames_of(&bytes),
+            vec![Frame::StreamsBlocked {
+                bidirectional: true,
+                limit: 2
+            }]
+        );
+        assert_eq!(
+            sent,
+            vec![SentFrame::Stream(StreamFrame::StreamsBlocked {
+                bidirectional: true,
+                limit: 2
+            })]
+        );
         // (once for the limit, though the application tried twice)
         assert!(!c.has_pending());
         // the packet was lost: the frame goes again, as the stream is still blocked
@@ -1441,12 +1841,25 @@ mod tests {
         assert_eq!(frames_of(&bytes).len(), 1);
         // the peer raises the limit
         assert!(c.poll_event().is_none());
-        c.on_frame(&Frame::MaxStreams { bidirectional: true, max: 3 }).unwrap();
-        assert_eq!(events(&mut c), vec![StreamEvent::Available { bidirectional: true }]);
+        c.on_frame(&Frame::MaxStreams {
+            bidirectional: true,
+            max: 3,
+        })
+        .unwrap();
+        assert_eq!(
+            events(&mut c),
+            vec![StreamEvent::Available {
+                bidirectional: true
+            }]
+        );
         assert_eq!(c.open(true), Ok(8));
         assert_eq!(c.open(true), Err(StreamError::Blocked));
         // a lower limit than the one we have changes nothing
-        c.on_frame(&Frame::MaxStreams { bidirectional: true, max: 1 }).unwrap();
+        c.on_frame(&Frame::MaxStreams {
+            bidirectional: true,
+            max: 1,
+        })
+        .unwrap();
         assert_eq!(c.peer_max_streams[0], 3);
         // the unidirectional streams have a limit of their own
         assert_eq!(c.open(false), Ok(2));
@@ -1473,8 +1886,16 @@ mod tests {
             packets += 1;
         }
         assert_eq!(packets, 5);
-        assert_eq!(&sizes[..4], &[1200; 4], "the full packets have no room to spare: the frame has no length");
-        assert_eq!(events(&mut s), vec![StreamEvent::Readable(id)], "one event for the stream, however many frames came");
+        assert_eq!(
+            &sizes[..4],
+            &[1200; 4],
+            "the full packets have no room to spare: the frame has no length"
+        );
+        assert_eq!(
+            events(&mut s),
+            vec![StreamEvent::Readable(id)],
+            "one event for the stream, however many frames came"
+        );
         let (got, fin) = read_all(&mut s, id);
         assert!(fin);
         assert_eq!(got, data);
@@ -1486,7 +1907,10 @@ mod tests {
         assert_eq!(s.write(id, b"ok", true), Ok(2));
         settle(&mut c, &mut s);
         assert_eq!(read_all(&mut c, id), (b"ok".to_vec(), true));
-        assert!(!c.contains(id) && !s.contains(id), "a stream that is over on both sides is forgotten");
+        assert!(
+            !c.contains(id) && !s.contains(id),
+            "a stream that is over on both sides is forgotten"
+        );
     }
 
     #[test]
@@ -1495,17 +1919,42 @@ mod tests {
         let id = c.open(false).unwrap();
         assert_eq!(c.write(id, b"hello", false), Ok(5));
         let sent = flow(&mut c, &mut s, 1200);
-        assert_eq!(sent, vec![SentFrame::Stream(StreamFrame::Stream { id, offset: 0, len: 5, fin: false })]);
+        assert_eq!(
+            sent,
+            vec![SentFrame::Stream(StreamFrame::Stream {
+                id,
+                offset: 0,
+                len: 5,
+                fin: false
+            })]
+        );
         assert_eq!(read_all(&mut s, id), (b"hello".to_vec(), false));
         assert_eq!(c.write(id, b"", true), Ok(0));
         let sent = flow(&mut c, &mut s, 1200);
-        assert_eq!(sent, vec![SentFrame::Stream(StreamFrame::Stream { id, offset: 5, len: 0, fin: true })]);
+        assert_eq!(
+            sent,
+            vec![SentFrame::Stream(StreamFrame::Stream {
+                id,
+                offset: 5,
+                len: 0,
+                fin: true
+            })]
+        );
         // the application is told of the end, and then reads it
-        assert_eq!(events(&mut s), vec![StreamEvent::Readable(id), StreamEvent::Readable(id)]);
+        assert_eq!(
+            events(&mut s),
+            vec![StreamEvent::Readable(id), StreamEvent::Readable(id)]
+        );
         let mut buf = [0u8; 10];
         assert_eq!(s.read(id, &mut buf), Ok((0, true)));
-        assert!(!s.contains(id), "a unidirectional stream that is read to its end is forgotten");
-        assert!(!c.contains(id), "and the sending side's once all is acknowledged");
+        assert!(
+            !s.contains(id),
+            "a unidirectional stream that is read to its end is forgotten"
+        );
+        assert!(
+            !c.contains(id),
+            "and the sending side's once all is acknowledged"
+        );
         // writing after the end is refused
         let (mut c2, _s2) = pair();
         let id = c2.open(true).unwrap();
@@ -1524,11 +1973,16 @@ mod tests {
     }
 
     #[test]
-    fn a_write_that_the_buffer_cannot_hold_is_cut_short_and_the_application_is_told_when_there_is_room() {
+    fn a_write_that_the_buffer_cannot_hold_is_cut_short_and_the_application_is_told_when_there_is_room(
+    ) {
         let (mut c, mut s) = pair();
         let id = c.open(true).unwrap();
         let data = pattern(20_000, 2);
-        assert_eq!(c.write(id, &data, true), Ok(8000), "the buffer holds 8000 bytes");
+        assert_eq!(
+            c.write(id, &data, true),
+            Ok(8000),
+            "the buffer holds 8000 bytes"
+        );
         assert_eq!(c.send_room(id), Some(0));
         assert_eq!(c.write(id, &data[8000..], true), Err(StreamError::Blocked));
         // sent, and not acknowledged: still held
@@ -1618,22 +2072,36 @@ mod tests {
             }
             let _ = drain_to(&mut s, &mut c);
         }
-        assert!(!s.contains(id) && !c.contains(id), "read to the end, all acknowledged, forgotten");
+        assert!(
+            !s.contains(id) && !c.contains(id),
+            "read to the end, all acknowledged, forgotten"
+        );
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
     // flow control
 
     fn stream_bytes(sent: &[SentFrame]) -> usize {
-        sent.iter().map(|f| if let SentFrame::Stream(StreamFrame::Stream { len, .. }) = f { *len } else { 0 }).sum()
+        sent.iter()
+            .map(|f| {
+                if let SentFrame::Stream(StreamFrame::Stream { len, .. }) = f {
+                    *len
+                } else {
+                    0
+                }
+            })
+            .sum()
     }
 
     fn count(sent: &[SentFrame], pick: impl Fn(&StreamFrame) -> bool) -> usize {
-        sent.iter().filter(|f| matches!(f, SentFrame::Stream(f) if pick(f))).count()
+        sent.iter()
+            .filter(|f| matches!(f, SentFrame::Stream(f) if pick(f)))
+            .count()
     }
 
     #[test]
-    fn a_stream_stops_at_the_limit_says_so_once_and_goes_on_when_the_peer_has_read_half_the_window() {
+    fn a_stream_stops_at_the_limit_says_so_once_and_goes_on_when_the_peer_has_read_half_the_window()
+    {
         let (mut c, mut s) = pair();
         let id = c.open(true).unwrap();
         c.write(id, &pattern(8000, 5), false).unwrap();
@@ -1642,28 +2110,61 @@ mod tests {
             sent.extend(flow(&mut c, &mut s, 1200));
         }
         assert_eq!(stream_bytes(&sent), 6000, "the limit of the stream is 6000");
-        assert_eq!(count(&sent, |f| matches!(f, StreamFrame::StreamDataBlocked { id: i, limit: 6000 } if *i == id)), 1);
-        assert_eq!(count(&sent, |f| matches!(f, StreamFrame::StreamDataBlocked { .. })), 1);
-        assert!(!c.has_pending(), "nothing to send until the peer gives more credit");
+        assert_eq!(
+            count(
+                &sent,
+                |f| matches!(f, StreamFrame::StreamDataBlocked { id: i, limit: 6000 } if *i == id)
+            ),
+            1
+        );
+        assert_eq!(
+            count(&sent, |f| matches!(
+                f,
+                StreamFrame::StreamDataBlocked { .. }
+            )),
+            1
+        );
+        assert!(
+            !c.has_pending(),
+            "nothing to send until the peer gives more credit"
+        );
         // the peer reads, but less than half of the window: no news
         let mut buf = vec![0u8; 2999];
         assert_eq!(s.read(id, &mut buf), Ok((2999, false)));
         assert!(!s.has_pending());
         assert_eq!(s.read(id, &mut buf[..1]), Ok((1, false)));
         let sent = flow(&mut s, &mut c, 1200);
-        assert_eq!(sent, vec![SentFrame::Stream(StreamFrame::MaxStreamData { id, max: 9000 })]);
+        assert_eq!(
+            sent,
+            vec![SentFrame::Stream(StreamFrame::MaxStreamData {
+                id,
+                max: 9000
+            })]
+        );
         assert!(c.has_pending());
         let mut rest = Vec::new();
         while c.has_pending() {
             rest.extend(flow(&mut c, &mut s, 1200));
         }
         assert_eq!(stream_bytes(&rest), 2000);
-        assert_eq!(count(&rest, |f| matches!(f, StreamFrame::StreamDataBlocked { .. })), 0);
+        assert_eq!(
+            count(&rest, |f| matches!(
+                f,
+                StreamFrame::StreamDataBlocked { .. }
+            )),
+            0
+        );
     }
 
     #[test]
     fn all_streams_stop_at_the_limit_of_the_connection_and_the_connection_says_so_once() {
-        let (mut c, mut s) = pair_with(config(true), StreamsConfig { max_data: 5000, ..config(false) });
+        let (mut c, mut s) = pair_with(
+            config(true),
+            StreamsConfig {
+                max_data: 5000,
+                ..config(false)
+            },
+        );
         let (a, b) = (c.open(true).unwrap(), c.open(true).unwrap());
         let (da, db) = (pattern(4000, 1), pattern(4000, 2));
         c.write(a, &da, true).unwrap();
@@ -1673,13 +2174,30 @@ mod tests {
             sent.extend(flow(&mut c, &mut s, 1200));
         }
         assert_eq!(stream_bytes(&sent), 5000);
-        assert_eq!(count(&sent, |f| matches!(f, StreamFrame::DataBlocked(5000))), 1);
-        assert_eq!(count(&sent, |f| matches!(f, StreamFrame::StreamDataBlocked { .. })), 0, "the streams' limits are not reached");
+        assert_eq!(
+            count(&sent, |f| matches!(f, StreamFrame::DataBlocked(5000))),
+            1
+        );
+        assert_eq!(
+            count(&sent, |f| matches!(
+                f,
+                StreamFrame::StreamDataBlocked { .. }
+            )),
+            0,
+            "the streams' limits are not reached"
+        );
         // the server reads what came, and gives more: not at every byte, but when half of the window has been read
         let (mut ra, mut rb) = (read_all(&mut s, a).0, read_all(&mut s, b).0);
         assert_eq!(ra.len() + rb.len(), 5000);
         let sent = flow(&mut s, &mut c, 1200);
-        assert_eq!(count(&sent, |f| matches!(f, StreamFrame::MaxData(v) if *v > 5000 && *v <= 10_000)), 1, "{sent:?}");
+        assert_eq!(
+            count(
+                &sent,
+                |f| matches!(f, StreamFrame::MaxData(v) if *v > 5000 && *v <= 10_000)
+            ),
+            1,
+            "{sent:?}"
+        );
         assert!(c.has_pending());
         for _ in 0..10 {
             settle(&mut c, &mut s);
@@ -1692,7 +2210,14 @@ mod tests {
 
     #[test]
     fn credit_for_the_whole_connection_follows_what_is_read_not_what_comes() {
-        let (mut c, mut s) = pair_with(config(true), StreamsConfig { max_data: 4000, bidi_remote: 4000, ..config(false) });
+        let (mut c, mut s) = pair_with(
+            config(true),
+            StreamsConfig {
+                max_data: 4000,
+                bidi_remote: 4000,
+                ..config(false)
+            },
+        );
         let id = c.open(true).unwrap();
         c.write(id, &pattern(4000, 0), false).unwrap();
         while c.has_pending() {
@@ -1706,7 +2231,13 @@ mod tests {
         assert!(s.max_data_pending, "half of the window was read");
         let sent = flow(&mut s, &mut c, 1200);
         assert_eq!(count(&sent, |f| matches!(f, StreamFrame::MaxData(6000))), 1);
-        assert_eq!(count(&sent, |f| matches!(f, StreamFrame::MaxStreamData { max: 6000, .. })), 1);
+        assert_eq!(
+            count(&sent, |f| matches!(
+                f,
+                StreamFrame::MaxStreamData { max: 6000, .. }
+            )),
+            1
+        );
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
@@ -1717,22 +2248,39 @@ mod tests {
     }
 
     fn data(id: u64, offset: u64, bytes: &[u8], fin: bool) -> Frame<'_> {
-        Frame::Stream { id, offset, data: bytes, fin }
+        Frame::Stream {
+            id,
+            offset,
+            data: bytes,
+            fin,
+        }
     }
 
     #[test]
     fn data_beyond_the_limit_of_a_stream_or_of_the_connection_ends_the_connection() {
         let (_c, mut s) = pair();
-        assert!(s.on_frame(&data(0, 5980, &[0; 20], false)).is_ok(), "up to the limit is fine");
-        assert_eq!(code_of(s.on_frame(&data(0, 5990, &[0; 20], false))), code::FLOW_CONTROL_ERROR);
-        assert_eq!(code_of(s.on_frame(&data(4, 6000, &[0; 1], false))), code::FLOW_CONTROL_ERROR);
+        assert!(
+            s.on_frame(&data(0, 5980, &[0; 20], false)).is_ok(),
+            "up to the limit is fine"
+        );
+        assert_eq!(
+            code_of(s.on_frame(&data(0, 5990, &[0; 20], false))),
+            code::FLOW_CONTROL_ERROR
+        );
+        assert_eq!(
+            code_of(s.on_frame(&data(4, 6000, &[0; 1], false))),
+            code::FLOW_CONTROL_ERROR
+        );
         // the limit of the connection is 20000: 3 streams of 5000 and then a 4th; 5980 are in from the first
         let (_c, mut s) = pair();
         for i in 0..4u64 {
             s.on_frame(&data(4 * i, 0, &[0; 5000], false)).unwrap();
         }
         assert_eq!(s.recv_total, 20_000);
-        assert_eq!(code_of(s.on_frame(&data(16, 0, &[0; 1], false))), code::FLOW_CONTROL_ERROR);
+        assert_eq!(
+            code_of(s.on_frame(&data(16, 0, &[0; 1], false))),
+            code::FLOW_CONTROL_ERROR
+        );
         // a repeat of what came is not new data
         assert!(s.on_frame(&data(0, 0, &[0; 5000], false)).is_ok());
     }
@@ -1742,45 +2290,118 @@ mod tests {
         let ok = |s: &mut Streams, f: Frame<'_>| s.on_frame(&f).unwrap();
         let (_c, mut s) = pair();
         ok(&mut s, data(0, 0, &[1; 100], true));
-        assert_eq!(code_of(s.on_frame(&data(0, 100, &[1; 10], false))), code::FINAL_SIZE_ERROR, "data beyond the end");
-        assert_eq!(code_of(s.on_frame(&data(0, 95, &[1; 10], true))), code::FINAL_SIZE_ERROR, "another end");
+        assert_eq!(
+            code_of(s.on_frame(&data(0, 100, &[1; 10], false))),
+            code::FINAL_SIZE_ERROR,
+            "data beyond the end"
+        );
+        assert_eq!(
+            code_of(s.on_frame(&data(0, 95, &[1; 10], true))),
+            code::FINAL_SIZE_ERROR,
+            "another end"
+        );
         ok(&mut s, data(0, 50, &[1; 50], true)); // (the same end again is a repeat)
-        assert_eq!(code_of(s.on_frame(&Frame::ResetStream { id: 0, error: 1, final_size: 99 })), code::FINAL_SIZE_ERROR);
+        assert_eq!(
+            code_of(s.on_frame(&Frame::ResetStream {
+                id: 0,
+                error: 1,
+                final_size: 99
+            })),
+            code::FINAL_SIZE_ERROR
+        );
         // the end below data that has come
         let (_c, mut s) = pair();
         ok(&mut s, data(4, 0, &[1; 100], false));
-        assert_eq!(code_of(s.on_frame(&data(4, 50, &[], true))), code::FINAL_SIZE_ERROR);
+        assert_eq!(
+            code_of(s.on_frame(&data(4, 50, &[], true))),
+            code::FINAL_SIZE_ERROR
+        );
         // a reset below data that has come
-        assert_eq!(code_of(s.on_frame(&Frame::ResetStream { id: 4, error: 1, final_size: 99 })), code::FINAL_SIZE_ERROR);
+        assert_eq!(
+            code_of(s.on_frame(&Frame::ResetStream {
+                id: 4,
+                error: 1,
+                final_size: 99
+            })),
+            code::FINAL_SIZE_ERROR
+        );
         // a reset beyond the limit
-        assert_eq!(code_of(s.on_frame(&Frame::ResetStream { id: 4, error: 1, final_size: 6001 })), code::FLOW_CONTROL_ERROR);
+        assert_eq!(
+            code_of(s.on_frame(&Frame::ResetStream {
+                id: 4,
+                error: 1,
+                final_size: 6001
+            })),
+            code::FLOW_CONTROL_ERROR
+        );
     }
 
     #[test]
     fn data_that_differs_from_what_came_for_the_same_offsets_is_a_violation() {
         let (_c, mut s) = pair();
         s.on_frame(&data(0, 0, &[1; 100], false)).unwrap();
-        assert_eq!(code_of(s.on_frame(&data(0, 50, &[2; 10], false))), code::PROTOCOL_VIOLATION);
+        assert_eq!(
+            code_of(s.on_frame(&data(0, 50, &[2; 10], false))),
+            code::PROTOCOL_VIOLATION
+        );
     }
 
     #[test]
     fn frames_for_streams_that_cannot_be_are_stream_state_errors() {
         let (mut c, mut s) = pair();
         // the server's unidirectional stream 3 is one the client only reads: it cannot send on it
-        assert_eq!(code_of(s.on_frame(&data(3, 0, &[1], false))), code::STREAM_STATE_ERROR);
-        assert_eq!(code_of(s.on_frame(&Frame::ResetStream { id: 3, error: 0, final_size: 0 })), code::STREAM_STATE_ERROR);
+        assert_eq!(
+            code_of(s.on_frame(&data(3, 0, &[1], false))),
+            code::STREAM_STATE_ERROR
+        );
+        assert_eq!(
+            code_of(s.on_frame(&Frame::ResetStream {
+                id: 3,
+                error: 0,
+                final_size: 0
+            })),
+            code::STREAM_STATE_ERROR
+        );
         // a stream of the server's that it did not open
-        assert_eq!(code_of(s.on_frame(&data(1, 0, &[1], false))), code::STREAM_STATE_ERROR);
-        assert_eq!(code_of(s.on_frame(&Frame::MaxStreamData { id: 1, max: 9 })), code::STREAM_STATE_ERROR);
-        assert_eq!(code_of(s.on_frame(&Frame::StopSending { id: 1, error: 9 })), code::STREAM_STATE_ERROR);
+        assert_eq!(
+            code_of(s.on_frame(&data(1, 0, &[1], false))),
+            code::STREAM_STATE_ERROR
+        );
+        assert_eq!(
+            code_of(s.on_frame(&Frame::MaxStreamData { id: 1, max: 9 })),
+            code::STREAM_STATE_ERROR
+        );
+        assert_eq!(
+            code_of(s.on_frame(&Frame::StopSending { id: 1, error: 9 })),
+            code::STREAM_STATE_ERROR
+        );
         // the client's unidirectional streams are not ones the client reads, nor ones the server sends on
-        assert_eq!(code_of(s.on_frame(&Frame::MaxStreamData { id: 2, max: 9 })), code::STREAM_STATE_ERROR);
-        assert_eq!(code_of(s.on_frame(&Frame::StopSending { id: 2, error: 9 })), code::STREAM_STATE_ERROR);
+        assert_eq!(
+            code_of(s.on_frame(&Frame::MaxStreamData { id: 2, max: 9 })),
+            code::STREAM_STATE_ERROR
+        );
+        assert_eq!(
+            code_of(s.on_frame(&Frame::StopSending { id: 2, error: 9 })),
+            code::STREAM_STATE_ERROR
+        );
         // the same from the client's side
-        assert_eq!(code_of(c.on_frame(&data(2, 0, &[1], false))), code::STREAM_STATE_ERROR);
-        assert_eq!(code_of(c.on_frame(&Frame::MaxStreamData { id: 3, max: 9 })), code::STREAM_STATE_ERROR);
-        assert_eq!(code_of(c.on_frame(&Frame::StreamDataBlocked { id: 2, limit: 9 })), code::STREAM_STATE_ERROR);
-        assert_eq!(code_of(c.on_frame(&Frame::MaxStreamData { id: 8, max: 9 })), code::STREAM_STATE_ERROR, "a stream we did not open");
+        assert_eq!(
+            code_of(c.on_frame(&data(2, 0, &[1], false))),
+            code::STREAM_STATE_ERROR
+        );
+        assert_eq!(
+            code_of(c.on_frame(&Frame::MaxStreamData { id: 3, max: 9 })),
+            code::STREAM_STATE_ERROR
+        );
+        assert_eq!(
+            code_of(c.on_frame(&Frame::StreamDataBlocked { id: 2, limit: 9 })),
+            code::STREAM_STATE_ERROR
+        );
+        assert_eq!(
+            code_of(c.on_frame(&Frame::MaxStreamData { id: 8, max: 9 })),
+            code::STREAM_STATE_ERROR,
+            "a stream we did not open"
+        );
     }
 
     #[test]
@@ -1790,8 +2411,18 @@ mod tests {
         for id in [0, 4, 8, 12, 16, 20, 24, 28] {
             assert!(s.contains(id), "{id}");
         }
-        assert_eq!(code_of(s.on_frame(&data(32, 0, &[1], false))), code::STREAM_LIMIT_ERROR);
-        assert_eq!(code_of(s.on_frame(&Frame::ResetStream { id: 36, error: 0, final_size: 0 })), code::STREAM_LIMIT_ERROR);
+        assert_eq!(
+            code_of(s.on_frame(&data(32, 0, &[1], false))),
+            code::STREAM_LIMIT_ERROR
+        );
+        assert_eq!(
+            code_of(s.on_frame(&Frame::ResetStream {
+                id: 36,
+                error: 0,
+                final_size: 0
+            })),
+            code::STREAM_LIMIT_ERROR
+        );
         // the server can write on the streams that the client opened with a frame for another
         assert_eq!(s.write(0, b"hi", false), Ok(2));
         assert_eq!(events(&mut s), vec![StreamEvent::Readable(28)]);
@@ -1809,9 +2440,20 @@ mod tests {
         assert!(!s.contains(id) && !c.contains(id));
         // a copy of the frame arrives again, and an acknowledgment and a loss of what is forgotten
         deliver(&mut s, &bytes).unwrap();
-        s.on_frame(&Frame::MaxStreamData { id: 2, max: 9 }).expect_err("it is a stream that we do not send on");
-        c.on_acked(&StreamFrame::Stream { id, offset: 0, len: 3, fin: true });
-        c.on_lost(&StreamFrame::Stream { id, offset: 0, len: 3, fin: true });
+        s.on_frame(&Frame::MaxStreamData { id: 2, max: 9 })
+            .expect_err("it is a stream that we do not send on");
+        c.on_acked(&StreamFrame::Stream {
+            id,
+            offset: 0,
+            len: 3,
+            fin: true,
+        });
+        c.on_lost(&StreamFrame::Stream {
+            id,
+            offset: 0,
+            len: 3,
+            fin: true,
+        });
         c.on_frame(&Frame::MaxStreamData { id, max: 9 }).unwrap();
         c.on_frame(&Frame::StopSending { id, error: 0 }).unwrap();
         assert!(!c.has_pending());
@@ -1832,12 +2474,26 @@ mod tests {
         assert_eq!(c.write(id, b"x", false), Err(StreamError::Closed));
         assert_eq!(c.reset(id, 78), Ok(()), "a second reset changes nothing");
         let (bytes, sent) = packet(&mut c, 1200);
-        assert_eq!(frames_of(&bytes), vec![Frame::ResetStream { id, error: 77, final_size: sent_bytes }]);
+        assert_eq!(
+            frames_of(&bytes),
+            vec![Frame::ResetStream {
+                id,
+                error: 77,
+                final_size: sent_bytes
+            }]
+        );
         assert!(!c.has_pending());
         // the packet is lost: it is sent again, the same
         lost(&mut c, &sent);
         let (bytes, sent) = packet(&mut c, 1200);
-        assert_eq!(frames_of(&bytes), vec![Frame::ResetStream { id, error: 77, final_size: sent_bytes }]);
+        assert_eq!(
+            frames_of(&bytes),
+            vec![Frame::ResetStream {
+                id,
+                error: 77,
+                final_size: sent_bytes
+            }]
+        );
         deliver(&mut s, &bytes).unwrap();
         acked(&mut c, &sent);
         // the receiver has data that it did not read, and is told of the reset
@@ -1848,8 +2504,18 @@ mod tests {
         // what was in the buffer and what did not come count as read, for the credit of the connection
         assert_eq!(s.consumed, sent_bytes);
         // acknowledgments and losses of what was in flight are no harm
-        c.on_acked(&StreamFrame::Stream { id, offset: 0, len: 100, fin: false });
-        c.on_lost(&StreamFrame::Stream { id, offset: 100, len: 100, fin: false });
+        c.on_acked(&StreamFrame::Stream {
+            id,
+            offset: 0,
+            len: 100,
+            fin: false,
+        });
+        c.on_lost(&StreamFrame::Stream {
+            id,
+            offset: 100,
+            len: 100,
+            fin: false,
+        });
         assert!(!c.has_pending());
     }
 
@@ -1873,7 +2539,16 @@ mod tests {
         let id = c.open(false).unwrap();
         c.write(id, &pattern(5000, 7), false).unwrap();
         let data_in = |frames: &[SentFrame]| -> u64 {
-            frames.iter().map(|f| if let SentFrame::Stream(StreamFrame::Stream { len, .. }) = f { *len as u64 } else { 0 }).sum()
+            frames
+                .iter()
+                .map(|f| {
+                    if let SentFrame::Stream(StreamFrame::Stream { len, .. }) = f {
+                        *len as u64
+                    } else {
+                        0
+                    }
+                })
+                .sum()
         };
         let mut data_sent = data_in(&flow(&mut c, &mut s, 1200));
         data_sent += data_in(&flow(&mut c, &mut s, 1200));
@@ -1883,19 +2558,31 @@ mod tests {
         assert_eq!(s.consumed, data_sent, "what was held counts as read");
         assert_eq!(s.read(id, &mut [0u8; 5]), Err(StreamError::Closed));
         events(&mut s); // (what happened so far is not what this test is about)
-        // data that is on its way is thrown away as it comes, and counts as read too (the connection's credit must not leak)
+                        // data that is on its way is thrown away as it comes, and counts as read too (the connection's credit must not leak)
         let (late, late_sent) = packet(&mut c, 1200);
         deliver(&mut s, &late).unwrap();
         acked(&mut c, &late_sent);
         data_sent += data_in(&late_sent);
         assert_eq!(s.consumed, data_sent, "what came after counts as read too");
-        assert!(!events(&mut s).contains(&StreamEvent::Readable(id)), "data that is thrown away is not announced");
+        assert!(
+            !events(&mut s).contains(&StreamEvent::Readable(id)),
+            "data that is thrown away is not announced"
+        );
         let sent = flow(&mut s, &mut c, 1200);
-        assert_eq!(count(&sent, |f| matches!(f, StreamFrame::StopSending { error: 9, .. })), 1);
+        assert_eq!(
+            count(&sent, |f| matches!(
+                f,
+                StreamFrame::StopSending { error: 9, .. }
+            )),
+            1
+        );
         assert_eq!(events(&mut c), vec![StreamEvent::Stopped(id, 9)]);
         assert_eq!(c.write(id, b"more", false), Err(StreamError::Stopped(9)));
         settle(&mut c, &mut s);
-        assert!(!c.contains(id) && !s.contains(id), "reset with the same code, and both are done");
+        assert!(
+            !c.contains(id) && !s.contains(id),
+            "reset with the same code, and both are done"
+        );
     }
 
     #[test]
@@ -1905,7 +2592,13 @@ mod tests {
         c.write(id, b"all of it", true).unwrap();
         flow(&mut c, &mut s, 1200);
         s.stop_sending(id, 3).unwrap();
-        assert!(!s.has_pending() || count(&flow(&mut s, &mut c, 1200), |f| matches!(f, StreamFrame::StopSending { .. })) == 0);
+        assert!(
+            !s.has_pending()
+                || count(&flow(&mut s, &mut c, 1200), |f| matches!(
+                    f,
+                    StreamFrame::StopSending { .. }
+                )) == 0
+        );
         assert!(!s.contains(id));
     }
 
@@ -1917,10 +2610,19 @@ mod tests {
         flow(&mut c, &mut s, 1200);
         s.stop_sending(id, 4).unwrap();
         let (_, sent) = packet(&mut s, 1200);
-        assert_eq!(count(&sent, |f| matches!(f, StreamFrame::StopSending { .. })), 1);
+        assert_eq!(
+            count(&sent, |f| matches!(f, StreamFrame::StopSending { .. })),
+            1
+        );
         lost(&mut s, &sent);
         let (bytes, sent2) = packet(&mut s, 1200);
-        assert_eq!(count(&sent2, |f| matches!(f, StreamFrame::StopSending { error: 4, .. })), 1);
+        assert_eq!(
+            count(&sent2, |f| matches!(
+                f,
+                StreamFrame::StopSending { error: 4, .. }
+            )),
+            1
+        );
         deliver(&mut c, &bytes).unwrap();
         acked(&mut s, &sent2);
         // the sender's reset ends it
@@ -1941,7 +2643,12 @@ mod tests {
         c.reset(id, 4).unwrap();
         settle(&mut c, &mut s);
         assert!(!s.contains(id) && !c.contains(id));
-        assert!(events(&mut s).iter().all(|e| !matches!(e, StreamEvent::Readable(i) if *i == id)) || true);
+        assert!(
+            events(&mut s)
+                .iter()
+                .all(|e| !matches!(e, StreamEvent::Readable(i) if *i == id))
+                || true
+        );
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
@@ -1949,28 +2656,54 @@ mod tests {
 
     #[test]
     fn streams_that_are_over_make_room_for_the_peer_to_open_more() {
-        let (mut c, mut s) = pair_with(config(true), StreamsConfig { max_streams_uni: 4, ..config(false) });
+        let (mut c, mut s) = pair_with(
+            config(true),
+            StreamsConfig {
+                max_streams_uni: 4,
+                ..config(false)
+            },
+        );
         let mut ids = Vec::new();
         for round in 0..3 {
             for _ in 0..4 {
-                let id = c.open(false).unwrap_or_else(|e| panic!("round {round}: {e}"));
+                let id = c
+                    .open(false)
+                    .unwrap_or_else(|e| panic!("round {round}: {e}"));
                 c.write(id, b"x", true).unwrap();
                 ids.push(id);
             }
-            assert_eq!(c.open(false), Err(StreamError::Blocked), "round {round}: the limit");
+            assert_eq!(
+                c.open(false),
+                Err(StreamError::Blocked),
+                "round {round}: the limit"
+            );
             settle(&mut c, &mut s);
             for &id in ids.iter().rev().take(4) {
                 assert_eq!(read_all(&mut s, id), (b"x".to_vec(), true));
             }
             settle(&mut c, &mut s);
-            assert!(events(&mut c).iter().any(|e| *e == StreamEvent::Available { bidirectional: false }), "round {round}");
+            assert!(
+                events(&mut c).iter().any(|e| *e
+                    == StreamEvent::Available {
+                        bidirectional: false
+                    }),
+                "round {round}"
+            );
         }
         assert_eq!(ids.len(), 12);
     }
 
     #[test]
     fn a_limit_that_was_lost_is_sent_again_as_it_is_now() {
-        let (mut c, mut s) = pair_with(config(true), StreamsConfig { max_data: 4000, bidi_remote: 4000, max_streams_uni: 2, ..config(false) });
+        let (mut c, mut s) = pair_with(
+            config(true),
+            StreamsConfig {
+                max_data: 4000,
+                bidi_remote: 4000,
+                max_streams_uni: 2,
+                ..config(false)
+            },
+        );
         let id = c.open(true).unwrap();
         c.write(id, &pattern(4000, 3), false).unwrap();
         while c.has_pending() {
@@ -1978,28 +2711,61 @@ mod tests {
         }
         s.read(id, &mut vec![0u8; 2000]).unwrap();
         let (_, first) = packet(&mut s, 1200);
-        assert_eq!(count(&first, |f| matches!(f, StreamFrame::MaxData(6000))), 1);
-        assert_eq!(count(&first, |f| matches!(f, StreamFrame::MaxStreamData { max: 6000, .. })), 1);
+        assert_eq!(
+            count(&first, |f| matches!(f, StreamFrame::MaxData(6000))),
+            1
+        );
+        assert_eq!(
+            count(&first, |f| matches!(
+                f,
+                StreamFrame::MaxStreamData { max: 6000, .. }
+            )),
+            1
+        );
         assert!(!s.has_pending());
         // lost: both are sent again
         lost(&mut s, &first);
         let (_, second) = packet(&mut s, 1200);
-        assert_eq!(count(&second, |f| matches!(f, StreamFrame::MaxData(6000) | StreamFrame::MaxStreamData { max: 6000, .. })), 2);
+        assert_eq!(
+            count(&second, |f| matches!(
+                f,
+                StreamFrame::MaxData(6000) | StreamFrame::MaxStreamData { max: 6000, .. }
+            )),
+            2
+        );
         // the application reads more and a higher limit is sent; the loss of the old one is no reason to send it
         s.read(id, &mut vec![0u8; 2000]).unwrap();
         let (_, third) = packet(&mut s, 1200);
-        assert_eq!(count(&third, |f| matches!(f, StreamFrame::MaxData(8000))), 1);
+        assert_eq!(
+            count(&third, |f| matches!(f, StreamFrame::MaxData(8000))),
+            1
+        );
         lost(&mut s, &second);
-        assert!(!s.has_pending(), "the limits that were lost are not the current ones");
+        assert!(
+            !s.has_pending(),
+            "the limits that were lost are not the current ones"
+        );
         lost(&mut s, &third);
         assert!(s.has_pending());
         let (_, fourth) = packet(&mut s, 1200);
-        assert_eq!(count(&fourth, |f| matches!(f, StreamFrame::MaxData(8000) | StreamFrame::MaxStreamData { max: 8000, .. })), 2);
+        assert_eq!(
+            count(&fourth, |f| matches!(
+                f,
+                StreamFrame::MaxData(8000) | StreamFrame::MaxStreamData { max: 8000, .. }
+            )),
+            2
+        );
     }
 
     #[test]
     fn a_stream_limit_that_was_lost_is_sent_again() {
-        let (mut c, mut s) = pair_with(config(true), StreamsConfig { max_streams_uni: 2, ..config(false) });
+        let (mut c, mut s) = pair_with(
+            config(true),
+            StreamsConfig {
+                max_streams_uni: 2,
+                ..config(false)
+            },
+        );
         for _ in 0..2 {
             let id = c.open(false).unwrap();
             c.write(id, b"x", true).unwrap();
@@ -2009,10 +2775,29 @@ mod tests {
             read_all(&mut s, id);
         }
         let (_, sent) = packet(&mut s, 1200);
-        assert_eq!(count(&sent, |f| matches!(f, StreamFrame::MaxStreams { bidirectional: false, max: 4 })), 1, "{sent:?}");
+        assert_eq!(
+            count(&sent, |f| matches!(
+                f,
+                StreamFrame::MaxStreams {
+                    bidirectional: false,
+                    max: 4
+                }
+            )),
+            1,
+            "{sent:?}"
+        );
         lost(&mut s, &sent);
         let (_, again) = packet(&mut s, 1200);
-        assert_eq!(count(&again, |f| matches!(f, StreamFrame::MaxStreams { bidirectional: false, max: 4 })), 1);
+        assert_eq!(
+            count(&again, |f| matches!(
+                f,
+                StreamFrame::MaxStreams {
+                    bidirectional: false,
+                    max: 4
+                }
+            )),
+            1
+        );
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
@@ -2023,17 +2808,31 @@ mod tests {
         let mut rng = Rng(99);
         let (mut c, mut s) = pair();
         for id in 0..6u64 {
-            let id = if id % 2 == 0 { c.open(true).unwrap() } else { c.open(false).unwrap() };
-            c.write(id, &pattern(2000 + 100 * id as usize, id as u8), id % 3 == 0).unwrap();
+            let id = if id % 2 == 0 {
+                c.open(true).unwrap()
+            } else {
+                c.open(false).unwrap()
+            };
+            c.write(
+                id,
+                &pattern(2000 + 100 * id as usize, id as u8),
+                id % 3 == 0,
+            )
+            .unwrap();
         }
         let mut rounds = 0;
         while c.has_pending() {
             rounds += 1;
             assert!(rounds < 5000, "no end");
-            let budget = [0usize, 1, 2, 3, 4, 5, 8, 17, 20, 21, 30, 64, 100, 1200][rng.below(14) as usize];
+            let budget =
+                [0usize, 1, 2, 3, 4, 5, 8, 17, 20, 21, 30, 64, 100, 1200][rng.below(14) as usize];
             let (bytes, sent) = packet(&mut c, budget);
             // the frames that come out are the frames that were said to be sent
-            let n = if bytes.is_empty() { 0 } else { frame::frames(&bytes, PacketType::OneRtt).count() };
+            let n = if bytes.is_empty() {
+                0
+            } else {
+                frame::frames(&bytes, PacketType::OneRtt).count()
+            };
             assert_eq!(n, sent.len(), "budget {budget}");
             deliver(&mut s, &bytes).unwrap();
             acked(&mut c, &sent);
@@ -2051,9 +2850,19 @@ mod tests {
 
     enum Ev {
         /// A packet arrives (at the server if `to_server`); then it is acknowledged `ack` later (or never: it was lost).
-        Deliver { to_server: bool, bytes: Vec<u8>, sent: Vec<SentFrame> },
-        Ack { to_server: bool, sent: Vec<SentFrame> },
-        Lost { to_server: bool, sent: Vec<SentFrame> },
+        Deliver {
+            to_server: bool,
+            bytes: Vec<u8>,
+            sent: Vec<SentFrame>,
+        },
+        Ack {
+            to_server: bool,
+            sent: Vec<SentFrame>,
+        },
+        Lost {
+            to_server: bool,
+            sent: Vec<SentFrame>,
+        },
     }
 
     #[derive(Default)]
@@ -2082,7 +2891,16 @@ mod tests {
     impl Sim {
         fn new(seed: u64, loss: u64, cc: StreamsConfig, sc: StreamsConfig) -> Sim {
             let (c, s) = pair_with(cc, sc);
-            Sim { side: [c, s], rng: Rng(seed * 2654435761 + 12345), now: 0, seq: 0, events: Vec::new(), book: Book::default(), known: [BTreeSet::new(), BTreeSet::new()], loss }
+            Sim {
+                side: [c, s],
+                rng: Rng(seed * 2654435761 + 12345),
+                now: 0,
+                seq: 0,
+                events: Vec::new(),
+                book: Book::default(),
+                known: [BTreeSet::new(), BTreeSet::new()],
+                loss,
+            }
         }
 
         fn push(&mut self, at: u64, ev: Ev) {
@@ -2103,7 +2921,14 @@ mod tests {
                 self.push(at, Ev::Lost { to_server, sent });
             } else {
                 let at = self.now + 1 + self.rng.below(12);
-                self.push(at, Ev::Deliver { to_server, bytes, sent });
+                self.push(
+                    at,
+                    Ev::Deliver {
+                        to_server,
+                        bytes,
+                        sent,
+                    },
+                );
             }
         }
 
@@ -2115,14 +2940,26 @@ mod tests {
                 }
                 let (at, _, ev) = self.events.remove(0);
                 match ev {
-                    Ev::Deliver { to_server, bytes, sent } => {
+                    Ev::Deliver {
+                        to_server,
+                        bytes,
+                        sent,
+                    } => {
                         let to = to_server as usize;
                         deliver(&mut self.side[to], &bytes).expect("an honest peer");
                         let back = at + 1 + self.rng.below(12);
-                        self.push(back, Ev::Ack { to_server: !to_server, sent });
+                        self.push(
+                            back,
+                            Ev::Ack {
+                                to_server: !to_server,
+                                sent,
+                            },
+                        );
                     }
                     Ev::Ack { to_server, sent } => acked(&mut self.side[to_server as usize], &sent),
-                    Ev::Lost { to_server, sent } => lost(&mut self.side[(!to_server) as usize], &sent),
+                    Ev::Lost { to_server, sent } => {
+                        lost(&mut self.side[(!to_server) as usize], &sent)
+                    }
                 }
             }
             for w in 0..2 {
@@ -2147,7 +2984,11 @@ mod tests {
             loop {
                 match self.side[who].read(id, &mut buf) {
                     Ok((n, fin)) => {
-                        self.book.read.entry(key).or_default().extend_from_slice(&buf[..n]);
+                        self.book
+                            .read
+                            .entry(key)
+                            .or_default()
+                            .extend_from_slice(&buf[..n]);
                         if fin {
                             self.book.ended.insert(key);
                             return;
@@ -2171,16 +3012,25 @@ mod tests {
             let data = pattern(len, id as u8);
             let fin = fin_allowed && self.rng.chance(10);
             let at = self.book.written.entry(key).or_default().len();
-            let chunk: Vec<u8> = (0..len).map(|i| ((at + i) as u8).wrapping_mul(7).wrapping_add(id as u8)).collect();
+            let chunk: Vec<u8> = (0..len)
+                .map(|i| ((at + i) as u8).wrapping_mul(7).wrapping_add(id as u8))
+                .collect();
             let _ = data;
             match self.side[who].write(id, &chunk, fin) {
                 Ok(n) => {
-                    self.book.written.get_mut(&key).unwrap().extend_from_slice(&chunk[..n]);
+                    self.book
+                        .written
+                        .get_mut(&key)
+                        .unwrap()
+                        .extend_from_slice(&chunk[..n]);
                     if fin && n == len {
                         self.book.fin_written.insert(key);
                     }
                 }
-                Err(StreamError::Stopped(_)) | Err(StreamError::Closed) | Err(StreamError::Blocked) | Err(StreamError::Unknown) => {}
+                Err(StreamError::Stopped(_))
+                | Err(StreamError::Closed)
+                | Err(StreamError::Blocked)
+                | Err(StreamError::Unknown) => {}
                 Err(e) => panic!("{e}"),
             }
         }
@@ -2238,7 +3088,9 @@ mod tests {
                         let ids: Vec<u64> = self.side[who].streams.keys().copied().collect();
                         for id in ids {
                             let ours = is_client_initiated(id) == (who == 0);
-                            if (ours || is_bidirectional(id)) && !self.book.fin_written.contains(&(who == 0, id)) {
+                            if (ours || is_bidirectional(id))
+                                && !self.book.fin_written.contains(&(who == 0, id))
+                            {
                                 let key = (who == 0, id);
                                 match self.side[who].write(id, &[], true) {
                                     Ok(_) => {
@@ -2255,7 +3107,12 @@ mod tests {
                         }
                     }
                 }
-                if self.events.is_empty() && !self.side[0].has_pending() && !self.side[1].has_pending() && self.side[0].streams.is_empty() && self.side[1].streams.is_empty() {
+                if self.events.is_empty()
+                    && !self.side[0].has_pending()
+                    && !self.side[1].has_pending()
+                    && self.side[0].streams.is_empty()
+                    && self.side[1].streams.is_empty()
+                {
                     return;
                 }
             }
@@ -2264,12 +3121,35 @@ mod tests {
                 for (id, st) in &self.side[who].streams {
                     why += &format!(
                         "\n side {who} stream {id}: send {:?} recv {:?}",
-                        st.send.as_ref().map(|s| (s.state, s.buf.buffered(), s.buf.has_pending(), s.buf.is_fully_acked(), s.max_data, s.buf.sent(), s.queued, s.parked, s.reset.as_ref().map(|r| r.pending))),
-                        st.recv.as_ref().map(|r| (r.state, r.final_size, r.buf.read_offset(), r.buf.readable(), r.discard, r.max_data, r.high))
+                        st.send.as_ref().map(|s| (
+                            s.state,
+                            s.buf.buffered(),
+                            s.buf.has_pending(),
+                            s.buf.is_fully_acked(),
+                            s.max_data,
+                            s.buf.sent(),
+                            s.queued,
+                            s.parked,
+                            s.reset.as_ref().map(|r| r.pending)
+                        )),
+                        st.recv.as_ref().map(|r| (
+                            r.state,
+                            r.final_size,
+                            r.buf.read_offset(),
+                            r.buf.readable(),
+                            r.discard,
+                            r.max_data,
+                            r.high
+                        ))
                     );
                 }
             }
-            panic!("it does not end: {} events, pending {} {}{why}", self.events.len(), self.side[0].has_pending(), self.side[1].has_pending());
+            panic!(
+                "it does not end: {} events, pending {} {}{why}",
+                self.events.len(),
+                self.side[0].has_pending(),
+                self.side[1].has_pending()
+            );
         }
 
         fn check(&self) {
@@ -2278,9 +3158,18 @@ mod tests {
                     continue;
                 }
                 let got = self.book.read.get(key).map_or(&[][..], |v| &v[..]);
-                assert_eq!(got.len(), wrote.len(), "stream {key:?}: read {} of {} bytes", got.len(), wrote.len());
+                assert_eq!(
+                    got.len(),
+                    wrote.len(),
+                    "stream {key:?}: read {} of {} bytes",
+                    got.len(),
+                    wrote.len()
+                );
                 assert!(got == &wrote[..], "stream {key:?}: the bytes differ");
-                assert!(self.book.ended.contains(key), "stream {key:?}: the end did not come");
+                assert!(
+                    self.book.ended.contains(key),
+                    "stream {key:?}: the end did not come"
+                );
             }
         }
     }
@@ -2306,7 +3195,16 @@ mod tests {
 
     #[test]
     fn random_use_with_small_windows_and_a_lot_of_loss() {
-        let small = |client| StreamsConfig { max_data: 3000, bidi_local: 1500, bidi_remote: 1500, uni: 1500, max_streams_bidi: 3, max_streams_uni: 3, send_buffer: 2500, ..config(client) };
+        let small = |client| StreamsConfig {
+            max_data: 3000,
+            bidi_local: 1500,
+            bidi_remote: 1500,
+            uni: 1500,
+            max_streams_bidi: 3,
+            max_streams_uni: 3,
+            send_buffer: 2500,
+            ..config(client)
+        };
         for seed in 100..140 {
             simulate(seed, 40, small(true), small(false));
         }
@@ -2323,9 +3221,30 @@ mod tests {
     #[test]
     #[ignore]
     fn random_use_for_a_long_time() {
-        let small = |client| StreamsConfig { max_data: 3000, bidi_local: 1500, bidi_remote: 1500, uni: 1500, max_streams_bidi: 3, max_streams_uni: 3, send_buffer: 2500, ..config(client) };
-        let medium = |client| StreamsConfig { max_data: 9000, bidi_local: 4000, bidi_remote: 2500, uni: 3000, max_streams_bidi: 5, max_streams_uni: 2, send_buffer: 5000, ..config(client) };
-        let n: u64 = std::env::var("STREAMS_SIM_SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
+        let small = |client| StreamsConfig {
+            max_data: 3000,
+            bidi_local: 1500,
+            bidi_remote: 1500,
+            uni: 1500,
+            max_streams_bidi: 3,
+            max_streams_uni: 3,
+            send_buffer: 2500,
+            ..config(client)
+        };
+        let medium = |client| StreamsConfig {
+            max_data: 9000,
+            bidi_local: 4000,
+            bidi_remote: 2500,
+            uni: 3000,
+            max_streams_bidi: 5,
+            max_streams_uni: 2,
+            send_buffer: 5000,
+            ..config(client)
+        };
+        let n: u64 = std::env::var("STREAMS_SIM_SEEDS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(600);
         for seed in 1000..1000 + n {
             simulate(seed, 15 + seed % 30, small(true), small(false));
             simulate(seed + 10_000, seed % 40, medium(true), config(false));

@@ -65,17 +65,29 @@ fn dir() -> PathBuf {
 }
 
 fn certs_in(path: &Path) -> Vec<Vec<u8>> {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    pem::parse(&text).into_iter().filter(|b| b.label == "CERTIFICATE").map(|b| b.data).collect()
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    pem::parse(&text)
+        .into_iter()
+        .filter(|b| b.label == "CERTIFICATE")
+        .map(|b| b.data)
+        .collect()
 }
 
 fn cases() -> Vec<Case> {
-    let text = std::fs::read_to_string(dir().join("fixtures.tsv")).expect("tests/data/chain_cases/fixtures.tsv (python3 tools/gen_chain_cases.py)");
+    let text = std::fs::read_to_string(dir().join("fixtures.tsv"))
+        .expect("tests/data/chain_cases/fixtures.tsv (python3 tools/gen_chain_cases.py)");
     text.lines()
         .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
         .map(|l| {
             let c: Vec<&str> = l.split('\t').collect();
-            Case { name: c[0].into(), host: c[1].into(), time: c[2].parse().unwrap(), expect: c[3].into(), anchor: c[4].into() }
+            Case {
+                name: c[0].into(),
+                host: c[1].into(),
+                time: c[2].parse().unwrap(),
+                expect: c[3].into(),
+                anchor: c[4].into(),
+            }
         })
         .collect()
 }
@@ -86,7 +98,10 @@ fn accepted(case: &Case) -> Result<(), String> {
     for der in certs_in(&dir().join(&case.anchor)) {
         store.add_der(&der).map_err(|e| format!("anchor: {e}"))?;
     }
-    store.verify_server_chain(&chain, &case.host, case.time).map(|_| ()).map_err(|e| e.to_string())
+    store
+        .verify_server_chain(&chain, &case.host, case.time)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[test]
@@ -101,37 +116,74 @@ fn every_generated_chain_comes_out_as_the_standards_or_the_librarys_choice_say()
             "refuse" => false,
             "either" => match DECIDED.iter().find(|d| d.0 == case.name) {
                 Some(d) => d.1,
-                None => panic!("{}: a case left to the verifier with no decision in DECIDED", case.name),
+                None => panic!(
+                    "{}: a case left to the verifier with no decision in DECIDED",
+                    case.name
+                ),
             },
             other => panic!("{}: expect {other}?", case.name),
         };
         if got.is_ok() != want {
-            wrong.push(format!("{}: wanted {}, got {:?}", case.name, if want { "accepted" } else { "refused" }, got));
+            wrong.push(format!(
+                "{}: wanted {}, got {:?}",
+                case.name,
+                if want { "accepted" } else { "refused" },
+                got
+            ));
         }
     }
-    assert!(wrong.is_empty(), "{} case(s) came out otherwise:\n{}", wrong.len(), wrong.join("\n"));
+    assert!(
+        wrong.is_empty(),
+        "{} case(s) came out otherwise:\n{}",
+        wrong.len(),
+        wrong.join("\n")
+    );
     // and the table names cases that exist and are left open
     for (name, _, _) in DECIDED {
-        assert!(cases.iter().any(|c| c.name == *name && c.expect == "either"), "DECIDED names {name}, which is not a case left open");
+        assert!(
+            cases
+                .iter()
+                .any(|c| c.name == *name && c.expect == "either"),
+            "DECIDED names {name}, which is not a case left open"
+        );
     }
 }
 
 #[test]
 fn a_store_of_private_anchors_is_held_to_rfc_5280_alone() {
     // the cases the CA/Browser Forum's rules close, accepted again under a store that turns them off (and the rest as before)
-    let relaxed = ["ok_ed25519", "either_leaf_without_eku", "either_leaf_eku_any", "either_leaf_eku_server_and_any", "either_issuer_name_case", "either_issuer_name_printable_string", "either_issuer_name_spaces", "either_authority_key_id_mismatch"];
+    let relaxed = [
+        "ok_ed25519",
+        "either_leaf_without_eku",
+        "either_leaf_eku_any",
+        "either_leaf_eku_server_and_any",
+        "either_issuer_name_case",
+        "either_issuer_name_printable_string",
+        "either_issuer_name_spaces",
+        "either_authority_key_id_mismatch",
+    ];
     for case in cases() {
         let chain = certs_in(&dir().join("chains").join(format!("{}.pem", case.name)));
         let mut store = TrustStore::empty().with_web_pki_rules(false);
         for der in certs_in(&dir().join(&case.anchor)) {
             store.add_der(&der).unwrap();
         }
-        let private = store.verify_server_chain(&chain, &case.host, case.time).is_ok();
+        let private = store
+            .verify_server_chain(&chain, &case.host, case.time)
+            .is_ok();
         let default = accepted(&case).is_ok();
         if relaxed.contains(&case.name.as_str()) {
-            assert!(private && !default, "{}: private {private}, default {default}", case.name);
+            assert!(
+                private && !default,
+                "{}: private {private}, default {default}",
+                case.name
+            );
         } else {
-            assert_eq!(private, default, "{}: only the CA/Browser Forum's cases differ", case.name);
+            assert_eq!(
+                private, default,
+                "{}: only the CA/Browser Forum's cases differ",
+                case.name
+            );
         }
     }
 }
