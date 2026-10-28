@@ -6,10 +6,13 @@
 //! line or the trailers is refused. See the module above for what else is refused, and why.
 
 use super::runtime::{Ctl, Pending, Timer};
-use super::{call, reason, response_head, Body, BodySink, BodySource, BodyWriter, ConnInfo, Handler, HttpConfig, Request, Response, ResponseBody, Transport, Upgraded, Version};
-use std::time::{Duration, Instant};
+use super::{
+    call, reason, response_head, Body, BodySink, BodySource, BodyWriter, ConnInfo, Handler,
+    HttpConfig, Request, Response, ResponseBody, Transport, Upgraded, Version,
+};
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 /// The longest chunk line (the size and its extensions).
 const MAX_CHUNK_LINE: usize = 4096;
@@ -28,7 +31,10 @@ pub(super) struct Bad {
 }
 
 fn bad(status: u16, why: impl Into<String>) -> Bad {
-    Bad { status, why: why.into() }
+    Bad {
+        status,
+        why: why.into(),
+    }
 }
 
 /// Why a line could not be read.
@@ -93,7 +99,9 @@ struct Conn {
 
 impl Conn {
     fn io(&mut self) -> io::Result<&mut Box<dyn Transport>> {
-        self.io.as_mut().ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "the connection was upgraded"))
+        self.io.as_mut().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotConnected, "the connection was upgraded")
+        })
     }
 
     /// Reads once more from the transport; 0 at its end.
@@ -110,7 +118,12 @@ impl Conn {
         let got = loop {
             let io = match self.io.as_mut() {
                 Some(io) => io,
-                None => break Err(io::Error::new(io::ErrorKind::NotConnected, "the connection was upgraded")),
+                None => {
+                    break Err(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "the connection was upgraded",
+                    ))
+                }
             };
             match io.read(&mut self.rbuf[old..]) {
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
@@ -196,7 +209,9 @@ impl Conn {
             Ok(n) => {
                 self.body.read += n as u64;
                 if self.body.max.is_some_and(|max| self.body.read > max) {
-                    return Err(self.body_error("the request body is larger than this server takes".into()));
+                    return Err(
+                        self.body_error("the request body is larger than this server takes".into())
+                    );
                 }
                 Ok(n)
             }
@@ -224,31 +239,49 @@ impl Conn {
                 }
                 Framing::Length(left) => {
                     let n = self.copy_data(buf, left)?;
-                    self.body.framing = if left == n as u64 { Framing::Done } else { Framing::Length(left - n as u64) };
+                    self.body.framing = if left == n as u64 {
+                        Framing::Done
+                    } else {
+                        Framing::Length(left - n as u64)
+                    };
                     return Ok(n);
                 }
                 Framing::Chunked(Chunk::Data(left)) => {
                     let n = self.copy_data(buf, left)?;
-                    self.body.framing = Framing::Chunked(if left == n as u64 { Chunk::DataEnd } else { Chunk::Data(left - n as u64) });
+                    self.body.framing = Framing::Chunked(if left == n as u64 {
+                        Chunk::DataEnd
+                    } else {
+                        Chunk::Data(left - n as u64)
+                    });
                     return Ok(n);
                 }
                 Framing::Chunked(Chunk::DataEnd) => {
-                    let line = self.read_line(0).map_err(|e| self.line_error(e, "chunk data not followed by CRLF"))?;
+                    let line = self
+                        .read_line(0)
+                        .map_err(|e| self.line_error(e, "chunk data not followed by CRLF"))?;
                     if !line.is_empty() {
                         return Err(self.body_error("chunk data not followed by CRLF".into()));
                     }
                     self.body.framing = Framing::Chunked(Chunk::Size);
                 }
                 Framing::Chunked(Chunk::Size) => {
-                    let line = self.read_line(MAX_CHUNK_LINE).map_err(|e| self.line_error(e, "a chunk line longer than this server takes"))?;
+                    let line = self.read_line(MAX_CHUNK_LINE).map_err(|e| {
+                        self.line_error(e, "a chunk line longer than this server takes")
+                    })?;
                     let size = chunk_size(&line).map_err(|why| self.body_error(why.into()))?;
                     if size == 0 {
                         self.read_trailers()?;
                         self.body.framing = Framing::Done;
                         return Ok(0);
                     }
-                    if self.body.max.is_some_and(|max| self.body.read.saturating_add(size) > max) {
-                        return Err(self.body_error("the request body is larger than this server takes".into()));
+                    if self
+                        .body
+                        .max
+                        .is_some_and(|max| self.body.read.saturating_add(size) > max)
+                    {
+                        return Err(self.body_error(
+                            "the request body is larger than this server takes".into(),
+                        ));
                     }
                     self.body.framing = Framing::Chunked(Chunk::Data(size));
                 }
@@ -269,7 +302,8 @@ impl Conn {
                 }
             };
             if n == 0 {
-                return Err(self.body_error("the connection ended in the middle of the request body".into()));
+                return Err(self
+                    .body_error("the connection ended in the middle of the request body".into()));
             }
             return Ok(n);
         }
@@ -283,7 +317,9 @@ impl Conn {
     fn line_error(&mut self, e: LineError, too_long: &str) -> io::Error {
         match e {
             LineError::Io(e) => e,
-            LineError::Eof(_) => self.body_error("the connection ended in the middle of the request body".into()),
+            LineError::Eof(_) => {
+                self.body_error("the connection ended in the middle of the request body".into())
+            }
             LineError::TooLong => self.body_error(too_long.into()),
             LineError::Bad(why) => self.body_error(format!("{why} in the chunked body")),
         }
@@ -294,7 +330,9 @@ impl Conn {
         let mut trailers = Vec::new();
         loop {
             let budget = self.max_header_bytes.saturating_sub(used);
-            let line = self.read_line(budget).map_err(|e| self.line_error(e, "trailers longer than this server takes"))?;
+            let line = self
+                .read_line(budget)
+                .map_err(|e| self.line_error(e, "trailers longer than this server takes"))?;
             if line.is_empty() {
                 break;
             }
@@ -302,7 +340,8 @@ impl Conn {
             if trailers.len() == self.max_headers {
                 return Err(self.body_error("more trailers than this server takes".into()));
             }
-            let (name, value) = field_line(&line).map_err(|b| self.body_error(format!("a trailer: {}", b.why)))?;
+            let (name, value) =
+                field_line(&line).map_err(|b| self.body_error(format!("a trailer: {}", b.why)))?;
             trailers.push((name, value));
         }
         self.body.trailers = trailers;
@@ -320,7 +359,11 @@ pub(super) fn chunk_size(line: &[u8]) -> Result<u64, &'static str> {
     if digits > 16 {
         return Err("a chunk size of more than 16 hexadecimal digits");
     }
-    let size = u64::from_str_radix(std::str::from_utf8(&line[..digits]).expect("hex digits"), 16).map_err(|_| "a chunk size that does not fit 64 bits")?;
+    let size = u64::from_str_radix(
+        std::str::from_utf8(&line[..digits]).expect("hex digits"),
+        16,
+    )
+    .map_err(|_| "a chunk size that does not fit 64 bits")?;
     chunk_extensions(&line[digits..])?;
     Ok(size)
 }
@@ -332,7 +375,11 @@ fn chunk_extensions(mut s: &[u8]) -> Result<(), &'static str> {
     loop {
         let w = ws(s);
         if w == s.len() {
-            return if w == 0 { Ok(()) } else { Err("white space after a chunk size with no extension") };
+            return if w == 0 {
+                Ok(())
+            } else {
+                Err("white space after a chunk size with no extension")
+            };
         }
         s = &s[w..];
         if s[0] != b';' {
@@ -355,12 +402,10 @@ fn chunk_extensions(mut s: &[u8]) -> Result<(), &'static str> {
                     match s.get(i) {
                         None => return Err("a quoted chunk extension that does not end"),
                         Some(b'"') => break,
-                        Some(b'\\') => {
-                            match s.get(i + 1) {
-                                Some(&b) if b == b'\t' || (b >= 0x20 && b != 0x7f) => i += 2,
-                                _ => return Err("a quoted chunk extension that is not well formed"),
-                            }
-                        }
+                        Some(b'\\') => match s.get(i + 1) {
+                            Some(&b) if b == b'\t' || (b >= 0x20 && b != 0x7f) => i += 2,
+                            _ => return Err("a quoted chunk extension that is not well formed"),
+                        },
                         Some(&b) if b == b'\t' || (b >= 0x20 && b != 0x7f) => i += 1,
                         Some(_) => return Err("a control character in a chunk extension"),
                     }
@@ -388,14 +433,26 @@ pub(super) fn field_line(line: &[u8]) -> Result<(String, String), Bad> {
         return Err(bad(400, "a header field without a name"));
     }
     if line.get(n) != Some(&b':') {
-        return Err(bad(400, "a header field name followed by something other than a colon"));
+        return Err(bad(
+            400,
+            "a header field name followed by something other than a colon",
+        ));
     }
     let value = &line[n + 1..];
-    if let Some(b) = value.iter().find(|&&b| !(b == b'\t' || (b >= 0x20 && b != 0x7f))) {
-        return Err(bad(400, format!("a control character ({b:#04x}) in a header field value")));
+    if let Some(b) = value
+        .iter()
+        .find(|&&b| !(b == b'\t' || (b >= 0x20 && b != 0x7f)))
+    {
+        return Err(bad(
+            400,
+            format!("a control character ({b:#04x}) in a header field value"),
+        ));
     }
-    let value = std::str::from_utf8(value).map_err(|_| bad(400, "a header field value that is not UTF-8"))?;
-    let name = std::str::from_utf8(&line[..n]).expect("token characters").to_ascii_lowercase();
+    let value = std::str::from_utf8(value)
+        .map_err(|_| bad(400, "a header field value that is not UTF-8"))?;
+    let name = std::str::from_utf8(&line[..n])
+        .expect("token characters")
+        .to_ascii_lowercase();
     Ok((name, value.trim_matches([' ', '\t']).to_string()))
 }
 
@@ -403,19 +460,29 @@ pub(super) fn field_line(line: &[u8]) -> Result<(String, String), Bad> {
 /// between them.
 pub(super) fn request_line(line: &[u8]) -> Result<(String, String, Version), Bad> {
     let mut parts = line.split(|&b| b == b' ');
-    let (Some(method), Some(target), Some(version), None) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
-        return Err(bad(400, "a request line that is not three parts with a space between each"));
+    let (Some(method), Some(target), Some(version), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Err(bad(
+            400,
+            "a request line that is not three parts with a space between each",
+        ));
     };
     if method.is_empty() || !method.iter().all(|&b| super::is_tchar(b)) {
         return Err(bad(400, "a method that is not a token"));
     }
     if target.is_empty() || !target.iter().all(|&b| (0x21..0x7f).contains(&b)) {
-        return Err(bad(400, "a request target with a character it may not have"));
+        return Err(bad(
+            400,
+            "a request target with a character it may not have",
+        ));
     }
     let version = match version {
         b"HTTP/1.1" => Version::Http11,
         b"HTTP/1.0" => Version::Http10,
-        [b'H', b'T', b'T', b'P', b'/', major, b'.', minor] if major.is_ascii_digit() && minor.is_ascii_digit() => {
+        [b'H', b'T', b'T', b'P', b'/', major, b'.', minor]
+            if major.is_ascii_digit() && minor.is_ascii_digit() =>
+        {
             if *major == b'1' {
                 Version::Http11 // a later 1.x is answered as 1.1 (RFC 9110 section 2.5)
             } else {
@@ -433,7 +500,9 @@ pub(super) fn request_line(line: &[u8]) -> Result<(String, String, Version), Bad
 pub(super) fn valid_authority(host: &str) -> bool {
     !host.is_empty()
         && host.len() <= 1024
-        && host.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=%:[]".contains(&b))
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=%:[]".contains(&b))
         && host.bytes().filter(|&b| b == b'[').count() <= 1
 }
 
@@ -451,14 +520,31 @@ pub(super) struct Checked {
 
 /// Checks a request's head: the target's form, Host, the framing of the body (RFC 9112 section 6), Expect and
 /// Connection.
-pub(super) fn check(method: String, target: String, version: Version, headers: Vec<(String, String)>, config: &HttpConfig) -> Result<Checked, Bad> {
+pub(super) fn check(
+    method: String,
+    target: String,
+    version: Version,
+    headers: Vec<(String, String)>,
+    config: &HttpConfig,
+) -> Result<Checked, Bad> {
     if target.contains('#') {
         return Err(bad(400, "a fragment in the request target"));
     }
     // the target's form (RFC 9112 section 3.2) and the authority
-    let hosts: Vec<&str> = headers.iter().filter(|(n, _)| n == "host").map(|(_, v)| v.as_str()).collect();
+    let hosts: Vec<&str> = headers
+        .iter()
+        .filter(|(n, _)| n == "host")
+        .map(|(_, v)| v.as_str())
+        .collect();
     if version == Version::Http11 && hosts.len() != 1 {
-        return Err(bad(400, if hosts.is_empty() { "no Host field" } else { "more than one Host field" }));
+        return Err(bad(
+            400,
+            if hosts.is_empty() {
+                "no Host field"
+            } else {
+                "more than one Host field"
+            },
+        ));
     }
     if hosts.len() > 1 {
         return Err(bad(400, "more than one Host field"));
@@ -470,7 +556,10 @@ pub(super) fn check(method: String, target: String, version: Version, headers: V
     }
     let authority = if method == "CONNECT" {
         // authority-form: host:port, nothing else
-        let ok = valid_authority(&target) && target.rsplit_once(':').is_some_and(|(h, p)| !h.is_empty() && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+        let ok = valid_authority(&target)
+            && target.rsplit_once(':').is_some_and(|(h, p)| {
+                !h.is_empty() && !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())
+            });
         if !ok {
             return Err(bad(400, "a CONNECT target that is not host:port"));
         }
@@ -485,9 +574,19 @@ pub(super) fn check(method: String, target: String, version: Version, headers: V
     } else {
         // absolute-form: its authority, not Host's (RFC 9112 section 3.2.2)
         let lower = target.to_ascii_lowercase();
-        let rest = lower.strip_prefix("http://").or_else(|| lower.strip_prefix("https://")).ok_or_else(|| bad(400, "a request target that is not a path, a URL, host:port or *"))?;
+        let rest = lower
+            .strip_prefix("http://")
+            .or_else(|| lower.strip_prefix("https://"))
+            .ok_or_else(|| {
+                bad(
+                    400,
+                    "a request target that is not a path, a URL, host:port or *",
+                )
+            })?;
         let start = target.len() - rest.len();
-        let end = target[start..].find(['/', '?']).map_or(target.len(), |i| start + i);
+        let end = target[start..]
+            .find(['/', '?'])
+            .map_or(target.len(), |i| start + i);
         let authority = &target[start..end];
         let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
         if !valid_authority(authority) {
@@ -496,8 +595,16 @@ pub(super) fn check(method: String, target: String, version: Version, headers: V
         authority.to_string()
     };
     // the body's framing
-    let te: Vec<&str> = headers.iter().filter(|(n, _)| n == "transfer-encoding").map(|(_, v)| v.as_str()).collect();
-    let cl: Vec<&str> = headers.iter().filter(|(n, _)| n == "content-length").map(|(_, v)| v.as_str()).collect();
+    let te: Vec<&str> = headers
+        .iter()
+        .filter(|(n, _)| n == "transfer-encoding")
+        .map(|(_, v)| v.as_str())
+        .collect();
+    let cl: Vec<&str> = headers
+        .iter()
+        .filter(|(n, _)| n == "content-length")
+        .map(|(_, v)| v.as_str())
+        .collect();
     let framing = if !te.is_empty() {
         if version == Version::Http10 {
             return Err(bad(400, "Transfer-Encoding in an HTTP/1.0 request"));
@@ -505,17 +612,27 @@ pub(super) fn check(method: String, target: String, version: Version, headers: V
         if !cl.is_empty() {
             return Err(bad(400, "both Transfer-Encoding and Content-Length"));
         }
-        let codings: Vec<&str> = te.iter().flat_map(|v| v.split(',')).map(|c| c.trim_matches([' ', '\t'])).collect();
+        let codings: Vec<&str> = te
+            .iter()
+            .flat_map(|v| v.split(','))
+            .map(|c| c.trim_matches([' ', '\t']))
+            .collect();
         let chunked = |c: &str| c.eq_ignore_ascii_case("chunked");
         if codings.iter().any(|c| c.is_empty()) {
             return Err(bad(400, "an empty transfer coding"));
         }
         if codings.len() == 1 && chunked(codings[0]) {
             Framing::Chunked(Chunk::Size)
-        } else if codings.iter().filter(|c| chunked(c)).count() == 1 && chunked(codings[codings.len() - 1]) && codings.iter().all(|c| c.bytes().all(super::is_tchar)) {
+        } else if codings.iter().filter(|c| chunked(c)).count() == 1
+            && chunked(codings[codings.len() - 1])
+            && codings.iter().all(|c| c.bytes().all(super::is_tchar))
+        {
             return Err(bad(501, "a transfer coding other than chunked"));
         } else {
-            return Err(bad(400, "a Transfer-Encoding that does not end with chunked, once"));
+            return Err(bad(
+                400,
+                "a Transfer-Encoding that does not end with chunked, once",
+            ));
         }
     } else if !cl.is_empty() {
         if cl.len() > 1 {
@@ -529,7 +646,11 @@ pub(super) fn check(method: String, target: String, version: Version, headers: V
         if config.max_body.is_some_and(|max| n > max) {
             return Err(bad(413, "a body larger than this server takes"));
         }
-        if n == 0 { Framing::Done } else { Framing::Length(n) }
+        if n == 0 {
+            Framing::Done
+        } else {
+            Framing::Length(n)
+        }
     } else {
         Framing::Done
     };
@@ -544,9 +665,24 @@ pub(super) fn check(method: String, target: String, version: Version, headers: V
             }
         }
     }
-    let tokens: Vec<String> = headers.iter().filter(|(n, _)| n == "connection").flat_map(|(_, v)| v.split(',')).map(|t| t.trim_matches([' ', '\t']).to_ascii_lowercase()).collect();
-    let close = tokens.iter().any(|t| t == "close") || (version == Version::Http10 && !tokens.iter().any(|t| t == "keep-alive"));
-    Ok(Checked { method, target, authority, version, headers, expect_continue: expect_continue && !matches!(framing, Framing::Done), framing, close })
+    let tokens: Vec<String> = headers
+        .iter()
+        .filter(|(n, _)| n == "connection")
+        .flat_map(|(_, v)| v.split(','))
+        .map(|t| t.trim_matches([' ', '\t']).to_ascii_lowercase())
+        .collect();
+    let close = tokens.iter().any(|t| t == "close")
+        || (version == Version::Http10 && !tokens.iter().any(|t| t == "keep-alive"));
+    Ok(Checked {
+        method,
+        target,
+        authority,
+        version,
+        headers,
+        expect_continue: expect_continue && !matches!(framing, Framing::Done),
+        framing,
+        close,
+    })
 }
 
 /// The body of the request being handled, as the handler reads it.
@@ -563,7 +699,10 @@ impl BodySource for Source {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let mut c = lock(&self.conn);
         if c.generation != self.generation {
-            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "the request this body belongs to is over"));
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the request this body belongs to is over",
+            ));
         }
         c.read_body(buf)
     }
@@ -578,18 +717,40 @@ impl BodySource for Source {
 }
 
 /// Serves an HTTP/1.1 connection until it ends.
-pub(super) fn serve(io: Box<dyn Transport>, info: Arc<ConnInfo>, handler: Arc<dyn Handler>, config: &HttpConfig, ctl: Arc<Ctl>) -> io::Result<()> {
+pub(super) fn serve(
+    io: Box<dyn Transport>,
+    info: Arc<ConnInfo>,
+    handler: Arc<dyn Handler>,
+    config: &HttpConfig,
+    ctl: Arc<Ctl>,
+) -> io::Result<()> {
     serve_with(io, Vec::new(), info, handler, config, ctl)
 }
 
 /// [`serve`], with bytes already read from the connection.
-pub(super) fn serve_with(io: Box<dyn Transport>, already: Vec<u8>, info: Arc<ConnInfo>, handler: Arc<dyn Handler>, config: &HttpConfig, ctl: Arc<Ctl>) -> io::Result<()> {
+pub(super) fn serve_with(
+    io: Box<dyn Transport>,
+    already: Vec<u8>,
+    info: Arc<ConnInfo>,
+    handler: Arc<dyn Handler>,
+    config: &HttpConfig,
+    ctl: Arc<Ctl>,
+) -> io::Result<()> {
     let conn = Arc::new(Mutex::new(Conn {
         io: Some(io),
         rbuf: already,
         rpos: 0,
         scan: 0,
-        body: BodyState { framing: Framing::Done, continue_pending: false, responded: true, read: 0, max: None, trailers: Vec::new(), error: None, timed: true },
+        body: BodyState {
+            framing: Framing::Done,
+            continue_pending: false,
+            responded: true,
+            read: 0,
+            max: None,
+            trailers: Vec::new(),
+            error: None,
+            timed: true,
+        },
         generation: 0,
         max_header_bytes: config.max_header_bytes,
         max_headers: config.max_headers,
@@ -643,7 +804,16 @@ pub(super) fn serve_with(io: Box<dyn Transport>, already: Vec<u8>, info: Arc<Con
             }
         };
         let (method, target, version, headers) = head;
-        let Checked { method, target, authority, version, headers, framing, expect_continue, close } = match check(method, target, version, headers, config) {
+        let Checked {
+            method,
+            target,
+            authority,
+            version,
+            headers,
+            framing,
+            expect_continue,
+            close,
+        } = match check(method, target, version, headers, config) {
             Ok(c) => c,
             Err(b) => {
                 refuse(&mut lock(&conn), &b, config);
@@ -667,14 +837,30 @@ pub(super) fn serve_with(io: Box<dyn Transport>, already: Vec<u8>, info: Arc<Con
             };
             c.generation
         };
-        let body = if has_body { Body::new(Some(Box::new(Source { conn: conn.clone(), generation }))) } else { Body::new(None) };
-        let mut ctx = Ctx { version, head: method == "HEAD", connect: method == "CONNECT", close: close || served >= config.max_requests_per_connection, upgraded_idle: ctl.limits.upgraded_idle_timeout };
+        let body = if has_body {
+            Body::new(Some(Box::new(Source {
+                conn: conn.clone(),
+                generation,
+            })))
+        } else {
+            Body::new(None)
+        };
+        let mut ctx = Ctx {
+            version,
+            head: method == "HEAD",
+            connect: method == "CONNECT",
+            close: close || served >= config.max_requests_per_connection,
+            upgraded_idle: ctl.limits.upgraded_idle_timeout,
+        };
         let interim: Option<super::Interim> = (version == Version::Http11).then(|| {
             let conn = conn.clone();
             Arc::new(move |status: u16, fields: &[(String, String)]| {
                 let mut c = lock(&conn);
                 if c.generation != generation || c.body.responded {
-                    return Err(io::Error::new(io::ErrorKind::BrokenPipe, "the final response has begun"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "the final response has begun",
+                    ));
                 }
                 let mut text = format!("HTTP/1.1 {status} {}\r\n", reason(status));
                 for (n, v) in fields {
@@ -685,7 +871,18 @@ pub(super) fn serve_with(io: Box<dyn Transport>, already: Vec<u8>, info: Arc<Con
                 c.flush()
             }) as super::Interim
         });
-        let request = Request { method, target, authority, scheme: scheme.into(), version, headers, body, info: info.clone(), interim, ctl: Some(ctl.clone()) };
+        let request = Request {
+            method,
+            target,
+            authority,
+            scheme: scheme.into(),
+            version,
+            headers,
+            body,
+            info: info.clone(),
+            interim,
+            ctl: Some(ctl.clone()),
+        };
         let pending = Pending::of(&ctl, &request);
         let (response, panicked) = call(&*handler, request);
         // a server that began to shut down while the handler ran closes after this response
@@ -735,25 +932,45 @@ type Head = (String, String, Version, Vec<(String, String)>);
 fn read_head(c: &mut Conn, config: &HttpConfig) -> Result<Option<Head>, HeadError> {
     let line_err = |e: LineError, too_long: Bad| match e {
         LineError::Io(e) => HeadError::Io(e),
-        LineError::Eof(partial) => HeadError::Bad(bad(400, if partial { "the connection ended in the middle of a request head" } else { "" })),
+        LineError::Eof(partial) => HeadError::Bad(bad(
+            400,
+            if partial {
+                "the connection ended in the middle of a request head"
+            } else {
+                ""
+            },
+        )),
         LineError::TooLong => HeadError::Bad(too_long),
         LineError::Bad(why) => HeadError::Bad(bad(400, why)),
     };
     let mut line = match c.read_line(config.max_request_line) {
         Ok(l) => l,
         Err(LineError::Eof(false)) => return Ok(None),
-        Err(e) => return Err(line_err(e, bad(414, "a request line longer than this server takes"))),
+        Err(e) => {
+            return Err(line_err(
+                e,
+                bad(414, "a request line longer than this server takes"),
+            ))
+        }
     };
     let mut empty = 0;
     while line.is_empty() {
         empty += 1;
         if empty > MAX_EMPTY_LINES {
-            return Err(HeadError::Bad(bad(400, "empty lines where a request line should be")));
+            return Err(HeadError::Bad(bad(
+                400,
+                "empty lines where a request line should be",
+            )));
         }
         line = match c.read_line(config.max_request_line) {
             Ok(l) => l,
             Err(LineError::Eof(false)) => return Ok(None),
-            Err(e) => return Err(line_err(e, bad(414, "a request line longer than this server takes"))),
+            Err(e) => {
+                return Err(line_err(
+                    e,
+                    bad(414, "a request line longer than this server takes"),
+                ))
+            }
         };
     }
     let (method, target, version) = request_line(&line).map_err(HeadError::Bad)?;
@@ -761,16 +978,24 @@ fn read_head(c: &mut Conn, config: &HttpConfig) -> Result<Option<Head>, HeadErro
     let mut used = 0usize;
     loop {
         let budget = config.max_header_bytes.saturating_sub(used);
-        let line = c.read_line(budget).map_err(|e| line_err(e, bad(431, "header fields longer than this server takes")))?;
+        let line = c
+            .read_line(budget)
+            .map_err(|e| line_err(e, bad(431, "header fields longer than this server takes")))?;
         if line.is_empty() {
             break;
         }
         used += line.len() + 2;
         if used > config.max_header_bytes {
-            return Err(HeadError::Bad(bad(431, "header fields longer than this server takes")));
+            return Err(HeadError::Bad(bad(
+                431,
+                "header fields longer than this server takes",
+            )));
         }
         if headers.len() == config.max_headers {
-            return Err(HeadError::Bad(bad(431, "more header fields than this server takes")));
+            return Err(HeadError::Bad(bad(
+                431,
+                "more header fields than this server takes",
+            )));
         }
         headers.push(field_line(&line).map_err(HeadError::Bad)?);
     }
@@ -831,11 +1056,32 @@ enum Out {
 }
 
 /// Sends a response; says what is to become of the connection, and the status and body bytes sent (for the access log).
-fn send_response(conn: &Arc<Mutex<Conn>>, response: Response, ctx: &Ctx, panicked: bool, config: &HttpConfig) -> io::Result<(After, u16, u64)> {
-    let Response { status, headers, body } = response;
+fn send_response(
+    conn: &Arc<Mutex<Conn>>,
+    response: Response,
+    ctx: &Ctx,
+    panicked: bool,
+    config: &HttpConfig,
+) -> io::Result<(After, u16, u64)> {
+    let Response {
+        status,
+        headers,
+        body,
+    } = response;
     let head = match response_head(&headers, config) {
         Ok(h) if (100..=999).contains(&status) => h,
-        _ => return send_response(conn, Response::text(500, "internal server error\n"), &Ctx { close: true, ..*ctx }, true, config),
+        _ => {
+            return send_response(
+                conn,
+                Response::text(500, "internal server error\n"),
+                &Ctx {
+                    close: true,
+                    ..*ctx
+                },
+                true,
+                config,
+            )
+        }
     };
     let upgrade = matches!(body, ResponseBody::Upgrade(_));
     let valid = match status {
@@ -845,16 +1091,32 @@ fn send_response(conn: &Arc<Mutex<Conn>>, response: Response, ctx: &Ctx, panicke
         _ => !upgrade,
     };
     if !valid {
-        return send_response(conn, Response::text(500, "internal server error\n"), &Ctx { close: true, ..*ctx }, true, config);
+        return send_response(
+            conn,
+            Response::text(500, "internal server error\n"),
+            &Ctx {
+                close: true,
+                ..*ctx
+            },
+            true,
+            config,
+        );
     }
-    let no_body = matches!(status, 100..=199 | 204 | 304) || (ctx.connect && (200..300).contains(&status));
+    let no_body =
+        matches!(status, 100..=199 | 204 | 304) || (ctx.connect && (200..300).contains(&status));
     let out = if no_body {
         Out::None
     } else {
         match &body {
-            ResponseBody::Empty => Out::Length(if ctx.head { head.content_length.unwrap_or(0) } else { 0 }),
+            ResponseBody::Empty => Out::Length(if ctx.head {
+                head.content_length.unwrap_or(0)
+            } else {
+                0
+            }),
             ResponseBody::Bytes(b) => Out::Length(b.len() as u64),
-            ResponseBody::Reader { length: Some(n), .. } => Out::Length(*n),
+            ResponseBody::Reader {
+                length: Some(n), ..
+            } => Out::Length(*n),
             ResponseBody::Reader { length: None, .. } | ResponseBody::Stream(_) => {
                 if ctx.head {
                     Out::None
@@ -869,7 +1131,8 @@ fn send_response(conn: &Arc<Mutex<Conn>>, response: Response, ctx: &Ctx, panicke
     };
     // what of the request body will be left when the response is done, and whether it is too much to read past: a body
     // the client is still waiting for a 100 to send, or more than the drain limit (if its length is known)
-    let streams = matches!(body, ResponseBody::Reader { .. } | ResponseBody::Stream(_)) && !ctx.head;
+    let streams =
+        matches!(body, ResponseBody::Reader { .. } | ResponseBody::Stream(_)) && !ctx.head;
     let abandon = {
         let c = lock(conn);
         let left = match c.body.framing {
@@ -877,10 +1140,15 @@ fn send_response(conn: &Arc<Mutex<Conn>>, response: Response, ctx: &Ctx, panicke
             Framing::Length(n) => Some(n),
             Framing::Chunked(_) => None,
         };
-        c.body.error.is_some() || (!streams && left != Some(0) && (c.body.continue_pending || left.is_some_and(|n| n > config.drain_limit)))
+        c.body.error.is_some()
+            || (!streams
+                && left != Some(0)
+                && (c.body.continue_pending || left.is_some_and(|n| n > config.drain_limit)))
     };
     // after a CONNECT that is not a tunnel the client may already have sent what was meant for the tunnel: close
-    let close = (ctx.close || head.close || panicked || abandon || out == Out::UntilClose || ctx.connect) && !upgrade;
+    let close =
+        (ctx.close || head.close || panicked || abandon || out == Out::UntilClose || ctx.connect)
+            && !upgrade;
     let mut text = format!("HTTP/1.1 {status} {}\r\n", reason(status));
     for (n, v) in &head.fields {
         text.push_str(n);
@@ -908,7 +1176,10 @@ fn send_response(conn: &Arc<Mutex<Conn>>, response: Response, ctx: &Ctx, panicke
     {
         let mut c = lock(conn);
         // a streamed response may read the request body as it goes: the 100 it may be waiting for goes first
-        if c.body.continue_pending && matches!(body, ResponseBody::Reader { .. } | ResponseBody::Stream(_)) && !ctx.head {
+        if c.body.continue_pending
+            && matches!(body, ResponseBody::Reader { .. } | ResponseBody::Stream(_))
+            && !ctx.head
+        {
             c.body.continue_pending = false;
             let mut with = b"HTTP/1.1 100 Continue\r\n\r\n".to_vec();
             with.append(&mut head_bytes);
@@ -943,11 +1214,17 @@ fn send_response(conn: &Arc<Mutex<Conn>>, response: Response, ctx: &Ctx, panicke
         ResponseBody::Reader { mut reader, length } => {
             lock(conn).write_out(&head_bytes)?;
             if send_body {
-                let mut sink = Sink { conn, framing: out, buf: Vec::new() };
+                let mut sink = Sink {
+                    conn,
+                    framing: out,
+                    buf: Vec::new(),
+                };
                 let mut left = length;
                 let mut chunk = vec![0u8; WRITE_SIZE];
                 loop {
-                    let want = left.map_or(chunk.len(), |l| chunk.len().min(usize::try_from(l).unwrap_or(usize::MAX)));
+                    let want = left.map_or(chunk.len(), |l| {
+                        chunk.len().min(usize::try_from(l).unwrap_or(usize::MAX))
+                    });
                     if want == 0 {
                         break;
                     }
@@ -980,8 +1257,16 @@ fn send_response(conn: &Arc<Mutex<Conn>>, response: Response, ctx: &Ctx, panicke
         ResponseBody::Stream(write) => {
             lock(conn).write_out(&head_bytes)?;
             if send_body {
-                let mut sink = Sink { conn, framing: out, buf: Vec::new() };
-                let mut writer = BodyWriter { sink: &mut sink, trailers: Vec::new(), written: 0 };
+                let mut sink = Sink {
+                    conn,
+                    framing: out,
+                    buf: Vec::new(),
+                };
+                let mut writer = BodyWriter {
+                    sink: &mut sink,
+                    trailers: Vec::new(),
+                    written: 0,
+                };
                 let res = write(&mut writer);
                 let trailers = std::mem::take(&mut writer.trailers);
                 sent = writer.written;
@@ -1004,17 +1289,30 @@ fn send_response(conn: &Arc<Mutex<Conn>>, response: Response, ctx: &Ctx, panicke
                 c.generation += 1;
                 (c.io.take(), leftover)
             };
-            let Some(io) = io else { return Ok((After::Close, status, 0)) };
+            let Some(io) = io else {
+                return Ok((After::Close, status, 0));
+            };
             // an upgraded connection may be quiet for long (a tunnel): each read waits up to its own limit
             if let Some(t) = lock(conn).timer.as_ref() {
                 t.each(ctx.upgraded_idle);
             }
             let (r, w) = io.split()?;
-            then(Upgraded { reader: Box::new(io::Cursor::new(leftover).chain(r)), writer: w });
+            then(Upgraded {
+                reader: Box::new(io::Cursor::new(leftover).chain(r)),
+                writer: w,
+            });
             return Ok((After::Upgraded, status, 0));
         }
     }
-    Ok((if close { After::Close } else { After::KeepAlive }, status, sent))
+    Ok((
+        if close {
+            After::Close
+        } else {
+            After::KeepAlive
+        },
+        status,
+        sent,
+    ))
 }
 
 /// Writes a response body, framed, gathering small writes.

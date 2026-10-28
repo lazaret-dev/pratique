@@ -26,7 +26,15 @@ pub fn bytes<const N: usize>() -> io::Result<[u8; N]> {
 }
 
 /// Reads `/dev/urandom` (the fallback on Unix systems without a better call).
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd"))))]
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd"
+    ))
+))]
 fn urandom(buf: &mut [u8]) -> io::Result<()> {
     use std::io::Read;
     std::fs::File::open("/dev/urandom")?.read_exact(buf)
@@ -36,7 +44,12 @@ fn urandom(buf: &mut [u8]) -> io::Result<()> {
 
 #[cfg(all(
     any(target_os = "linux", target_os = "android"),
-    any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm")
+    any(
+        target_arch = "x86_64",
+        target_arch = "x86",
+        target_arch = "aarch64",
+        target_arch = "arm"
+    )
 ))]
 mod os {
     use std::io;
@@ -55,7 +68,11 @@ mod os {
 
     extern "C" {
         fn syscall(number: core::ffi::c_long, ...) -> core::ffi::c_long;
-        fn poll(fds: *mut PollFd, nfds: core::ffi::c_ulong, timeout: core::ffi::c_int) -> core::ffi::c_int;
+        fn poll(
+            fds: *mut PollFd,
+            nfds: core::ffi::c_ulong,
+            timeout: core::ffi::c_int,
+        ) -> core::ffi::c_int;
     }
 
     #[repr(C)]
@@ -69,32 +86,53 @@ mod os {
     /// The longest to wait for the pool to be seeded before the fallback gives up.
     const POOL_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
-    /// Waits until `/dev/random` says the kernel's pool is seeded, which is the wait `getrandom(0)` does itself
-    /// and a read of `/dev/urandom` does not (at the time of a very early boot, or on a restored snapshot, it
-    /// would hand out bytes from a pool nobody has seeded). It is a best effort for a fallback that exists
-    /// for old kernels and sandboxes: if the wait cannot be made at all (no `/dev/random`, `poll` refused) the
-    /// caller reads `/dev/urandom` as before; only a pool still unseeded after a minute is an error.
+    /// Waits until `/dev/random` says the kernel's pool is seeded. If readiness
+    /// cannot be established, fail closed rather than reading `/dev/urandom`.
     pub(super) fn wait_for_pool() -> io::Result<()> {
         use std::os::fd::AsRawFd;
-        let Ok(file) = std::fs::File::open("/dev/random") else { return Ok(()) };
+        let file = std::fs::File::open("/dev/random")?;
         let deadline = std::time::Instant::now() + POOL_WAIT;
         loop {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
-            let mut fds = PollFd { fd: file.as_raw_fd(), events: POLLIN, revents: 0 };
+            let mut fds = PollFd {
+                fd: file.as_raw_fd(),
+                events: POLLIN,
+                revents: 0,
+            };
             // SAFETY: `fds` is one valid, initialised `pollfd` that lives through the call, and the count says one.
-            let n = unsafe { poll(&mut fds, 1, left.as_millis().min(i32::MAX as u128) as core::ffi::c_int) };
+            let n = unsafe {
+                poll(
+                    &mut fds,
+                    1,
+                    left.as_millis().min(i32::MAX as u128) as core::ffi::c_int,
+                )
+            };
             if n > 0 {
-                // readable, or in a state (an error, a hang-up) from which there is nothing more to wait for
-                return Ok(());
+                return pool_ready(fds.revents);
             }
             if n == 0 {
-                return Err(io::Error::new(io::ErrorKind::TimedOut, "the operating system's random pool was not seeded within a minute"));
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "the operating system's random pool was not seeded within a minute",
+                ));
             }
             let e = io::Error::last_os_error();
             match e.kind() {
                 io::ErrorKind::Interrupted => {}
-                _ => return Ok(()),
+                _ => return Err(e),
             }
+        }
+    }
+
+    pub(super) fn pool_ready(events: i16) -> io::Result<()> {
+        // POLLERR, POLLHUP, POLLNVAL and any unexpected event fail closed,
+        // including when they occur together with POLLIN.
+        if events == POLLIN {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                "could not establish OS random pool readiness",
+            ))
         }
     }
 
@@ -113,7 +151,12 @@ mod os {
     pub(super) fn fill(mut buf: &mut [u8]) -> io::Result<()> {
         while !buf.is_empty() {
             match getrandom_once(buf) {
-                Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "getrandom returned no data")),
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::UnexpectedEof,
+                        "getrandom returned no data",
+                    ))
+                }
                 Ok(n) => buf = &mut buf[n..],
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 // an old kernel, or a seccomp filter that does not know the call
@@ -130,7 +173,12 @@ mod os {
 
 // ------------------------------------------------------------------------- macOS and BSD family
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "openbsd"
+))]
 mod os {
     use std::io;
 
@@ -159,7 +207,12 @@ mod os {
 
     #[link(name = "bcrypt")]
     extern "system" {
-        fn BCryptGenRandom(algorithm: *mut core::ffi::c_void, buffer: *mut u8, len: u32, flags: u32) -> i32;
+        fn BCryptGenRandom(
+            algorithm: *mut core::ffi::c_void,
+            buffer: *mut u8,
+            len: u32,
+            flags: u32,
+        ) -> i32;
     }
     const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x0000_0002;
 
@@ -169,10 +222,18 @@ mod os {
             // together with BCRYPT_USE_SYSTEM_PREFERRED_RNG is the documented way to ask for the
             // system RNG.
             let status = unsafe {
-                BCryptGenRandom(core::ptr::null_mut(), chunk.as_mut_ptr(), chunk.len() as u32, BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+                BCryptGenRandom(
+                    core::ptr::null_mut(),
+                    chunk.as_mut_ptr(),
+                    chunk.len() as u32,
+                    BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+                )
             };
             if status != 0 {
-                return Err(io::Error::new(io::ErrorKind::Other, format!("BCryptGenRandom failed: {:#x}", status)));
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("BCryptGenRandom failed: {:#x}", status),
+                ));
             }
         }
         Ok(())
@@ -183,10 +244,20 @@ mod os {
 
 #[cfg(all(
     unix,
-    not(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd")),
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "openbsd"
+    )),
     not(all(
         any(target_os = "linux", target_os = "android"),
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm")
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "arm"
+        )
     ))
 ))]
 mod os {
@@ -202,13 +273,33 @@ mod os {
     use std::io;
 
     pub(super) fn fill(_buf: &mut [u8]) -> io::Result<()> {
-        Err(io::Error::new(io::ErrorKind::Unsupported, "no OS random source available on this platform"))
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "no OS random source available on this platform",
+        ))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(
+        any(target_os = "linux", target_os = "android"),
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "arm"
+        )
+    ))]
+    #[test]
+    fn fallback_requires_unambiguous_pool_readiness() {
+        assert!(os::pool_ready(1).is_ok());
+        for events in [0, 8, 16, 32, 9, 17, 33, -1] {
+            assert!(os::pool_ready(events).is_err());
+        }
+    }
 
     #[test]
     fn produces_distinct_nonzero_output() {
@@ -229,7 +320,12 @@ mod tests {
                 assert!(v.iter().any(|&b| b != 0), "len {}", len);
                 // every 256-byte block must have been filled, not only the first
                 for chunk in v.chunks(256).filter(|c| c.len() >= 16) {
-                    assert!(chunk.iter().any(|&b| b != 0), "a chunk of {} bytes stayed zero (len {})", chunk.len(), len);
+                    assert!(
+                        chunk.iter().any(|&b| b != 0),
+                        "a chunk of {} bytes stayed zero (len {})",
+                        chunk.len(),
+                        len
+                    );
                 }
             }
         }
@@ -246,19 +342,34 @@ mod tests {
         assert!(seen.iter().all(|&s| s));
         let ones: u64 = v.iter().map(|b| b.count_ones() as u64).sum();
         let total = v.len() as u64 * 8;
-        assert!((ones as f64 / total as f64 - 0.5).abs() < 0.01, "{} of {} bits set", ones, total);
+        assert!(
+            (ones as f64 / total as f64 - 0.5).abs() < 0.01,
+            "{} of {} bits set",
+            ones,
+            total
+        );
     }
 
     #[test]
     fn works_from_many_threads() {
-        let handles: Vec<_> = (0..8).map(|_| std::thread::spawn(|| bytes::<32>().unwrap())).collect();
+        let handles: Vec<_> = (0..8)
+            .map(|_| std::thread::spawn(|| bytes::<32>().unwrap()))
+            .collect();
         let mut all: Vec<[u8; 32]> = handles.into_iter().map(|h| h.join().unwrap()).collect();
         all.sort();
         all.dedup();
         assert_eq!(all.len(), 8);
     }
 
-    #[cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "freebsd", target_os = "openbsd"))))]
+    #[cfg(all(
+        unix,
+        not(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "freebsd",
+            target_os = "openbsd"
+        ))
+    ))]
     #[test]
     fn urandom_fallback_works() {
         let mut a = [0u8; 32];
@@ -272,7 +383,12 @@ mod tests {
     /// accepted the call and filled the buffer (so it did not fall back silently to /dev/urandom).
     #[cfg(all(
         any(target_os = "linux", target_os = "android"),
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm")
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "arm"
+        )
     ))]
     #[test]
     fn the_fallback_waits_for_a_seeded_pool_and_a_running_system_has_one() {
@@ -280,12 +396,21 @@ mod tests {
         // `poll` call is made correctly (no error, no hang, no crash) and gives the answer "ready"
         let t = std::time::Instant::now();
         os::wait_for_pool().unwrap();
-        assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            t.elapsed()
+        );
     }
 
     #[cfg(all(
         any(target_os = "linux", target_os = "android"),
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm")
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "arm"
+        )
     ))]
     #[test]
     fn getrandom_system_call_itself_works() {
@@ -309,7 +434,12 @@ mod tests {
 
     #[cfg(all(
         any(target_os = "linux", target_os = "android"),
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm")
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "arm"
+        )
     ))]
     fn the_call_is_not_there(e: &std::io::Error) -> bool {
         matches!(e.raw_os_error(), Some(os::ENOSYS) | Some(os::EPERM))
@@ -317,7 +447,12 @@ mod tests {
 
     #[cfg(all(
         any(target_os = "linux", target_os = "android"),
-        any(target_arch = "x86_64", target_arch = "x86", target_arch = "aarch64", target_arch = "arm")
+        any(
+            target_arch = "x86_64",
+            target_arch = "x86",
+            target_arch = "aarch64",
+            target_arch = "arm"
+        )
     ))]
     #[test]
     fn only_a_missing_or_blocked_call_is_skipped_not_any_failure() {
@@ -326,8 +461,14 @@ mod tests {
         assert!(the_call_is_not_there(&Error::from_raw_os_error(os::EPERM)));
         // a bad address, an interrupted call and an out-of-memory are real failures
         for errno in [14, 4, 12, 22, 11] {
-            assert!(!the_call_is_not_there(&Error::from_raw_os_error(errno)), "errno {errno}");
+            assert!(
+                !the_call_is_not_there(&Error::from_raw_os_error(errno)),
+                "errno {errno}"
+            );
         }
-        assert!(!the_call_is_not_there(&Error::new(std::io::ErrorKind::Other, "no errno at all")));
+        assert!(!the_call_is_not_there(&Error::new(
+            std::io::ErrorKind::Other,
+            "no errno at all"
+        )));
     }
 }

@@ -32,13 +32,13 @@ pub mod sendbuf;
 pub mod streams;
 // the test peer and the test server are used by the fuzzer as well (`fuzz_hooks`; the fuzz crate always has the `server` feature on,
 // which the certificates of the test peer need)
+#[cfg(pratique_fuzzing)]
+#[doc(hidden)]
+pub mod fuzz_hooks;
 #[cfg(any(test, pratique_fuzzing))]
 mod test_peer;
 #[cfg(any(test, pratique_fuzzing))]
 mod test_server;
-#[cfg(pratique_fuzzing)]
-#[doc(hidden)]
-pub mod fuzz_hooks;
 pub mod tls;
 pub mod transport_params;
 #[cfg(test)]

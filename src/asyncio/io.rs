@@ -14,13 +14,21 @@ use std::task::{Context, Poll};
 pub trait AsyncRead {
     /// Reads into `buf`. `Ready(Ok(0))` means end of stream (or an empty `buf`); `Pending`
     /// means the task will be woken when a retry can make progress.
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>>;
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>>;
 }
 
 /// Writes bytes without blocking the thread.
 pub trait AsyncWrite {
     /// Writes some of `buf`; returns how many bytes were taken.
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>>;
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>>;
     /// Completes when everything written so far has been handed on to the transport.
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>>;
     /// Flushes and closes the write side.
@@ -28,13 +36,21 @@ pub trait AsyncWrite {
 }
 
 impl<T: AsyncRead + Unpin + ?Sized> AsyncRead for &mut T {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         Pin::new(&mut **self).poll_read(cx, buf)
     }
 }
 
 impl<T: AsyncRead + Unpin + ?Sized> AsyncRead for Box<T> {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         Pin::new(&mut **self).poll_read(cx, buf)
     }
 }
@@ -44,13 +60,21 @@ where
     P: DerefMut + Unpin,
     P::Target: AsyncRead,
 {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         self.get_mut().as_mut().poll_read(cx, buf)
     }
 }
 
 impl<T: AsyncWrite + Unpin + ?Sized> AsyncWrite for &mut T {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         Pin::new(&mut **self).poll_write(cx, buf)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -62,7 +86,11 @@ impl<T: AsyncWrite + Unpin + ?Sized> AsyncWrite for &mut T {
 }
 
 impl<T: AsyncWrite + Unpin + ?Sized> AsyncWrite for Box<T> {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         Pin::new(&mut **self).poll_write(cx, buf)
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -78,7 +106,11 @@ where
     P: DerefMut + Unpin,
     P::Target: AsyncWrite,
 {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         self.get_mut().as_mut().poll_write(cx, buf)
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
@@ -91,14 +123,22 @@ where
 
 /// In-memory sources are always ready.
 impl AsyncRead for &[u8] {
-    fn poll_read(mut self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         let n = <&[u8] as io::Read>::read(&mut *self, buf)?;
         Poll::Ready(Ok(n))
     }
 }
 
 impl<T: AsRef<[u8]> + Unpin> AsyncRead for io::Cursor<T> {
-    fn poll_read(mut self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         let n = io::Read::read(&mut *self, buf)?;
         Poll::Ready(Ok(n))
     }
@@ -106,7 +146,11 @@ impl<T: AsRef<[u8]> + Unpin> AsyncRead for io::Cursor<T> {
 
 /// In-memory sinks are always ready.
 impl AsyncWrite for Vec<u8> {
-    fn poll_write(mut self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         self.extend_from_slice(buf);
         Poll::Ready(Ok(buf.len()))
     }
@@ -127,12 +171,20 @@ pub trait AsyncReadExt: AsyncRead + Unpin {
 
     /// Fills `buf` completely, or fails with `UnexpectedEof`.
     fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a, Self> {
-        ReadExact { reader: self, buf, filled: 0 }
+        ReadExact {
+            reader: self,
+            buf,
+            filled: 0,
+        }
     }
 
     /// Appends everything up to the end of the stream to `out`; returns how many bytes.
     fn read_to_end<'a>(&'a mut self, out: &'a mut Vec<u8>) -> ReadToEnd<'a, Self> {
-        ReadToEnd { reader: self, out, total: 0 }
+        ReadToEnd {
+            reader: self,
+            out,
+            total: 0,
+        }
     }
 }
 
@@ -194,7 +246,10 @@ impl<R: AsyncRead + Unpin + ?Sized> Future for ReadExact<'_, R> {
                 Poll::Pending => return Poll::Pending,
             };
             if n == 0 {
-                return Poll::Ready(Err(io::Error::new(io::ErrorKind::UnexpectedEof, "stream ended before the buffer was full")));
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "stream ended before the buffer was full",
+                )));
             }
             this.filled += n;
         }
@@ -254,7 +309,12 @@ impl<W: AsyncWrite + Unpin + ?Sized> Future for WriteAll<'_, W> {
         let this = &mut *self;
         while !this.buf.is_empty() {
             match Pin::new(&mut *this.writer).poll_write(cx, this.buf) {
-                Poll::Ready(Ok(0)) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::WriteZero, "the transport accepted no bytes"))),
+                Poll::Ready(Ok(0)) => {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "the transport accepted no bytes",
+                    )))
+                }
                 Poll::Ready(Ok(n)) => this.buf = &this.buf[n..],
                 Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
                 Poll::Pending => return Poll::Pending,
@@ -304,7 +364,10 @@ mod tests {
         assert_eq!(rest, b" world");
         let mut short: &[u8] = b"ab";
         let mut four = [0u8; 4];
-        assert_eq!(block_on(short.read_exact(&mut four)).unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(
+            block_on(short.read_exact(&mut four)).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
 
         let mut sink: Vec<u8> = Vec::new();
         block_on(async {
@@ -321,7 +384,11 @@ mod tests {
     fn write_all_loops_over_partial_writes_and_stops_on_zero() {
         struct Dribble(Vec<u8>, usize);
         impl AsyncWrite for Dribble {
-            fn poll_write(mut self: Pin<&mut Self>, _: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+            fn poll_write(
+                mut self: Pin<&mut Self>,
+                _: &mut Context<'_>,
+                buf: &[u8],
+            ) -> Poll<io::Result<usize>> {
                 let n = buf.len().min(self.1);
                 let me = &mut *self;
                 me.0.extend_from_slice(&buf[..n]);
@@ -338,7 +405,10 @@ mod tests {
         block_on(d.write_all(b"0123456789")).unwrap();
         assert_eq!(d.0, b"0123456789");
         let mut z = Dribble(Vec::new(), 0);
-        assert_eq!(block_on(z.write_all(b"x")).unwrap_err().kind(), io::ErrorKind::WriteZero);
+        assert_eq!(
+            block_on(z.write_all(b"x")).unwrap_err().kind(),
+            io::ErrorKind::WriteZero
+        );
     }
 
     #[test]

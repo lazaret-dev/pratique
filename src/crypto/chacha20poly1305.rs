@@ -101,7 +101,10 @@ impl Absorb<'_, '_> {
         debug_assert!(src.len() % 16 == 0);
         let n = src.len() / 16;
         for b in n * it / 10..n * (it + 1) / 10 {
-            poly.block(<&[u8; 16]>::try_from(&src[16 * b..16 * b + 16]).unwrap(), true);
+            poly.block(
+                <&[u8; 16]>::try_from(&src[16 * b..16 * b + 16]).unwrap(),
+                true,
+            );
         }
     }
 }
@@ -116,7 +119,11 @@ impl Absorb<'_, '_> {
 //
 // Build with `RUSTFLAGS="--cfg pratique_portable"` to force the portable path everywhere.
 
-#[cfg(all(target_arch = "x86_64", target_feature = "sse2", not(pratique_portable)))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "sse2",
+    not(pratique_portable)
+))]
 mod simd {
     use super::SIGMA;
     use core::arch::x86_64::*;
@@ -221,7 +228,12 @@ mod simd {
     }
 }
 
-#[cfg(all(target_arch = "aarch64", target_feature = "neon", target_endian = "little", not(pratique_portable)))]
+#[cfg(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    target_endian = "little",
+    not(pratique_portable)
+))]
 mod simd {
     use super::{Absorb, SIGMA};
     use core::arch::aarch64::*;
@@ -359,7 +371,13 @@ mod simd {
     /// instructions that keeps the vector units half busy, two keep them busy (on an Apple M5 the keystream went from 1.85
     /// to 2.9 GB/s, B-103). Poly1305 runs between the rounds as `absorb` says, on the integer units.
     #[target_feature(enable = "neon")]
-    fn xor8_neon(key: &[u32; 8], counter: u32, nonce: &[u32; 3], data: &mut [u8; 512], mut absorb: Absorb) {
+    fn xor8_neon(
+        key: &[u32; 8],
+        counter: u32,
+        nonce: &[u32; 3],
+        data: &mut [u8; 512],
+        mut absorb: Absorb,
+    ) {
         let i0 = init_state(key, counter, nonce);
         let i1 = init_state(key, counter.wrapping_add(4), nonce);
         let (mut x, mut y) = (i0, i1);
@@ -393,15 +411,30 @@ mod simd {
     }
 
     /// XORs the keystream of blocks `counter .. counter + 8` into 512 bytes, absorbing into Poly1305 as `absorb` says.
-    pub fn xor8(key: &[u32; 8], counter: u32, nonce: &[u32; 3], data: &mut [u8; 512], absorb: Absorb) {
+    pub fn xor8(
+        key: &[u32; 8],
+        counter: u32,
+        nonce: &[u32; 3],
+        data: &mut [u8; 512],
+        absorb: Absorb,
+    ) {
         // SAFETY: as in `xor4`.
         unsafe { xor8_neon(key, counter, nonce, data, absorb) }
     }
 }
 
 #[cfg(not(any(
-    all(target_arch = "x86_64", target_feature = "sse2", not(pratique_portable)),
-    all(target_arch = "aarch64", target_feature = "neon", target_endian = "little", not(pratique_portable)),
+    all(
+        target_arch = "x86_64",
+        target_feature = "sse2",
+        not(pratique_portable)
+    ),
+    all(
+        target_arch = "aarch64",
+        target_feature = "neon",
+        target_endian = "little",
+        not(pratique_portable)
+    ),
 )))]
 mod simd {
     pub const AVAILABLE: bool = false;
@@ -436,7 +469,15 @@ mod avx2 {
 
     #[inline]
     #[target_feature(enable = "avx2")]
-    fn quarter_round(x: &mut [__m256i; 16], a: usize, b: usize, c: usize, d: usize, rot16: __m256i, rot8: __m256i) {
+    fn quarter_round(
+        x: &mut [__m256i; 16],
+        a: usize,
+        b: usize,
+        c: usize,
+        d: usize,
+        rot16: __m256i,
+        rot8: __m256i,
+    ) {
         x[a] = _mm256_add_epi32(x[a], x[b]);
         x[d] = _mm256_shuffle_epi8(_mm256_xor_si256(x[d], x[a]), rot16);
         x[c] = _mm256_add_epi32(x[c], x[d]);
@@ -462,15 +503,23 @@ mod avx2 {
     fn xor8_avx2(key: &[u32; 8], counter: u32, nonce: &[u32; 3], data: &mut [u8; 512]) {
         let set = |w: u32| _mm256_set1_epi32(w as i32);
         // (byte shuffles that rotate each 32-bit word left by 16 and by 8 bits; the same in both 128-bit halves)
-        let rot16 = _mm256_set_epi8(13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2, 13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2);
-        let rot8 = _mm256_set_epi8(14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3, 14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3);
+        let rot16 = _mm256_set_epi8(
+            13, 12, 15, 14, 9, 8, 11, 10, 5, 4, 7, 6, 1, 0, 3, 2, 13, 12, 15, 14, 9, 8, 11, 10, 5,
+            4, 7, 6, 1, 0, 3, 2,
+        );
+        let rot8 = _mm256_set_epi8(
+            14, 13, 12, 15, 10, 9, 8, 11, 6, 5, 4, 7, 2, 1, 0, 3, 14, 13, 12, 15, 10, 9, 8, 11, 6,
+            5, 4, 7, 2, 1, 0, 3,
+        );
         // The two shuffles hidden from the compiler (an empty asm takes them and gives them back), so that it keeps them
         // as they are (B-104): knowing them, it moved the rotation by 8 through the XOR before it, two shuffles for one,
         // and made the rotation by 16 out of two others (to keep a register), on the one port that shuffles. 8 percent
         // more keystream on an x86-64 server.
         let (mut rot16, mut rot8) = (rot16, rot8);
         // SAFETY: the template is a comment: no instruction, no memory, the registers given back as they came.
-        unsafe { core::arch::asm!("/* {0} {1} */", inout(ymm_reg) rot16, inout(ymm_reg) rot8, options(nomem, nostack, preserves_flags)) };
+        unsafe {
+            core::arch::asm!("/* {0} {1} */", inout(ymm_reg) rot16, inout(ymm_reg) rot8, options(nomem, nostack, preserves_flags))
+        };
         let init: [__m256i; 16] = [
             set(SIGMA[0]),
             set(SIGMA[1]),
@@ -514,15 +563,33 @@ mod avx2 {
             let t1 = _mm256_unpacklo_epi32(c, d);
             let t2 = _mm256_unpackhi_epi32(a, b);
             let t3 = _mm256_unpackhi_epi32(c, d);
-            *row = [_mm256_unpacklo_epi64(t0, t1), _mm256_unpackhi_epi64(t0, t1), _mm256_unpacklo_epi64(t2, t3), _mm256_unpackhi_epi64(t2, t3)];
+            *row = [
+                _mm256_unpacklo_epi64(t0, t1),
+                _mm256_unpackhi_epi64(t0, t1),
+                _mm256_unpacklo_epi64(t2, t3),
+                _mm256_unpackhi_epi64(t2, t3),
+            ];
         }
-        #[allow(clippy::needless_range_loop)] // (j picks the same register of each of the four groups)
+        #[allow(clippy::needless_range_loop)]
+        // (j picks the same register of each of the four groups)
         for j in 0..4 {
             let (lo, hi) = (64 * j, 64 * (j + 4));
-            xor_into(&mut data[lo..lo + 32], _mm256_permute2x128_si256::<0x20>(rows[0][j], rows[1][j]));
-            xor_into(&mut data[lo + 32..lo + 64], _mm256_permute2x128_si256::<0x20>(rows[2][j], rows[3][j]));
-            xor_into(&mut data[hi..hi + 32], _mm256_permute2x128_si256::<0x31>(rows[0][j], rows[1][j]));
-            xor_into(&mut data[hi + 32..hi + 64], _mm256_permute2x128_si256::<0x31>(rows[2][j], rows[3][j]));
+            xor_into(
+                &mut data[lo..lo + 32],
+                _mm256_permute2x128_si256::<0x20>(rows[0][j], rows[1][j]),
+            );
+            xor_into(
+                &mut data[lo + 32..lo + 64],
+                _mm256_permute2x128_si256::<0x20>(rows[2][j], rows[3][j]),
+            );
+            xor_into(
+                &mut data[hi..hi + 32],
+                _mm256_permute2x128_si256::<0x31>(rows[0][j], rows[1][j]),
+            );
+            xor_into(
+                &mut data[hi + 32..hi + 64],
+                _mm256_permute2x128_si256::<0x31>(rows[2][j], rows[3][j]),
+            );
         }
     }
 
@@ -599,7 +666,10 @@ mod avx512 {
             set(key[6]),
             set(key[7]),
             // block j has the counter + j (wrapping, as the scalar code's)
-            _mm512_add_epi32(set(counter), _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)),
+            _mm512_add_epi32(
+                set(counter),
+                _mm512_set_epi32(15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0),
+            ),
             set(nonce[0]),
             set(nonce[1]),
             set(nonce[2]),
@@ -628,16 +698,27 @@ mod avx512 {
             let t1 = _mm512_unpacklo_epi32(c, d);
             let t2 = _mm512_unpackhi_epi32(a, b);
             let t3 = _mm512_unpackhi_epi32(c, d);
-            *row = [_mm512_unpacklo_epi64(t0, t1), _mm512_unpackhi_epi64(t0, t1), _mm512_unpacklo_epi64(t2, t3), _mm512_unpackhi_epi64(t2, t3)];
+            *row = [
+                _mm512_unpacklo_epi64(t0, t1),
+                _mm512_unpackhi_epi64(t0, t1),
+                _mm512_unpacklo_epi64(t2, t3),
+                _mm512_unpackhi_epi64(t2, t3),
+            ];
         }
-        #[allow(clippy::needless_range_loop)] // (j picks the same register of each of the four groups)
+        #[allow(clippy::needless_range_loop)]
+        // (j picks the same register of each of the four groups)
         for j in 0..4 {
             let (a, b, c, d) = (rows[0][j], rows[1][j], rows[2][j], rows[3][j]);
             let t0 = _mm512_shuffle_i32x4::<0x44>(a, b);
             let t1 = _mm512_shuffle_i32x4::<0x44>(c, d);
             let t2 = _mm512_shuffle_i32x4::<0xee>(a, b);
             let t3 = _mm512_shuffle_i32x4::<0xee>(c, d);
-            let out = [_mm512_shuffle_i32x4::<0x88>(t0, t1), _mm512_shuffle_i32x4::<0xdd>(t0, t1), _mm512_shuffle_i32x4::<0x88>(t2, t3), _mm512_shuffle_i32x4::<0xdd>(t2, t3)];
+            let out = [
+                _mm512_shuffle_i32x4::<0x88>(t0, t1),
+                _mm512_shuffle_i32x4::<0xdd>(t0, t1),
+                _mm512_shuffle_i32x4::<0x88>(t2, t3),
+                _mm512_shuffle_i32x4::<0xdd>(t2, t3),
+            ];
             for (k, v) in out.into_iter().enumerate() {
                 let at = 64 * (j + 4 * k);
                 xor_into(&mut data[at..at + 64], v);
@@ -660,7 +741,12 @@ mod avx512 {
 // it. Only aarch64 has one: on an x86-64 server (Cascade Lake) the same with AVX2 took as long as the two passes, the integer
 // multiplier there sharing its port with vector instructions, and AVX2's sixteen registers being all taken by the state.
 
-#[cfg(all(target_arch = "aarch64", target_feature = "neon", target_endian = "little", not(pratique_portable)))]
+#[cfg(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    target_endian = "little",
+    not(pratique_portable)
+))]
 mod wide {
     use super::{simd, Absorb};
 
@@ -674,7 +760,12 @@ mod wide {
     }
 }
 
-#[cfg(not(all(target_arch = "aarch64", target_feature = "neon", target_endian = "little", not(pratique_portable))))]
+#[cfg(not(all(
+    target_arch = "aarch64",
+    target_feature = "neon",
+    target_endian = "little",
+    not(pratique_portable)
+)))]
 mod wide {
     use super::{chacha20_xor, Absorb};
 
@@ -685,7 +776,13 @@ mod wide {
 
     /// The same result in two steps, for the tests (the AEAD does not call it where [`width`] is 0): the blocks absorbed,
     /// then the keystream.
-    pub fn xor(key: &[u32; 8], counter: u32, nonce: &[u32; 3], chunk: &mut [u8], mut absorb: Absorb) {
+    pub fn xor(
+        key: &[u32; 8],
+        counter: u32,
+        nonce: &[u32; 3],
+        chunk: &mut [u8],
+        mut absorb: Absorb,
+    ) {
         for it in 0..10 {
             absorb.step(it, chunk);
         }
@@ -703,7 +800,12 @@ fn chacha20_xor(key: &[u32; 8], nonce: &[u32; 3], start_counter: u32, data: &mut
         if rest.len() >= 1024 && avx512::available() {
             let mut chunks = rest.chunks_exact_mut(1024);
             for chunk in &mut chunks {
-                avx512::xor16(key, counter, nonce, <&mut [u8; 1024]>::try_from(chunk).unwrap());
+                avx512::xor16(
+                    key,
+                    counter,
+                    nonce,
+                    <&mut [u8; 1024]>::try_from(chunk).unwrap(),
+                );
                 counter = counter.wrapping_add(16);
             }
             rest = chunks.into_remainder();
@@ -711,17 +813,33 @@ fn chacha20_xor(key: &[u32; 8], nonce: &[u32; 3], start_counter: u32, data: &mut
         if rest.len() >= 512 && avx2::available() {
             let mut chunks = rest.chunks_exact_mut(512);
             for chunk in &mut chunks {
-                avx2::xor8(key, counter, nonce, <&mut [u8; 512]>::try_from(chunk).unwrap());
+                avx2::xor8(
+                    key,
+                    counter,
+                    nonce,
+                    <&mut [u8; 512]>::try_from(chunk).unwrap(),
+                );
                 counter = counter.wrapping_add(8);
             }
             rest = chunks.into_remainder();
         }
     }
-    #[cfg(all(target_arch = "aarch64", target_feature = "neon", target_endian = "little", not(pratique_portable)))]
+    #[cfg(all(
+        target_arch = "aarch64",
+        target_feature = "neon",
+        target_endian = "little",
+        not(pratique_portable)
+    ))]
     {
         let mut chunks = rest.chunks_exact_mut(512);
         for chunk in &mut chunks {
-            simd::xor8(key, counter, nonce, <&mut [u8; 512]>::try_from(chunk).unwrap(), Absorb::Nothing);
+            simd::xor8(
+                key,
+                counter,
+                nonce,
+                <&mut [u8; 512]>::try_from(chunk).unwrap(),
+                Absorb::Nothing,
+            );
             counter = counter.wrapping_add(8);
         }
         rest = chunks.into_remainder();
@@ -729,7 +847,12 @@ fn chacha20_xor(key: &[u32; 8], nonce: &[u32; 3], start_counter: u32, data: &mut
     if simd::AVAILABLE {
         let mut chunks = rest.chunks_exact_mut(256);
         for chunk in &mut chunks {
-            simd::xor4(key, counter, nonce, <&mut [u8; 256]>::try_from(chunk).unwrap());
+            simd::xor4(
+                key,
+                counter,
+                nonce,
+                <&mut [u8; 256]>::try_from(chunk).unwrap(),
+            );
             counter = counter.wrapping_add(4);
         }
         rest = chunks.into_remainder();
@@ -774,7 +897,11 @@ fn head(key: &[u32; 8], nonce: &[u32; 3], len: usize) -> Zeroizing<[u8; 256]> {
     if simd::AVAILABLE {
         simd::xor4(key, 0, nonce, &mut ks);
     } else {
-        for (i, block) in ks.chunks_exact_mut(64).enumerate().take(1 + len.min(HEAD).div_ceil(64)) {
+        for (i, block) in ks
+            .chunks_exact_mut(64)
+            .enumerate()
+            .take(1 + len.min(HEAD).div_ceil(64))
+        {
             block.copy_from_slice(&*Zeroizing::new(chacha20_block(key, i as u32, nonce)));
         }
     }
@@ -798,7 +925,11 @@ fn seal_body(key: &[u32; 8], nonce: &[u32; 3], counter: u32, data: &mut [u8], po
     if w > 0 {
         while data.len() - done >= w {
             let (before, rest) = data.split_at_mut(done);
-            let absorb = if hashed < done { Absorb::These(poly, &before[hashed..]) } else { Absorb::Nothing };
+            let absorb = if hashed < done {
+                Absorb::These(poly, &before[hashed..])
+            } else {
+                Absorb::Nothing
+            };
             wide::xor(key, counter, nonce, &mut rest[..w], absorb);
             hashed = done;
             done += w;
@@ -818,7 +949,13 @@ fn open_body(key: &[u32; 8], nonce: &[u32; 3], counter: u32, data: &mut [u8], po
     let mut done = 0usize;
     if w > 0 {
         while data.len() - done >= w {
-            wide::xor(key, counter, nonce, &mut data[done..done + w], Absorb::Own(poly));
+            wide::xor(
+                key,
+                counter,
+                nonce,
+                &mut data[done..done + w],
+                Absorb::Own(poly),
+            );
             done += w;
             counter = counter.wrapping_add((w / 64) as u32);
         }
@@ -849,7 +986,12 @@ fn compute_tag(otk: &[u8; 32], aad: &[u8], ciphertext: &[u8]) -> [u8; 16] {
 /// The sealed message (ciphertext, then the tag) made with the scalar block function alone, whatever vector code the build has: what
 /// the fuzz target `aead` holds [`ChaCha20Poly1305::seal`] to.
 #[cfg(pratique_fuzzing)]
-pub(crate) fn seal_with_scalar_code(key: &[u8], nonce: &[u8; NONCE_LEN], aad: &[u8], plaintext: &[u8]) -> Vec<u8> {
+pub(crate) fn seal_with_scalar_code(
+    key: &[u8],
+    nonce: &[u8; NONCE_LEN],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Vec<u8> {
     let mut k = Zeroizing::new([0u8; 32]);
     k.copy_from_slice(key);
     let (kw, nw) = (key_words(&k), nonce_words(nonce));
@@ -952,7 +1094,12 @@ impl ChaCha20Poly1305 {
     /// there is a one-pass keystream function, on aarch64, a message of more than 192 bytes is
     /// decrypted as it is authenticated, and put back by XORing the same keystream again if the tag is
     /// wrong; otherwise the tag is checked before anything is decrypted.)
-    pub fn open_in_place(&self, nonce: &[u8; NONCE_LEN], aad: &[u8], buf: &mut [u8]) -> Option<usize> {
+    pub fn open_in_place(
+        &self,
+        nonce: &[u8; NONCE_LEN],
+        aad: &[u8],
+        buf: &mut [u8],
+    ) -> Option<usize> {
         let _dit = Dit::on(); // data-independent timing while the key and the data are in use (crypto::dit)
         if buf.len() < TAG_LEN {
             return None;
@@ -1002,7 +1149,12 @@ impl ChaCha20Poly1305 {
         out
     }
 
-    pub fn open(&self, nonce: &[u8; NONCE_LEN], aad: &[u8], ciphertext_and_tag: &[u8]) -> Option<Vec<u8>> {
+    pub fn open(
+        &self,
+        nonce: &[u8; NONCE_LEN],
+        aad: &[u8],
+        ciphertext_and_tag: &[u8],
+    ) -> Option<Vec<u8>> {
         let mut buf = ciphertext_and_tag.to_vec();
         let n = self.open_in_place(nonce, aad, &mut buf)?;
         buf.truncate(n);
@@ -1067,9 +1219,17 @@ mod tests {
             let pt = det_pt(idx, n);
             let out = c.seal(&nonce, &aad, &pt);
             assert_eq!(out.len(), n + TAG_LEN);
-            assert_eq!(hex(&Sha256::digest(&out[..n])), ct_sha, "ciphertext, vector {idx} (len {n})");
+            assert_eq!(
+                hex(&Sha256::digest(&out[..n])),
+                ct_sha,
+                "ciphertext, vector {idx} (len {n})"
+            );
             assert_eq!(hex(&out[n..]), tag, "tag, vector {idx} (len {n})");
-            assert_eq!(c.open(&nonce, &aad, &out).unwrap(), pt, "open, vector {idx}");
+            assert_eq!(
+                c.open(&nonce, &aad, &out).unwrap(),
+                pt,
+                "open, vector {idx}"
+            );
         }
     }
 
@@ -1091,7 +1251,16 @@ mod tests {
     fn the_wide_kernels_match_the_one_block_function() {
         let key = key_words(&det_key(9, 32).try_into().unwrap());
         let nonce = nonce_words(&det_nonce(9));
-        let counters = [0u32, 1, 0x7fff_ffff, 0xffff_ffef, 0xffff_fff0, 0xffff_fff8, 0xffff_fffb, 0xffff_ffff];
+        let counters = [
+            0u32,
+            1,
+            0x7fff_ffff,
+            0xffff_ffef,
+            0xffff_fff0,
+            0xffff_fff8,
+            0xffff_fffb,
+            0xffff_ffff,
+        ];
         let mut ran = Vec::new();
         if avx2::available() {
             for &ctr in &counters {
@@ -1111,7 +1280,11 @@ mod tests {
                 xor_reference(&key, &nonce, ctr, &mut b);
                 assert_eq!(a, b, "AVX-512 from counter {ctr}");
             }
-            ran.push(if avx512::available() { "AVX-512 (in use)" } else { "AVX-512 (not in use on this CPU)" });
+            ran.push(if avx512::available() {
+                "AVX-512 (in use)"
+            } else {
+                "AVX-512 (not in use on this CPU)"
+            });
         }
         eprintln!("kernels checked: {ran:?}");
     }
@@ -1148,7 +1321,9 @@ mod tests {
             }
         };
         // (where there is no one-pass function, the two-step stand-in, which the AEAD does not use)
-        check(wide::width().max(512), &|ctr, d, a| wide::xor(&key, ctr, &nonce, d, a));
+        check(wide::width().max(512), &|ctr, d, a| {
+            wide::xor(&key, ctr, &nonce, d, a)
+        });
     }
 
     /// The one-pass seal and open against the two passes they replaced (the keystream by the one-block function, then the
@@ -1158,7 +1333,10 @@ mod tests {
     fn the_one_pass_aead_matches_two_passes() {
         let c = ChaCha20Poly1305::new(&det_key(13, 32));
         let nonce = det_nonce(13);
-        let (kw, nw) = (key_words(&det_key(13, 32).try_into().unwrap()), nonce_words(&nonce));
+        let (kw, nw) = (
+            key_words(&det_key(13, 32).try_into().unwrap()),
+            nonce_words(&nonce),
+        );
         let otk = one_time_key(&kw, &nw);
         for len in (0..2200usize).chain([3071, 3072, 3073, 4096 + 17, 16384, 16384 + 15]) {
             for aad_len in [0usize, 13] {
@@ -1176,13 +1354,20 @@ mod tests {
                 c.seal_in_place(&nonce, &aad, &mut buf);
                 assert_eq!(buf, want, "seal, length {len}, aad {aad_len}");
                 let mut opened = buf.clone();
-                assert_eq!(c.open_in_place(&nonce, &aad, &mut opened), Some(len), "open, length {len}");
+                assert_eq!(
+                    c.open_in_place(&nonce, &aad, &mut opened),
+                    Some(len),
+                    "open, length {len}"
+                );
                 assert_eq!(&opened[..len], &pt[..]);
                 let mut bad = buf.clone();
                 bad[len] ^= 1;
                 let kept = bad.clone();
                 assert_eq!(c.open_in_place(&nonce, &aad, &mut bad), None);
-                assert_eq!(bad, kept, "a refused message is left as it was, length {len}");
+                assert_eq!(
+                    bad, kept,
+                    "a refused message is left as it was, length {len}"
+                );
             }
         }
     }
@@ -1193,7 +1378,9 @@ mod tests {
         let nonce = nonce_words(&det_nonce(5));
         // Every length around the 64/256 boundaries, and counters that wrap around u32.
         for &ctr in &[0u32, 1, 7, 0xffff_fff9, 0xffff_fffe, 0xffff_ffff] {
-            for len in (0..700usize).chain([767, 768, 1023, 1024, 1025, 1536, 1600, 2047, 2048, 2049, 4096, 16384]) {
+            for len in (0..700usize).chain([
+                767, 768, 1023, 1024, 1025, 1536, 1600, 2047, 2048, 2049, 4096, 16384,
+            ]) {
                 let src = det_pt(len, len);
                 let mut a = src.clone();
                 let mut b = src.clone();

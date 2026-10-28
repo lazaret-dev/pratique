@@ -130,11 +130,19 @@ impl fmt::Display for Error {
         match self {
             Error::Truncated => f.write_str("the header block ended inside a field"),
             Error::Integer => f.write_str("a header block has an integer that is too large"),
-            Error::Index(i) => write!(f, "a header block refers to table index {i}, which does not exist"),
+            Error::Index(i) => write!(
+                f,
+                "a header block refers to table index {i}, which does not exist"
+            ),
             Error::Huffman(e) => e.fmt(f),
             Error::StringTooLong => f.write_str("a header block has a string that is too long"),
-            Error::SizeUpdateLate => f.write_str("a header block has a table size update after a field"),
-            Error::SizeUpdateTooLarge(n) => write!(f, "a header block sets the table size to {n}, more than was allowed"),
+            Error::SizeUpdateLate => {
+                f.write_str("a header block has a table size update after a field")
+            }
+            Error::SizeUpdateTooLarge(n) => write!(
+                f,
+                "a header block sets the table size to {n}, more than was allowed"
+            ),
         }
     }
 }
@@ -185,14 +193,28 @@ fn encode_int(out: &mut Vec<u8>, prefix_bits: u32, flags: u8, value: usize) {
 }
 
 /// A string literal (RFC 7541 section 5.2), at most `limit` bytes once decoded, appended to `out`.
-fn decode_string(buf: &[u8], pos: &mut usize, limit: usize, out: &mut Vec<u8>) -> Result<(), Error> {
+fn decode_string(
+    buf: &[u8],
+    pos: &mut usize,
+    limit: usize,
+    out: &mut Vec<u8>,
+) -> Result<(), Error> {
     let huffman_coded = *buf.get(*pos).ok_or(Error::Truncated)? & 0x80 != 0;
     let len = decode_int(buf, pos, 7)?;
-    let end = pos.checked_add(len).filter(|&e| e <= buf.len()).ok_or(Error::Truncated)?;
+    let end = pos
+        .checked_add(len)
+        .filter(|&e| e <= buf.len())
+        .ok_or(Error::Truncated)?;
     let raw = &buf[*pos..end];
     *pos = end;
     if huffman_coded {
-        huffman::decode(raw, out, limit).map_err(|e| if e == huffman::Error::TooLong { Error::StringTooLong } else { Error::Huffman(e) })
+        huffman::decode(raw, out, limit).map_err(|e| {
+            if e == huffman::Error::TooLong {
+                Error::StringTooLong
+            } else {
+                Error::Huffman(e)
+            }
+        })
     } else if raw.len() > limit {
         Err(Error::StringTooLong)
     } else {
@@ -227,7 +249,11 @@ struct DynamicTable {
 
 impl DynamicTable {
     fn new(max: usize) -> DynamicTable {
-        DynamicTable { entries: VecDeque::new(), size: 0, max }
+        DynamicTable {
+            entries: VecDeque::new(),
+            size: 0,
+            max,
+        }
     }
 
     fn insert(&mut self, field: Field) {
@@ -246,7 +272,10 @@ impl DynamicTable {
     fn set_max(&mut self, max: usize) {
         self.max = max;
         while self.size > max {
-            let old = self.entries.pop_back().expect("a table with a size has entries");
+            let old = self
+                .entries
+                .pop_back()
+                .expect("a table with a size has entries");
             self.size -= old.size();
         }
     }
@@ -259,7 +288,9 @@ impl DynamicTable {
             let (n, v) = STATIC[index - 1];
             Some((n.as_bytes(), v.as_bytes()))
         } else {
-            self.entries.get(index - STATIC.len() - 1).map(|f| (&f.name[..], &f.value[..]))
+            self.entries
+                .get(index - STATIC.len() - 1)
+                .map(|f| (&f.name[..], &f.value[..]))
         }
     }
 }
@@ -278,7 +309,11 @@ pub(crate) struct Decoder {
 
 impl Decoder {
     pub(crate) fn new(allowed_table_size: usize, max_list_size: usize) -> Decoder {
-        Decoder { table: DynamicTable::new(allowed_table_size), allowed_table_size, max_list_size }
+        Decoder {
+            table: DynamicTable::new(allowed_table_size),
+            allowed_table_size,
+            max_list_size,
+        }
     }
 
     /// Decodes a whole header block (the fragments of a HEADERS frame and its CONTINUATION frames, joined) and
@@ -304,7 +339,10 @@ impl Decoder {
                 if list > self.max_list_size {
                     within = false;
                 } else {
-                    out.push(Field { name: name.to_vec(), value: value.to_vec() });
+                    out.push(Field {
+                        name: name.to_vec(),
+                        value: value.to_vec(),
+                    });
                 }
                 continue;
             } else if first & 0x40 != 0 {
@@ -339,7 +377,13 @@ impl Decoder {
     }
 
     /// A literal field: the name as an index or a string, then the value as a string.
-    fn literal(&self, block: &[u8], pos: &mut usize, prefix_bits: u32, string_limit: usize) -> Result<Field, Error> {
+    fn literal(
+        &self,
+        block: &[u8],
+        pos: &mut usize,
+        prefix_bits: u32,
+        string_limit: usize,
+    ) -> Result<Field, Error> {
         let index = decode_int(block, pos, prefix_bits)?;
         let mut name = Vec::new();
         if index == 0 {
@@ -381,7 +425,10 @@ pub(crate) struct Encoder {
 
 impl Encoder {
     pub(crate) fn new() -> Encoder {
-        Encoder { table: DynamicTable::new(DEFAULT_TABLE_SIZE), pending: None }
+        Encoder {
+            table: DynamicTable::new(DEFAULT_TABLE_SIZE),
+            pending: None,
+        }
     }
 
     /// The peer announced this SETTINGS_HEADER_TABLE_SIZE. The table shrinks to it if need be, and the next block
@@ -437,7 +484,10 @@ impl Encoder {
         }
         encode_string(out, f.value);
         if add {
-            self.table.insert(Field { name: f.name.to_vec(), value: f.value.to_vec() });
+            self.table.insert(Field {
+                name: f.name.to_vec(),
+                value: f.value.to_vec(),
+            });
         }
     }
 
@@ -474,7 +524,9 @@ mod tests {
     use super::*;
 
     fn unhex(hex: &str) -> Vec<u8> {
-        (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap()).collect()
+        (0..hex.len() / 2)
+            .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+            .collect()
     }
 
     fn hex(bytes: &[u8]) -> String {
@@ -482,11 +534,22 @@ mod tests {
     }
 
     fn pairs(fields: &[Field]) -> Vec<(String, String)> {
-        fields.iter().map(|f| (String::from_utf8_lossy(&f.name).into_owned(), String::from_utf8_lossy(&f.value).into_owned())).collect()
+        fields
+            .iter()
+            .map(|f| {
+                (
+                    String::from_utf8_lossy(&f.name).into_owned(),
+                    String::from_utf8_lossy(&f.value).into_owned(),
+                )
+            })
+            .collect()
     }
 
     fn list(items: &[(&str, &str)]) -> Vec<(String, String)> {
-        items.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect()
+        items
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect()
     }
 
     fn decode_hex(dec: &mut Decoder, hex: &str) -> Vec<(String, String)> {
@@ -524,11 +587,28 @@ mod tests {
     fn integers_round_trip_at_the_edges() {
         for prefix in 1..=7u32 {
             let max = (1usize << prefix) - 1;
-            for value in [0, 1, max - 1, max, max + 1, max + 127, max + 128, 16383, 16384, 2_097_151, 2_097_152, u32::MAX as usize] {
+            for value in [
+                0,
+                1,
+                max - 1,
+                max,
+                max + 1,
+                max + 127,
+                max + 128,
+                16383,
+                16384,
+                2_097_151,
+                2_097_152,
+                u32::MAX as usize,
+            ] {
                 let mut out = Vec::new();
                 encode_int(&mut out, prefix, 0, value);
                 let mut pos = 0;
-                assert_eq!(decode_int(&out, &mut pos, prefix), Ok(value), "prefix {prefix} value {value}");
+                assert_eq!(
+                    decode_int(&out, &mut pos, prefix),
+                    Ok(value),
+                    "prefix {prefix} value {value}"
+                );
                 assert_eq!(pos, out.len());
             }
         }
@@ -548,10 +628,16 @@ mod tests {
         }
         // written with six continuation bytes, though it is small
         pos = 0;
-        assert_eq!(decode_int(&[0x7f, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00], &mut pos, 7), Err(Error::Integer));
+        assert_eq!(
+            decode_int(&[0x7f, 0x80, 0x80, 0x80, 0x80, 0x80, 0x00], &mut pos, 7),
+            Err(Error::Integer)
+        );
         // cut short
         pos = 0;
-        assert_eq!(decode_int(&[0x7f, 0x80], &mut pos, 7), Err(Error::Truncated));
+        assert_eq!(
+            decode_int(&[0x7f, 0x80], &mut pos, 7),
+            Err(Error::Truncated)
+        );
         pos = 0;
         assert_eq!(decode_int(&[], &mut pos, 7), Err(Error::Truncated));
     }
@@ -560,10 +646,18 @@ mod tests {
     fn strings_raw_and_huffman_coded() {
         let mut out = Vec::new();
         encode_string(&mut out, b"www.example.com");
-        assert_eq!(hex(&out), "8cf1e3c2e5f23a6ba0ab90f4ff", "Huffman is shorter, so it is used");
+        assert_eq!(
+            hex(&out),
+            "8cf1e3c2e5f23a6ba0ab90f4ff",
+            "Huffman is shorter, so it is used"
+        );
         out.clear();
         encode_string(&mut out, b"{}{}{}{}");
-        assert_eq!(out[0] & 0x80, 0, "these are long in Huffman (15 to 28 bits each)");
+        assert_eq!(
+            out[0] & 0x80,
+            0,
+            "these are long in Huffman (15 to 28 bits each)"
+        );
         let mut text = Vec::new();
         let mut pos = 0;
         decode_string(&out, &mut pos, 100, &mut text).unwrap();
@@ -576,14 +670,26 @@ mod tests {
     fn rfc_appendix_c2_single_fields() {
         let mut d = decoder();
         // C.2.1: literal with indexing, new name; the table has 55 bytes afterwards
-        assert_eq!(decode_hex(&mut d, "400a637573746f6d2d6b65790d637573746f6d2d686561646572"), list(&[("custom-key", "custom-header")]));
+        assert_eq!(
+            decode_hex(
+                &mut d,
+                "400a637573746f6d2d6b65790d637573746f6d2d686561646572"
+            ),
+            list(&[("custom-key", "custom-header")])
+        );
         assert_eq!(d.table_state(), (1, 55));
         // C.2.2: literal without indexing, name from the static table
         let mut d = decoder();
-        assert_eq!(decode_hex(&mut d, "040c2f73616d706c652f70617468"), list(&[(":path", "/sample/path")]));
+        assert_eq!(
+            decode_hex(&mut d, "040c2f73616d706c652f70617468"),
+            list(&[(":path", "/sample/path")])
+        );
         assert_eq!(d.table_state(), (0, 0));
         // C.2.3: never indexed
-        assert_eq!(decode_hex(&mut d, "100870617373776f726406736563726574"), list(&[("password", "secret")]));
+        assert_eq!(
+            decode_hex(&mut d, "100870617373776f726406736563726574"),
+            list(&[("password", "secret")])
+        );
         assert_eq!(d.table_state(), (0, 0));
         // C.2.4: indexed
         assert_eq!(decode_hex(&mut d, "82"), list(&[(":method", "GET")]));
@@ -593,18 +699,43 @@ mod tests {
     fn rfc_appendix_c3_and_c4_requests() {
         // the same three requests without and with Huffman coding; the table sizes are the RFC's
         for (blocks, label) in [
-            (["828684410f7777772e6578616d706c652e636f6d", "828684be58086e6f2d6361636865", "828785bf400a637573746f6d2d6b65790c637573746f6d2d76616c7565"], "C.3"),
-            (["828684418cf1e3c2e5f23a6ba0ab90f4ff", "828684be5886a8eb10649cbf", "828785bf408825a849e95ba97d7f8925a849e95bb8e8b4bf"], "C.4"),
+            (
+                [
+                    "828684410f7777772e6578616d706c652e636f6d",
+                    "828684be58086e6f2d6361636865",
+                    "828785bf400a637573746f6d2d6b65790c637573746f6d2d76616c7565",
+                ],
+                "C.3",
+            ),
+            (
+                [
+                    "828684418cf1e3c2e5f23a6ba0ab90f4ff",
+                    "828684be5886a8eb10649cbf",
+                    "828785bf408825a849e95ba97d7f8925a849e95bb8e8b4bf",
+                ],
+                "C.4",
+            ),
         ] {
             let mut d = decoder();
-            let first = list(&[(":method", "GET"), (":scheme", "http"), (":path", "/"), (":authority", "www.example.com")]);
+            let first = list(&[
+                (":method", "GET"),
+                (":scheme", "http"),
+                (":path", "/"),
+                (":authority", "www.example.com"),
+            ]);
             assert_eq!(decode_hex(&mut d, blocks[0]), first, "{label}.1");
             assert_eq!(d.table_state(), (1, 57), "{label}.1");
             let mut second = first.clone();
             second.push(("cache-control".into(), "no-cache".into()));
             assert_eq!(decode_hex(&mut d, blocks[1]), second, "{label}.2");
             assert_eq!(d.table_state(), (2, 110), "{label}.2");
-            let third = list(&[(":method", "GET"), (":scheme", "https"), (":path", "/index.html"), (":authority", "www.example.com"), ("custom-key", "custom-value")]);
+            let third = list(&[
+                (":method", "GET"),
+                (":scheme", "https"),
+                (":path", "/index.html"),
+                (":authority", "www.example.com"),
+                ("custom-key", "custom-value"),
+            ]);
             assert_eq!(decode_hex(&mut d, blocks[2]), third, "{label}.3");
             assert_eq!(d.table_state(), (3, 164), "{label}.3");
         }
@@ -646,14 +777,42 @@ mod tests {
     fn the_encoder_makes_the_rfcs_huffman_requests() {
         // Appendix C.4: the three requests, byte for byte
         let mut e = Encoder::new();
-        let want = ["828684418cf1e3c2e5f23a6ba0ab90f4ff", "828684be5886a8eb10649cbf", "828785bf408825a849e95ba97d7f8925a849e95bb8e8b4bf"];
+        let want = [
+            "828684418cf1e3c2e5f23a6ba0ab90f4ff",
+            "828684be5886a8eb10649cbf",
+            "828785bf408825a849e95ba97d7f8925a849e95bb8e8b4bf",
+        ];
         let requests: [&[(&str, &str)]; 3] = [
-            &[(":method", "GET"), (":scheme", "http"), (":path", "/"), (":authority", "www.example.com")],
-            &[(":method", "GET"), (":scheme", "http"), (":path", "/"), (":authority", "www.example.com"), ("cache-control", "no-cache")],
-            &[(":method", "GET"), (":scheme", "https"), (":path", "/index.html"), (":authority", "www.example.com"), ("custom-key", "custom-value")],
+            &[
+                (":method", "GET"),
+                (":scheme", "http"),
+                (":path", "/"),
+                (":authority", "www.example.com"),
+            ],
+            &[
+                (":method", "GET"),
+                (":scheme", "http"),
+                (":path", "/"),
+                (":authority", "www.example.com"),
+                ("cache-control", "no-cache"),
+            ],
+            &[
+                (":method", "GET"),
+                (":scheme", "https"),
+                (":path", "/index.html"),
+                (":authority", "www.example.com"),
+                ("custom-key", "custom-value"),
+            ],
         ];
         for (request, want) in requests.iter().zip(want) {
-            let fields: Vec<FieldRef> = request.iter().map(|(n, v)| FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false }).collect();
+            let fields: Vec<FieldRef> = request
+                .iter()
+                .map(|(n, v)| FieldRef {
+                    name: n.as_bytes(),
+                    value: v.as_bytes(),
+                    sensitive: false,
+                })
+                .collect();
             let mut out = Vec::new();
             e.encode(&fields, &mut out);
             assert_eq!(hex(&out), want);
@@ -675,11 +834,20 @@ mod tests {
         for line in text.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
             match parts.first().copied() {
-                Some("seq") => seqs.push(Sequence { allowed: parts[1].parse().unwrap(), blocks: Vec::new() }),
-                Some("block") => seqs.last_mut().unwrap().blocks.push((unhex(parts.get(1).copied().unwrap_or("")), Vec::new())),
+                Some("seq") => seqs.push(Sequence {
+                    allowed: parts[1].parse().unwrap(),
+                    blocks: Vec::new(),
+                }),
+                Some("block") => seqs
+                    .last_mut()
+                    .unwrap()
+                    .blocks
+                    .push((unhex(parts.get(1).copied().unwrap_or("")), Vec::new())),
                 Some("field") => {
                     let block = seqs.last_mut().unwrap().blocks.last_mut().unwrap();
-                    block.1.push((unhex(parts[1]), unhex(parts.get(2).copied().unwrap_or(""))));
+                    block
+                        .1
+                        .push((unhex(parts[1]), unhex(parts.get(2).copied().unwrap_or(""))));
                 }
                 _ => {}
             }
@@ -696,8 +864,13 @@ mod tests {
             let mut d = Decoder::new(seq.allowed, 1 << 20);
             for (j, (block, fields)) in seq.blocks.iter().enumerate() {
                 let mut out = Vec::new();
-                assert_eq!(d.decode(block, &mut out), Ok(true), "sequence {i} block {j}");
-                let got: Vec<(Vec<u8>, Vec<u8>)> = out.into_iter().map(|f| (f.name, f.value)).collect();
+                assert_eq!(
+                    d.decode(block, &mut out),
+                    Ok(true),
+                    "sequence {i} block {j}"
+                );
+                let got: Vec<(Vec<u8>, Vec<u8>)> =
+                    out.into_iter().map(|f| (f.name, f.value)).collect();
                 assert_eq!(&got, fields, "sequence {i} block {j}");
                 count += 1;
             }
@@ -710,7 +883,11 @@ mod tests {
         // tests/data/hpack_python.txt was made by `tools/hpack_oracle.py gen` with Python's hpack 4.2.0: random
         // fields, table sizes from 0 to 4096 (and changes of it between blocks, which the encoder announces),
         // Huffman coding on and off, never-indexed fields
-        check_fixture(include_str!("../../../tests/data/hpack_python.txt"), 40, 152);
+        check_fixture(
+            include_str!("../../../tests/data/hpack_python.txt"),
+            40,
+            152,
+        );
     }
 
     #[test]
@@ -735,12 +912,17 @@ mod tests {
 
         fn bytes(&mut self, lo: usize, hi: usize, alphabet: &[u8]) -> Vec<u8> {
             let n = lo + self.below(hi - lo + 1);
-            (0..n).map(|_| alphabet[self.below(alphabet.len())]).collect()
+            (0..n)
+                .map(|_| alphabet[self.below(alphabet.len())])
+                .collect()
         }
     }
 
     /// Random fields, a good share of them repeating earlier ones, with some sensitive and some binary.
-    fn random_fields(rng: &mut Prng, pool: &mut Vec<(Vec<u8>, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>, bool)> {
+    fn random_fields(
+        rng: &mut Prng,
+        pool: &mut Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Vec<(Vec<u8>, Vec<u8>, bool)> {
         const COMMON: [(&str, &str); 8] = [
             (":method", "GET"),
             (":path", "/"),
@@ -765,7 +947,10 @@ mod tests {
             } else if r < 85 {
                 (rng.bytes(1, 14, &lower), rng.bytes(0, 40, &text))
             } else if r < 95 {
-                (COMMON[rng.below(COMMON.len())].0.as_bytes().to_vec(), rng.bytes(0, 30, &text))
+                (
+                    COMMON[rng.below(COMMON.len())].0.as_bytes().to_vec(),
+                    rng.bytes(0, 30, &text),
+                )
             } else {
                 (rng.bytes(1, 6, &lower), rng.bytes(0, 20, &any))
             };
@@ -799,14 +984,31 @@ mod tests {
                     }
                 }
                 let fields = random_fields(&mut rng, &mut pool);
-                let refs: Vec<FieldRef> = fields.iter().map(|(n, v, s)| FieldRef { name: n, value: v, sensitive: *s }).collect();
+                let refs: Vec<FieldRef> = fields
+                    .iter()
+                    .map(|(n, v, s)| FieldRef {
+                        name: n,
+                        value: v,
+                        sensitive: *s,
+                    })
+                    .collect();
                 let mut out = Vec::new();
                 e.encode(&refs, &mut out);
                 let mut got = Vec::new();
                 assert_eq!(d.decode(&out, &mut got), Ok(true));
-                let want: Vec<Field> = fields.iter().map(|(n, v, _)| Field { name: n.clone(), value: v.clone() }).collect();
+                let want: Vec<Field> = fields
+                    .iter()
+                    .map(|(n, v, _)| Field {
+                        name: n.clone(),
+                        value: v.clone(),
+                    })
+                    .collect();
                 assert_eq!(got, want);
-                assert_eq!(e.table_state(), d.table_state(), "the tables went out of step");
+                assert_eq!(
+                    e.table_state(),
+                    d.table_state(),
+                    "the tables went out of step"
+                );
                 text.push_str(&format!("block {}\n", hex(&out)));
                 for (n, v, _) in &fields {
                     text.push_str(&format!("field {} {}\n", hex(n), hex(v)));
@@ -845,13 +1047,33 @@ mod tests {
     #[test]
     fn broken_blocks_are_errors() {
         assert_eq!(run(&unhex("80")), Err(Error::Index(0)));
-        assert_eq!(run(&unhex("be")), Err(Error::Index(62)), "the dynamic table is empty");
+        assert_eq!(
+            run(&unhex("be")),
+            Err(Error::Index(62)),
+            "the dynamic table is empty"
+        );
         assert_eq!(run(&unhex("ff8001")), Err(Error::Index(255)));
-        assert_eq!(run(&unhex("4100")).map(|_| ()), Ok(()), "index 1 is a name; its value is empty");
-        assert_eq!(run(&unhex("7f8001")), Err(Error::Index(191)), "a name index past the tables");
-        assert_eq!(run(&unhex("40")), Err(Error::Truncated), "a literal that ends at once");
+        assert_eq!(
+            run(&unhex("4100")).map(|_| ()),
+            Ok(()),
+            "index 1 is a name; its value is empty"
+        );
+        assert_eq!(
+            run(&unhex("7f8001")),
+            Err(Error::Index(191)),
+            "a name index past the tables"
+        );
+        assert_eq!(
+            run(&unhex("40")),
+            Err(Error::Truncated),
+            "a literal that ends at once"
+        );
         assert_eq!(run(&unhex("400161")), Err(Error::Truncated), "no value");
-        assert_eq!(run(&unhex("400a61")), Err(Error::Truncated), "a string longer than the block");
+        assert_eq!(
+            run(&unhex("400a61")),
+            Err(Error::Truncated),
+            "a string longer than the block"
+        );
         assert_eq!(run(&unhex("ff")), Err(Error::Truncated));
         // an index or a length that does not fit 32 bits
         assert_eq!(run(&unhex("ffffffffff1f")), Err(Error::Integer));
@@ -866,10 +1088,26 @@ mod tests {
     #[test]
     fn huffman_strings_are_checked() {
         // a literal with a one-byte name "a" and a Huffman value
-        assert_eq!(run(&unhex("4001618161")), Err(Error::Huffman(huffman::Error::Padding)), "'/' and then 01: the padding is not ones");
-        assert_eq!(run(&unhex("400161851fffffffff")), Err(Error::Huffman(huffman::Error::Eos)), "'a' then more than thirty ones");
-        assert_eq!(run(&unhex("400161841fffffff")), Err(Error::Huffman(huffman::Error::Padding)), "'a' then 27 ones: far too long for padding");
-        assert_eq!(run(&unhex("40016181ff")), Err(Error::Huffman(huffman::Error::Padding)), "eight bits of padding");
+        assert_eq!(
+            run(&unhex("4001618161")),
+            Err(Error::Huffman(huffman::Error::Padding)),
+            "'/' and then 01: the padding is not ones"
+        );
+        assert_eq!(
+            run(&unhex("400161851fffffffff")),
+            Err(Error::Huffman(huffman::Error::Eos)),
+            "'a' then more than thirty ones"
+        );
+        assert_eq!(
+            run(&unhex("400161841fffffff")),
+            Err(Error::Huffman(huffman::Error::Padding)),
+            "'a' then 27 ones: far too long for padding"
+        );
+        assert_eq!(
+            run(&unhex("40016181ff")),
+            Err(Error::Huffman(huffman::Error::Padding)),
+            "eight bits of padding"
+        );
         assert_eq!(run(&unhex("400161811f")).unwrap(), list(&[("a", "a")]));
     }
 
@@ -895,7 +1133,18 @@ mod tests {
     fn a_list_over_the_limit_is_cut_but_the_block_is_still_read_through() {
         // two fields of 32 + 1 + 1 = 34 bytes each; room for one
         let mut e = Encoder::new();
-        let fields = [FieldRef { name: b"a", value: b"1", sensitive: false }, FieldRef { name: b"b", value: b"2", sensitive: false }];
+        let fields = [
+            FieldRef {
+                name: b"a",
+                value: b"1",
+                sensitive: false,
+            },
+            FieldRef {
+                name: b"b",
+                value: b"2",
+                sensitive: false,
+            },
+        ];
         let mut block = Vec::new();
         e.encode(&fields, &mut block);
         let mut d = Decoder::new(4096, 40);
@@ -906,7 +1155,11 @@ mod tests {
         assert_eq!(d.table_state(), (2, 68));
         let mut again = Vec::new();
         e.encode(&fields[1..], &mut again);
-        assert_eq!(again, [0x80 | 62], "the encoder refers to the entry both of them have");
+        assert_eq!(
+            again,
+            [0x80 | 62],
+            "the encoder refers to the entry both of them have"
+        );
         let mut out = Vec::new();
         assert_eq!(d.decode(&again, &mut out), Ok(true));
         assert_eq!(pairs(&out), list(&[("b", "2")]));
@@ -931,7 +1184,11 @@ mod tests {
         assert_eq!(d.table_state(), (2, 72));
         out.clear();
         d.decode(&[0x80 | 62, 0x80 | 63], &mut out).unwrap();
-        assert_eq!(pairs(&out), list(&[("cc", "33"), ("bb", "22")]), "newest first");
+        assert_eq!(
+            pairs(&out),
+            list(&[("cc", "33"), ("bb", "22")]),
+            "newest first"
+        );
         assert_eq!(d.decode(&[0x80 | 64], &mut out), Err(Error::Index(64)));
         // an entry larger than the whole table empties it and is not kept
         let huge = literal("name", &"v".repeat(90));
@@ -958,14 +1215,23 @@ mod tests {
         let mut pool = Vec::new();
         for _ in 0..40 {
             let fields = random_fields(&mut rng, &mut pool);
-            let refs: Vec<FieldRef> = fields.iter().map(|(n, v, s)| FieldRef { name: n, value: v, sensitive: *s }).collect();
+            let refs: Vec<FieldRef> = fields
+                .iter()
+                .map(|(n, v, s)| FieldRef {
+                    name: n,
+                    value: v,
+                    sensitive: *s,
+                })
+                .collect();
             let mut out = Vec::new();
             e.encode(&refs, &mut out);
             valid.push(out);
         }
         for round in 0..6000 {
             let mut block = if round % 3 == 0 {
-                (0..rng.below(60)).map(|_| rng.next() as u8).collect::<Vec<u8>>()
+                (0..rng.below(60))
+                    .map(|_| rng.next() as u8)
+                    .collect::<Vec<u8>>()
             } else {
                 valid[rng.below(valid.len())].clone()
             };
@@ -982,7 +1248,10 @@ mod tests {
             let mut out = Vec::new();
             let _ = d.decode(&block, &mut out);
             let kept: usize = out.iter().map(|f| f.size()).sum();
-            assert!(kept <= 200, "{kept} bytes of fields kept under a limit of 200");
+            assert!(
+                kept <= 200,
+                "{kept} bytes of fields kept under a limit of 200"
+            );
             let (_, table) = d.table_state();
             assert!(table <= 256);
         }
@@ -994,17 +1263,42 @@ mod tests {
     fn sensitive_fields_are_never_indexed_and_never_added() {
         let mut e = Encoder::new();
         let mut out = Vec::new();
-        e.encode(&[FieldRef { name: b"authorization", value: b"Bearer secret", sensitive: true }], &mut out);
+        e.encode(
+            &[FieldRef {
+                name: b"authorization",
+                value: b"Bearer secret",
+                sensitive: true,
+            }],
+            &mut out,
+        );
         // 0001 prefix; the name is static index 23
-        assert_eq!(out[0], 0x10 | 15, "never indexed, name index 23 continues past the 4-bit prefix");
+        assert_eq!(
+            out[0],
+            0x10 | 15,
+            "never indexed, name index 23 continues past the 4-bit prefix"
+        );
         assert_eq!(e.table_state(), (0, 0));
         // the same again: still a literal, not an index
         let mut again = Vec::new();
-        e.encode(&[FieldRef { name: b"authorization", value: b"Bearer secret", sensitive: true }], &mut again);
+        e.encode(
+            &[FieldRef {
+                name: b"authorization",
+                value: b"Bearer secret",
+                sensitive: true,
+            }],
+            &mut again,
+        );
         assert_eq!(out, again);
         // a name that is nowhere is sent in full
         let mut out = Vec::new();
-        e.encode(&[FieldRef { name: b"x-secret", value: b"v", sensitive: true }], &mut out);
+        e.encode(
+            &[FieldRef {
+                name: b"x-secret",
+                value: b"v",
+                sensitive: true,
+            }],
+            &mut out,
+        );
         assert_eq!(out[0], 0x10);
         assert_eq!(run(&out).unwrap(), list(&[("x-secret", "v")]));
     }
@@ -1014,7 +1308,14 @@ mod tests {
         let mut e = Encoder::new();
         let value = vec![b'v'; 3000];
         let mut out = Vec::new();
-        e.encode(&[FieldRef { name: b"x-big", value: &value, sensitive: false }], &mut out);
+        e.encode(
+            &[FieldRef {
+                name: b"x-big",
+                value: &value,
+                sensitive: false,
+            }],
+            &mut out,
+        );
         assert_eq!(out[0] & 0xf0, 0x00, "a literal without indexing");
         assert_eq!(e.table_state(), (0, 0));
     }
@@ -1025,15 +1326,36 @@ mod tests {
         e.set_peer_table_size(0);
         e.set_peer_table_size(100);
         let mut out = Vec::new();
-        e.encode(&[FieldRef { name: b":method", value: b"GET", sensitive: false }], &mut out);
+        e.encode(
+            &[FieldRef {
+                name: b":method",
+                value: b"GET",
+                sensitive: false,
+            }],
+            &mut out,
+        );
         // the smallest size since the last block is announced with this one: 0 (and the last, 100, with the next)
         assert_eq!(hex(&out), "2082");
         let mut out = Vec::new();
-        e.encode(&[FieldRef { name: b":method", value: b"GET", sensitive: false }], &mut out);
+        e.encode(
+            &[FieldRef {
+                name: b":method",
+                value: b"GET",
+                sensitive: false,
+            }],
+            &mut out,
+        );
         assert_eq!(hex(&out), "3f4582");
         // and then nothing more
         let mut out = Vec::new();
-        e.encode(&[FieldRef { name: b":method", value: b"GET", sensitive: false }], &mut out);
+        e.encode(
+            &[FieldRef {
+                name: b":method",
+                value: b"GET",
+                sensitive: false,
+            }],
+            &mut out,
+        );
         assert_eq!(hex(&out), "82");
         // a decoder takes the updates, and also both together (the RFC allows that)
         let mut d = Decoder::new(4096, 1 << 20);
@@ -1051,7 +1373,21 @@ mod tests {
         // a smaller table evicts: fill it, then shrink it
         let mut e = Encoder::new();
         let mut out = Vec::new();
-        e.encode(&[FieldRef { name: b"aa", value: b"11", sensitive: false }, FieldRef { name: b"bb", value: b"22", sensitive: false }], &mut out);
+        e.encode(
+            &[
+                FieldRef {
+                    name: b"aa",
+                    value: b"11",
+                    sensitive: false,
+                },
+                FieldRef {
+                    name: b"bb",
+                    value: b"22",
+                    sensitive: false,
+                },
+            ],
+            &mut out,
+        );
         assert_eq!(e.table_state(), (2, 72));
         e.set_peer_table_size(40);
         assert_eq!(e.table_state(), (1, 36));
@@ -1060,7 +1396,11 @@ mod tests {
     #[test]
     fn repeated_fields_become_one_byte() {
         let mut e = Encoder::new();
-        let f = [FieldRef { name: b"x-request-id", value: b"7f3a9c", sensitive: false }];
+        let f = [FieldRef {
+            name: b"x-request-id",
+            value: b"7f3a9c",
+            sensitive: false,
+        }];
         let mut first = Vec::new();
         e.encode(&f, &mut first);
         assert!(first.len() > 5);
@@ -1069,7 +1409,21 @@ mod tests {
         assert_eq!(second, [0x80 | 62]);
         // static entries too
         let mut third = Vec::new();
-        e.encode(&[FieldRef { name: b":method", value: b"POST", sensitive: false }, FieldRef { name: b":status", value: b"404", sensitive: false }], &mut third);
+        e.encode(
+            &[
+                FieldRef {
+                    name: b":method",
+                    value: b"POST",
+                    sensitive: false,
+                },
+                FieldRef {
+                    name: b":status",
+                    value: b"404",
+                    sensitive: false,
+                },
+            ],
+            &mut third,
+        );
         assert_eq!(hex(&third), "838d");
     }
 }

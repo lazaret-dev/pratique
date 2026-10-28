@@ -46,13 +46,13 @@ pub mod ber;
 pub mod cms;
 pub mod crypto;
 pub mod ct;
+#[cfg(test)]
+mod fuzz;
 pub mod idna;
 pub mod inflate;
 pub mod json;
 #[cfg(feature = "mozilla-roots")]
 pub mod mozilla_roots;
-#[cfg(test)]
-mod fuzz;
 pub mod note;
 pub mod pem;
 pub mod revocation;
@@ -119,9 +119,17 @@ mod thread_safety {
         assert_send_sync::<crate::tls::ClientConnection>();
         // the futures of the async client can be moved to another thread (spawned on a runtime)
         fn is_send<F: std::future::Future + Send>(_: &F) {}
-        let client = crate::Client::with_tls_config(crate::tls::ClientConfig::new(crate::x509::TrustStore::empty())).into_async();
+        let client = crate::Client::with_tls_config(crate::tls::ClientConfig::new(
+            crate::x509::TrustStore::empty(),
+        ))
+        .into_async();
         is_send(&client.get("https://example.com/"));
-        is_send(&client.request("POST", "https://example.com/").body("x").send());
+        is_send(
+            &client
+                .request("POST", "https://example.com/")
+                .body("x")
+                .send(),
+        );
         assert_send_sync::<crate::asyncio::BlockingTask<crate::error::Result<crate::Response>>>();
     }
 }

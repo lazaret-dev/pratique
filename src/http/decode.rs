@@ -30,7 +30,11 @@ pub(crate) struct DecodeLimits {
 impl DecodeLimits {
     /// The limits of the decoder for a request whose body limit is `max_body`.
     pub(crate) fn for_body(&self, max_body: u64) -> Limits {
-        Limits { max_output: self.max_output.unwrap_or(max_body), max_ratio: self.max_ratio, ratio_floor: self.ratio_floor }
+        Limits {
+            max_output: self.max_output.unwrap_or(max_body),
+            max_ratio: self.max_ratio,
+            ratio_floor: self.ratio_floor,
+        }
     }
 }
 
@@ -75,14 +79,15 @@ pub(crate) fn coding_of(method: &str, status: u16, headers: &[(String, String)])
             if token.is_empty() || token.eq_ignore_ascii_case("identity") {
                 continue;
             }
-            let format = if token.eq_ignore_ascii_case("gzip") || token.eq_ignore_ascii_case("x-gzip") {
-                Format::Gzip
-            } else if token.eq_ignore_ascii_case("deflate") {
-                // what is meant is zlib, and some servers send the bare form
-                Format::ZlibOrDeflate
-            } else {
-                return None;
-            };
+            let format =
+                if token.eq_ignore_ascii_case("gzip") || token.eq_ignore_ascii_case("x-gzip") {
+                    Format::Gzip
+                } else if token.eq_ignore_ascii_case("deflate") {
+                    // what is meant is zlib, and some servers send the bare form
+                    Format::ZlibOrDeflate
+                } else {
+                    return None;
+                };
             if found.replace(format).is_some() {
                 // more than one coding: each layer would be a bomb of its own
                 return None;
@@ -94,7 +99,9 @@ pub(crate) fn coding_of(method: &str, status: u16, headers: &[(String, String)])
 
 /// Takes the headers that describe the encoded body out of a list of headers whose body has been decoded.
 pub(crate) fn strip_encoding_headers(headers: &mut Vec<(String, String)>) {
-    headers.retain(|(n, _)| !n.eq_ignore_ascii_case("content-encoding") && !n.eq_ignore_ascii_case("content-length"));
+    headers.retain(|(n, _)| {
+        !n.eq_ignore_ascii_case("content-encoding") && !n.eq_ignore_ascii_case("content-length")
+    });
 }
 
 /// What the decoder wants a stream to do next.
@@ -180,7 +187,9 @@ impl BodyDecoder {
             if p.status == Status::Done {
                 // (bytes that the decoder took into its bit buffer count as input it took, and are not the stream's)
                 if self.pos < self.end || !self.inf.take_unused().is_empty() {
-                    return self.fail(InflateError::Corrupt("data follows the end of the compressed stream"));
+                    return self.fail(InflateError::Corrupt(
+                        "data follows the end of the compressed stream",
+                    ));
                 }
                 self.stream_done = true;
             }
@@ -189,7 +198,9 @@ impl BodyDecoder {
             }
             match p.status {
                 Status::Done => {}
-                Status::NeedOutput => return self.fail(InflateError::Corrupt("the decoder made no progress")),
+                Status::NeedOutput => {
+                    return self.fail(InflateError::Corrupt("the decoder made no progress"))
+                }
                 Status::NeedInput => {
                     if self.wire_eof {
                         // (a gzip stream of members ends here, if it ends between two of them)
@@ -220,7 +231,9 @@ impl BodyDecoder {
         }
         self.wire_total += n as u64;
         if self.stream_done {
-            return self.fail(InflateError::Corrupt("data follows the end of the compressed stream"));
+            return self.fail(InflateError::Corrupt(
+                "data follows the end of the compressed stream",
+            ));
         }
         self.pos = 0;
         self.end = n.min(self.buf.len());
@@ -230,7 +243,10 @@ impl BodyDecoder {
 
 impl std::fmt::Debug for BodyDecoder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("BodyDecoder").field("wire_total", &self.wire_total).field("stream_done", &self.stream_done).finish_non_exhaustive()
+        f.debug_struct("BodyDecoder")
+            .field("wire_total", &self.wire_total)
+            .field("stream_done", &self.stream_done)
+            .finish_non_exhaustive()
     }
 }
 
@@ -239,7 +255,10 @@ mod tests {
     use super::*;
 
     fn h(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs.iter().map(|(n, v)| (n.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(n, v)| (n.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -248,49 +267,99 @@ mod tests {
         assert_eq!(get(&[("Content-Encoding", "gzip")]), Some(Format::Gzip));
         assert_eq!(get(&[("content-encoding", "GZIP")]), Some(Format::Gzip));
         assert_eq!(get(&[("content-encoding", " x-gzip ")]), Some(Format::Gzip));
-        assert_eq!(get(&[("content-encoding", "deflate")]), Some(Format::ZlibOrDeflate));
+        assert_eq!(
+            get(&[("content-encoding", "deflate")]),
+            Some(Format::ZlibOrDeflate)
+        );
         // identity is no coding, alone or in a list, and an empty header is none either
         assert_eq!(get(&[("content-encoding", "identity")]), None);
-        assert_eq!(get(&[("content-encoding", "identity, gzip")]), Some(Format::Gzip));
+        assert_eq!(
+            get(&[("content-encoding", "identity, gzip")]),
+            Some(Format::Gzip)
+        );
         assert_eq!(get(&[("content-encoding", "")]), None);
         assert_eq!(get(&[]), None);
         // more than one coding, in one header or in several, and every one that is not known, are left alone
         assert_eq!(get(&[("content-encoding", "gzip, gzip")]), None);
         assert_eq!(get(&[("content-encoding", "deflate, gzip")]), None);
-        assert_eq!(get(&[("content-encoding", "gzip"), ("content-encoding", "gzip")]), None);
-        assert_eq!(get(&[("content-encoding", "gzip"), ("content-encoding", "br")]), None);
+        assert_eq!(
+            get(&[("content-encoding", "gzip"), ("content-encoding", "gzip")]),
+            None
+        );
+        assert_eq!(
+            get(&[("content-encoding", "gzip"), ("content-encoding", "br")]),
+            None
+        );
         assert_eq!(get(&[("content-encoding", "br")]), None);
         assert_eq!(get(&[("content-encoding", "zstd")]), None);
         assert_eq!(get(&[("content-encoding", "gzip;q=1")]), None);
         assert_eq!(get(&[("content-encoding", "gzipp")]), None);
         // no body to decode, or a part of the encoded body
         for status in [100, 101, 204, 205, 206, 304] {
-            assert_eq!(coding_of("GET", status, &h(&[("content-encoding", "gzip")])), None, "status {status}");
+            assert_eq!(
+                coding_of("GET", status, &h(&[("content-encoding", "gzip")])),
+                None,
+                "status {status}"
+            );
         }
-        assert_eq!(coding_of("HEAD", 200, &h(&[("content-encoding", "gzip")])), None);
-        assert_eq!(coding_of("head", 200, &h(&[("content-encoding", "gzip")])), None);
+        assert_eq!(
+            coding_of("HEAD", 200, &h(&[("content-encoding", "gzip")])),
+            None
+        );
+        assert_eq!(
+            coding_of("head", 200, &h(&[("content-encoding", "gzip")])),
+            None
+        );
         // an error page is decoded like any other body
-        assert_eq!(coding_of("GET", 404, &h(&[("content-encoding", "gzip")])), Some(Format::Gzip));
-        assert_eq!(coding_of("POST", 201, &h(&[("content-encoding", "deflate")])), Some(Format::ZlibOrDeflate));
+        assert_eq!(
+            coding_of("GET", 404, &h(&[("content-encoding", "gzip")])),
+            Some(Format::Gzip)
+        );
+        assert_eq!(
+            coding_of("POST", 201, &h(&[("content-encoding", "deflate")])),
+            Some(Format::ZlibOrDeflate)
+        );
     }
 
     #[test]
     fn the_headers_of_the_encoded_body_are_dropped() {
-        let mut hs = h(&[("Content-Type", "text/plain"), ("Content-Encoding", "gzip"), ("content-length", "20"), ("Vary", "Accept-Encoding"), ("ETag", "\"x\"")]);
+        let mut hs = h(&[
+            ("Content-Type", "text/plain"),
+            ("Content-Encoding", "gzip"),
+            ("content-length", "20"),
+            ("Vary", "Accept-Encoding"),
+            ("ETag", "\"x\""),
+        ]);
         strip_encoding_headers(&mut hs);
-        assert_eq!(hs, h(&[("Content-Type", "text/plain"), ("Vary", "Accept-Encoding"), ("ETag", "\"x\"")]));
+        assert_eq!(
+            hs,
+            h(&[
+                ("Content-Type", "text/plain"),
+                ("Vary", "Accept-Encoding"),
+                ("ETag", "\"x\"")
+            ])
+        );
     }
 
     #[test]
     fn limits_follow_the_body_limit_unless_they_are_set() {
         let d = DecodeLimits::default();
         assert_eq!(d.for_body(100), Limits::new(100));
-        let d = DecodeLimits { max_output: Some(7), max_ratio: 50, ratio_floor: 1000 };
+        let d = DecodeLimits {
+            max_output: Some(7),
+            max_ratio: 50,
+            ratio_floor: 1000,
+        };
         assert_eq!(d.for_body(100), Limits::new(7).with_ratio(50, 1000));
     }
 
     /// Drives a decoder the way a stream does: the wire body in pieces of `piece` bytes, the output in a buffer of `out` bytes.
-    fn drive(d: &mut BodyDecoder, wire: &[u8], piece: usize, out: usize) -> Result<Vec<u8>, InflateError> {
+    fn drive(
+        d: &mut BodyDecoder,
+        wire: &[u8],
+        piece: usize,
+        out: usize,
+    ) -> Result<Vec<u8>, InflateError> {
         let mut result = Vec::new();
         let mut buf = vec![0u8; out];
         let mut at = 0;
@@ -309,7 +378,10 @@ mod tests {
     }
 
     fn zlib_hello() -> Vec<u8> {
-        vec![0x78, 0x9c, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0xc8, 0x40, 0x27, 0x01, 0x68, 0x03, 0x08, 0xb1]
+        vec![
+            0x78, 0x9c, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0xc8, 0x40, 0x27, 0x01, 0x68, 0x03,
+            0x08, 0xb1,
+        ]
     }
 
     fn gzip_hello() -> Vec<u8> {
@@ -323,11 +395,23 @@ mod tests {
 
     #[test]
     fn a_body_is_decoded_however_it_is_cut() {
-        for (format, wire) in [(Format::Gzip, gzip_hello()), (Format::Zlib, zlib_hello()), (Format::ZlibOrDeflate, zlib_hello()), (Format::ZlibOrDeflate, zlib_hello()[2..zlib_hello().len() - 4].to_vec())] {
+        for (format, wire) in [
+            (Format::Gzip, gzip_hello()),
+            (Format::Zlib, zlib_hello()),
+            (Format::ZlibOrDeflate, zlib_hello()),
+            (
+                Format::ZlibOrDeflate,
+                zlib_hello()[2..zlib_hello().len() - 4].to_vec(),
+            ),
+        ] {
             for piece in [1, 3, 100, 1 << 20] {
                 for out in [1, 5, 4096] {
                     let mut d = BodyDecoder::new(format, Limits::new(1000));
-                    assert_eq!(drive(&mut d, &wire, piece, out).unwrap(), b"hello hello hello hello", "{format:?} in {piece}s, out {out}s");
+                    assert_eq!(
+                        drive(&mut d, &wire, piece, out).unwrap(),
+                        b"hello hello hello hello",
+                        "{format:?} in {piece}s, out {out}s"
+                    );
                     // and it stays at the end
                     assert_eq!(d.next(&mut [0u8; 8]), Ok(Next::End));
                 }
@@ -342,7 +426,11 @@ mod tests {
         let wire = gzip_hello();
         for cut in 1..wire.len() {
             let mut d = BodyDecoder::new(Format::Gzip, Limits::unlimited());
-            assert_eq!(drive(&mut d, &wire[..cut], 7, 64), Err(InflateError::Truncated), "cut at {cut}");
+            assert_eq!(
+                drive(&mut d, &wire[..cut], 7, 64),
+                Err(InflateError::Truncated),
+                "cut at {cut}"
+            );
             // the failure is kept
             assert_eq!(d.next(&mut [0u8; 8]), Err(InflateError::Truncated));
         }
@@ -350,12 +438,19 @@ mod tests {
 
     #[test]
     fn bytes_after_the_stream_are_refused_wherever_they_come_in() {
-        for (format, mut wire) in [(Format::Zlib, zlib_hello()), (Format::ZlibOrDeflate, zlib_hello()), (Format::Gzip, gzip_hello())] {
+        for (format, mut wire) in [
+            (Format::Zlib, zlib_hello()),
+            (Format::ZlibOrDeflate, zlib_hello()),
+            (Format::Gzip, gzip_hello()),
+        ] {
             wire.extend_from_slice(b"\0");
             for piece in [1, 5, 1 << 20] {
                 let mut d = BodyDecoder::new(format, Limits::unlimited());
                 let r = drive(&mut d, &wire, piece, 4096);
-                assert!(matches!(r, Err(InflateError::Corrupt(_))), "{format:?} in {piece}s: {r:?}");
+                assert!(
+                    matches!(r, Err(InflateError::Corrupt(_))),
+                    "{format:?} in {piece}s: {r:?}"
+                );
             }
         }
     }
@@ -363,7 +458,10 @@ mod tests {
     #[test]
     fn the_output_limit_stops_the_decoding() {
         let mut d = BodyDecoder::new(Format::Gzip, Limits::new(10));
-        assert_eq!(drive(&mut d, &gzip_hello(), 100, 4), Err(InflateError::OutputLimit { limit: 10 }));
+        assert_eq!(
+            drive(&mut d, &gzip_hello(), 100, 4),
+            Err(InflateError::OutputLimit { limit: 10 })
+        );
         let mut d = BodyDecoder::new(Format::Gzip, Limits::new(23));
         assert_eq!(drive(&mut d, &gzip_hello(), 100, 4).unwrap().len(), 23);
     }

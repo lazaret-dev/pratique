@@ -150,7 +150,8 @@ impl ServerConfig {
     /// A configuration that serves `chain` (DER, leaf first) with `key`, the leaf's key (not checked: see
     /// [`from_pem`](Self::from_pem) and [`CertifiedKey::new`] for that).
     pub fn new(chain: Vec<Vec<u8>>, key: impl Into<SigningKey>) -> ServerConfig {
-        let cert = CertifiedKey::new_unchecked(chain, key.into()).expect("a certificate chain that is not empty");
+        let cert = CertifiedKey::new_unchecked(chain, key.into())
+            .expect("a certificate chain that is not empty");
         ServerConfig::with_certificates(CertStore::single(cert))
     }
 
@@ -186,7 +187,9 @@ impl ServerConfig {
     /// a CA delivers a "fullchain" file) and its private key in `key_pem` (PKCS#8, SEC 1 or PKCS#1 PEM; see
     /// [`SigningKey::from_pem`]). Refused if the key is not the first certificate's.
     pub fn from_pem(chain_pem: &str, key_pem: &str) -> Result<ServerConfig> {
-        Ok(ServerConfig::with_certificates(CertStore::single(CertifiedKey::from_pem(chain_pem, key_pem)?)))
+        Ok(ServerConfig::with_certificates(CertStore::single(
+            CertifiedKey::from_pem(chain_pem, key_pem)?,
+        )))
     }
 
     /// Resumes nothing: every handshake is a full one.
@@ -259,7 +262,8 @@ impl ServerConfig {
     /// configuration's own (the clones it was made from keep theirs).
     pub fn with_ocsp_staple(mut self, response: &[u8]) -> ServerConfig {
         if let Some(store) = &self.store {
-            let mut certs: Vec<CertifiedKey> = store.certificates().iter().map(|c| (**c).clone()).collect();
+            let mut certs: Vec<CertifiedKey> =
+                store.certificates().iter().map(|c| (**c).clone()).collect();
             if let Some(first) = certs.first_mut() {
                 *first = first.clone().with_ocsp_staple(response.to_vec());
             }
@@ -311,7 +315,13 @@ fn alert_description(err: &Error) -> Option<u8> {
     ];
     match err {
         Error::Io(_) | Error::Alert(_, _) => None,
-        Error::Tls(m) => Some(TABLE.iter().find(|(prefix, _)| m.starts_with(prefix)).map(|(_, d)| *d).unwrap_or(80)), // internal_error
+        Error::Tls(m) => Some(
+            TABLE
+                .iter()
+                .find(|(prefix, _)| m.starts_with(prefix))
+                .map(|(_, d)| *d)
+                .unwrap_or(80),
+        ), // internal_error
         _ => Some(80),
     }
 }
@@ -349,28 +359,48 @@ fn u16_list(data: &[u8], what: &str) -> Result<Vec<u16>> {
     if !r.is_empty() || list.len() % 2 != 0 {
         return Err(bad(what));
     }
-    Ok(list.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect())
+    Ok(list
+        .chunks(2)
+        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .collect())
 }
 
 /// Parses the body of a ClientHello (RFC 8446 section 4.1.2).
 fn parse_hello(body: &[u8]) -> Result<Hello> {
     let mut r = Reader::new(body);
     let legacy_version = r.u16().ok_or_else(|| bad("ClientHello version"))?;
-    let random: [u8; 32] = r.take(32).and_then(|b| <[u8; 32]>::try_from(b).ok()).ok_or_else(|| bad("ClientHello random"))?;
-    let session_id = r.vec8().ok_or_else(|| bad("ClientHello session id"))?.to_vec();
+    let random: [u8; 32] = r
+        .take(32)
+        .and_then(|b| <[u8; 32]>::try_from(b).ok())
+        .ok_or_else(|| bad("ClientHello random"))?;
+    let session_id = r
+        .vec8()
+        .ok_or_else(|| bad("ClientHello session id"))?
+        .to_vec();
     if session_id.len() > 32 {
-        return Err(Error::Tls("illegal_parameter: session id longer than 32 bytes".into()));
+        return Err(Error::Tls(
+            "illegal_parameter: session id longer than 32 bytes".into(),
+        ));
     }
     let suites = r.vec16().ok_or_else(|| bad("ClientHello cipher suites"))?;
     if suites.is_empty() || suites.len() % 2 != 0 {
         return Err(bad("ClientHello cipher suites"));
     }
-    let cipher_suites = suites.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
-    let compression = r.vec8().ok_or_else(|| bad("ClientHello compression methods"))?;
+    let cipher_suites = suites
+        .chunks(2)
+        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .collect();
+    let compression = r
+        .vec8()
+        .ok_or_else(|| bad("ClientHello compression methods"))?;
     if compression != [0] {
-        return Err(Error::Tls("illegal_parameter: legacy_compression_methods is not exactly null".into()));
+        return Err(Error::Tls(
+            "illegal_parameter: legacy_compression_methods is not exactly null".into(),
+        ));
     }
-    let extensions = r.vec16().ok_or_else(|| Error::Tls("protocol_version: a ClientHello without extensions cannot offer TLS 1.3".into()))?;
+    let extensions = r.vec16().ok_or_else(|| {
+        Error::Tls("protocol_version: a ClientHello without extensions cannot offer TLS 1.3".into())
+    })?;
     if !r.is_empty() {
         return Err(bad("trailing data in ClientHello"));
     }
@@ -409,11 +439,18 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
                 if !vr.is_empty() || list.is_empty() || list.len() % 2 != 0 {
                     return Err(bad("supported_versions"));
                 }
-                hello.versions = list.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+                hello.versions = list
+                    .chunks(2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    .collect();
             }
             EXT_SUPPORTED_GROUPS => hello.groups = u16_list(d, "supported_groups")?,
-            EXT_SIGNATURE_ALGORITHMS => hello.signature_algorithms = Some(u16_list(d, "signature_algorithms")?),
-            EXT_SIGNATURE_ALGORITHMS_CERT => hello.signature_algorithms_cert = Some(u16_list(d, "signature_algorithms_cert")?),
+            EXT_SIGNATURE_ALGORITHMS => {
+                hello.signature_algorithms = Some(u16_list(d, "signature_algorithms")?)
+            }
+            EXT_SIGNATURE_ALGORITHMS_CERT => {
+                hello.signature_algorithms_cert = Some(u16_list(d, "signature_algorithms_cert")?)
+            }
             EXT_EARLY_DATA => {
                 if !d.is_empty() {
                     return Err(bad("early_data in a ClientHello is empty"));
@@ -431,7 +468,9 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
                     let group = lr.u16().ok_or_else(|| bad("key_share group"))?;
                     let key = lr.vec16().ok_or_else(|| bad("key_share key"))?;
                     if hello.shares.iter().any(|(g, _)| *g == group) {
-                        return Err(Error::Tls("illegal_parameter: two key shares for one group".into()));
+                        return Err(Error::Tls(
+                            "illegal_parameter: two key shares for one group".into(),
+                        ));
                     }
                     hello.shares.push((group, key.to_vec()));
                 }
@@ -447,7 +486,10 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
                     let name_type = lr.u8().ok_or_else(|| bad("server_name type"))?;
                     let name = lr.vec16().ok_or_else(|| bad("server_name"))?;
                     if name_type == 0 && hello.server_name.is_none() {
-                        hello.server_name = Some(String::from_utf8(name.to_vec()).map_err(|_| Error::Tls("illegal_parameter: server_name is not text".into()))?);
+                        hello.server_name =
+                            Some(String::from_utf8(name.to_vec()).map_err(|_| {
+                                Error::Tls("illegal_parameter: server_name is not text".into())
+                            })?);
                     }
                 }
             }
@@ -480,7 +522,9 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
             EXT_PRE_SHARED_KEY => {
                 // RFC 8446 section 4.2.11: the last extension, identities and then binders, as many of one as of the other
                 if !er.is_empty() {
-                    return Err(Error::Tls("illegal_parameter: pre_shared_key is not the last extension".into()));
+                    return Err(Error::Tls(
+                        "illegal_parameter: pre_shared_key is not the last extension".into(),
+                    ));
                 }
                 let mut pr = Reader::new(d);
                 let ids = pr.vec16().ok_or_else(|| bad("pre_shared_key identities"))?;
@@ -494,11 +538,15 @@ fn parse_hello(body: &[u8]) -> Result<Hello> {
                 while !ir.is_empty() {
                     let id = ir.vec16().ok_or_else(|| bad("PSK identity"))?;
                     ir.u32().ok_or_else(|| bad("PSK age"))?;
-                    let binder = br.vec8().ok_or_else(|| Error::Tls("illegal_parameter: fewer binders than identities".into()))?;
+                    let binder = br.vec8().ok_or_else(|| {
+                        Error::Tls("illegal_parameter: fewer binders than identities".into())
+                    })?;
                     first.get_or_insert((id.to_vec(), binder.to_vec()));
                 }
                 if !br.is_empty() {
-                    return Err(Error::Tls("illegal_parameter: more binders than identities".into()));
+                    return Err(Error::Tls(
+                        "illegal_parameter: more binders than identities".into(),
+                    ));
                 }
                 let (id, binder) = first.ok_or_else(|| bad("pre_shared_key without identities"))?;
                 hello.psk = Some((id, binder, d.len() - binders_at));
@@ -576,21 +624,32 @@ fn key_exchange(group: u16, client_share: &[u8]) -> Result<(Vec<u8>, Zeroizing<V
         let public = x25519::public_key(&private).to_vec();
         (Secret::X25519(private), public)
     } else {
-        let curve = curve_of(group).ok_or_else(|| Error::Tls("internal: key exchange for an unsupported group".into()))?;
+        let curve = curve_of(group)
+            .ok_or_else(|| Error::Tls("internal: key exchange for an unsupported group".into()))?;
         let (scalar, public) = ecdh::generate(curve)?;
         (Secret::Ec(curve, scalar), public)
     };
     let shared = match secret {
         Secret::X25519(private) => {
-            let peer: [u8; 32] = <[u8; 32]>::try_from(client_share).map_err(|_| Error::Tls("illegal_parameter: X25519 key share is not 32 bytes".into()))?;
+            let peer: [u8; 32] = <[u8; 32]>::try_from(client_share).map_err(|_| {
+                Error::Tls("illegal_parameter: X25519 key share is not 32 bytes".into())
+            })?;
             let shared = Zeroizing::new(x25519::x25519(&private, &peer));
             if shared.iter().fold(0u8, |acc, &b| acc | b) == 0 {
-                return Err(Error::Tls("illegal_parameter: X25519 produced an all-zero shared secret".into()));
+                return Err(Error::Tls(
+                    "illegal_parameter: X25519 produced an all-zero shared secret".into(),
+                ));
             }
             Zeroizing::new(shared.to_vec())
         }
-        Secret::Ec(curve, scalar) => ecdh::shared_secret(curve, &scalar, client_share)
-            .ok_or_else(|| Error::Tls("illegal_parameter: the client's key share is not a valid point on the curve".into()))?,
+        Secret::Ec(curve, scalar) => {
+            ecdh::shared_secret(curve, &scalar, client_share).ok_or_else(|| {
+                Error::Tls(
+                    "illegal_parameter: the client's key share is not a valid point on the curve"
+                        .into(),
+                )
+            })?
+        }
     };
     Ok((public, shared))
 }
@@ -792,8 +851,15 @@ impl ServerConnection {
     /// Encrypts `content` into records of at most `max_fragment` bytes. An alert is never split (RFC 8446
     /// section 5.1): it is one record whatever the limit.
     fn queue_protected(&mut self, inner_type: u8, content: &[u8]) -> Result<()> {
-        let fragment = if inner_type == RT_ALERT { MAX_PLAINTEXT } else { self.config.max_fragment.clamp(1, MAX_PLAINTEXT) };
-        let cipher = self.write_cipher.as_mut().ok_or_else(|| Error::Tls("internal: no write keys".into()))?;
+        let fragment = if inner_type == RT_ALERT {
+            MAX_PLAINTEXT
+        } else {
+            self.config.max_fragment.clamp(1, MAX_PLAINTEXT)
+        };
+        let cipher = self
+            .write_cipher
+            .as_mut()
+            .ok_or_else(|| Error::Tls("internal: no write keys".into()))?;
         for chunk in content.chunks(fragment) {
             cipher.encrypt_into(inner_type, chunk, &mut self.out);
         }
@@ -804,10 +870,15 @@ impl ServerConnection {
     /// per call; call again with the rest).
     pub fn write_plaintext(&mut self, data: &[u8]) -> Result<usize> {
         if self.failed || self.sent_close_notify {
-            return Err(Error::Io(io::Error::new(io::ErrorKind::BrokenPipe, "the TLS connection is closed for writing")));
+            return Err(Error::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "the TLS connection is closed for writing",
+            )));
         }
         if !self.established {
-            return Err(Error::Tls("internal: application data before the handshake finished".into()));
+            return Err(Error::Tls(
+                "internal: application data before the handshake finished".into(),
+            ));
         }
         let n = data.len().min(MAX_WRITE);
         let _dit = Dit::on(); // held across the records, as the client does (crypto::dit)
@@ -823,7 +894,10 @@ impl ServerConnection {
     }
 
     fn rekey_if_due(&mut self) -> Result<()> {
-        let due = self.write_cipher.as_ref().is_some_and(|c| c.records().saturating_add(1) >= self.rekey_after);
+        let due = self
+            .write_cipher
+            .as_ref()
+            .is_some_and(|c| c.records().saturating_add(1) >= self.rekey_after);
         if due {
             self.send_key_update(false)?;
         }
@@ -834,9 +908,14 @@ impl ServerConnection {
     /// switch its own too.
     pub fn send_key_update(&mut self, request_peer: bool) -> Result<()> {
         if !self.established {
-            return Err(Error::Tls("internal: KeyUpdate before the handshake finished".into()));
+            return Err(Error::Tls(
+                "internal: KeyUpdate before the handshake finished".into(),
+            ));
         }
-        self.queue_protected(RT_HANDSHAKE, &handshake_message(HS_KEY_UPDATE, &[request_peer as u8]))?;
+        self.queue_protected(
+            RT_HANDSHAKE,
+            &handshake_message(HS_KEY_UPDATE, &[request_peer as u8]),
+        )?;
         let next = self.write_cipher.as_ref().map(|c| c.next_generation());
         self.write_cipher = next;
         Ok(())
@@ -858,7 +937,13 @@ impl ServerConnection {
                         issued: sys::now_unix(),
                         lifetime,
                         age_add,
-                        psk: Zeroizing::new(expand_label(alg, secret, "resumption", &nonce, alg.output_len())),
+                        psk: Zeroizing::new(expand_label(
+                            alg,
+                            secret,
+                            "resumption",
+                            &nonce,
+                            alg.output_len(),
+                        )),
                         server_name: self.server_name.clone(),
                         alpn: self.alpn.clone(),
                         client_chain: self.peer_chain.clone(),
@@ -873,7 +958,10 @@ impl ServerConnection {
             put_vec8(&mut body, &nonce); // ticket_nonce
             put_vec16(&mut body, &ticket); // ticket
             put_vec16(&mut body, &[]); // extensions: no early_data, so a client never sends 0-RTT data with it
-            self.queue_protected(RT_HANDSHAKE, &handshake_message(HS_NEW_SESSION_TICKET, &body))?;
+            self.queue_protected(
+                RT_HANDSHAKE,
+                &handshake_message(HS_NEW_SESSION_TICKET, &body),
+            )?;
         }
         Ok(())
     }
@@ -931,7 +1019,9 @@ impl ServerConnection {
     /// connection is dead: the matching fatal alert is queued in the output and every later call fails.
     pub fn process(&mut self) -> Result<()> {
         if self.failed {
-            return Err(Error::Tls("internal: the connection has already failed".into()));
+            return Err(Error::Tls(
+                "internal: the connection has already failed".into(),
+            ));
         }
         let _dit = Dit::on(); // data-independent timing across the records and the handshake work (crypto::dit)
         match self.process_records() {
@@ -963,17 +1053,24 @@ impl ServerConnection {
             if self.has_plaintext() || self.got_close_notify {
                 return Ok(());
             }
-            let Some((record_type, content)) = self.next_record()? else { return Ok(()) };
+            let Some((record_type, content)) = self.next_record()? else {
+                return Ok(());
+            };
             // RFC 8446 section 5.1: no record of another type inside a handshake message split over records
             if record_type != RT_HANDSHAKE && !self.hs_buf.is_empty() {
-                return Err(Error::Tls("unexpected_message: a record of another type inside a handshake message".into()));
+                return Err(Error::Tls(
+                    "unexpected_message: a record of another type inside a handshake message"
+                        .into(),
+                ));
             }
             if self.established {
                 match record_type {
                     RT_APPLICATION_DATA if content.is_empty() => {
                         self.empty_in_a_row += 1;
                         if self.empty_in_a_row > MAX_EMPTY_RECORDS_IN_A_ROW {
-                            return Err(Error::Tls("unexpected_message: too many empty records in a row".into()));
+                            return Err(Error::Tls(
+                                "unexpected_message: too many empty records in a row".into(),
+                            ));
                         }
                     }
                     RT_APPLICATION_DATA => {
@@ -991,20 +1088,32 @@ impl ServerConnection {
                     }
                     RT_HANDSHAKE => {
                         if content.is_empty() {
-                            return Err(Error::Tls("unexpected_message: empty handshake record".into()));
+                            return Err(Error::Tls(
+                                "unexpected_message: empty handshake record".into(),
+                            ));
                         }
                         self.hs_buf.extend_from_slice(&content);
                         self.process_post_handshake()?;
                     }
-                    _ => return Err(Error::Tls("unexpected_message: unexpected record type".into())),
+                    _ => {
+                        return Err(Error::Tls(
+                            "unexpected_message: unexpected record type".into(),
+                        ))
+                    }
                 }
             } else {
                 match record_type {
-                    RT_HANDSHAKE if content.is_empty() => return Err(Error::Tls("unexpected_message: empty handshake record".into())),
+                    RT_HANDSHAKE if content.is_empty() => {
+                        return Err(Error::Tls(
+                            "unexpected_message: empty handshake record".into(),
+                        ))
+                    }
                     RT_HANDSHAKE => {
                         self.hs_buf.extend_from_slice(&content);
                         while self.hs.is_some() {
-                            let Some(msg) = self.take_handshake_message()? else { break };
+                            let Some(msg) = self.take_handshake_message()? else {
+                                break;
+                            };
                             self.handshake_step(&msg)?;
                             if self.established {
                                 break;
@@ -1012,7 +1121,11 @@ impl ServerConnection {
                         }
                     }
                     RT_ALERT => return Err(alert_error(&content)),
-                    _ => return Err(Error::Tls("unexpected_message: non-handshake record during the handshake".into())),
+                    _ => {
+                        return Err(Error::Tls(
+                            "unexpected_message: non-handshake record during the handshake".into(),
+                        ))
+                    }
                 }
             }
         }
@@ -1025,13 +1138,25 @@ impl ServerConnection {
             if self.inbuf.len() < 5 {
                 return Ok(None);
             }
-            let header: [u8; 5] = [self.inbuf[0], self.inbuf[1], self.inbuf[2], self.inbuf[3], self.inbuf[4]];
+            let header: [u8; 5] = [
+                self.inbuf[0],
+                self.inbuf[1],
+                self.inbuf[2],
+                self.inbuf[3],
+                self.inbuf[4],
+            ];
             let record_type = header[0];
             let length = u16::from_be_bytes([header[3], header[4]]) as usize;
             if header[1] != 0x03 {
-                return Err(Error::Tls("protocol_version: peer is not speaking TLS".into()));
+                return Err(Error::Tls(
+                    "protocol_version: peer is not speaking TLS".into(),
+                ));
             }
-            let limit = if self.read_cipher.is_some() { MAX_CIPHERTEXT_RECORD } else { MAX_PLAINTEXT };
+            let limit = if self.read_cipher.is_some() {
+                MAX_CIPHERTEXT_RECORD
+            } else {
+                MAX_PLAINTEXT
+            };
             if length > limit {
                 return Err(Error::Tls("record_overflow: record too large".into()));
             }
@@ -1044,9 +1169,14 @@ impl ServerConnection {
             // HelloRetryRequest, its records before the second ClientHello; otherwise those that do not open under the
             // handshake keys. Skipped up to a limit; the first record that opens ends the skipping.
             if self.skip_early > 0 && !self.established && record_type == RT_APPLICATION_DATA {
-                let retried = matches!(self.hs.as_ref().map(|h| &h.stage), Some(Stage::RetriedHello));
+                let retried = matches!(
+                    self.hs.as_ref().map(|h| &h.stage),
+                    Some(Stage::RetriedHello)
+                );
                 if retried && self.read_cipher.is_none() {
-                    self.skip_early = self.skip_early.checked_sub(length).ok_or_else(|| Error::Tls("unexpected_message: too much early data".into()))?;
+                    self.skip_early = self.skip_early.checked_sub(length).ok_or_else(|| {
+                        Error::Tls("unexpected_message: too much early data".into())
+                    })?;
                     continue;
                 }
                 if let Some(cipher) = self.read_cipher.as_mut() {
@@ -1056,7 +1186,9 @@ impl ServerConnection {
                             self.skip_early = 0;
                             content.truncate(n);
                             if t == RT_CHANGE_CIPHER_SPEC {
-                                return Err(Error::Tls("unexpected_message: protected change_cipher_spec".into()));
+                                return Err(Error::Tls(
+                                    "unexpected_message: protected change_cipher_spec".into(),
+                                ));
                             }
                             return Ok(Some((t, content)));
                         }
@@ -1071,9 +1203,16 @@ impl ServerConnection {
             match (self.read_cipher.as_mut(), record_type) {
                 (_, RT_CHANGE_CIPHER_SPEC) => {
                     // RFC 8446 appendix D.4: a client may send one after its ClientHello (or its second), not before
-                    let before_hello = matches!(self.hs.as_ref().map(|h| &h.stage), Some(Stage::Hello));
-                    if self.established || before_hello || payload != [1] || self.ccs_skipped >= MAX_COMPAT_CCS {
-                        return Err(Error::Tls("unexpected_message: bad change_cipher_spec".into()));
+                    let before_hello =
+                        matches!(self.hs.as_ref().map(|h| &h.stage), Some(Stage::Hello));
+                    if self.established
+                        || before_hello
+                        || payload != [1]
+                        || self.ccs_skipped >= MAX_COMPAT_CCS
+                    {
+                        return Err(Error::Tls(
+                            "unexpected_message: bad change_cipher_spec".into(),
+                        ));
                     }
                     self.ccs_skipped += 1;
                 }
@@ -1082,15 +1221,29 @@ impl ServerConnection {
                     let (t, n) = cipher.decrypt_in_place(&header, &mut content)?;
                     content.truncate(n);
                     if t == RT_CHANGE_CIPHER_SPEC {
-                        return Err(Error::Tls("unexpected_message: protected change_cipher_spec".into()));
+                        return Err(Error::Tls(
+                            "unexpected_message: protected change_cipher_spec".into(),
+                        ));
                     }
                     return Ok(Some((t, content)));
                 }
                 // a client that cannot read our flight (it does not take our certificate, say) may say so in the clear
-                (Some(_), RT_ALERT) if !self.established && payload.len() == 2 => return Ok(Some((RT_ALERT, payload.to_vec()))),
-                (Some(_), _) => return Err(Error::Tls("unexpected_message: unprotected record after keys were established".into())),
-                (None, RT_HANDSHAKE) | (None, RT_ALERT) => return Ok(Some((record_type, payload.to_vec()))),
-                (None, _) => return Err(Error::Tls("unexpected_message: unexpected record type".into())),
+                (Some(_), RT_ALERT) if !self.established && payload.len() == 2 => {
+                    return Ok(Some((RT_ALERT, payload.to_vec())))
+                }
+                (Some(_), _) => {
+                    return Err(Error::Tls(
+                        "unexpected_message: unprotected record after keys were established".into(),
+                    ))
+                }
+                (None, RT_HANDSHAKE) | (None, RT_ALERT) => {
+                    return Ok(Some((record_type, payload.to_vec())))
+                }
+                (None, _) => {
+                    return Err(Error::Tls(
+                        "unexpected_message: unexpected record type".into(),
+                    ))
+                }
             }
         }
     }
@@ -1099,13 +1252,19 @@ impl ServerConnection {
         if self.hs_buf.len() < 4 {
             return Ok(None);
         }
-        let len = ((self.hs_buf[1] as usize) << 16) | ((self.hs_buf[2] as usize) << 8) | self.hs_buf[3] as usize;
+        let len = ((self.hs_buf[1] as usize) << 16)
+            | ((self.hs_buf[2] as usize) << 8)
+            | self.hs_buf[3] as usize;
         // a Finished is as long as a hash: one that says it is longer is a decode_error at once, before its bytes come
         if self.hs_buf[0] == HS_FINISHED && len > 64 {
-            return Err(Error::Tls("decode_error: a Finished longer than any hash".into()));
+            return Err(Error::Tls(
+                "decode_error: a Finished longer than any hash".into(),
+            ));
         }
         if len > MAX_HANDSHAKE_MESSAGE {
-            return Err(Error::Tls("illegal_parameter: handshake message too large".into()));
+            return Err(Error::Tls(
+                "illegal_parameter: handshake message too large".into(),
+            ));
         }
         if self.hs_buf.len() < 4 + len {
             return Ok(None);
@@ -1116,7 +1275,10 @@ impl ServerConnection {
     // ------------------------------------------------------------------ handshake
 
     fn handshake_step(&mut self, msg: &[u8]) -> Result<()> {
-        let mut hs = self.hs.take().ok_or_else(|| Error::Tls("internal: no handshake in progress".into()))?;
+        let mut hs = self
+            .hs
+            .take()
+            .ok_or_else(|| Error::Tls("internal: no handshake in progress".into()))?;
         let result = self.on_message(&mut hs, msg);
         if !self.established {
             self.hs = Some(hs);
@@ -1126,11 +1288,17 @@ impl ServerConnection {
 
     fn on_message(&mut self, hs: &mut Handshake, msg: &[u8]) -> Result<()> {
         match (&hs.stage, msg[0]) {
-            (Stage::Hello, HS_CLIENT_HELLO) | (Stage::RetriedHello, HS_CLIENT_HELLO) => self.on_client_hello(hs, msg),
+            (Stage::Hello, HS_CLIENT_HELLO) | (Stage::RetriedHello, HS_CLIENT_HELLO) => {
+                self.on_client_hello(hs, msg)
+            }
             (Stage::ClientCertificate, HS_CERTIFICATE) => self.on_client_certificate(hs, msg),
-            (Stage::ClientCertificateVerify, HS_CERTIFICATE_VERIFY) => self.on_client_certificate_verify(hs, msg),
+            (Stage::ClientCertificateVerify, HS_CERTIFICATE_VERIFY) => {
+                self.on_client_certificate_verify(hs, msg)
+            }
             (Stage::ClientFinished, HS_FINISHED) => self.on_client_finished(hs, msg),
-            _ => Err(Error::Tls("unexpected_message: handshake message out of order".into())),
+            _ => Err(Error::Tls(
+                "unexpected_message: handshake message out of order".into(),
+            )),
         }
     }
 
@@ -1144,11 +1312,15 @@ impl ServerConnection {
         }
         // legacy_version is 0x0303 from a TLS 1.3 client; SSL 3.0 or older there is refused, as OpenSSL does
         if hello.legacy_version < 0x0301 {
-            return Err(Error::Tls("protocol_version: legacy_version is SSL 3.0 or older".into()));
+            return Err(Error::Tls(
+                "protocol_version: legacy_version is SSL 3.0 or older".into(),
+            ));
         }
         // RFC 8446 section 9.2: supported_groups and key_share go together, and without a pre_shared_key both are needed
         if hello.has_groups != hello.has_key_share || (!hello.has_groups && hello.psk.is_none()) {
-            return Err(Error::Tls("missing_extension: supported_groups and key_share are not both there".into()));
+            return Err(Error::Tls(
+                "missing_extension: supported_groups and key_share are not both there".into(),
+            ));
         }
         let config = self.config.clone();
         let suite = config
@@ -1158,7 +1330,9 @@ impl ServerConnection {
             .find(|s| hello.cipher_suites.contains(&s.id()))
             .ok_or_else(|| Error::Tls("handshake_failure: no cipher suite in common".into()))?;
         let Some(sig_algs) = &hello.signature_algorithms else {
-            return Err(Error::Tls("missing_extension: no signature_algorithms".into()));
+            return Err(Error::Tls(
+                "missing_extension: no signature_algorithms".into(),
+            ));
         };
         let info = ClientHelloInfo {
             server_name: hello.server_name.as_deref(),
@@ -1169,9 +1343,18 @@ impl ServerConnection {
         let Some(cert) = config.certs.resolve(&info) else {
             // no certificate for the name at all (a strict store), or none whose signature the client takes
             const ANY: [u16; 7] = [0x0403, 0x0503, 0x0603, 0x0807, 0x0804, 0x0805, 0x0806];
-            let for_the_name = config.certs.resolve(&ClientHelloInfo { signature_schemes: &ANY, signature_schemes_cert: None, ..info }).is_some();
+            let for_the_name = config
+                .certs
+                .resolve(&ClientHelloInfo {
+                    signature_schemes: &ANY,
+                    signature_schemes_cert: None,
+                    ..info
+                })
+                .is_some();
             return Err(Error::Tls(match &hello.server_name {
-                Some(name) if !for_the_name => format!("unrecognized_name: no certificate for {name:?}"),
+                Some(name) if !for_the_name => {
+                    format!("unrecognized_name: no certificate for {name:?}")
+                }
                 _ => "handshake_failure: no certificate whose signatures the client takes".into(),
             }));
         };
@@ -1179,7 +1362,11 @@ impl ServerConnection {
         // early data (never accepted) is skipped: after a HelloRetryRequest only until the second ClientHello, which may
         // not offer it again (RFC 8446 section 4.2.10); a record that does not open after that is an error
         match (hello.early_data, matches!(hs.stage, Stage::RetriedHello)) {
-            (true, true) => return Err(Error::Tls("illegal_parameter: early_data in the second ClientHello".into())),
+            (true, true) => {
+                return Err(Error::Tls(
+                    "illegal_parameter: early_data in the second ClientHello".into(),
+                ))
+            }
             (true, false) => self.skip_early = MAX_EARLY_DATA_SKIP,
             (false, true) => self.skip_early = 0,
             (false, false) => {}
@@ -1188,8 +1375,14 @@ impl ServerConnection {
         // the second ClientHello must be the first with a new key share
         let second = matches!(hs.stage, Stage::RetriedHello);
         if let Some(r) = &hs.retried {
-            if hello.random != r.random || hello.session_id != r.session_id || hello.cipher_suites != r.cipher_suites || suite != r.suite {
-                return Err(Error::Tls("illegal_parameter: the second ClientHello changed what the first said".into()));
+            if hello.random != r.random
+                || hello.session_id != r.session_id
+                || hello.cipher_suites != r.cipher_suites
+                || suite != r.suite
+            {
+                return Err(Error::Tls(
+                    "illegal_parameter: the second ClientHello changed what the first said".into(),
+                ));
             }
             if hello.shares.len() != 1 || hello.shares[0].0 != r.group {
                 return Err(Error::Tls("illegal_parameter: the second ClientHello does not carry exactly the key share that was asked for".into()));
@@ -1199,17 +1392,28 @@ impl ServerConnection {
         // a share for a group of ours that supported_groups does not list (RFC 8446 section 4.2.8: MAY be refused);
         // checked, as OpenSSL does, for the groups taken here alone, so that a share for one unknown here (GREASE) is
         // passed over
-        if let Some((g, _)) = hello.shares.iter().find(|(g, _)| config.groups.contains(g) && !hello.groups.contains(g)) {
+        if let Some((g, _)) = hello
+            .shares
+            .iter()
+            .find(|(g, _)| config.groups.contains(g) && !hello.groups.contains(g))
+        {
             return Err(Error::Tls(format!("illegal_parameter: a key share for group {g:#06x}, which supported_groups does not list")));
         }
         // the key share: the first group of ours that the client sent a share for
-        let share = config.groups.iter().find_map(|g| hello.shares.iter().find(|(sg, _)| sg == g));
+        let share = config
+            .groups
+            .iter()
+            .find_map(|g| hello.shares.iter().find(|(sg, _)| sg == g));
         let Some((group, client_public)) = share else {
             if second {
-                return Err(Error::Tls("illegal_parameter: no usable key share after a HelloRetryRequest".into()));
+                return Err(Error::Tls(
+                    "illegal_parameter: no usable key share after a HelloRetryRequest".into(),
+                ));
             }
             let Some(&wanted) = config.groups.iter().find(|g| hello.groups.contains(g)) else {
-                return Err(Error::Tls("handshake_failure: no key exchange group in common".into()));
+                return Err(Error::Tls(
+                    "handshake_failure: no key exchange group in common".into(),
+                ));
             };
             return self.send_retry(hs, msg, &hello, suite, wanted);
         };
@@ -1238,24 +1442,43 @@ impl ServerConnection {
         // still verifies; resumed with a fresh key exchange. Its binder must then be right (RFC 8446 section 4.2.11.2: a
         // wrong one ends the handshake). Any other ticket means a full handshake.
         let mut psk = None;
-        if let (Some((id, binder, binders_len)), true, Some(keys), false) = (&hello.psk, hello.psk_dhe_ke, &config.ticket_keys, acme_challenge) {
+        if let (Some((id, binder, binders_len)), true, Some(keys), false) = (
+            &hello.psk,
+            hello.psk_dhe_ke,
+            &config.ticket_keys,
+            acme_challenge,
+        ) {
             let state = keys.open(id).and_then(|plain| TicketState::decode(&plain));
             let now = sys::now_unix();
             let usable = state.filter(|st| {
                 Suite::from_id(st.suite).is_some_and(|s| s.hash() == suite.hash())
                     && st.is_current(now)
-                    && st.server_name.as_deref().map(str::to_ascii_lowercase) == hello.server_name.as_deref().map(str::to_ascii_lowercase)
+                    && st.server_name.as_deref().map(str::to_ascii_lowercase)
+                        == hello.server_name.as_deref().map(str::to_ascii_lowercase)
                     && match &config.client_auth {
                         ClientAuth::None => true,
-                        ClientAuth::Optional(roots) => st.client_chain.is_empty() || client_chain_verifies(roots, &st.client_chain, now).is_ok(),
-                        ClientAuth::Required(roots) => !st.client_chain.is_empty() && client_chain_verifies(roots, &st.client_chain, now).is_ok(),
+                        ClientAuth::Optional(roots) => {
+                            st.client_chain.is_empty()
+                                || client_chain_verifies(roots, &st.client_chain, now).is_ok()
+                        }
+                        ClientAuth::Required(roots) => {
+                            !st.client_chain.is_empty()
+                                && client_chain_verifies(roots, &st.client_chain, now).is_ok()
+                        }
                     }
             });
             if let Some(st) = usable {
                 let alg = suite.hash();
                 let early = Zeroizing::new(hkdf_extract(alg, &[], &st.psk));
-                let binder_key = Zeroizing::new(derive_secret(alg, &early, "res binder", &alg.digest(&[])));
-                let finished_key = Zeroizing::new(expand_label(alg, &binder_key, "finished", &[], alg.output_len()));
+                let binder_key =
+                    Zeroizing::new(derive_secret(alg, &early, "res binder", &alg.digest(&[])));
+                let finished_key = Zeroizing::new(expand_label(
+                    alg,
+                    &binder_key,
+                    "finished",
+                    &[],
+                    alg.output_len(),
+                ));
                 let mut t = hs.transcript.clone();
                 t.extend_from_slice(&msg[..msg.len() - binders_len]);
                 if !ct_eq(&hmac(alg, &finished_key, &alg.digest(&t)), binder) {
@@ -1273,7 +1496,14 @@ impl ServerConnection {
     }
 
     /// Asks for a key share for `group` (RFC 8446 section 4.1.4).
-    fn send_retry(&mut self, hs: &mut Handshake, ch: &[u8], hello: &Hello, suite: Suite, group: u16) -> Result<()> {
+    fn send_retry(
+        &mut self,
+        hs: &mut Handshake,
+        ch: &[u8],
+        hello: &Hello,
+        suite: Suite,
+        group: u16,
+    ) -> Result<()> {
         let mut body = Vec::new();
         put_u16(&mut body, 0x0303);
         body.extend_from_slice(&HELLO_RETRY_REQUEST_RANDOM);
@@ -1281,7 +1511,11 @@ impl ServerConnection {
         put_u16(&mut body, suite.id());
         body.push(0);
         let mut exts = Vec::new();
-        put_extension(&mut exts, EXT_SUPPORTED_VERSIONS, &VERSION_TLS13.to_be_bytes());
+        put_extension(
+            &mut exts,
+            EXT_SUPPORTED_VERSIONS,
+            &VERSION_TLS13.to_be_bytes(),
+        );
         put_extension(&mut exts, EXT_KEY_SHARE, &group.to_be_bytes());
         put_vec16(&mut body, &exts);
         let hrr = handshake_message(HS_SERVER_HELLO, &body);
@@ -1327,7 +1561,11 @@ impl ServerConnection {
         put_u16(&mut body, suite.id());
         body.push(0);
         let mut exts = Vec::new();
-        put_extension(&mut exts, EXT_SUPPORTED_VERSIONS, &VERSION_TLS13.to_be_bytes());
+        put_extension(
+            &mut exts,
+            EXT_SUPPORTED_VERSIONS,
+            &VERSION_TLS13.to_be_bytes(),
+        );
         let mut share = group.to_be_bytes().to_vec();
         put_vec16(&mut share, &server_public);
         put_extension(&mut exts, EXT_KEY_SHARE, &share);
@@ -1348,13 +1586,27 @@ impl ServerConnection {
         let hash_len = alg.output_len();
         let zeros = vec![0u8; hash_len];
         let empty_hash = alg.digest(&[]);
-        let early_secret = Zeroizing::new(hkdf_extract(alg, &[], psk.as_deref().map_or(&zeros[..], |p| &p[..])));
+        let early_secret = Zeroizing::new(hkdf_extract(
+            alg,
+            &[],
+            psk.as_deref().map_or(&zeros[..], |p| &p[..]),
+        ));
         let derived = Zeroizing::new(derive_secret(alg, &early_secret, "derived", &empty_hash));
         let handshake_secret = Zeroizing::new(hkdf_extract(alg, &derived, &shared));
         let hello_hash = alg.digest(&hs.transcript);
         self.resumed = psk.is_some();
-        let c_hs = Zeroizing::new(derive_secret(alg, &handshake_secret, "c hs traffic", &hello_hash));
-        let s_hs = Zeroizing::new(derive_secret(alg, &handshake_secret, "s hs traffic", &hello_hash));
+        let c_hs = Zeroizing::new(derive_secret(
+            alg,
+            &handshake_secret,
+            "c hs traffic",
+            &hello_hash,
+        ));
+        let s_hs = Zeroizing::new(derive_secret(
+            alg,
+            &handshake_secret,
+            "s hs traffic",
+            &hello_hash,
+        ));
         self.write_cipher = Some(RecordCipher::new(suite, &s_hs));
         self.read_cipher = Some(RecordCipher::new(suite, &c_hs));
         self.suite = Some(suite);
@@ -1404,23 +1656,46 @@ impl ServerConnection {
 
         // application keys (transcript through our Finished) and what the client's Finished must be
         let app_hash = alg.digest(&hs.transcript);
-        let derived2 = Zeroizing::new(derive_secret(alg, &handshake_secret, "derived", &empty_hash));
+        let derived2 = Zeroizing::new(derive_secret(
+            alg,
+            &handshake_secret,
+            "derived",
+            &empty_hash,
+        ));
         let master_secret = Zeroizing::new(hkdf_extract(alg, &derived2, &zeros));
-        let c_ap = Zeroizing::new(derive_secret(alg, &master_secret, "c ap traffic", &app_hash));
-        let s_ap = Zeroizing::new(derive_secret(alg, &master_secret, "s ap traffic", &app_hash));
-        hs.client_finished_key = Zeroizing::new(expand_label(alg, &c_hs, "finished", &[], hash_len));
+        let c_ap = Zeroizing::new(derive_secret(
+            alg,
+            &master_secret,
+            "c ap traffic",
+            &app_hash,
+        ));
+        let s_ap = Zeroizing::new(derive_secret(
+            alg,
+            &master_secret,
+            "s ap traffic",
+            &app_hash,
+        ));
+        hs.client_finished_key =
+            Zeroizing::new(expand_label(alg, &c_hs, "finished", &[], hash_len));
         hs.client_application_secret = c_ap;
         hs.suite = suite;
         hs.master_secret = master_secret;
         // we may send application data as soon as our Finished is out; we read the client's Finished first
         self.write_cipher = Some(RecordCipher::new(suite, &s_ap));
-        hs.stage = if request { Stage::ClientCertificate } else { Stage::ClientFinished };
+        hs.stage = if request {
+            Stage::ClientCertificate
+        } else {
+            Stage::ClientFinished
+        };
         Ok(())
     }
 
     /// Certificate and CertificateVerify (a full handshake's).
     fn queue_certificate(&mut self, hs: &mut Handshake, hello: &Hello, alg: HashAlg) -> Result<()> {
-        let ck = hs.cert.clone().ok_or_else(|| Error::Tls("internal: no certificate chosen".into()))?;
+        let ck = hs
+            .cert
+            .clone()
+            .ok_or_else(|| Error::Tls("internal: no certificate chosen".into()))?;
         self.presented = Some(ck.clone());
         // Certificate
         let mut list = Vec::new();
@@ -1443,7 +1718,12 @@ impl ServerConnection {
         // CertificateVerify
         let content = server_certificate_verify_content(&alg.digest(&hs.transcript));
         let offered = hello.signature_algorithms.as_deref().unwrap_or(&[]);
-        let scheme = ck.key().tls_schemes().into_iter().find(|s| offered.contains(s)).ok_or_else(|| Error::Tls("internal: no signature scheme in common".into()))?;
+        let scheme = ck
+            .key()
+            .tls_schemes()
+            .into_iter()
+            .find(|s| offered.contains(s))
+            .ok_or_else(|| Error::Tls("internal: no signature scheme in common".into()))?;
         let signature = ck.key().sign_tls(scheme, &content)?;
         let mut verify = Vec::new();
         put_u16(&mut verify, scheme);
@@ -1463,7 +1743,10 @@ impl ServerConnection {
         let mut r = Reader::new(&msg[4..]);
         let ctx = r.vec8().ok_or_else(|| bad("client Certificate context"))?;
         if !ctx.is_empty() {
-            return Err(Error::Tls("illegal_parameter: a client Certificate with a context our request did not have".into()));
+            return Err(Error::Tls(
+                "illegal_parameter: a client Certificate with a context our request did not have"
+                    .into(),
+            ));
         }
         let list = r.vec24().ok_or_else(|| bad("client Certificate list"))?;
         if !r.is_empty() {
@@ -1473,7 +1756,8 @@ impl ServerConnection {
         let mut lr = Reader::new(list);
         while !lr.is_empty() {
             let der = lr.vec24().ok_or_else(|| bad("client certificate"))?;
-            lr.vec16().ok_or_else(|| bad("client certificate extensions"))?;
+            lr.vec16()
+                .ok_or_else(|| bad("client certificate extensions"))?;
             if der.is_empty() {
                 return Err(bad("an empty client certificate"));
             }
@@ -1483,11 +1767,17 @@ impl ServerConnection {
         let (roots, required) = match &self.config.client_auth {
             ClientAuth::Optional(r) => (r.clone(), false),
             ClientAuth::Required(r) => (r.clone(), true),
-            ClientAuth::None => return Err(Error::Tls("unexpected_message: a client Certificate that was not asked for".into())),
+            ClientAuth::None => {
+                return Err(Error::Tls(
+                    "unexpected_message: a client Certificate that was not asked for".into(),
+                ))
+            }
         };
         if chain.is_empty() {
             if required {
-                return Err(Error::Tls("certificate_required: the client sent no certificate".into()));
+                return Err(Error::Tls(
+                    "certificate_required: the client sent no certificate".into(),
+                ));
             }
             hs.stage = Stage::ClientFinished;
             return Ok(());
@@ -1506,7 +1796,10 @@ impl ServerConnection {
         }
         let alg = hs.suite.hash();
         let content = client_certificate_verify_content(&alg.digest(&hs.transcript));
-        let leaf = hs.client_leaf.as_ref().ok_or_else(|| Error::Tls("internal: no client certificate".into()))?;
+        let leaf = hs
+            .client_leaf
+            .as_ref()
+            .ok_or_else(|| Error::Tls("internal: no client certificate".into()))?;
         // (illegal_parameter for a scheme that does not go with the key, decrypt_error for a signature that is wrong)
         super::signature::verify_tls13_signature(leaf, scheme, &content, &signature)?;
         hs.transcript.extend_from_slice(msg);
@@ -1517,29 +1810,52 @@ impl ServerConnection {
     fn on_client_finished(&mut self, hs: &mut Handshake, msg: &[u8]) -> Result<()> {
         let alg = hs.suite.hash();
         if msg.len() - 4 != alg.output_len() {
-            return Err(Error::Tls("decode_error: the client Finished is not the length of the hash".into()));
+            return Err(Error::Tls(
+                "decode_error: the client Finished is not the length of the hash".into(),
+            ));
         }
         let expected = hmac(alg, &hs.client_finished_key, &alg.digest(&hs.transcript));
         if !ct_eq(&expected, &msg[4..]) {
-            return Err(Error::Tls("decrypt_error: client Finished MAC is invalid".into()));
+            return Err(Error::Tls(
+                "decrypt_error: client Finished MAC is invalid".into(),
+            ));
         }
         if !self.hs_buf.is_empty() {
-            return Err(Error::Tls("unexpected_message: handshake data after the client Finished".into()));
+            return Err(Error::Tls(
+                "unexpected_message: handshake data after the client Finished".into(),
+            ));
         }
         self.read_cipher = Some(RecordCipher::new(hs.suite, &hs.client_application_secret));
-        self.rekey_after = self.config.rekey_after_records.unwrap_or(hs.suite.records_per_key()).max(2);
+        self.rekey_after = self
+            .config
+            .rekey_after_records
+            .unwrap_or(hs.suite.records_per_key())
+            .max(2);
         self.established = true;
         if !hs.client_chain.is_empty() {
             self.peer_chain = std::mem::take(&mut hs.client_chain);
         }
-        let counter = if self.resumed { &self.config.stats.resumed } else { &self.config.stats.full };
+        let counter = if self.resumed {
+            &self.config.stats.resumed
+        } else {
+            &self.config.stats.full
+        };
         counter.fetch_add(1, Ordering::Relaxed);
         // the resumption master secret: the transcript through the client's Finished
         hs.transcript.extend_from_slice(msg);
-        let res_master = Zeroizing::new(derive_secret(alg, &hs.master_secret, "res master", &alg.digest(&hs.transcript)));
+        let res_master = Zeroizing::new(derive_secret(
+            alg,
+            &hs.master_secret,
+            "res master",
+            &alg.digest(&hs.transcript),
+        ));
         self.resumption_secret = Some((hs.suite, res_master));
         // no tickets on a TLS-ALPN-01 validation connection, which carries nothing after the handshake
-        let tickets = if self.alpn.as_deref() == Some(ACME_TLS_1) { 0 } else { self.config.tickets };
+        let tickets = if self.alpn.as_deref() == Some(ACME_TLS_1) {
+            0
+        } else {
+            self.config.tickets
+        };
         if self.config.tickets_after_first_write {
             self.late_tickets = tickets;
         } else {
@@ -1557,11 +1873,16 @@ impl ServerConnection {
                     }
                     if msg[4] > 1 {
                         // RFC 8446 section 4.6.3
-                        return Err(Error::Tls("illegal_parameter: a KeyUpdate that neither asks nor does not ask".into()));
+                        return Err(Error::Tls(
+                            "illegal_parameter: a KeyUpdate that neither asks nor does not ask"
+                                .into(),
+                        ));
                     }
                     self.key_updates_in_a_row += 1;
                     if self.key_updates_in_a_row > MAX_KEY_UPDATES_IN_A_ROW {
-                        return Err(Error::Tls("unexpected_message: too many KeyUpdates in a row".into()));
+                        return Err(Error::Tls(
+                            "unexpected_message: too many KeyUpdates in a row".into(),
+                        ));
                     }
                     if !self.hs_buf.is_empty() {
                         return Err(Error::Tls("unexpected_message: handshake data follows a KeyUpdate in the same record".into()));
@@ -1574,7 +1895,11 @@ impl ServerConnection {
                     }
                 }
                 // a client may send nothing else after its Finished (no certificates were asked for)
-                _ => return Err(Error::Tls("unexpected_message: unexpected post-handshake message".into())),
+                _ => {
+                    return Err(Error::Tls(
+                        "unexpected_message: unexpected post-handshake message".into(),
+                    ))
+                }
             }
         }
         Ok(())
@@ -1586,7 +1911,11 @@ fn client_chain_verifies(roots: &TrustStore, chain: &[Vec<u8>], now: i64) -> Res
     roots
         .verify_chain(chain, &VerifyOptions::new(Purpose::ClientAuth, now))
         .map(|v| v.leaf)
-        .map_err(|e| Error::Tls(format!("bad_certificate: the client's certificate does not verify: {e}")))
+        .map_err(|e| {
+            Error::Tls(format!(
+                "bad_certificate: the client's certificate does not verify: {e}"
+            ))
+        })
 }
 
 impl Drop for ServerConnection {
@@ -1611,7 +1940,11 @@ pub struct ServerStream<S: Read + Write> {
 impl<S: Read + Write> ServerStream<S> {
     /// Performs the server side of the handshake over `io`.
     pub fn accept(io: S, config: &Arc<ServerConfig>) -> Result<ServerStream<S>> {
-        let mut s = ServerStream { io, conn: ServerConnection::new(config.clone()), staging: vec![0u8; 32 * 1024] };
+        let mut s = ServerStream {
+            io,
+            conn: ServerConnection::new(config.clone()),
+            staging: vec![0u8; 32 * 1024],
+        };
         while s.conn.is_handshaking() {
             if let Err(e) = s.pump() {
                 let _ = s.send_output();
@@ -1631,7 +1964,13 @@ impl<S: Read + Write> ServerStream<S> {
         self.io.flush()?;
         loop {
             match self.io.read(&mut self.staging) {
-                Ok(0) => return self.conn.recv_eof().and_then(|_| Err(Error::Tls("the client closed the connection during the handshake".into()))),
+                Ok(0) => {
+                    return self.conn.recv_eof().and_then(|_| {
+                        Err(Error::Tls(
+                            "the client closed the connection during the handshake".into(),
+                        ))
+                    })
+                }
                 Ok(n) => {
                     self.conn.receive(&self.staging[..n]);
                     break;

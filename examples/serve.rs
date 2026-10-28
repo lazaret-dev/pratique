@@ -48,19 +48,19 @@
 //! must treat as an error). Each request is checked as it comes; a connection the server finds fault with is reported
 //! on its line ("the server found fault").
 
+use pratique::crypto::ecdsa::Curve;
+use pratique::http::h2_server::{self, Action, Step};
+use pratique::http::server::{Request, Response, ServerBuilder, Version};
+use pratique::tls::certs::{CertStore, CertifiedKey};
+use pratique::tls::pki::{issue, CertSpec, KeyPair, TestPki};
+use pratique::tls::server::{ClientAuth, ServerConfig, ServerStream};
+use pratique::tls::Suite;
+use pratique::x509::TrustStore;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use pratique::http::h2_server::{self, Action, Step};
-use pratique::http::server::{Request, Response, ServerBuilder, Version};
-use pratique::crypto::ecdsa::Curve;
-use pratique::tls::certs::{CertStore, CertifiedKey};
-use pratique::tls::pki::{issue, CertSpec, KeyPair, TestPki};
-use pratique::x509::TrustStore;
-use pratique::tls::server::{ClientAuth, ServerConfig, ServerStream};
-use pratique::tls::Suite;
 
 fn main() {
     let mut opts = std::collections::HashMap::new();
@@ -70,7 +70,15 @@ fn main() {
                 opts.insert(k.to_string(), v.to_string());
             }
             None => {
-                eprintln!("{}", include_str!("serve.rs").lines().take_while(|l| l.starts_with("//")).map(|l| l.trim_start_matches("//").trim_start_matches(' ')).collect::<Vec<_>>().join("\n"));
+                eprintln!(
+                    "{}",
+                    include_str!("serve.rs")
+                        .lines()
+                        .take_while(|l| l.starts_with("//"))
+                        .map(|l| l.trim_start_matches("//").trim_start_matches(' '))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
                 std::process::exit(2);
             }
         }
@@ -100,13 +108,23 @@ fn main() {
             let root_key = key_of("rootkey");
             let pki = TestPki::with_keys(CertSpec::server(&names), &root_key, server_key);
             std::fs::write(&ca_path, pki.root_pem()).expect("write the root certificate");
-            let store = CertStore::single(CertifiedKey::new(pki.chain.clone(), pki.server_key.signing_key().clone()).expect("the test certificate"));
+            let store = CertStore::single(
+                CertifiedKey::new(pki.chain.clone(), pki.server_key.signing_key().clone())
+                    .expect("the test certificate"),
+            );
             if let Some(n2) = opts.get("names2") {
                 // a second certificate under the same root ("pratique test root", as TestPki names it)
                 let names2: Vec<&str> = n2.split(',').collect();
                 let key2 = KeyPair::generate_ecdsa(Curve::P256).expect("random numbers");
-                let der = issue(&CertSpec::server(&names2), &key2, Some(("pratique test root", &root_key)));
-                store.add(CertifiedKey::new(vec![der], key2.signing_key().clone()).expect("the second certificate"));
+                let der = issue(
+                    &CertSpec::server(&names2),
+                    &key2,
+                    Some(("pratique test root", &root_key)),
+                );
+                store.add(
+                    CertifiedKey::new(vec![der], key2.signing_key().clone())
+                        .expect("the second certificate"),
+                );
             }
             ServerConfig::with_certificates(store)
         }
@@ -153,21 +171,23 @@ fn main() {
     }
     let config = Arc::new(config);
     let test_server = get("server", "production") == "test";
-    QUIET.store(opts.contains_key("quiet"), std::sync::atomic::Ordering::Relaxed);
+    QUIET.store(
+        opts.contains_key("quiet"),
+        std::sync::atomic::Ordering::Relaxed,
+    );
     let plain = opts.contains_key("plain");
     let h2c = opts.get("plain").is_some_and(|v| v == "h2");
     let addr = format!("127.0.0.1:{}", get("port", "0"));
     if !test_server {
         // the production server, under its runtime (B-112): its listener, limits and timeouts
-        let builder = ServerBuilder::new(page)
-            .error_log(|peer, e| {
-                let who = peer.map(|p| p.to_string()).unwrap_or_default();
-                if e.kind() == std::io::ErrorKind::InvalidData {
-                    println!("connection from {who}: the server found fault: {e}");
-                } else {
-                    println!("connection from {who}: ended: {e}");
-                }
-            });
+        let builder = ServerBuilder::new(page).error_log(|peer, e| {
+            let who = peer.map(|p| p.to_string()).unwrap_or_default();
+            if e.kind() == std::io::ErrorKind::InvalidData {
+                println!("connection from {who}: the server found fault: {e}");
+            } else {
+                println!("connection from {who}: ended: {e}");
+            }
+        });
         let builder = if h2c {
             builder.h2c(&addr)
         } else if plain {
@@ -236,8 +256,16 @@ fn serve(n: usize, mut stream: ServerStream<TcpStream>) {
         let request_line = lines.next().unwrap_or("").to_string();
         let mut parts = request_line.split(' ');
         let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or("/"));
-        let header = |name: &str| lines.clone().find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.trim().to_string()));
-        let length: usize = header("content-length").and_then(|v| v.parse().ok()).unwrap_or(0);
+        let header = |name: &str| {
+            lines.clone().find_map(|l| {
+                l.split_once(':')
+                    .filter(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v.trim().to_string())
+            })
+        };
+        let length: usize = header("content-length")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
         while buf.len() < length {
             let mut chunk = [0u8; 4096];
             match stream.read(&mut chunk) {
@@ -247,18 +275,26 @@ fn serve(n: usize, mut stream: ServerStream<TcpStream>) {
         }
         let body: Vec<u8> = buf.drain(..length).collect();
         println!("connection {n}: {request_line}");
-        let close = header("connection").is_some_and(|v| v.eq_ignore_ascii_case("close")) || path == "/close";
+        let close = header("connection").is_some_and(|v| v.eq_ignore_ascii_case("close"))
+            || path == "/close";
         let connection = if close { "Connection: close\r\n" } else { "" };
-        let ok = |len: usize| format!("HTTP/1.1 200 OK\r\nContent-Length: {len}\r\n{connection}\r\n");
+        let ok =
+            |len: usize| format!("HTTP/1.1 200 OK\r\nContent-Length: {len}\r\n{connection}\r\n");
         let pattern = |len: usize| -> Vec<u8> { (0..len).map(|i| b'a' + (i % 26) as u8).collect() };
         let written = if let Some(k) = path.strip_prefix("/size/") {
             let data = pattern(k.parse().unwrap_or(0));
-            stream.write_all(ok(data.len()).as_bytes()).and_then(|_| stream.write_all(&data))
+            stream
+                .write_all(ok(data.len()).as_bytes())
+                .and_then(|_| stream.write_all(&data))
         } else if path == "/echo" {
-            stream.write_all(ok(body.len()).as_bytes()).and_then(|_| stream.write_all(&body))
+            stream
+                .write_all(ok(body.len()).as_bytes())
+                .and_then(|_| stream.write_all(&body))
         } else if let Some(k) = path.strip_prefix("/chunked/") {
             let data = pattern(k.parse().unwrap_or(0));
-            let mut out = format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n{connection}\r\n").into_bytes();
+            let mut out =
+                format!("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n{connection}\r\n")
+                    .into_bytes();
             for piece in data.chunks(1000) {
                 out.extend_from_slice(format!("{:x}\r\n", piece.len()).as_bytes());
                 out.extend_from_slice(piece);
@@ -281,7 +317,9 @@ fn serve(n: usize, mut stream: ServerStream<TcpStream>) {
             stream.write_all(ok(5).as_bytes())
         } else {
             let text = b"hello from pratique\n";
-            stream.write_all(ok(text.len()).as_bytes()).and_then(|_| stream.write_all(text))
+            stream
+                .write_all(ok(text.len()).as_bytes())
+                .and_then(|_| stream.write_all(text))
         };
         if written.and_then(|_| stream.flush()).is_err() || close {
             return;
@@ -293,7 +331,10 @@ fn serve(n: usize, mut stream: ServerStream<TcpStream>) {
 fn serve_h2(n: usize, mut stream: ServerStream<TcpStream>) {
     let mut conn = h2_server::ServerConn::new(h2_server::Settings::default());
     let mut handler = |r: &h2_server::Request| -> Vec<Step> {
-        println!("connection {n}: h2 stream {} {} {}", r.stream, r.method, r.path);
+        println!(
+            "connection {n}: h2 stream {} {} {}",
+            r.stream, r.method, r.path
+        );
         h2_page(r)
     };
     let ended = h2_server::serve_with(&mut stream, &mut conn, &mut handler);
@@ -305,19 +346,37 @@ fn serve_h2(n: usize, mut stream: ServerStream<TcpStream>) {
 
 fn h2_page(r: &h2_server::Request) -> Vec<Step> {
     let pattern = |len: usize| -> Vec<u8> { (0..len).map(|i| b'a' + (i % 26) as u8).collect() };
-    let number = |prefix: &str| r.path.strip_prefix(prefix).and_then(|k| k.parse::<usize>().ok());
+    let number = |prefix: &str| {
+        r.path
+            .strip_prefix(prefix)
+            .and_then(|k| k.parse::<usize>().ok())
+    };
     let pair = |n: &str, v: &str| (n.to_string(), v.to_string());
-    let head = |status: u16, headers: Vec<(String, String)>, end: bool| Step::now(Action::Head { status, headers, end });
+    let head = |status: u16, headers: Vec<(String, String)>, end: bool| {
+        Step::now(Action::Head {
+            status,
+            headers,
+            end,
+        })
+    };
     if let Some(k) = number("/size/") {
         let len = pattern(k).len().to_string();
-        let mut steps = vec![head(200, vec![pair("content-length", &len)], k == 0 || r.method == "HEAD")];
+        let mut steps = vec![head(
+            200,
+            vec![pair("content-length", &len)],
+            k == 0 || r.method == "HEAD",
+        )];
         if k > 0 && r.method != "HEAD" {
             steps.push(Step::now(Action::Data(pattern(k))));
             steps.push(Step::now(Action::End));
         }
         steps
     } else if r.path == "/echo" {
-        h2_server::response(200, &[("content-length", &r.body.len().to_string())], &r.body)
+        h2_server::response(
+            200,
+            &[("content-length", &r.body.len().to_string())],
+            &r.body,
+        )
     } else if let Some(k) = number("/chunked/") {
         let mut steps = vec![head(200, vec![], false)];
         for piece in pattern(k).chunks(1000) {
@@ -326,15 +385,25 @@ fn h2_page(r: &h2_server::Request) -> Vec<Step> {
         steps.push(Step::now(Action::End));
         steps
     } else if let Some(k) = number("/slow/") {
-        let mut steps = vec![head(200, vec![pair("content-length", &k.to_string())], k == 0)];
+        let mut steps = vec![head(
+            200,
+            vec![pair("content-length", &k.to_string())],
+            k == 0,
+        )];
         for b in pattern(k) {
-            steps.push(Step::later(Duration::from_millis(20), Action::Data(vec![b])));
+            steps.push(Step::later(
+                Duration::from_millis(20),
+                Action::Data(vec![b]),
+            ));
         }
         steps.push(Step::now(Action::End));
         steps
     } else if r.path == "/close" {
         let mut steps = h2_server::response(200, &[], b"closing\n");
-        steps.push(Step::now(Action::GoAway { code: 0, last_stream: None }));
+        steps.push(Step::now(Action::GoAway {
+            code: 0,
+            last_stream: None,
+        }));
         steps
     } else if r.path == "/trailers" {
         vec![
@@ -343,23 +412,51 @@ fn h2_page(r: &h2_server::Request) -> Vec<Step> {
             Step::now(Action::Trailers(vec![pair("x-sum", "21")])),
         ]
     } else if r.path == "/interim" {
-        let mut steps = vec![Step::now(Action::Interim { status: 103, headers: vec![pair("link", "</style.css>; rel=preload")] })];
-        steps.extend(h2_server::response(200, &[], b"after the interim response\n"));
+        let mut steps = vec![Step::now(Action::Interim {
+            status: 103,
+            headers: vec![pair("link", "</style.css>; rel=preload")],
+        })];
+        steps.extend(h2_server::response(
+            200,
+            &[],
+            b"after the interim response\n",
+        ));
         steps
     } else if r.path == "/reset" {
-        vec![head(200, vec![], false), Step::now(Action::Data(pattern(1000))), Step::now(Action::Reset(2))]
+        vec![
+            head(200, vec![], false),
+            Step::now(Action::Data(pattern(1000))),
+            Step::now(Action::Reset(2)),
+        ]
     } else if r.path == "/goaway" {
         let mut steps = h2_server::response(200, &[], b"going away\n");
-        steps.push(Step::now(Action::GoAway { code: 0, last_stream: None }));
+        steps.push(Step::now(Action::GoAway {
+            code: 0,
+            last_stream: None,
+        }));
         steps
     } else if let Some(k) = number("/headers/") {
-        let headers: Vec<(String, String)> = (0..k).map(|i| (format!("x-header-{i}"), format!("{i:0>100}"))).collect();
-        vec![head(200, headers, false), Step::now(Action::Data(b"many headers\n".to_vec())), Step::now(Action::End)]
+        let headers: Vec<(String, String)> = (0..k)
+            .map(|i| (format!("x-header-{i}"), format!("{i:0>100}")))
+            .collect();
+        vec![
+            head(200, headers, false),
+            Step::now(Action::Data(b"many headers\n".to_vec())),
+            Step::now(Action::End),
+        ]
     } else if let Some(k) = number("/status/") {
         vec![head(k as u16, vec![], true)]
     } else if r.path == "/push" {
-        let promised = vec![pair(":method", "GET"), pair(":scheme", "https"), pair(":authority", &r.authority), pair(":path", "/pushed")];
-        let mut steps = vec![Step::now(Action::PushPromise { promised: 2, headers: promised })];
+        let promised = vec![
+            pair(":method", "GET"),
+            pair(":scheme", "https"),
+            pair(":authority", &r.authority),
+            pair(":path", "/pushed"),
+        ];
+        let mut steps = vec![Step::now(Action::PushPromise {
+            promised: 2,
+            headers: promised,
+        })];
         steps.extend(h2_server::response(200, &[], b"with a promise\n"));
         steps
     } else if r.method == "HEAD" {
@@ -375,10 +472,36 @@ static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 fn page(req: Request) -> Response {
     let pattern = |len: usize| -> Vec<u8> { (0..len).map(|i| b'a' + (i % 26) as u8).collect() };
     let path = req.path().to_string();
-    let number = |prefix: &str| path.strip_prefix(prefix).and_then(|k| k.parse::<usize>().ok());
+    let number = |prefix: &str| {
+        path.strip_prefix(prefix)
+            .and_then(|k| k.parse::<usize>().ok())
+    };
     if !QUIET.load(std::sync::atomic::Ordering::Relaxed) {
-        let tls = req.connection().tls.as_ref().map(|t| format!(" {} alpn {:?} sni {:?} resumed {} client certificates {}", t.cipher_suite.unwrap_or("?"), t.alpn, t.server_name, t.resumed, t.client_certificates.len())).unwrap_or_default();
-        println!("request from {}: {} {} {}{tls}", req.connection().peer.map(|p| p.to_string()).unwrap_or_default(), req.method(), req.target(), req.version());
+        let tls = req
+            .connection()
+            .tls
+            .as_ref()
+            .map(|t| {
+                format!(
+                    " {} alpn {:?} sni {:?} resumed {} client certificates {}",
+                    t.cipher_suite.unwrap_or("?"),
+                    t.alpn,
+                    t.server_name,
+                    t.resumed,
+                    t.client_certificates.len()
+                )
+            })
+            .unwrap_or_default();
+        println!(
+            "request from {}: {} {} {}{tls}",
+            req.connection()
+                .peer
+                .map(|p| p.to_string())
+                .unwrap_or_default(),
+            req.method(),
+            req.target(),
+            req.version()
+        );
     }
     if let Some(k) = number("/size/") {
         Response::bytes(200, "text/plain", cached_pattern(k))
@@ -396,7 +519,11 @@ fn page(req: Request) -> Response {
     } else if let Some(k) = number("/slow/") {
         Response::reader(200, Slow(pattern(k), 0), Some(k as u64))
     } else if path == "/close" {
-        let text: &[u8] = if req.version() == Version::Http2 { b"closing\n" } else { b"hello from pratique\n" };
+        let text: &[u8] = if req.version() == Version::Http2 {
+            b"closing\n"
+        } else {
+            b"hello from pratique\n"
+        };
         Response::bytes(200, "text/plain", text.to_vec()).with_header("connection", "close")
     } else if path == "/trailers" {
         Response::stream(200, |w| {
@@ -431,13 +558,18 @@ fn page(req: Request) -> Response {
 
 /// The pattern of `/size/N`, made once per size (as the Go server of tools/bench_server.go does), and copied.
 fn cached_pattern(n: usize) -> Vec<u8> {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<usize, Arc<Vec<u8>>>>> = std::sync::OnceLock::new();
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<usize, Arc<Vec<u8>>>>,
+    > = std::sync::OnceLock::new();
     if n > 16 << 20 {
         return (0..n).map(|i| b'a' + (i % 26) as u8).collect();
     }
     let cache = CACHE.get_or_init(Default::default);
     let mut c = cache.lock().unwrap();
-    c.entry(n).or_insert_with(|| Arc::new((0..n).map(|i| b'a' + (i % 26) as u8).collect())).as_ref().clone()
+    c.entry(n)
+        .or_insert_with(|| Arc::new((0..n).map(|i| b'a' + (i % 26) as u8).collect()))
+        .as_ref()
+        .clone()
 }
 
 /// A body that comes a byte at a time, 20 ms apart.

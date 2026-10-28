@@ -62,7 +62,12 @@ impl HttpCrlSource {
             .total_timeout(Duration::from_secs(20))
             .max_redirects(3)
             .max_body_bytes(16 << 20);
-        HttpCrlSource { inner: Arc::new(Inner { client, cache: Mutex::new(Cache::default()) }) }
+        HttpCrlSource {
+            inner: Arc::new(Inner {
+                client,
+                cache: Mutex::new(Cache::default()),
+            }),
+        }
     }
 
     /// How many lists are cached, and their size in bytes as downloaded.
@@ -85,9 +90,15 @@ impl Inner {
 
     /// Downloads and parses the list at `url`, with its size.
     fn download(&self, url: &str) -> Result<(Arc<Crl>, usize)> {
-        let response = self.client.get(url).map_err(|e| Error::Unavailable(format!("{}: {}", url, e)))?;
+        let response = self
+            .client
+            .get(url)
+            .map_err(|e| Error::Unavailable(format!("{}: {}", url, e)))?;
         if response.status != 200 {
-            return Err(Error::Unavailable(format!("CRL download answered {}", response.status)));
+            return Err(Error::Unavailable(format!(
+                "CRL download answered {}",
+                response.status
+            )));
         }
         let crl = if response.body.starts_with(b"-----BEGIN") {
             Crl::from_pem(&String::from_utf8_lossy(&response.body))?
@@ -109,13 +120,28 @@ impl Inner {
             return;
         }
         while c.lists.len() >= MAX_LISTS || c.bytes + size > MAX_BYTES {
-            let Some(oldest) = c.lists.iter().min_by_key(|(_, e)| e.used).map(|(u, _)| u.clone()) else { break };
+            let Some(oldest) = c
+                .lists
+                .iter()
+                .min_by_key(|(_, e)| e.used)
+                .map(|(u, _)| u.clone())
+            else {
+                break;
+            };
             if let Some(e) = c.lists.remove(&oldest) {
                 c.bytes -= e.size;
             }
         }
         c.bytes += size;
-        c.lists.insert(url.to_string(), Entry { crl, size, used, refreshing: false });
+        c.lists.insert(
+            url.to_string(),
+            Entry {
+                crl,
+                size,
+                used,
+                refreshing: false,
+            },
+        );
     }
 }
 
@@ -129,7 +155,10 @@ fn due_for_refresh(crl: &Crl, now: i64) -> bool {
 impl CrlSource for HttpCrlSource {
     fn fetch(&self, url: &str) -> Result<Arc<Crl>> {
         if !url.starts_with("http://") {
-            return Err(Error::Unavailable(format!("not fetching a CRL from {:?}: only http:// URLs are used", url)));
+            return Err(Error::Unavailable(format!(
+                "not fetching a CRL from {:?}: only http:// URLs are used",
+                url
+            )));
         }
         let now = crate::sys::now_unix();
         let cached = {
@@ -153,16 +182,16 @@ impl CrlSource for HttpCrlSource {
                 // the next list, fetched while this one is still used; if that fails, the next use tries again
                 let inner = self.inner.clone();
                 let at = url.to_string();
-                let started = std::thread::Builder::new().name("pratique CRL refresh".into()).spawn(move || {
-                    match inner.download(&at) {
+                let started = std::thread::Builder::new()
+                    .name("pratique CRL refresh".into())
+                    .spawn(move || match inner.download(&at) {
                         Ok((fresh, size)) => inner.store(&at, fresh, size),
                         Err(_) => {
                             if let Some(e) = inner.lock().lists.get_mut(&at) {
                                 e.refreshing = false;
                             }
                         }
-                    }
-                });
+                    });
                 if started.is_err() {
                     if let Some(e) = self.inner.lock().lists.get_mut(url) {
                         e.refreshing = false;
@@ -191,7 +220,9 @@ mod tests {
         let count = served.clone();
         std::thread::spawn(move || {
             for answer in answers {
-                let Ok((mut s, _)) = listener.accept() else { return };
+                let Ok((mut s, _)) = listener.accept() else {
+                    return;
+                };
                 let mut head = Vec::new();
                 let mut byte = [0u8; 1];
                 while !head.ends_with(b"\r\n\r\n") && s.read(&mut byte).unwrap_or(0) == 1 {
@@ -205,7 +236,8 @@ mod tests {
     }
 
     fn http_ok(body: &[u8]) -> Vec<u8> {
-        let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+        let mut r =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
         r.extend_from_slice(body);
         r
     }
@@ -226,14 +258,27 @@ mod tests {
         // the fixture's window closed long before the real clock (nextUpdate is 2026-09-20 in the
         // fixtures), so the cached copy is stale and the next call downloads again
         assert!(crl.is_stale(crate::sys::now_unix()));
-        let err = source.fetch(&url).err().expect("a 404 is an error").to_string();
+        let err = source
+            .fetch(&url)
+            .err()
+            .expect("a 404 is an error")
+            .to_string();
         assert!(err.contains("404"), "{}", err);
         assert!(source.fetch(&url).is_err(), "garbage is not a CRL");
         assert!(source.fetch(&url).is_ok());
         assert_eq!(served.load(Ordering::SeqCst), 4);
         // only plain http is used: nothing is sent for other schemes
-        for bad in ["https://crl.example.test/x.crl", "ldap://crl.example.test/x", "file:///etc/passwd", "ftp://example.test/x.crl"] {
-            let err = source.fetch(bad).err().expect("only http:// URLs are fetched").to_string();
+        for bad in [
+            "https://crl.example.test/x.crl",
+            "ldap://crl.example.test/x",
+            "file:///etc/passwd",
+            "ftp://example.test/x.crl",
+        ] {
+            let err = source
+                .fetch(bad)
+                .err()
+                .expect("only http:// URLs are fetched")
+                .to_string();
             assert!(err.contains("only http://"), "{}: {}", bad, err);
         }
         assert_eq!(served.load(Ordering::SeqCst), 4);

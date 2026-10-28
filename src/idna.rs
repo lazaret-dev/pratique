@@ -9,7 +9,8 @@
 //! What [`to_ascii`] does, label by label: an ASCII label is lower-cased and kept (an `xn--` label must be a valid
 //! A-label: it decodes, it is not all ASCII once decoded, and encoding the result gives it back); a label with other
 //! characters is lower-cased character by character (Rust's `char::to_lowercase`, which is Unicode's simple case
-//! mapping) and encoded. Ideographic and full-width full stops separate labels like `.`.
+//! mapping) and encoded, unless lower-casing left nothing but ASCII (the Kelvin sign `K` is a `k`), when it is the
+//! ASCII label it became, under the same rules. Ideographic and full-width full stops separate labels like `.`.
 //!
 //! What it does not do, because it needs Unicode tables this crate does not carry: the mapping of UTS #46 (full-width
 //! letters to ASCII, compatibility characters, `ß` to `ss` in its transitional form), normalization to NFC, and the
@@ -209,7 +210,9 @@ fn u_label(label: &str) -> Result<Vec<char>, IdnaError> {
     let mut chars = Vec::with_capacity(label.len());
     for c in label.chars() {
         let mut lower = c.to_lowercase();
-        let (Some(l), None) = (lower.next(), lower.next()) else { return Err(IdnaError::Character(c)) };
+        let (Some(l), None) = (lower.next(), lower.next()) else {
+            return Err(IdnaError::Character(c));
+        };
         if !(l.is_alphanumeric() || l == '-') {
             return Err(IdnaError::Character(c));
         }
@@ -219,6 +222,33 @@ fn u_label(label: &str) -> Result<Vec<char>, IdnaError> {
         return Err(IdnaError::Hyphen);
     }
     Ok(chars)
+}
+
+/// Checks an ASCII label, already in lower case: letters, digits, `-` and `_`; no hyphen at either end; `--` in the third
+/// and fourth places only in a valid A-label; not too long for DNS.
+fn ascii_label(lower: &str) -> Result<(), IdnaError> {
+    if !lower
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        let bad = lower
+            .chars()
+            .find(|&c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
+            .unwrap_or('?');
+        return Err(IdnaError::Character(bad));
+    }
+    if lower.starts_with('-') || lower.ends_with('-') {
+        return Err(IdnaError::Hyphen);
+    }
+    if lower.starts_with("xn--") {
+        a_label(lower)?;
+    } else if lower.get(2..4) == Some("--") {
+        return Err(IdnaError::Hyphen);
+    }
+    if lower.len() > MAX_LABEL {
+        return Err(IdnaError::LabelTooLong);
+    }
+    Ok(())
 }
 
 /// `label` (ASCII, lower case) if it is a valid A-label: Punycode after `xn--` that decodes to a label with something
@@ -266,24 +296,18 @@ pub fn to_ascii(name: &str) -> Result<String, IdnaError> {
         }
         if label.is_ascii() {
             let lower = label.to_ascii_lowercase();
-            if !lower.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
-                let bad = lower.chars().find(|&c| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')).unwrap_or('?');
-                return Err(IdnaError::Character(bad));
-            }
-            if lower.starts_with('-') || lower.ends_with('-') {
-                return Err(IdnaError::Hyphen);
-            }
-            if lower.starts_with("xn--") {
-                a_label(&lower)?;
-            } else if lower.get(2..4) == Some("--") {
-                return Err(IdnaError::Hyphen);
-            }
-            if lower.len() > MAX_LABEL {
-                return Err(IdnaError::LabelTooLong);
-            }
+            ascii_label(&lower)?;
             out.push_str(&lower);
         } else {
             let chars = u_label(label)?;
+            if chars.iter().all(char::is_ascii) {
+                // lower-casing left nothing but ASCII (the Kelvin sign is a `k`): the ASCII label it became, not an
+                // A-label of it (found by the fuzzer, B-92)
+                let lower: String = chars.into_iter().collect();
+                ascii_label(&lower)?;
+                out.push_str(&lower);
+                continue;
+            }
             let encoded = punycode_encode(&chars).ok_or(IdnaError::LabelTooLong)?;
             if 4 + encoded.len() > MAX_LABEL {
                 return Err(IdnaError::LabelTooLong);
@@ -307,7 +331,9 @@ pub fn to_unicode(name: &str) -> String {
         .map(|label| {
             let lower = label.to_ascii_lowercase();
             if lower.starts_with("xn--") && a_label(&lower).is_ok() {
-                punycode_decode(&lower[4..]).map(|cs| cs.into_iter().collect()).unwrap_or_else(|| label.to_string())
+                punycode_decode(&lower[4..])
+                    .map(|cs| cs.into_iter().collect())
+                    .unwrap_or_else(|| label.to_string())
             } else {
                 label.to_string()
             }
@@ -327,10 +353,42 @@ mod tests {
             .filter(|l| !l.starts_with('#'))
             .map(|l| {
                 let (cps, enc) = l.split_once('\t').expect("a tab");
-                let chars = if cps == "-" { Vec::new() } else { cps.split(' ').map(|h| char::from_u32(u32::from_str_radix(h, 16).unwrap()).unwrap()).collect() };
+                let chars = if cps == "-" {
+                    Vec::new()
+                } else {
+                    cps.split(' ')
+                        .map(|h| char::from_u32(u32::from_str_radix(h, 16).unwrap()).unwrap())
+                        .collect()
+                };
                 (chars, enc.to_string())
             })
             .collect()
+    }
+
+    /// Found by the fuzzer (B-92 part 5, 2026-10-10): the Kelvin sign K (U+212A) lower-cases to the ASCII `k`, and a
+    /// label that had it was encoded although nothing but ASCII was left, `GKa` to `xn--gka-`: an A-label this module
+    /// refuses itself, and another name than the `gka` a browser makes of it (NFC turns the sign into `K`). A label that
+    /// lower-casing leaves all ASCII is the ASCII label it became, with the rules of one.
+    #[test]
+    fn a_label_that_lower_casing_leaves_ascii_is_not_encoded() {
+        let kelvin = '\u{212A}';
+        for (name, want) in [
+            (format!("G{kelvin}a"), "gka"),
+            (format!("aexa{kelvin}mple.test"), "aexakmple.test"),
+            (format!("例え。{kelvin}"), "xn--r8jz45g.k"),
+            (format!("xn-FbcEm-{kelvin}qHh"), "xn-fbcem-kqhh"),
+            (format!("{kelvin}ü.example"), "xn--k-eha.example"),
+        ] {
+            assert_eq!(to_ascii(&name).as_deref(), Ok(want), "{name:?}");
+            assert_eq!(
+                to_ascii(want).as_deref(),
+                Ok(want),
+                "{want:?} is its own conversion"
+            );
+        }
+        // and the rules of an ASCII label hold for it: `--` in the third and fourth places, a hyphen at an end
+        assert_eq!(to_ascii(&format!("a{kelvin}--b")), Err(IdnaError::Hyphen));
+        assert_eq!(to_ascii(&format!("{kelvin}-")), Err(IdnaError::Hyphen));
     }
 
     #[test]
@@ -340,7 +398,16 @@ mod tests {
         for (chars, enc) in &all {
             // the encoder writes lower case; the RFC's samples I, D, J, K... carry upper-case annotations or basic letters
             let got = punycode_encode(chars).unwrap();
-            let want_lower: String = enc.chars().map(|c| if c.is_ascii_uppercase() && !chars.contains(&c) { c.to_ascii_lowercase() } else { c }).collect();
+            let want_lower: String = enc
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_uppercase() && !chars.contains(&c) {
+                        c.to_ascii_lowercase()
+                    } else {
+                        c
+                    }
+                })
+                .collect();
             assert_eq!(got, want_lower, "{chars:?}");
             assert_eq!(punycode_decode(enc).as_ref(), Some(chars), "{enc}");
             // and with the digits in upper case, the same characters
@@ -356,11 +423,31 @@ mod tests {
     fn invalid_punycode_is_refused() {
         assert_eq!(punycode_decode("a-é"), None, "not ASCII");
         assert_eq!(punycode_decode("ab!"), None, "not a digit");
-        assert_eq!(punycode_decode("9999999999a"), None, "a number too large for 32 bits");
-        assert_eq!(punycode_decode("99999999999"), None, "a number that does not end");
-        assert_eq!(punycode_decode("z"), None, "a digit at or above the threshold with nothing after it");
-        assert_eq!(punycode_decode("a9999999a"), None, "a code point beyond Unicode");
-        assert_eq!(punycode_decode("-5"), None, "a hyphen at the start is not a delimiter, and not a digit");
+        assert_eq!(
+            punycode_decode("9999999999a"),
+            None,
+            "a number too large for 32 bits"
+        );
+        assert_eq!(
+            punycode_decode("99999999999"),
+            None,
+            "a number that does not end"
+        );
+        assert_eq!(
+            punycode_decode("z"),
+            None,
+            "a digit at or above the threshold with nothing after it"
+        );
+        assert_eq!(
+            punycode_decode("a9999999a"),
+            None,
+            "a code point beyond Unicode"
+        );
+        assert_eq!(
+            punycode_decode("-5"),
+            None,
+            "a hyphen at the start is not a delimiter, and not a digit"
+        );
         // what does decode encodes back to the same (in lower case)
         for s in ["a", "aaa-a", "AAA-A", "-> $1.00 <--", "", "abc-"] {
             let chars = punycode_decode(s).unwrap_or_else(|| panic!("{s:?}"));
@@ -422,8 +509,14 @@ mod tests {
             assert_eq!(to_ascii(input), Err(why), "{input:?}");
         }
         let long = "a".repeat(64);
-        assert_eq!(to_ascii(&format!("{long}.example")), Err(IdnaError::LabelTooLong));
-        assert_eq!(to_ascii(&format!("{}.example", "ü".repeat(60))), Err(IdnaError::LabelTooLong));
+        assert_eq!(
+            to_ascii(&format!("{long}.example")),
+            Err(IdnaError::LabelTooLong)
+        );
+        assert_eq!(
+            to_ascii(&format!("{}.example", "ü".repeat(60))),
+            Err(IdnaError::LabelTooLong)
+        );
         let name = vec!["abcdefghi"; 26].join(".");
         assert_eq!(to_ascii(&name), Err(IdnaError::NameTooLong));
         assert!(to_ascii(&vec!["abcdefghi"; 25].join(".")).is_ok());
@@ -432,7 +525,10 @@ mod tests {
     #[test]
     fn to_unicode_shows_valid_a_labels_only() {
         assert_eq!(to_unicode("xn--bcher-kva.example"), "bücher.example");
-        assert_eq!(to_unicode("xn--e1afmkfd.xn--80akhbyknj4f"), "пример.испытание");
+        assert_eq!(
+            to_unicode("xn--e1afmkfd.xn--80akhbyknj4f"),
+            "пример.испытание"
+        );
         assert_eq!(to_unicode("xn--abc-.example"), "xn--abc-.example");
         assert_eq!(to_unicode("crates.io"), "crates.io");
         for name in ["bücher.example", "例え.テスト", "faß.de"] {

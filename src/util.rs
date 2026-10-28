@@ -68,11 +68,13 @@ impl<'a> Reader<'a> {
         self.take(2).map(|s| u16::from_be_bytes([s[0], s[1]]))
     }
     pub fn u32(&mut self) -> Option<u32> {
-        self.take(4).map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        self.take(4)
+            .map(|b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
     }
 
     pub fn u24(&mut self) -> Option<usize> {
-        self.take(3).map(|s| ((s[0] as usize) << 16) | ((s[1] as usize) << 8) | s[2] as usize)
+        self.take(3)
+            .map(|s| ((s[0] as usize) << 16) | ((s[1] as usize) << 8) | s[2] as usize)
     }
     /// Reads a vector with a 1-byte length prefix.
     pub fn vec8(&mut self) -> Option<&'a [u8]> {
@@ -167,7 +169,11 @@ mod tests {
                 3 => vec![0; len],
                 _ => vec![0xff; len],
             };
-            assert_eq!(ct_eq(&a, &b), reference(&a, &b), "{a:02x?} against {b:02x?}");
+            assert_eq!(
+                ct_eq(&a, &b),
+                reference(&a, &b),
+                "{a:02x?} against {b:02x?}"
+            );
             assert_eq!(ct_eq(&vec![0; len], &b), reference(&vec![0; len], &b));
         }
     }

@@ -125,12 +125,22 @@ pub(crate) fn mutate(rng: &mut Rng, data: &[u8]) -> Vec<u8> {
 /// Runs `f` for `iters` deterministic iterations (times `PRATIQUE_FUZZ_SCALE`), reporting the
 /// iteration if it panics so the failure can be replayed.
 pub(crate) fn run(name: &str, iters: u64, f: impl Fn(&mut Rng)) {
-    let scale: u64 = std::env::var("PRATIQUE_FUZZ_SCALE").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
-    let name_hash = name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3));
+    let scale: u64 = std::env::var("PRATIQUE_FUZZ_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1);
+    let name_hash = name.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(0x100_0000_01b3)
+    });
     for i in 0..iters * scale {
         let mut rng = Rng::new(name_hash ^ i);
         if let Err(p) = catch_unwind(AssertUnwindSafe(|| f(&mut rng))) {
-            eprintln!("fuzz target '{}' panicked on iteration {} (seed {:#x})", name, i, name_hash ^ i);
+            eprintln!(
+                "fuzz target '{}' panicked on iteration {} (seed {:#x})",
+                name,
+                i,
+                name_hash ^ i
+            );
             resume_unwind(p);
         }
     }
@@ -169,7 +179,11 @@ fn der_of(p: &str) -> Vec<u8> {
 fn certificate_parser_never_panics() {
     let seeds = fixture_ders();
     run("certificate_parser", 6000, |rng| {
-        let der = if rng.chance(10) { random_up_to(rng, 400) } else { mutate_seed(rng, &seeds) };
+        let der = if rng.chance(10) {
+            random_up_to(rng, 400)
+        } else {
+            mutate_seed(rng, &seeds)
+        };
         if let Ok(c) = Certificate::from_der(&der) {
             let _ = c.matches_hostname("example.test");
             let _ = c.matches_hostname("127.0.0.1");
@@ -189,7 +203,8 @@ fn tampered_chains_are_never_accepted_and_never_panic() {
     ts.add_der(&root).unwrap();
     const NOW: i64 = 1_789_430_400;
     // control
-    ts.verify_server_chain(&[leaf.clone(), inter.clone()], "example.test", NOW).unwrap();
+    ts.verify_server_chain(&[leaf.clone(), inter.clone()], "example.test", NOW)
+        .unwrap();
     run("tampered_chains", 3000, |rng| {
         let mut l = leaf.clone();
         let mut i = inter.clone();
@@ -217,9 +232,17 @@ fn tampered_chains_are_never_accepted_and_never_panic() {
 
 #[test]
 fn pem_and_base64_never_panic() {
-    let seeds = [fixture_pem!("root_rsa"), fixture_pem!("leaf_p384"), fixture_pem!("inter_nc")];
+    let seeds = [
+        fixture_pem!("root_rsa"),
+        fixture_pem!("leaf_p384"),
+        fixture_pem!("inter_nc"),
+    ];
     run("pem", 4000, |rng| {
-        let text = String::from_utf8_lossy(&mutate_seed(rng, &seeds.iter().map(|s| s.as_bytes()).collect::<Vec<_>>())).into_owned();
+        let text = String::from_utf8_lossy(&mutate_seed(
+            rng,
+            &seeds.iter().map(|s| s.as_bytes()).collect::<Vec<_>>(),
+        ))
+        .into_owned();
         let blocks = pem::parse(&text);
         for b in &blocks {
             let _ = Certificate::from_der(&b.data);
@@ -235,7 +258,11 @@ fn pem_and_base64_never_panic() {
 fn asn1_reader_never_panics() {
     let seeds = fixture_ders();
     run("asn1", 6000, |rng| {
-        let data = if rng.chance(30) { random_up_to(rng, 200) } else { mutate_seed(rng, &seeds) };
+        let data = if rng.chance(30) {
+            random_up_to(rng, 200)
+        } else {
+            mutate_seed(rng, &seeds)
+        };
         // walk the structure generically: descend into anything that decodes
         fn walk(d: &[u8], depth: usize) {
             let mut r = asn1::Der::new(d);
@@ -244,7 +271,11 @@ fn asn1_reader_never_panics() {
                 let _ = asn1::unsigned_integer(&t);
                 let _ = asn1::bit_string_bytes(&t);
                 let _ = asn1::parse_time(&t);
-                if depth < 6 && (t.tag & 0x20 != 0 || t.tag == asn1::TAG_OCTET_STRING || t.tag == asn1::TAG_BIT_STRING) {
+                if depth < 6
+                    && (t.tag & 0x20 != 0
+                        || t.tag == asn1::TAG_OCTET_STRING
+                        || t.tag == asn1::TAG_BIT_STRING)
+                {
                     walk(t.content, depth + 1);
                 }
             }
@@ -256,13 +287,25 @@ fn asn1_reader_never_panics() {
 #[test]
 fn rsa_verification_never_panics() {
     let key_der = unhex(tv::RSA_PUBKEY_DER);
-    let sigs = [unhex(tv::RSA_PKCS1_SHA256_SIG), unhex(tv::RSA_PSS_SHA256_SIG), unhex(tv::RSA_PKCS1_SHA512_SIG)];
+    let sigs = [
+        unhex(tv::RSA_PKCS1_SHA256_SIG),
+        unhex(tv::RSA_PSS_SHA256_SIG),
+        unhex(tv::RSA_PKCS1_SHA512_SIG),
+    ];
     // the genuine key must still verify, so the harness is exercising real paths
     let genuine = RsaPublicKey::from_pkcs1_der(&key_der).unwrap();
     assert!(genuine.verify_pkcs1(HashAlg::Sha256, tv::RSA_MSG, &sigs[0]));
     run("rsa_mutated_key_and_sig", 3000, |rng| {
-        let kd = if rng.chance(50) { key_der.clone() } else { mutate(rng, &key_der) };
-        let sig = if rng.chance(70) { mutate_seed(rng, &sigs) } else { random_up_to(rng, 600) };
+        let kd = if rng.chance(50) {
+            key_der.clone()
+        } else {
+            mutate(rng, &key_der)
+        };
+        let sig = if rng.chance(70) {
+            mutate_seed(rng, &sigs)
+        } else {
+            random_up_to(rng, 600)
+        };
         if let Ok(k) = RsaPublicKey::from_pkcs1_der(&kd) {
             for alg in [HashAlg::Sha256, HashAlg::Sha384, HashAlg::Sha512] {
                 let _ = k.verify_pkcs1(alg, tv::RSA_MSG, &sig);
@@ -280,7 +323,11 @@ fn rsa_verification_never_panics() {
         n[0] |= 0x80 >> rng.below(8);
         *n.last_mut().unwrap() |= 1;
         let e_len = 1 + rng.below(9);
-        let e = if rng.chance(50) { vec![1, 0, 1] } else { rng.bytes(e_len) };
+        let e = if rng.chance(50) {
+            vec![1, 0, 1]
+        } else {
+            rng.bytes(e_len)
+        };
         if let Ok(k) = RsaPublicKey::from_components(&n, &e) {
             for siglen in [len, len - 1, len + 1, rng.below(600)] {
                 let mut sig = rng.bytes(siglen);
@@ -299,16 +346,34 @@ fn ecdsa_verification_never_panics() {
     let p256 = unhex(tv::P256_PUBKEY);
     let p384 = unhex(tv::P384_PUBKEY);
     let sigs = [unhex(tv::P256_SHA256_SIG), unhex(tv::P384_SHA384_SIG)];
-    assert!(ecdsa::verify(ecdsa::Curve::P256, &p256, HashAlg::Sha256, tv::EC_MSG, &sigs[0]));
+    assert!(ecdsa::verify(
+        ecdsa::Curve::P256,
+        &p256,
+        HashAlg::Sha256,
+        tv::EC_MSG,
+        &sigs[0]
+    ));
     run("ecdsa", 3000, |rng| {
-        let (curve, key) = if rng.chance(50) { (ecdsa::Curve::P256, &p256) } else { (ecdsa::Curve::P384, &p384) };
-        let mut k = if rng.chance(50) { key.clone() } else { mutate(rng, key) };
+        let (curve, key) = if rng.chance(50) {
+            (ecdsa::Curve::P256, &p256)
+        } else {
+            (ecdsa::Curve::P384, &p384)
+        };
+        let mut k = if rng.chance(50) {
+            key.clone()
+        } else {
+            mutate(rng, key)
+        };
         if rng.chance(10) && k.len() > 1 {
             // coordinates that are not reduced mod p
             let n = k.len();
             k[1..n].iter_mut().for_each(|b| *b = 0xff);
         }
-        let sig = if rng.chance(70) { mutate_seed(rng, &sigs) } else { random_up_to(rng, 150) };
+        let sig = if rng.chance(70) {
+            mutate_seed(rng, &sigs)
+        } else {
+            random_up_to(rng, 150)
+        };
         let digest = random_up_to(rng, 100);
         let _ = ecdsa::verify_prehashed(curve, &k, &digest, &sig);
         let _ = ecdsa::verify(curve, &k, HashAlg::Sha384, tv::EC_MSG, &sig);
@@ -323,15 +388,38 @@ fn ed25519_verification_never_panics_and_accepts_only_the_genuine_signature() {
     let sig = unhex("92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00");
     assert!(ed25519::verify(&pk, &msg, &sig));
     run("ed25519", 2000, |rng| {
-        let k = if rng.chance(40) { pk.clone() } else { mutate(rng, &pk) };
-        let m = if rng.chance(40) { msg.clone() } else { mutate(rng, &msg) };
-        let s = if rng.chance(40) { sig.clone() } else { mutate(rng, &sig) };
+        let k = if rng.chance(40) {
+            pk.clone()
+        } else {
+            mutate(rng, &pk)
+        };
+        let m = if rng.chance(40) {
+            msg.clone()
+        } else {
+            mutate(rng, &msg)
+        };
+        let s = if rng.chance(40) {
+            sig.clone()
+        } else {
+            mutate(rng, &sig)
+        };
         let ok = ed25519::verify(&k, &m, &s);
         // Anything else would be a forgery: the key is not small-order, R is compared as bytes and S is
         // canonical, so only the original triple verifies
-        assert_eq!(ok, k == pk && m == msg && s == sig, "key {:x?} message {:x?} signature {:x?}", k, m, s);
+        assert_eq!(
+            ok,
+            k == pk && m == msg && s == sig,
+            "key {:x?} message {:x?} signature {:x?}",
+            k,
+            m,
+            s
+        );
         // keys and signatures that are not even the right shape, and extreme ones
-        let _ = ed25519::verify(&random_up_to(rng, 40), &random_up_to(rng, 100), &random_up_to(rng, 80));
+        let _ = ed25519::verify(
+            &random_up_to(rng, 40),
+            &random_up_to(rng, 100),
+            &random_up_to(rng, 80),
+        );
         let mut extreme_key = [0xffu8; 32];
         extreme_key[rng.below(32)] = rng.next_u64() as u8;
         let mut extreme_sig = [0xffu8; 64];
@@ -354,20 +442,34 @@ fn signed_notes_never_panic_and_only_genuine_signatures_verify() {
         .iter()
         .map(|b| {
             let n = note::open(b, std::slice::from_ref(&real)).unwrap();
-            (n.text.clone(), format!("{} {}", n.signatures[0].name, n.signatures[0].base64))
+            (
+                n.text.clone(),
+                format!("{} {}", n.signatures[0].name, n.signatures[0].base64),
+            )
         })
         .collect();
     let other = Verifier::ed25519("other.example", &[9; 32]).unwrap();
     let known = [real.clone(), other];
     run("note", 6000, |rng| {
-        let data = if rng.chance(5) { random_up_to(rng, 300) } else { mutate_seed(rng, &seeds) };
+        let data = if rng.chance(5) {
+            random_up_to(rng, 300)
+        } else {
+            mutate_seed(rng, &seeds)
+        };
         if let Ok(n) = note::open(&data, &known) {
             for sig in &n.signatures {
                 let line = format!("{} {}", sig.name, sig.base64);
-                assert!(genuine.iter().any(|(t, l)| *t == n.text && *l == line), "a signature that was never made verified: {:?}", data);
+                assert!(
+                    genuine.iter().any(|(t, l)| *t == n.text && *l == line),
+                    "a signature that was never made verified: {:?}",
+                    data
+                );
             }
         }
-        let _ = Verifier::from_key(&String::from_utf8_lossy(&mutate(rng, crate::sumdb::KEY.as_bytes())));
+        let _ = Verifier::from_key(&String::from_utf8_lossy(&mutate(
+            rng,
+            crate::sumdb::KEY.as_bytes(),
+        )));
     });
 }
 
@@ -383,7 +485,11 @@ fn transparency_log_parsers_and_proof_checks_never_panic() {
         b"tile/8/1/x001/018.p/122",
     ];
     run("sumdb", 6000, |rng| {
-        let data = if rng.chance(5) { random_up_to(rng, 200) } else { mutate_seed(rng, &seeds) };
+        let data = if rng.chance(5) {
+            random_up_to(rng, 200)
+        } else {
+            mutate_seed(rng, &seeds)
+        };
         let text = String::from_utf8_lossy(&data).into_owned();
         let _ = sumdb::parse_tree(&text);
         let _ = sumdb::parse_record(&data);
@@ -401,18 +507,41 @@ fn transparency_log_parsers_and_proof_checks_never_panic() {
     run("tlog_proofs", 6000, |rng| {
         let h = |rng: &mut Rng| -> tlog::Hash { rng.bytes(32).try_into().unwrap() };
         let proof: Vec<tlog::Hash> = (0..rng.below(70)).map(|_| h(rng)).collect();
-        let size = if rng.chance(30) { rng.next_u64() } else { rng.next_u64() >> rng.below(64) };
-        let index = if rng.chance(50) { rng.next_u64() % size.max(1) } else { rng.next_u64() >> rng.below(64) };
+        let size = if rng.chance(30) {
+            rng.next_u64()
+        } else {
+            rng.next_u64() >> rng.below(64)
+        };
+        let index = if rng.chance(50) {
+            rng.next_u64() % size.max(1)
+        } else {
+            rng.next_u64() >> rng.below(64)
+        };
         let (root, leaf) = (h(rng), h(rng));
         let _ = tlog::verify_inclusion(&proof, size, &root, index, &leaf);
-        let old = if rng.chance(50) { rng.next_u64() % size.max(1) + 1 } else { rng.next_u64() >> rng.below(64) };
+        let old = if rng.chance(50) {
+            rng.next_u64() % size.max(1) + 1
+        } else {
+            rng.next_u64() >> rng.below(64)
+        };
         let _ = tlog::verify_consistency(&proof, old, &root, size, &leaf);
-        let tree = tlog::Tree { size: size >> rng.below(10), root };
+        let tree = tlog::Tree {
+            size: size >> rng.below(10),
+            root,
+        };
         let height = rng.below(33) as u32;
         let _ = tlog::tiles_for_record(&tree, height, index);
         let _ = tlog::tiles_for_prefix(&tree, height, old);
         let _ = tlog::check_record(&tree, height, index, &leaf, &TileSet::new());
-        let _ = tlog::check_prefix(&tlog::Tree { size: old, root: leaf }, &tree, height, &TileSet::new());
+        let _ = tlog::check_prefix(
+            &tlog::Tree {
+                size: old,
+                root: leaf,
+            },
+            &tree,
+            height,
+            &TileSet::new(),
+        );
     });
 }
 
@@ -427,9 +556,16 @@ const RESPONSES: [&[u8]; 6] = [
 ];
 
 /// The messages of tests/data/cms_fixtures.txt: certificates, detached contents and blobs, by name.
-fn cms_fixtures() -> (Vec<(String, Vec<u8>)>, Vec<(String, Vec<u8>)>, Vec<(String, Vec<u8>)>) {
+fn cms_fixtures() -> (
+    Vec<(String, Vec<u8>)>,
+    Vec<(String, Vec<u8>)>,
+    Vec<(String, Vec<u8>)>,
+) {
     let (mut certs, mut contents, mut blobs) = (Vec::new(), Vec::new(), Vec::new());
-    for line in include_str!("../tests/data/cms_fixtures.txt").lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+    for line in include_str!("../tests/data/cms_fixtures.txt")
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
         let p: Vec<&str> = line.split(' ').collect();
         let entry = (p[1].to_string(), unhex(p[2]));
         match p[0] {
@@ -446,12 +582,18 @@ fn ber_reader_never_panics_and_what_it_writes_is_stable() {
     let (_, _, blobs) = cms_fixtures();
     let seeds: Vec<&[u8]> = blobs.iter().map(|(_, b)| b.as_slice()).collect();
     run("ber", 4000, |rng| {
-        let data = if rng.chance(10) { random_up_to(rng, 200) } else { mutate_seed(rng, &seeds) };
+        let data = if rng.chance(10) {
+            random_up_to(rng, 200)
+        } else {
+            mutate_seed(rng, &seeds)
+        };
         if let Ok((node, _)) = crate::ber::parse(&data) {
             if let Ok(der) = node.der() {
                 // DER at the top, and written again the same
                 let mut strict = asn1::Der::new(&der);
-                let t = strict.next().expect("der() wrote something the DER reader refuses");
+                let t = strict
+                    .next()
+                    .expect("der() wrote something the DER reader refuses");
                 assert!(strict.finish().is_ok() && t.raw == der.as_slice());
                 assert_eq!(crate::ber::parse_exact(&der).unwrap().der().unwrap(), der);
                 assert_eq!(node.der_content().unwrap(), t.content);
@@ -466,11 +608,22 @@ fn cms_never_panics_and_only_genuine_signatures_verify() {
     use crate::x509::Purpose;
     const NOW: i64 = 1_791_201_600;
     let (certs, contents, blobs) = cms_fixtures();
-    let get = |list: &[(String, Vec<u8>)], name: &str| list.iter().find(|(n, _)| n == name).unwrap().1.clone();
+    let get = |list: &[(String, Vec<u8>)], name: &str| {
+        list.iter().find(|(n, _)| n == name).unwrap().1.clone()
+    };
     let mut trust = TrustStore::empty();
     trust.add_der(&get(&certs, "root")).unwrap();
-    let extra = [Certificate::from_der(&get(&certs, "rsa")).unwrap(), Certificate::from_der(&get(&certs, "inter")).unwrap()];
-    let detached = [None, Some(get(&contents, "hello")), Some(get(&contents, "jar_rsa")), Some(get(&contents, "jar_p256")), Some(get(&contents, "jar_ed"))];
+    let extra = [
+        Certificate::from_der(&get(&certs, "rsa")).unwrap(),
+        Certificate::from_der(&get(&certs, "inter")).unwrap(),
+    ];
+    let detached = [
+        None,
+        Some(get(&contents, "hello")),
+        Some(get(&contents, "jar_rsa")),
+        Some(get(&contents, "jar_p256")),
+        Some(get(&contents, "jar_ed")),
+    ];
     let mut options = Options::new(&trust, Purpose::CodeSigning, NOW);
     options.allow_sha1 = true;
     options.extra_certs = &extra;
@@ -478,25 +631,47 @@ fn cms_never_panics_and_only_genuine_signatures_verify() {
     // what verifies unchanged, by signature value (with its content), which is what damage must not conjure
     let mut genuine: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     for (_, blob) in &blobs {
-        let Ok(sd) = SignedData::parse(blob) else { continue };
+        let Ok(sd) = SignedData::parse(blob) else {
+            continue;
+        };
         for d in &detached {
             for i in 0..sd.signers().len() {
                 if sd.verify_signer(i, d.as_deref(), &options).is_ok() {
-                    genuine.push((sd.signers()[i].signature().to_vec(), sd.content().or(d.as_deref()).unwrap().to_vec()));
+                    genuine.push((
+                        sd.signers()[i].signature().to_vec(),
+                        sd.content().or(d.as_deref()).unwrap().to_vec(),
+                    ));
                 }
             }
         }
     }
     assert!(genuine.len() >= 15, "{}", genuine.len());
-    let seeds: Vec<&[u8]> = blobs.iter().filter(|(n, _)| !n.starts_with("token_")).map(|(_, b)| b.as_slice()).collect();
+    let seeds: Vec<&[u8]> = blobs
+        .iter()
+        .filter(|(n, _)| !n.starts_with("token_"))
+        .map(|(_, b)| b.as_slice())
+        .collect();
     run("cms", 3000, |rng| {
-        let data = if rng.chance(5) { random_up_to(rng, 300) } else { mutate_seed(rng, &seeds) };
-        let Ok(sd) = SignedData::parse(&data) else { return };
+        let data = if rng.chance(5) {
+            random_up_to(rng, 300)
+        } else {
+            mutate_seed(rng, &seeds)
+        };
+        let Ok(sd) = SignedData::parse(&data) else {
+            return;
+        };
         for d in &detached {
             for i in 0..sd.signers().len() {
                 if sd.verify_signer(i, d.as_deref(), &options).is_ok() {
-                    let key = (sd.signers()[i].signature().to_vec(), sd.content().or(d.as_deref()).unwrap().to_vec());
-                    assert!(genuine.contains(&key), "a signature that was never made verified: {:?}", data);
+                    let key = (
+                        sd.signers()[i].signature().to_vec(),
+                        sd.content().or(d.as_deref()).unwrap().to_vec(),
+                    );
+                    assert!(
+                        genuine.contains(&key),
+                        "a signature that was never made verified: {:?}",
+                        data
+                    );
                 }
             }
         }
@@ -507,9 +682,16 @@ fn cms_never_panics_and_only_genuine_signatures_verify() {
 #[test]
 fn http_response_parser_never_panics() {
     run("http_response", 8000, |rng| {
-        let data = if rng.chance(10) { random_up_to(rng, 300) } else { mutate_seed(rng, &RESPONSES) };
+        let data = if rng.chance(10) {
+            random_up_to(rng, 300)
+        } else {
+            mutate_seed(rng, &RESPONSES)
+        };
         let method = *rng.pick(&["GET", "HEAD", "POST", "CONNECT"]);
-        let limits = Limits { max_header_bytes: 64 + rng.below(2000), max_body_bytes: rng.below(100) as u64 };
+        let limits = Limits {
+            max_header_bytes: 64 + rng.below(2000),
+            max_body_bytes: rng.below(100) as u64,
+        };
         let mut cur = std::io::Cursor::new(data);
         let _ = wire::read_response(&mut cur, method, limits);
     });
@@ -527,12 +709,20 @@ fn url_parsing_never_panics() {
         "https://exämple.com/ü?ö#é",
     ];
     run("url", 8000, |rng| {
-        let text = String::from_utf8_lossy(&mutate_seed(rng, &seeds.iter().map(|s| s.as_bytes()).collect::<Vec<_>>())).into_owned();
+        let text = String::from_utf8_lossy(&mutate_seed(
+            rng,
+            &seeds.iter().map(|s| s.as_bytes()).collect::<Vec<_>>(),
+        ))
+        .into_owned();
         if let Ok(u) = Url::parse(&text) {
             let _ = u.host_header();
             let _ = u.origin();
             let _ = u.is_https();
-            let loc = String::from_utf8_lossy(&mutate_seed(rng, &seeds.iter().map(|s| s.as_bytes()).collect::<Vec<_>>())).into_owned();
+            let loc = String::from_utf8_lossy(&mutate_seed(
+                rng,
+                &seeds.iter().map(|s| s.as_bytes()).collect::<Vec<_>>(),
+            ))
+            .into_owned();
             let _ = u.join(&loc);
         }
         let _ = Url::parse(&String::from_utf8_lossy(&random_up_to(rng, 60)));
@@ -552,7 +742,13 @@ fn inflate_never_panics_and_how_the_stream_is_cut_changes_nothing() {
             _ => Format::Gzip,
         }
     }
-    fn chunked(format: Format, data: &[u8], limits: Limits, inp: usize, out: usize) -> Result<Vec<u8>, Error> {
+    fn chunked(
+        format: Format,
+        data: &[u8],
+        limits: Limits,
+        inp: usize,
+        out: usize,
+    ) -> Result<Vec<u8>, Error> {
         let mut inf = Inflater::new(format, limits);
         let (mut result, mut buf, mut pos) = (Vec::new(), vec![0u8; out], 0usize);
         loop {
@@ -562,7 +758,13 @@ fn inflate_never_panics_and_how_the_stream_is_cut_changes_nothing() {
             result.extend_from_slice(&buf[..p.produced]);
             assert!(result.len() as u64 <= limits.max_output);
             match p.status {
-                Status::Done => return if pos == data.len() && inf.take_unused().is_empty() { Ok(result) } else { Err(Error::Corrupt("trailing")) },
+                Status::Done => {
+                    return if pos == data.len() && inf.take_unused().is_empty() {
+                        Ok(result)
+                    } else {
+                        Err(Error::Corrupt("trailing"))
+                    }
+                }
                 Status::NeedOutput => {}
                 Status::NeedInput if pos == data.len() => return inf.finish().map(|_| result),
                 Status::NeedInput => {}
@@ -577,11 +779,21 @@ fn inflate_never_panics_and_how_the_stream_is_cut_changes_nothing() {
         })
         .collect();
     assert!(seeds.len() > 20);
-    let formats = [Format::Deflate, Format::Zlib, Format::ZlibOrDeflate, Format::Gzip, Format::GzipMember];
+    let formats = [
+        Format::Deflate,
+        Format::Zlib,
+        Format::ZlibOrDeflate,
+        Format::Gzip,
+        Format::GzipMember,
+    ];
     run("inflate", 3000, |rng| {
         let (format, seed) = &seeds[rng.below(seeds.len())];
         let data = mutate(rng, seed);
-        let format = if rng.chance(15) { *rng.pick(&formats) } else { *format };
+        let format = if rng.chance(15) {
+            *rng.pick(&formats)
+        } else {
+            *format
+        };
         let limits = match rng.below(4) {
             0 => Limits::new(1 << 20),
             1 => Limits::new(rng.below(2000) as u64),
@@ -595,6 +807,11 @@ fn inflate_never_panics_and_how_the_stream_is_cut_changes_nothing() {
             (Err(Error::Corrupt(_)), Err(Error::Corrupt(_))) => true,
             (a, b) => a == b,
         };
-        assert!(same, "{format:?}, input in {inp}s and output in {out}s: {:?} against {:?}", cut.as_ref().map(Vec::len), whole.as_ref().map(Vec::len));
+        assert!(
+            same,
+            "{format:?}, input in {inp}s and output in {out}s: {:?} against {:?}",
+            cut.as_ref().map(Vec::len),
+            whole.as_ref().map(Vec::len)
+        );
     });
 }

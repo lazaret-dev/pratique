@@ -9,17 +9,24 @@
 //! what `security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain` prints). `--pem OUT`
 //! writes the trusted roots as a PEM bundle. The exit status is 1 if the store could not be read or has no root.
 
-use std::collections::BTreeSet;
 use pratique::native_roots::native_roots;
 use pratique::x509::Certificate;
+use std::collections::BTreeSet;
 
 fn name(der: &[u8]) -> String {
-    Certificate::from_der(der).map(|c| c.subject_summary()).unwrap_or_else(|_| "(does not parse)".to_string())
+    Certificate::from_der(der)
+        .map(|c| c.subject_summary())
+        .unwrap_or_else(|_| "(does not parse)".to_string())
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let option = |n: &str| args.iter().position(|a| a == n).and_then(|i| args.get(i + 1)).cloned();
+    let option = |n: &str| {
+        args.iter()
+            .position(|a| a == n)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
     let mut roots = match native_roots() {
         Ok(r) => r,
         Err(e) => {
@@ -28,7 +35,11 @@ fn main() {
         }
     };
     let store = roots.trust_store();
-    println!("native store: {} roots trusted for TLS servers, {} left out", store.len(), roots.excluded.len());
+    println!(
+        "native store: {} roots trusted for TLS servers, {} left out",
+        store.len(),
+        roots.excluded.len()
+    );
     for (der, why) in &roots.excluded {
         println!("  left out: [{}]: {why}", name(der));
     }
@@ -56,15 +67,27 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        let file: BTreeSet<Vec<u8>> = pratique::pem::parse(&text).into_iter().filter(|b| b.label == "CERTIFICATE").map(|b| b.data).collect();
+        let file: BTreeSet<Vec<u8>> = pratique::pem::parse(&text)
+            .into_iter()
+            .filter(|b| b.label == "CERTIFICATE")
+            .map(|b| b.data)
+            .collect();
         let native: BTreeSet<Vec<u8>> = roots.trusted.iter().cloned().collect();
         let excluded: BTreeSet<Vec<u8>> = roots.excluded.iter().map(|(d, _)| d.clone()).collect();
-        println!("compared with {path} ({} certificates): {} in both", file.len(), file.intersection(&native).count());
+        println!(
+            "compared with {path} ({} certificates): {} in both",
+            file.len(),
+            file.intersection(&native).count()
+        );
         for der in native.difference(&file) {
             println!("  only in the native store: [{}]", name(der));
         }
         for der in file.difference(&native) {
-            let note = if excluded.contains(der) { " (the native store has it and leaves it out)" } else { "" };
+            let note = if excluded.contains(der) {
+                " (the native store has it and leaves it out)"
+            } else {
+                ""
+            };
             println!("  only in {path}: [{}]{note}", name(der));
         }
     }

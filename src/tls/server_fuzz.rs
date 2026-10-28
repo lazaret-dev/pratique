@@ -44,25 +44,51 @@ fn fixture() -> &'static Fixture {
         let root_key = KeyPair::from_seed([0x51; 32]);
         let root = issue(&CertSpec::ca("fuzz root"), &root_key, None);
         let leaf_key = KeyPair::from_seed([0x52; 32]);
-        let leaf = issue(&CertSpec::server(&["server.test", "*.wild.test"]), &leaf_key, Some(("fuzz root", &root_key)));
+        let leaf = issue(
+            &CertSpec::server(&["server.test", "*.wild.test"]),
+            &leaf_key,
+            Some(("fuzz root", &root_key)),
+        );
         let ca_key = KeyPair::from_seed([0x53; 32]);
         let ca = issue(&CertSpec::ca("fuzz client CA"), &ca_key, None);
         let client_key = KeyPair::from_seed([0x54; 32]);
-        let spec = CertSpec { common_name: "fuzz client".into(), server_auth: false, client_auth: true, ..CertSpec::default() };
+        let spec = CertSpec {
+            common_name: "fuzz client".into(),
+            server_auth: false,
+            client_auth: true,
+            ..CertSpec::default()
+        };
         let client = issue(&spec, &client_key, Some(("fuzz client CA", &ca_key)));
         let mut roots = TrustStore::empty();
         roots.add_der(&ca).expect("the client CA parses");
         let roots = Arc::new(roots);
         let _ = root;
         let make = |required: bool, strict: bool| {
-            let store = CertStore::single(CertifiedKey::new(vec![leaf.clone()], leaf_key.signing_key().clone()).expect("the leaf is its key's"));
+            let store = CertStore::single(
+                CertifiedKey::new(vec![leaf.clone()], leaf_key.signing_key().clone())
+                    .expect("the leaf is its key's"),
+            );
             let store = if strict { store.strict() } else { store };
-            let auth = if required { ClientAuth::Required(roots.clone()) } else { ClientAuth::Optional(roots.clone()) };
-            Arc::new(ServerConfig::with_certificates(store).with_client_auth(auth).with_alpn(&["h2", "http/1.1"]))
+            let auth = if required {
+                ClientAuth::Required(roots.clone())
+            } else {
+                ClientAuth::Optional(roots.clone())
+            };
+            Arc::new(
+                ServerConfig::with_certificates(store)
+                    .with_client_auth(auth)
+                    .with_alpn(&["h2", "http/1.1"]),
+            )
         };
         Fixture {
-            configs: [make(false, false), make(true, false), make(false, true), make(true, true)],
-            client_cert: CertifiedKey::new(vec![client], client_key.signing_key().clone()).expect("the client certificate is its key's"),
+            configs: [
+                make(false, false),
+                make(true, false),
+                make(false, true),
+                make(true, true),
+            ],
+            client_cert: CertifiedKey::new(vec![client], client_key.signing_key().clone())
+                .expect("the client certificate is its key's"),
         }
     })
 }
@@ -114,8 +140,18 @@ fn read_flight(hello_msg: &[u8], out: &[u8]) -> Option<(Suite, Vec<u8>, Vec<u8>,
     let handshake_secret = hkdf_extract(alg, &derived, &shared);
     let mut transcript = hello_msg.to_vec();
     transcript.extend_from_slice(&server_hello);
-    let s_hs = derive_secret(alg, &handshake_secret, "s hs traffic", &alg.digest(&transcript));
-    let c_hs = derive_secret(alg, &handshake_secret, "c hs traffic", &alg.digest(&transcript));
+    let s_hs = derive_secret(
+        alg,
+        &handshake_secret,
+        "s hs traffic",
+        &alg.digest(&transcript),
+    );
+    let c_hs = derive_secret(
+        alg,
+        &handshake_secret,
+        "c hs traffic",
+        &alg.digest(&transcript),
+    );
     let mut cipher = RecordCipher::new(suite, &s_hs);
     let mut rest = &out[5 + sh_len..];
     while rest.len() >= 5 {
@@ -135,7 +171,9 @@ fn read_flight(hello_msg: &[u8], out: &[u8]) -> Option<(Suite, Vec<u8>, Vec<u8>,
 }
 
 pub fn server_exchange(data: &[u8]) {
-    let Some((&flags, rest)) = data.split_first() else { return };
+    let Some((&flags, rest)) = data.split_first() else {
+        return;
+    };
     let piece = [usize::MAX, 1, 7, 300][((flags >> 4) & 3) as usize];
     let take = |r: &mut &[u8]| -> Option<Vec<u8>> {
         if r.len() < 2 {
@@ -147,7 +185,9 @@ pub fn server_exchange(data: &[u8]) {
         Some(v)
     };
     let mut rest = rest;
-    let Some(hello_body) = take(&mut rest) else { return };
+    let Some(hello_body) = take(&mut rest) else {
+        return;
+    };
     let messages = take(&mut rest).unwrap_or_default();
     let f = fixture();
     let config = f.configs[(flags & 3) as usize].clone();
@@ -159,7 +199,9 @@ pub fn server_exchange(data: &[u8]) {
         return;
     }
     let out = take_output(&mut conn);
-    let Some((suite, c_hs, mut transcript, handshake_secret)) = read_flight(&hello, &out) else { return };
+    let Some((suite, c_hs, mut transcript, handshake_secret)) = read_flight(&hello, &out) else {
+        return;
+    };
     let server_transcript = transcript.clone();
     let alg: HashAlg = suite.hash();
     let mut hs_cipher = RecordCipher::new(suite, &c_hs);
@@ -182,7 +224,9 @@ pub fn server_exchange(data: &[u8]) {
         transcript.extend_from_slice(&cert_msg);
         let content = client_certificate_verify_content(&alg.digest(&transcript));
         let scheme = f.client_cert.key().tls_schemes()[0];
-        let Ok(signature) = f.client_cert.key().sign_tls(scheme, &content) else { return };
+        let Ok(signature) = f.client_cert.key().sign_tls(scheme, &content) else {
+            return;
+        };
         let mut v = scheme.to_be_bytes().to_vec();
         v.extend_from_slice(&(signature.len() as u16).to_be_bytes());
         v.extend_from_slice(&signature);
@@ -203,18 +247,26 @@ pub fn server_exchange(data: &[u8]) {
         return;
     }
     assert!(conn.cipher_suite().is_some(), "established without a suite");
-    assert!(!required || !conn.peer_certificates().is_empty() || conn.is_resumed(), "established without the required client certificate");
+    assert!(
+        !required || !conn.peer_certificates().is_empty() || conn.is_resumed(),
+        "established without the required client certificate"
+    );
     // application records under the client application keys (from the transcript through the server's Finished)
     let zeros = vec![0u8; alg.output_len()];
     let derived = derive_secret(alg, &handshake_secret, "derived", &alg.digest(&[]));
     let master = hkdf_extract(alg, &derived, &zeros);
     let app_hash = alg.digest(&server_transcript);
-    let mut app = RecordCipher::new(suite, &derive_secret(alg, &master, "c ap traffic", &app_hash));
+    let mut app = RecordCipher::new(
+        suite,
+        &derive_secret(alg, &master, "c ap traffic", &app_hash),
+    );
     let mut records = Vec::new();
     let mut r = rest;
     while r.len() >= 3 {
         let t = r[0];
-        let len = (u16::from_be_bytes([r[1], r[2]]) as usize).min(r.len() - 3).min(MAX_PLAINTEXT);
+        let len = (u16::from_be_bytes([r[1], r[2]]) as usize)
+            .min(r.len() - 3)
+            .min(MAX_PLAINTEXT);
         app.encrypt_into(t, &r[3..3 + len], &mut records);
         if t == RT_HANDSHAKE && r[3..3 + len].first() == Some(&HS_KEY_UPDATE) {
             app = app.next_generation();
@@ -245,7 +297,15 @@ pub fn server_exchange_seeds() -> Vec<Vec<u8>> {
     let body = hello[4..].to_vec();
     let empty_certificate = handshake_message(HS_CERTIFICATE, &[0, 0, 0, 0]);
     let mut app = Vec::new();
-    for (t, d) in [(RT_APPLICATION_DATA, &b"GET / HTTP/1.1\r\nHost: server.test\r\n\r\n"[..]), (RT_HANDSHAKE, &handshake_message(HS_KEY_UPDATE, &[1])[..]), (RT_APPLICATION_DATA, b"more"), (RT_ALERT, &[1, 0])] {
+    for (t, d) in [
+        (
+            RT_APPLICATION_DATA,
+            &b"GET / HTTP/1.1\r\nHost: server.test\r\n\r\n"[..],
+        ),
+        (RT_HANDSHAKE, &handshake_message(HS_KEY_UPDATE, &[1])[..]),
+        (RT_APPLICATION_DATA, b"more"),
+        (RT_ALERT, &[1, 0]),
+    ] {
         app.push(t);
         app.extend_from_slice(&(d.len() as u16).to_be_bytes());
         app.extend_from_slice(d);

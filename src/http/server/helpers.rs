@@ -17,8 +17,20 @@ pub fn redirect_to_https(https_port: Option<u16>) -> impl Handler {
             Some(p) if p != 443 => format!(":{p}"),
             _ => String::new(),
         };
-        let path = if req.target().starts_with('/') { req.target().to_string() } else { format!("{}{}", req.path(), req.query().map(|q| format!("?{q}")).unwrap_or_default()) };
-        let status = if matches!(req.method(), "GET" | "HEAD") { 301 } else { 308 };
+        let path = if req.target().starts_with('/') {
+            req.target().to_string()
+        } else {
+            format!(
+                "{}{}",
+                req.path(),
+                req.query().map(|q| format!("?{q}")).unwrap_or_default()
+            )
+        };
+        let status = if matches!(req.method(), "GET" | "HEAD") {
+            301
+        } else {
+            308
+        };
         Response::redirect(status, &format!("https://{host}{port}{path}"))
     }
 }
@@ -47,12 +59,18 @@ impl AcmeHttp01 {
 
     /// Starts answering the challenge with this token.
     pub fn insert(&self, token: &str, key_authorization: &str) {
-        self.tokens.write().unwrap_or_else(|e| e.into_inner()).insert(token.to_string(), key_authorization.to_string());
+        self.tokens
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(token.to_string(), key_authorization.to_string());
     }
 
     /// Stops answering it.
     pub fn remove(&self, token: &str) {
-        self.tokens.write().unwrap_or_else(|e| e.into_inner()).remove(token);
+        self.tokens
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(token);
     }
 
     /// The answer, if the request is for a challenge's path: the key authorization for a token that is waiting, 404 for
@@ -63,12 +81,20 @@ impl AcmeHttp01 {
             return Some(Response::new(405).with_header("allow", "GET, HEAD"));
         }
         // tokens are base64url (RFC 8555 section 8.3)
-        if token.is_empty() || !token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        if token.is_empty()
+            || !token
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
             return Some(Response::new(404));
         }
         let tokens = self.tokens.read().unwrap_or_else(|e| e.into_inner());
         Some(match tokens.get(token) {
-            Some(key_auth) => Response::bytes(200, "application/octet-stream", key_auth.as_bytes().to_vec()),
+            Some(key_auth) => Response::bytes(
+                200,
+                "application/octet-stream",
+                key_auth.as_bytes().to_vec(),
+            ),
             None => Response::new(404),
         })
     }
@@ -92,9 +118,15 @@ mod tests {
     fn redirects_keep_the_host_the_path_and_the_method() {
         let h = redirect_to_https(None);
         let r = h.handle(request("GET", "/a/b?c=d", "example.com:80"));
-        assert_eq!((r.status(), r.header("location")), (301, Some("https://example.com/a/b?c=d")));
+        assert_eq!(
+            (r.status(), r.header("location")),
+            (301, Some("https://example.com/a/b?c=d"))
+        );
         let r = h.handle(request("POST", "/form", "example.com"));
-        assert_eq!((r.status(), r.header("location")), (308, Some("https://example.com/form")));
+        assert_eq!(
+            (r.status(), r.header("location")),
+            (308, Some("https://example.com/form"))
+        );
         let r = redirect_to_https(Some(8443)).handle(request("GET", "/", "[2001:db8::1]:8080"));
         assert_eq!(r.header("location"), Some("https://[2001:db8::1]:8443/"));
         let r = h.handle(request("GET", "http://example.org/x?y", "example.org"));
@@ -107,15 +139,37 @@ mod tests {
         let acme = AcmeHttp01::new();
         let h = acme.wrap(|_req: Request| Response::text(200, "the site\n"));
         let path = |t: &str| format!("{CHALLENGE_PATH}{t}");
-        assert_eq!(h.handle(request("GET", &path("tok_en-1"), "example.com")).status(), 404);
+        assert_eq!(
+            h.handle(request("GET", &path("tok_en-1"), "example.com"))
+                .status(),
+            404
+        );
         acme.insert("tok_en-1", "tok_en-1.thumbprint");
         let r = h.handle(request("GET", &path("tok_en-1"), "example.com"));
         assert_eq!(r.status(), 200);
-        assert!(matches!(r.body(), super::super::ResponseBody::Bytes(b) if b == b"tok_en-1.thumbprint"));
-        assert_eq!(h.handle(request("POST", &path("tok_en-1"), "example.com")).status(), 405);
-        assert_eq!(h.handle(request("GET", &path("../etc"), "example.com")).status(), 404);
-        assert_eq!(h.handle(request("GET", "/index.html", "example.com")).status(), 200);
+        assert!(
+            matches!(r.body(), super::super::ResponseBody::Bytes(b) if b == b"tok_en-1.thumbprint")
+        );
+        assert_eq!(
+            h.handle(request("POST", &path("tok_en-1"), "example.com"))
+                .status(),
+            405
+        );
+        assert_eq!(
+            h.handle(request("GET", &path("../etc"), "example.com"))
+                .status(),
+            404
+        );
+        assert_eq!(
+            h.handle(request("GET", "/index.html", "example.com"))
+                .status(),
+            200
+        );
         acme.remove("tok_en-1");
-        assert_eq!(h.handle(request("GET", &path("tok_en-1"), "example.com")).status(), 404);
+        assert_eq!(
+            h.handle(request("GET", &path("tok_en-1"), "example.com"))
+                .status(),
+            404
+        );
     }
 }

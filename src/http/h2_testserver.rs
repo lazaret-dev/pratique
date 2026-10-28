@@ -57,7 +57,11 @@ impl H2Server {
     }
 
     /// With the server's HTTP/2 settings and its TLS configuration (the ALPN protocols, say) as given.
-    pub(crate) fn start_with(handler: impl Fn(&Seen) -> Vec<Step> + Send + Sync + 'static, settings: Settings, configure: impl FnOnce(ServerConfig) -> ServerConfig) -> H2Server {
+    pub(crate) fn start_with(
+        handler: impl Fn(&Seen) -> Vec<Step> + Send + Sync + 'static,
+        settings: Settings,
+        configure: impl FnOnce(ServerConfig) -> ServerConfig,
+    ) -> H2Server {
         let pki = TestPki::new(&["127.0.0.1", "localhost"]).unwrap();
         let tls = Arc::new(configure(ServerConfig::from_pki(&pki).with_alpn(&["h2"])));
         let handler: Handler = Arc::new(handler);
@@ -71,7 +75,14 @@ impl H2Server {
         let open = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
         {
-            let (connections, ended, requests, complaints, open, stop) = (connections.clone(), ended.clone(), requests.clone(), complaints.clone(), open.clone(), stop.clone());
+            let (connections, ended, requests, complaints, open, stop) = (
+                connections.clone(),
+                ended.clone(),
+                requests.clone(),
+                complaints.clone(),
+                open.clone(),
+                stop.clone(),
+            );
             thread::spawn(move || {
                 while !stop.load(Ordering::SeqCst) {
                     match listener.accept() {
@@ -80,7 +91,14 @@ impl H2Server {
                             let conn = connections.fetch_add(1, Ordering::SeqCst);
                             let raw = stream.try_clone().unwrap();
                             open.lock().unwrap().push(stream.try_clone().unwrap());
-                            let (handler, requests, complaints, tls, settings, ended) = (handler.clone(), requests.clone(), complaints.clone(), tls.clone(), settings.clone(), ended.clone());
+                            let (handler, requests, complaints, tls, settings, ended) = (
+                                handler.clone(),
+                                requests.clone(),
+                                complaints.clone(),
+                                tls.clone(),
+                                settings.clone(),
+                                ended.clone(),
+                            );
                             thread::spawn(move || {
                                 let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
                                 let Ok(mut io) = ServerStream::accept(stream, &tls) else {
@@ -89,12 +107,20 @@ impl H2Server {
                                 };
                                 let mut server = ServerConn::new(settings);
                                 let mut on_request = |r: &Request| {
-                                    let seen = Seen { conn, request: r.clone() };
+                                    let seen = Seen {
+                                        conn,
+                                        request: r.clone(),
+                                    };
                                     requests.lock().unwrap().push(seen.clone());
                                     handler(&seen)
                                 };
                                 let result = serve_with(&mut io, &mut server, &mut on_request);
-                                complaints.lock().unwrap().extend(server.complaints().iter().map(|c| format!("connection {conn}: {c}")));
+                                complaints.lock().unwrap().extend(
+                                    server
+                                        .complaints()
+                                        .iter()
+                                        .map(|c| format!("connection {conn}: {c}")),
+                                );
                                 match result {
                                     Ok(super::h2_server::Ended::Cut) => {
                                         let _ = raw.shutdown(Shutdown::Both);
@@ -112,12 +138,23 @@ impl H2Server {
                 }
             });
         }
-        H2Server { port, connections, ended, requests, complaints, open, stop, pki }
+        H2Server {
+            port,
+            connections,
+            ended,
+            requests,
+            complaints,
+            open,
+            stop,
+            pki,
+        }
     }
 
     /// A client that trusts the server's root, speaks HTTP/2, and gives up on a silent server after five seconds.
     pub(crate) fn client(&self) -> Client {
-        Client::with_tls_config(ClientConfig::new(self.pki.trust_store())).http2(true).timeout(Duration::from_secs(5))
+        Client::with_tls_config(ClientConfig::new(self.pki.trust_store()))
+            .http2(true)
+            .timeout(Duration::from_secs(5))
     }
 
     pub(crate) fn url(&self, path: &str) -> String {
@@ -147,7 +184,9 @@ impl H2Server {
     pub(crate) fn end_and_complaints(&self) -> Vec<String> {
         self.close_all();
         let give_up = std::time::Instant::now() + Duration::from_secs(3);
-        while self.ended.load(Ordering::SeqCst) < self.connections.load(Ordering::SeqCst) && std::time::Instant::now() < give_up {
+        while self.ended.load(Ordering::SeqCst) < self.connections.load(Ordering::SeqCst)
+            && std::time::Instant::now() < give_up
+        {
             thread::sleep(Duration::from_millis(5));
         }
         self.complaints.lock().unwrap().clone()

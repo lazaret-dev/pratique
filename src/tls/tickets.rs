@@ -49,8 +49,15 @@ impl TicketKeys {
 
     /// New keys, rotated every `rotate_every` seconds.
     pub fn with_rotation(rotate_every: i64, max_lifetime: u32) -> Result<TicketKeys> {
-        let keys = TicketKeys { keys: Mutex::new(Vec::new()), rotate_every: rotate_every.max(1), keep_for: max_lifetime as i64 };
-        keys.keys.lock().unwrap_or_else(|e| e.into_inner()).push(TicketKey::fresh(sys::now_unix())?);
+        let keys = TicketKeys {
+            keys: Mutex::new(Vec::new()),
+            rotate_every: rotate_every.max(1),
+            keep_for: max_lifetime as i64,
+        };
+        keys.keys
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(TicketKey::fresh(sys::now_unix())?);
         Ok(keys)
     }
 
@@ -104,7 +111,9 @@ impl TicketKeys {
         let (nonce, sealed) = rest.split_at(NONCE_LEN);
         let keys = self.keys.lock().unwrap_or_else(|e| e.into_inner());
         let key = keys.iter().find(|k| k.name[..] == *name)?;
-        key.cipher.open(nonce.try_into().ok()?, name, sealed).map(Zeroizing::new)
+        key.cipher
+            .open(nonce.try_into().ok()?, name, sealed)
+            .map(Zeroizing::new)
     }
 
     #[cfg(test)]
@@ -117,7 +126,11 @@ impl TicketKey {
     fn fresh(now: i64) -> Result<TicketKey> {
         let mut secret = Zeroizing::new([0u8; 32]);
         rand::fill(&mut secret[..])?;
-        Ok(TicketKey { name: rand::bytes()?, cipher: AesGcm::new(&secret[..]), created: now })
+        Ok(TicketKey {
+            name: rand::bytes()?,
+            cipher: AesGcm::new(&secret[..]),
+            created: now,
+        })
     }
 }
 
@@ -152,7 +165,9 @@ impl PartialEq for TicketState {
 
 impl TicketState {
     pub(crate) fn encode(&self) -> Zeroizing<Vec<u8>> {
-        let mut v = Zeroizing::new(Vec::with_capacity(128 + self.client_chain.iter().map(|c| c.len() + 3).sum::<usize>()));
+        let mut v = Zeroizing::new(Vec::with_capacity(
+            128 + self.client_chain.iter().map(|c| c.len() + 3).sum::<usize>(),
+        ));
         v.push(STATE_VERSION);
         v.extend_from_slice(&self.suite.to_be_bytes());
         v.extend_from_slice(&(self.issued as u64).to_be_bytes());
@@ -188,7 +203,11 @@ impl TicketState {
         let psk = Zeroizing::new(r.vec8()?.to_vec());
         let has_name = r.u8()? == 1;
         let name = r.vec16()?;
-        let server_name = if has_name { Some(String::from_utf8(name.to_vec()).ok()?) } else { None };
+        let server_name = if has_name {
+            Some(String::from_utf8(name.to_vec()).ok()?)
+        } else {
+            None
+        };
         let has_alpn = r.u8()? == 1;
         let alpn = r.vec8()?;
         let alpn = has_alpn.then(|| alpn.to_vec());
@@ -197,7 +216,16 @@ impl TicketState {
         for _ in 0..count {
             client_chain.push(r.vec24()?.to_vec());
         }
-        r.is_empty().then_some(TicketState { suite, issued, lifetime, age_add, psk, server_name, alpn, client_chain })
+        r.is_empty().then_some(TicketState {
+            suite,
+            issued,
+            lifetime,
+            age_add,
+            psk,
+            server_name,
+            alpn,
+            client_chain,
+        })
     }
 
     /// Still within its lifetime at `now` (and not issued in the future, beyond a minute of clock difference).
@@ -250,7 +278,11 @@ mod tests {
         let mut v2 = enc.to_vec();
         v2[0] = 2;
         assert!(TicketState::decode(&v2).is_none());
-        assert!(s.is_current(1_800_000_000) && s.is_current(1_800_086_399) && s.is_current(1_799_999_950));
+        assert!(
+            s.is_current(1_800_000_000)
+                && s.is_current(1_800_086_399)
+                && s.is_current(1_799_999_950)
+        );
         assert!(!s.is_current(1_800_086_400) && !s.is_current(1_799_999_900));
     }
 

@@ -115,8 +115,12 @@ impl fmt::Display for Error {
             Error::MalformedTree => write!(f, "malformed tree note"),
             Error::MalformedRecord => write!(f, "malformed record data"),
             Error::BadName(m) => write!(f, "cannot look up: {m}"),
-            Error::RecordOutsideTree { id, size } => write!(f, "cannot validate record {id} in tree of size {size}"),
-            Error::NoLineForVersion { module, version } => write!(f, "the record has no go.sum line for {module} {version}"),
+            Error::RecordOutsideTree { id, size } => {
+                write!(f, "cannot validate record {id} in tree of size {size}")
+            }
+            Error::NoLineForVersion { module, version } => {
+                write!(f, "the record has no go.sum line for {module} {version}")
+            }
         }
     }
 }
@@ -136,7 +140,11 @@ impl From<tlog::Error> for Error {
 }
 
 fn decimal(s: &str) -> Option<u64> {
-    if s.is_empty() || s.len() > 19 || !s.bytes().all(|b| b.is_ascii_digit()) || (s.len() > 1 && s.starts_with('0')) {
+    if s.is_empty()
+        || s.len() > 19
+        || !s.bytes().all(|b| b.is_ascii_digit())
+        || (s.len() > 1 && s.starts_with('0'))
+    {
         return None;
     }
     // What fits an int64, as in Go (`strconv.ParseInt`); a tree size is held to less by the caller.
@@ -151,15 +159,26 @@ pub fn parse_tree(text: &str) -> Result<Tree, Error> {
     }
     let mut lines = text.splitn(4, '\n');
     lines.next();
-    let size = lines.next().and_then(decimal).filter(|n| *n <= MAX_TREE_SIZE).ok_or(Error::MalformedTree)?;
-    let root = lines.next().and_then(base64_decode_strict).ok_or(Error::MalformedTree)?;
+    let size = lines
+        .next()
+        .and_then(decimal)
+        .filter(|n| *n <= MAX_TREE_SIZE)
+        .ok_or(Error::MalformedTree)?;
+    let root = lines
+        .next()
+        .and_then(base64_decode_strict)
+        .ok_or(Error::MalformedTree)?;
     let root: Hash = root.try_into().map_err(|_| Error::MalformedTree)?;
     Ok(Tree { size, root })
 }
 
 /// The text of a tree head, as the server signs it.
 pub fn format_tree(tree: &Tree) -> String {
-    format!("{TREE_PREFIX}{}\n{}\n", tree.size, base64_encode(&tree.root))
+    format!(
+        "{TREE_PREFIX}{}\n{}\n",
+        tree.size,
+        base64_encode(&tree.root)
+    )
 }
 
 fn valid_record_text(text: &str) -> bool {
@@ -176,10 +195,19 @@ fn valid_record_text(text: &str) -> bool {
 /// Splits a lookup response into the record number, the record text (the `go.sum` lines, each
 /// ending in a newline) and the rest, which is the signed tree head.
 pub fn parse_record(response: &[u8]) -> Result<(u64, &str, &[u8]), Error> {
-    let i = response.iter().position(|b| *b == b'\n').ok_or(Error::MalformedRecord)?;
-    let id = std::str::from_utf8(&response[..i]).ok().and_then(decimal).ok_or(Error::MalformedRecord)?;
+    let i = response
+        .iter()
+        .position(|b| *b == b'\n')
+        .ok_or(Error::MalformedRecord)?;
+    let id = std::str::from_utf8(&response[..i])
+        .ok()
+        .and_then(decimal)
+        .ok_or(Error::MalformedRecord)?;
     let body = &response[i + 1..];
-    let j = body.windows(2).position(|w| w == b"\n\n").ok_or(Error::MalformedRecord)?;
+    let j = body
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .ok_or(Error::MalformedRecord)?;
     let text = std::str::from_utf8(&body[..j + 1]).map_err(|_| Error::MalformedRecord)?;
     if !valid_record_text(text) {
         return Err(Error::MalformedRecord);
@@ -196,14 +224,29 @@ pub fn parse_record(response: &[u8]) -> Result<(u64, &str, &[u8]), Error> {
 /// version a leading `v`, then letters, digits and `-._~+`.
 pub fn lookup_path(module: &str, version: &str) -> Result<String, Error> {
     let version = version.strip_suffix("/go.mod").unwrap_or(version);
-    if module.is_empty() || module.split('/').any(|e| e.is_empty() || e.starts_with('.')) {
+    if module.is_empty()
+        || module
+            .split('/')
+            .any(|e| e.is_empty() || e.starts_with('.'))
+    {
         return Err(Error::BadName("module path has an empty or dot element"));
     }
-    if !module.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._~/".contains(&b)) {
-        return Err(Error::BadName("module path has a character that is not allowed"));
+    if !module
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"-._~/".contains(&b))
+    {
+        return Err(Error::BadName(
+            "module path has a character that is not allowed",
+        ));
     }
-    if !version.starts_with('v') || !version.bytes().all(|b| b.is_ascii_alphanumeric() || b"-._~+".contains(&b)) {
-        return Err(Error::BadName("version must start with v and use letters, digits and -._~+"));
+    if !version.starts_with('v')
+        || !version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-._~+".contains(&b))
+    {
+        return Err(Error::BadName(
+            "version must start with v and use letters, digits and -._~+",
+        ));
     }
     let escape = |s: &str| {
         let mut out = String::with_capacity(s.len());
@@ -271,7 +314,16 @@ impl Check {
     /// A check that trusts `verifier` (normally [`verifier()`]) and has seen no head: it starts
     /// from the empty log.
     pub fn new(verifier: Verifier) -> Check {
-        Check { verifier, latest: Tree { size: 0, root: tlog::EMPTY_ROOT }, latest_note: Vec::new(), obligations: Vec::new(), records: Vec::new() }
+        Check {
+            verifier,
+            latest: Tree {
+                size: 0,
+                root: tlog::EMPTY_ROOT,
+            },
+            latest_note: Vec::new(),
+            obligations: Vec::new(),
+            records: Vec::new(),
+        }
     }
 
     /// What adding the head `tree` (from the signed note `note`) to the timeline would require, and
@@ -279,10 +331,22 @@ impl Check {
     fn merge(&self, tree: Tree, note: &[u8]) -> (Vec<Obligation>, Option<(Tree, Vec<u8>)>) {
         if tree.size <= self.latest.size {
             // an old head: it must be inside the latest
-            (vec![Obligation::Prefix { older: tree, newer: self.latest }], None)
+            (
+                vec![Obligation::Prefix {
+                    older: tree,
+                    newer: self.latest,
+                }],
+                None,
+            )
         } else {
             // a new head: it must contain the latest, and becomes the latest
-            (vec![Obligation::Prefix { older: self.latest, newer: tree }], Some((tree, note.to_vec())))
+            (
+                vec![Obligation::Prefix {
+                    older: self.latest,
+                    newer: tree,
+                }],
+                Some((tree, note.to_vec())),
+            )
         }
     }
 
@@ -310,19 +374,38 @@ impl Check {
     /// no line for `module` and `version` is an error ([`Error::NoLineForVersion`]); Go's `Lookup` returns no
     /// lines instead and leaves it to the caller, which is how a genuine record of another module, served in
     /// answer to this question, would pass for "the database has nothing to say".
-    pub fn add_lookup(&mut self, module: &str, version: &str, response: &[u8]) -> Result<usize, Error> {
+    pub fn add_lookup(
+        &mut self,
+        module: &str,
+        version: &str,
+        response: &[u8],
+    ) -> Result<usize, Error> {
         let (id, text, note_bytes) = parse_record(response)?;
         let tree = self.open_head(note_bytes)?;
         let (mut obligations, newer) = self.merge(tree, note_bytes);
         let latest = newer.as_ref().map(|(t, _)| *t).unwrap_or(self.latest);
         if id >= latest.size {
-            return Err(Error::RecordOutsideTree { id, size: latest.size });
+            return Err(Error::RecordOutsideTree {
+                id,
+                size: latest.size,
+            });
         }
-        obligations.push(Obligation::Record { tree: latest, id, hash: tlog::record_hash(text.as_bytes()) });
+        obligations.push(Obligation::Record {
+            tree: latest,
+            id,
+            hash: tlog::record_hash(text.as_bytes()),
+        });
         let prefix = format!("{module} {version} ");
-        let lines: Vec<String> = text.split('\n').filter(|l| l.starts_with(&prefix)).map(str::to_string).collect();
+        let lines: Vec<String> = text
+            .split('\n')
+            .filter(|l| l.starts_with(&prefix))
+            .map(str::to_string)
+            .collect();
         if lines.is_empty() {
-            return Err(Error::NoLineForVersion { module: module.to_string(), version: version.to_string() });
+            return Err(Error::NoLineForVersion {
+                module: module.to_string(),
+                version: version.to_string(),
+            });
         }
 
         self.obligations.extend(obligations);
@@ -330,7 +413,13 @@ impl Check {
             self.latest = t;
             self.latest_note = n;
         }
-        self.records.push(VerifiedRecord { module: module.to_string(), version: version.to_string(), id, text: text.to_string(), lines });
+        self.records.push(VerifiedRecord {
+            module: module.to_string(),
+            version: version.to_string(),
+            id,
+            text: text.to_string(),
+            lines,
+        });
         Ok(self.records.len() - 1)
     }
 
@@ -341,8 +430,12 @@ impl Check {
         let mut out = Vec::new();
         for o in &self.obligations {
             let tiles = match o {
-                Obligation::Prefix { older, newer } => tlog::tiles_for_prefix(newer, TILE_HEIGHT, older.size)?,
-                Obligation::Record { tree, id, .. } => tlog::tiles_for_record(tree, TILE_HEIGHT, *id)?,
+                Obligation::Prefix { older, newer } => {
+                    tlog::tiles_for_prefix(newer, TILE_HEIGHT, older.size)?
+                }
+                Obligation::Record { tree, id, .. } => {
+                    tlog::tiles_for_record(tree, TILE_HEIGHT, *id)?
+                }
             };
             for t in tiles {
                 if seen.insert(t) {
@@ -359,11 +452,19 @@ impl Check {
     pub fn finish(self, tiles: &TileSet) -> Result<Outcome, Error> {
         for o in &self.obligations {
             match o {
-                Obligation::Prefix { older, newer } => tlog::check_prefix(older, newer, TILE_HEIGHT, tiles)?,
-                Obligation::Record { tree, id, hash } => tlog::check_record(tree, TILE_HEIGHT, *id, hash, tiles)?,
+                Obligation::Prefix { older, newer } => {
+                    tlog::check_prefix(older, newer, TILE_HEIGHT, tiles)?
+                }
+                Obligation::Record { tree, id, hash } => {
+                    tlog::check_record(tree, TILE_HEIGHT, *id, hash, tiles)?
+                }
             }
         }
-        Ok(Outcome { latest: self.latest, latest_note: self.latest_note, records: self.records })
+        Ok(Outcome {
+            latest: self.latest,
+            latest_note: self.latest_note,
+            records: self.records,
+        })
     }
 }
 
@@ -380,23 +481,46 @@ mod tests {
     const LATEST: &[u8] = include_bytes!("../tests/data/sumdb/latest.txt");
     const LOOKUP: &[u8] = include_bytes!("../tests/data/sumdb/lookup.txt");
     const TILES: [(&str, &[u8]); 7] = [
-        ("tile/8/0/x097/482", include_bytes!("../tests/data/sumdb/tile/8/0/x097/482")),
-        ("tile/8/0/x260/730.p/101", include_bytes!("../tests/data/sumdb/tile/8/0/x260/730.p/101")),
-        ("tile/8/1/380", include_bytes!("../tests/data/sumdb/tile/8/1/380")),
-        ("tile/8/1/x001/018.p/122", include_bytes!("../tests/data/sumdb/tile/8/1/x001/018.p/122")),
-        ("tile/8/2/001", include_bytes!("../tests/data/sumdb/tile/8/2/001")),
-        ("tile/8/2/003.p/250", include_bytes!("../tests/data/sumdb/tile/8/2/003.p/250")),
-        ("tile/8/3/000.p/3", include_bytes!("../tests/data/sumdb/tile/8/3/000.p/3")),
+        (
+            "tile/8/0/x097/482",
+            include_bytes!("../tests/data/sumdb/tile/8/0/x097/482"),
+        ),
+        (
+            "tile/8/0/x260/730.p/101",
+            include_bytes!("../tests/data/sumdb/tile/8/0/x260/730.p/101"),
+        ),
+        (
+            "tile/8/1/380",
+            include_bytes!("../tests/data/sumdb/tile/8/1/380"),
+        ),
+        (
+            "tile/8/1/x001/018.p/122",
+            include_bytes!("../tests/data/sumdb/tile/8/1/x001/018.p/122"),
+        ),
+        (
+            "tile/8/2/001",
+            include_bytes!("../tests/data/sumdb/tile/8/2/001"),
+        ),
+        (
+            "tile/8/2/003.p/250",
+            include_bytes!("../tests/data/sumdb/tile/8/2/003.p/250"),
+        ),
+        (
+            "tile/8/3/000.p/3",
+            include_bytes!("../tests/data/sumdb/tile/8/3/000.p/3"),
+        ),
     ];
     const MODULE: &str = "golang.org/x/mod";
     const VERSION: &str = "v0.17.0";
     const H1: &str = "golang.org/x/mod v0.17.0 h1:zY54UmvipHiNd+pm+m0x9KhZ9hl1/7QNMyxXbc6ICqA=";
-    const GOMOD_H1: &str = "golang.org/x/mod v0.17.0/go.mod h1:hTbmBsO62+eylJbnUtE2MGJUyE7QWk4xUqPFrRgJ+7c=";
+    const GOMOD_H1: &str =
+        "golang.org/x/mod v0.17.0/go.mod h1:hTbmBsO62+eylJbnUtE2MGJUyE7QWk4xUqPFrRgJ+7c=";
 
     fn tile_set() -> TileSet {
         let mut set = TileSet::new();
         for (path, data) in TILES {
-            set.insert(Tile::parse_path(path).unwrap(), data.to_vec()).unwrap();
+            set.insert(Tile::parse_path(path).unwrap(), data.to_vec())
+                .unwrap();
         }
         set
     }
@@ -436,11 +560,20 @@ mod tests {
         assert_eq!(paths(&check.tiles_needed().unwrap()), all_tile_paths());
         let outcome = check.finish(&tile_set()).unwrap();
         assert_eq!(outcome.latest.size, 66746981);
-        assert_eq!(crate::pem::base64_encode(&outcome.latest.root), "3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ=");
-        assert!(LOOKUP.ends_with(&outcome.latest_note), "the note to keep is the one from the lookup");
+        assert_eq!(
+            crate::pem::base64_encode(&outcome.latest.root),
+            "3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ="
+        );
+        assert!(
+            LOOKUP.ends_with(&outcome.latest_note),
+            "the note to keep is the one from the lookup"
+        );
         assert_eq!(outcome.records.len(), 1);
         let r = &outcome.records[0];
-        assert_eq!((r.module.as_str(), r.version.as_str(), r.id), (MODULE, VERSION, 24955599));
+        assert_eq!(
+            (r.module.as_str(), r.version.as_str(), r.id),
+            (MODULE, VERSION, 24955599)
+        );
         assert_eq!(r.lines, vec![H1.to_string()]);
         assert_eq!(r.text, format!("{H1}\n{GOMOD_H1}\n"));
     }
@@ -457,9 +590,20 @@ mod tests {
     fn a_record_of_something_else_is_not_an_answer() {
         // a genuine response for golang.org/x/mod@v0.17.0, served in answer to a question about anything else
         let mut check = Check::new(verifier());
-        for (module, version) in [(MODULE, "v0.17.1"), ("golang.org/x/net", VERSION), (MODULE, "v0.17"), ("golang.org/x", "v0.17.0")] {
+        for (module, version) in [
+            (MODULE, "v0.17.1"),
+            ("golang.org/x/net", VERSION),
+            (MODULE, "v0.17"),
+            ("golang.org/x", "v0.17.0"),
+        ] {
             let err = check.add_lookup(module, version, LOOKUP).unwrap_err();
-            assert_eq!(err, Error::NoLineForVersion { module: module.to_string(), version: version.to_string() });
+            assert_eq!(
+                err,
+                Error::NoLineForVersion {
+                    module: module.to_string(),
+                    version: version.to_string()
+                }
+            );
             assert!(err.to_string().contains(module), "{err}");
         }
         // nothing was kept: no record, no tile to fetch
@@ -484,11 +628,18 @@ mod tests {
         let mut check = Check::new(verifier());
         check.add_head(LATEST).unwrap();
         check.add_head(LATEST).unwrap();
-        assert!(check.tiles_needed().unwrap().is_empty(), "equal heads need no tiles");
+        assert!(
+            check.tiles_needed().unwrap().is_empty(),
+            "equal heads need no tiles"
+        );
         assert_eq!(check.finish(&TileSet::new()).unwrap().latest.size, 66746896);
         let mut check = Check::new(verifier());
         check.add_lookup(MODULE, VERSION, LOOKUP).unwrap();
-        assert_eq!(check.tiles_needed().unwrap().len(), 7, "the record alone needs the same seven tiles");
+        assert_eq!(
+            check.tiles_needed().unwrap().len(),
+            7,
+            "the record alone needs the same seven tiles"
+        );
         check.finish(&tile_set()).unwrap();
     }
 
@@ -517,7 +668,8 @@ mod tests {
             let mut set = TileSet::new();
             for (path, data) in TILES {
                 if path != skip {
-                    set.insert(Tile::parse_path(path).unwrap(), data.to_vec()).unwrap();
+                    set.insert(Tile::parse_path(path).unwrap(), data.to_vec())
+                        .unwrap();
                 }
             }
             match real_check().finish(&set) {
@@ -525,7 +677,10 @@ mod tests {
                 other => panic!("without {skip}: {other:?}"),
             }
         }
-        assert!(matches!(real_check().finish(&TileSet::new()), Err(Error::Log(tlog::Error::MissingTile(_)))));
+        assert!(matches!(
+            real_check().finish(&TileSet::new()),
+            Err(Error::Log(tlog::Error::MissingTile(_)))
+        ));
     }
 
     #[test]
@@ -551,7 +706,10 @@ mod tests {
         full.resize(8192, 0xAA);
         full[40] ^= 1;
         set.insert(t.full(), full).unwrap();
-        assert_eq!(real_check().finish(&set).unwrap_err(), Error::Log(tlog::Error::TilesDoNotMatchRoot));
+        assert_eq!(
+            real_check().finish(&set).unwrap_err(),
+            Error::Log(tlog::Error::TilesDoNotMatchRoot)
+        );
     }
 
     #[test]
@@ -561,7 +719,8 @@ mod tests {
         // 4 tiles). A proxy could then answer a lookup with a forged record and a leaf tile whose
         // entry is the hash of the forgery; the tree head and every right-edge tile were genuine, and
         // the client accepted the record. This builds exactly that from the real capture.
-        let forged_line = "golang.org/x/mod v0.17.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n";
+        let forged_line =
+            "golang.org/x/mod v0.17.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n";
         let forged_text = format!("{forged_line}{GOMOD_H1}\n");
         let (id, text, note) = parse_record(LOOKUP).unwrap();
         assert_eq!(text, format!("{H1}\n{GOMOD_H1}\n"));
@@ -575,13 +734,20 @@ mod tests {
             let t = Tile::parse_path(path).unwrap();
             let mut data = data.to_vec();
             if t == leaf_tile {
-                assert_eq!(data[entry..entry + 32], record_hash(text.as_bytes()), "the real entry is the real record's hash");
+                assert_eq!(
+                    data[entry..entry + 32],
+                    record_hash(text.as_bytes()),
+                    "the real entry is the real record's hash"
+                );
                 data[entry..entry + 32].copy_from_slice(&record_hash(forged_text.as_bytes()));
             }
             set.insert(t, data).unwrap();
         }
         // what the Go client compared: the entry of the leaf tile against the hash of the record. It matches.
-        assert_eq!(set.get(&leaf_tile).unwrap()[entry..entry + 32], record_hash(forged_text.as_bytes()));
+        assert_eq!(
+            set.get(&leaf_tile).unwrap()[entry..entry + 32],
+            record_hash(forged_text.as_bytes())
+        );
 
         let mut check = Check::new(verifier());
         check.add_lookup(MODULE, VERSION, &response).unwrap();
@@ -592,7 +758,10 @@ mod tests {
         // and with the forged record but the real tiles it is simply a different record
         let mut check = Check::new(verifier());
         check.add_lookup(MODULE, VERSION, &response).unwrap();
-        assert_eq!(check.finish(&tile_set()).unwrap_err(), Error::Log(tlog::Error::RecordMismatch));
+        assert_eq!(
+            check.finish(&tile_set()).unwrap_err(),
+            Error::Log(tlog::Error::RecordMismatch)
+        );
     }
 
     #[test]
@@ -612,7 +781,16 @@ mod tests {
                         Ok(_) => panic!("byte {at} of {path} changed and nothing noticed"),
                         Err(e) => e,
                     };
-                    assert!(matches!(err, Error::Log(tlog::Error::TilesDoNotMatchRoot | tlog::Error::TileDoesNotMatchParent(_))), "{path} byte {at}: {err}");
+                    assert!(
+                        matches!(
+                            err,
+                            Error::Log(
+                                tlog::Error::TilesDoNotMatchRoot
+                                    | tlog::Error::TileDoesNotMatchParent(_)
+                            )
+                        ),
+                        "{path} byte {at}: {err}"
+                    );
                 }
             }
         }
@@ -627,7 +805,10 @@ mod tests {
         let (da, db) = (set.get(&a).unwrap().to_vec(), set.get(&b).unwrap().to_vec());
         set.insert(a, db).unwrap();
         set.insert(b, da).unwrap();
-        assert!(matches!(real_check().finish(&set), Err(Error::Log(tlog::Error::TileDoesNotMatchParent(_)))));
+        assert!(matches!(
+            real_check().finish(&set),
+            Err(Error::Log(tlog::Error::TileDoesNotMatchParent(_)))
+        ));
     }
 
     #[test]
@@ -635,19 +816,31 @@ mod tests {
         // the same bytes under a different pinned key: nobody we trust signed it
         let other = Verifier::ed25519("sum.golang.org", &[7; 32]).unwrap();
         let mut check = Check::new(other);
-        assert!(matches!(check.add_lookup(MODULE, VERSION, LOOKUP), Err(Error::Note(note::Error::Unverified(_)))));
-        assert!(matches!(check.add_head(LATEST), Err(Error::Note(note::Error::Unverified(_)))));
+        assert!(matches!(
+            check.add_lookup(MODULE, VERSION, LOOKUP),
+            Err(Error::Note(note::Error::Unverified(_)))
+        ));
+        assert!(matches!(
+            check.add_head(LATEST),
+            Err(Error::Note(note::Error::Unverified(_)))
+        ));
         // and a signature that has been changed is refused outright
         let mut bad = LOOKUP.to_vec();
         let at = bad.len() - 10;
         bad[at] = if bad[at] == b'A' { b'B' } else { b'A' };
         let mut check = Check::new(verifier());
-        assert!(matches!(check.add_lookup(MODULE, VERSION, &bad), Err(Error::Note(note::Error::InvalidSignature { .. }))));
+        assert!(matches!(
+            check.add_lookup(MODULE, VERSION, &bad),
+            Err(Error::Note(note::Error::InvalidSignature { .. }))
+        ));
         // a changed tree size is not signed either
         let mut bad = LOOKUP.to_vec();
         let at = String::from_utf8_lossy(&bad).find("66746981").unwrap();
         bad[at + 7] = b'2';
-        assert!(matches!(Check::new(verifier()).add_lookup(MODULE, VERSION, &bad), Err(Error::Note(note::Error::InvalidSignature { .. }))));
+        assert!(matches!(
+            Check::new(verifier()).add_lookup(MODULE, VERSION, &bad),
+            Err(Error::Note(note::Error::InvalidSignature { .. }))
+        ));
         // and a failed add changes nothing
         let mut check = Check::new(verifier());
         let _ = check.add_lookup(MODULE, VERSION, &bad);
@@ -663,7 +856,10 @@ mod tests {
         response.extend_from_slice(note);
         let mut check = Check::new(verifier());
         check.add_lookup(MODULE, VERSION, &response).unwrap();
-        assert_eq!(check.finish(&tile_set()).unwrap_err(), Error::Log(tlog::Error::RecordMismatch));
+        assert_eq!(
+            check.finish(&tile_set()).unwrap_err(),
+            Error::Log(tlog::Error::RecordMismatch)
+        );
         // the same record under another number is another leaf
         for other in [id - 1, id + 1, 0, 66746980] {
             let mut response = format!("{other}\n{text}\n").into_bytes();
@@ -676,7 +872,13 @@ mod tests {
         let mut response = format!("66746981\n{text}\n").into_bytes();
         response.extend_from_slice(note);
         let mut check = Check::new(verifier());
-        assert_eq!(check.add_lookup(MODULE, VERSION, &response), Err(Error::RecordOutsideTree { id: 66746981, size: 66746981 }));
+        assert_eq!(
+            check.add_lookup(MODULE, VERSION, &response),
+            Err(Error::RecordOutsideTree {
+                id: 66746981,
+                size: 66746981
+            })
+        );
         assert!(check.tiles_needed().unwrap().is_empty());
     }
 
@@ -684,17 +886,23 @@ mod tests {
 
     #[test]
     fn tree_heads() {
-        let t = parse_tree("go.sum database tree\n66746981\n3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ=\n").unwrap();
+        let t = parse_tree(
+            "go.sum database tree\n66746981\n3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ=\n",
+        )
+        .unwrap();
         assert_eq!(t.size, 66746981);
-        assert_eq!(format_tree(&t), "go.sum database tree\n66746981\n3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ=\n");
+        assert_eq!(
+            format_tree(&t),
+            "go.sum database tree\n66746981\n3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ=\n"
+        );
         // more lines after the root are ignored (forward compatibility), as in Go
         assert_eq!(parse_tree("go.sum database tree\n5\n3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ=\nextra\nlines\n").unwrap().size, 5);
         let root = "3E4F4lzMBMmNFStdxyb64UKtphbJa3CNHeaauHIvkzQ=";
         for bad in [
             String::new(),
-            format!("go.sum database tree\n5\n{root}"),                 // no final newline: fewer than 3 newlines
+            format!("go.sum database tree\n5\n{root}"), // no final newline: fewer than 3 newlines
             format!("go.sum database tre\n5\n{root}\n"),
-            format!("go.sum database tree\n05\n{root}\n"),             // leading zero
+            format!("go.sum database tree\n05\n{root}\n"), // leading zero
             format!("go.sum database tree\n+5\n{root}\n"),
             format!("go.sum database tree\n-5\n{root}\n"),
             format!("go.sum database tree\n5 \n{root}\n"),
@@ -712,7 +920,12 @@ mod tests {
         }
         // the size 2^62 is the largest; the empty tree is allowed
         assert!(parse_tree(&format!("go.sum database tree\n{MAX_TREE_SIZE}\n{root}\n")).is_ok());
-        assert_eq!(parse_tree(&format!("go.sum database tree\n0\n{root}\n")).unwrap().size, 0);
+        assert_eq!(
+            parse_tree(&format!("go.sum database tree\n0\n{root}\n"))
+                .unwrap()
+                .size,
+            0
+        );
     }
 
     #[test]
@@ -721,37 +934,64 @@ mod tests {
         assert_eq!(id, 24955599);
         assert_eq!(text, format!("{H1}\n{GOMOD_H1}\n"));
         assert!(rest.starts_with(b"go.sum database tree\n"));
-        assert_eq!(parse_record(b"7\nline\n\nrest").unwrap(), (7, "line\n", &b"rest"[..]));
-        assert_eq!(parse_record(b"0\n\n\nrest").unwrap(), (0, "\n", &b"rest"[..]), "Go takes a lone newline as record text");
+        assert_eq!(
+            parse_record(b"7\nline\n\nrest").unwrap(),
+            (7, "line\n", &b"rest"[..])
+        );
+        assert_eq!(
+            parse_record(b"0\n\n\nrest").unwrap(),
+            (0, "\n", &b"rest"[..]),
+            "Go takes a lone newline as record text"
+        );
         for bad in [
             &b""[..],
             b"5",
             b"5\n",
             b"5\nno blank line\n",
-            b"5\nline\n",                // no blank line
-            b"\nline\n\n",               // no number
+            b"5\nline\n",  // no blank line
+            b"\nline\n\n", // no number
             b"x\nline\n\n",
             b"+5\nline\n\n",
             b"05\nline\n\n",
             b"-5\nline\n\n",
             b"5 \nline\n\n",
             b"99999999999999999999\nline\n\n",
-            b"5\nli\x00ne\n\n",           // control character
+            b"5\nli\x00ne\n\n", // control character
             b"5\nli\rne\n\n",
-            b"5\nli\xffne\n\n",           // not UTF-8
-            b"5\nline\n\t\n\n",           // a tab is a control character
+            b"5\nli\xffne\n\n", // not UTF-8
+            b"5\nline\n\t\n\n", // a tab is a control character
         ] {
-            assert_eq!(parse_record(bad), Err(Error::MalformedRecord), "{:?}", String::from_utf8_lossy(bad));
+            assert_eq!(
+                parse_record(bad),
+                Err(Error::MalformedRecord),
+                "{:?}",
+                String::from_utf8_lossy(bad)
+            );
         }
     }
 
     #[test]
     fn lookup_paths() {
-        assert_eq!(lookup_path("golang.org/x/mod", "v0.17.0").unwrap(), "lookup/golang.org/x/mod@v0.17.0");
-        assert_eq!(lookup_path("golang.org/x/mod", "v0.17.0/go.mod").unwrap(), "lookup/golang.org/x/mod@v0.17.0");
-        assert_eq!(lookup_path("github.com/Azure/azure-sdk-for-go", "v1.2.3+incompatible").unwrap(), "lookup/github.com/!azure/azure-sdk-for-go@v1.2.3+incompatible");
-        assert_eq!(lookup_path("github.com/BurntSushi/toml", "v1.0.0-RC1").unwrap(), "lookup/github.com/!burnt!sushi/toml@v1.0.0-!r!c1");
-        assert_eq!(lookup_path("example.com/x", "v0.0.0-20210101000000-abcdef123456").unwrap(), "lookup/example.com/x@v0.0.0-20210101000000-abcdef123456");
+        assert_eq!(
+            lookup_path("golang.org/x/mod", "v0.17.0").unwrap(),
+            "lookup/golang.org/x/mod@v0.17.0"
+        );
+        assert_eq!(
+            lookup_path("golang.org/x/mod", "v0.17.0/go.mod").unwrap(),
+            "lookup/golang.org/x/mod@v0.17.0"
+        );
+        assert_eq!(
+            lookup_path("github.com/Azure/azure-sdk-for-go", "v1.2.3+incompatible").unwrap(),
+            "lookup/github.com/!azure/azure-sdk-for-go@v1.2.3+incompatible"
+        );
+        assert_eq!(
+            lookup_path("github.com/BurntSushi/toml", "v1.0.0-RC1").unwrap(),
+            "lookup/github.com/!burnt!sushi/toml@v1.0.0-!r!c1"
+        );
+        assert_eq!(
+            lookup_path("example.com/x", "v0.0.0-20210101000000-abcdef123456").unwrap(),
+            "lookup/example.com/x@v0.0.0-20210101000000-abcdef123456"
+        );
         for (m, v) in [
             ("", "v1.0.0"),
             ("example.com//x", "v1.0.0"),
@@ -793,14 +1033,29 @@ mod tests {
 
     fn synthetic() -> Synthetic {
         let unhex = crate::util::unhex;
-        let mut s = Synthetic { verifier: verifier(), heads: Vec::new(), lookups: Vec::new(), tiles: Vec::new() };
-        for line in include_str!("../tests/data/sumdb_synthetic.txt").lines().filter(|l| !l.starts_with('#')) {
+        let mut s = Synthetic {
+            verifier: verifier(),
+            heads: Vec::new(),
+            lookups: Vec::new(),
+            tiles: Vec::new(),
+        };
+        for line in include_str!("../tests/data/sumdb_synthetic.txt")
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+        {
             let p: Vec<&str> = line.split(' ').collect();
             match p[0] {
                 "key" => s.verifier = Verifier::from_key(p[1]).unwrap(),
                 "head" => s.heads.push((p[1].to_string(), unhex(p[2]))),
-                "lookup" => s.lookups.push((p[1].to_string(), p[2].to_string(), p[3].to_string(), unhex(p[4]))),
-                "tile" => s.tiles.push((p[1].to_string(), p[2].to_string(), unhex(p[3]))),
+                "lookup" => s.lookups.push((
+                    p[1].to_string(),
+                    p[2].to_string(),
+                    p[3].to_string(),
+                    unhex(p[4]),
+                )),
+                "tile" => s
+                    .tiles
+                    .push((p[1].to_string(), p[2].to_string(), unhex(p[3]))),
                 _ => panic!("{line}"),
             }
         }
@@ -827,7 +1082,8 @@ mod tests {
             let mut set = TileSet::new();
             for (h, path, data) in &self.tiles {
                 if h == history {
-                    set.insert(Tile::parse_path(path).unwrap(), data.clone()).unwrap();
+                    set.insert(Tile::parse_path(path).unwrap(), data.clone())
+                        .unwrap();
                 }
             }
             set
@@ -909,18 +1165,28 @@ mod tests {
         // the head is honest and the tiles are the forked history's: they do not hash to its root
         let mut check = s.check();
         s.add_lookup(&mut check, "h300_17").unwrap();
-        assert_eq!(check.finish(&s.tiles("F")).unwrap_err(), Error::Log(tlog::Error::TilesDoNotMatchRoot));
+        assert_eq!(
+            check.finish(&s.tiles("F")).unwrap_err(),
+            Error::Log(tlog::Error::TilesDoNotMatchRoot)
+        );
         // the forked record 17 under the honest head is not what the honest log holds there
         let mut check = s.check();
         s.add_lookup(&mut check, "mix_17").unwrap();
-        assert_eq!(check.finish(&s.tiles("H")).unwrap_err(), Error::Log(tlog::Error::RecordMismatch));
+        assert_eq!(
+            check.finish(&s.tiles("H")).unwrap_err(),
+            Error::Log(tlog::Error::RecordMismatch)
+        );
         // and a tile of one history spliced into the other fails against the root
         let mut mixed = s.tiles("H");
         let full = Tile::parse_path("tile/8/0/000").unwrap();
-        mixed.insert(full, s.tiles("F").get(&full).unwrap().to_vec()).unwrap();
+        mixed
+            .insert(full, s.tiles("F").get(&full).unwrap().to_vec())
+            .unwrap();
         let mut check = s.check();
         s.add_lookup(&mut check, "h300_250").unwrap();
-        assert!(matches!(check.finish(&mixed), Err(Error::Log(tlog::Error::TileDoesNotMatchParent(_)))));
+        assert!(matches!(
+            check.finish(&mixed),
+            Err(Error::Log(tlog::Error::TileDoesNotMatchParent(_)))
+        ));
     }
 }
-

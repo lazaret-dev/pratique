@@ -51,7 +51,11 @@ pub(super) fn parse_client_hello(inbound: &[u8]) -> Option<Hello> {
                 let group = lr.u16()?;
                 let key = lr.vec16()?;
                 if group == GROUP_X25519 {
-                    return Some(Hello { msg: msg.clone(), session_id, x25519: key.try_into().ok()? });
+                    return Some(Hello {
+                        msg: msg.clone(),
+                        session_id,
+                        x25519: key.try_into().ok()?,
+                    });
                 }
             }
         }
@@ -120,7 +124,13 @@ pub(super) struct Session {
 impl Session {
     pub fn new(hello: Hello, suite: Suite) -> Session {
         let shared = x25519::x25519(&SERVER_PRIVATE, &hello.x25519);
-        Session { server_public: x25519::public_key(&SERVER_PRIVATE), shared, hello, suite, psk: None }
+        Session {
+            server_public: x25519::public_key(&SERVER_PRIVATE),
+            shared,
+            hello,
+            suite,
+            psk: None,
+        }
     }
 
     /// The ServerHello handshake message (header included).
@@ -206,14 +216,29 @@ pub(super) struct FakeServer {
 impl FakeServer {
     /// Answers the ClientHello with the bytes `respond` builds. The second value shows everything
     /// the client has written.
-    pub fn new(respond: impl FnOnce(Hello) -> Vec<u8> + 'static) -> (FakeServer, Rc<RefCell<Vec<u8>>>) {
+    pub fn new(
+        respond: impl FnOnce(Hello) -> Vec<u8> + 'static,
+    ) -> (FakeServer, Rc<RefCell<Vec<u8>>>) {
         let inbound = Rc::new(RefCell::new(Vec::new()));
-        (FakeServer { inbound: inbound.clone(), outbound: Vec::new(), pos: 0, respond: Some(Box::new(respond)) }, inbound)
+        (
+            FakeServer {
+                inbound: inbound.clone(),
+                outbound: Vec::new(),
+                pos: 0,
+                respond: Some(Box::new(respond)),
+            },
+            inbound,
+        )
     }
 
     /// A transport that just plays back `stream` (for connections that skip the handshake).
     pub fn playing(stream: Vec<u8>) -> FakeServer {
-        FakeServer { inbound: Rc::new(RefCell::new(Vec::new())), outbound: stream, pos: 0, respond: None }
+        FakeServer {
+            inbound: Rc::new(RefCell::new(Vec::new())),
+            outbound: stream,
+            pos: 0,
+            respond: None,
+        }
     }
 }
 
@@ -248,17 +273,29 @@ impl Write for FakeServer {
 // ---------------------------------------------------------------------------- HelloRetryRequest
 
 /// The server's handshake write cipher for a key exchange that gave `shared`, over `transcript`.
-pub(super) fn handshake_write_cipher(suite: Suite, shared: &[u8], transcript: &[u8]) -> RecordCipher {
+pub(super) fn handshake_write_cipher(
+    suite: Suite,
+    shared: &[u8],
+    transcript: &[u8],
+) -> RecordCipher {
     let alg = suite.hash();
     let zeros = vec![0u8; alg.output_len()];
     let early = hkdf_extract(alg, &[], &zeros);
     let derived = derive_secret(alg, &early, "derived", &alg.digest(&[]));
     let hs = hkdf_extract(alg, &derived, shared);
-    RecordCipher::new(suite, &derive_secret(alg, &hs, "s hs traffic", &alg.digest(transcript)))
+    RecordCipher::new(
+        suite,
+        &derive_secret(alg, &hs, "s hs traffic", &alg.digest(transcript)),
+    )
 }
 
 /// A HelloRetryRequest handshake message. `group` is the group it asks for (none: a cookie only).
-pub(super) fn retry_message(session_id: &[u8], suite: Suite, group: Option<u16>, cookie: Option<&[u8]>) -> Vec<u8> {
+pub(super) fn retry_message(
+    session_id: &[u8],
+    suite: Suite,
+    group: Option<u16>,
+    cookie: Option<&[u8]>,
+) -> Vec<u8> {
     let mut body = 0x0303u16.to_be_bytes().to_vec();
     body.extend_from_slice(&HELLO_RETRY_REQUEST_RANDOM);
     body.push(session_id.len() as u8);
@@ -277,7 +314,9 @@ pub(super) fn retry_message(session_id: &[u8], suite: Suite, group: Option<u16>,
 }
 
 /// The legacy session id and the first key share (group, public value) of a ClientHello message.
-pub(super) fn client_hello_session_and_share(msg: &[u8]) -> Option<(Vec<u8>, Option<(u16, Vec<u8>)>)> {
+pub(super) fn client_hello_session_and_share(
+    msg: &[u8],
+) -> Option<(Vec<u8>, Option<(u16, Vec<u8>)>)> {
     let mut r = Reader::new(msg.get(4..)?);
     r.u16()?;
     r.take(32)?;
@@ -320,13 +359,27 @@ pub(super) struct RetryServer {
 
 impl RetryServer {
     pub fn new(suite: Suite, kind: u8, flight: Vec<u8>, piece: usize) -> RetryServer {
-        RetryServer { suite, kind, flight, piece: piece.max(1), inbound: Vec::new(), outbound: Vec::new(), pos: 0, stage: 0, ch1: Vec::new(), hrr: Vec::new(), session_id: Vec::new() }
+        RetryServer {
+            suite,
+            kind,
+            flight,
+            piece: piece.max(1),
+            inbound: Vec::new(),
+            outbound: Vec::new(),
+            pos: 0,
+            stage: 0,
+            ch1: Vec::new(),
+            hrr: Vec::new(),
+            session_id: Vec::new(),
+        }
     }
 
     fn on_client_hello(&mut self, msg: &[u8]) {
         use crate::crypto::ecdh;
         use crate::crypto::ecdsa::Curve;
-        let Some((session_id, share)) = client_hello_session_and_share(msg) else { return };
+        let Some((session_id, share)) = client_hello_session_and_share(msg) else {
+            return;
+        };
         if self.stage == 0 {
             let (group, cookie): (Option<u16>, Option<&[u8]>) = match self.kind {
                 1 => (Some(GROUP_SECP256R1), None),
@@ -337,21 +390,35 @@ impl RetryServer {
             self.session_id = session_id.clone();
             self.hrr = retry_message(&session_id, self.suite, group, cookie);
             self.outbound.extend(plain_record(RT_HANDSHAKE, &self.hrr));
-            self.outbound.extend(plain_record(RT_CHANGE_CIPHER_SPEC, &[1]));
+            self.outbound
+                .extend(plain_record(RT_CHANGE_CIPHER_SPEC, &[1]));
             self.stage = 1;
             return;
         }
         let Some((group, public)) = share else { return };
         let (server_public, shared): (Vec<u8>, Vec<u8>) = match group {
             GROUP_X25519 => {
-                let Ok(client) = <[u8; 32]>::try_from(public.as_slice()) else { return };
-                (x25519::public_key(&SERVER_PRIVATE).to_vec(), x25519::x25519(&SERVER_PRIVATE, &client).to_vec())
+                let Ok(client) = <[u8; 32]>::try_from(public.as_slice()) else {
+                    return;
+                };
+                (
+                    x25519::public_key(&SERVER_PRIVATE).to_vec(),
+                    x25519::x25519(&SERVER_PRIVATE, &client).to_vec(),
+                )
             }
             GROUP_SECP256R1 | GROUP_SECP384R1 => {
-                let (curve, len) = if group == GROUP_SECP256R1 { (Curve::P256, 32) } else { (Curve::P384, 48) };
+                let (curve, len) = if group == GROUP_SECP256R1 {
+                    (Curve::P256, 32)
+                } else {
+                    (Curve::P384, 48)
+                };
                 let scalar = vec![0x2b; len];
-                let Some(server_public) = ecdh::public_key(curve, &scalar) else { return };
-                let Some(shared) = ecdh::shared_secret(curve, &scalar, &public) else { return };
+                let Some(server_public) = ecdh::public_key(curve, &scalar) else {
+                    return;
+                };
+                let Some(shared) = ecdh::shared_secret(curve, &scalar, &public) else {
+                    return;
+                };
                 (server_public, shared.to_vec())
             }
             _ => return,
@@ -369,7 +436,8 @@ impl RetryServer {
         body.extend(block16(&exts));
         let sh = handshake_message(HS_SERVER_HELLO, &body);
 
-        let mut transcript = handshake_message(HS_MESSAGE_HASH, &self.suite.hash().digest(&self.ch1));
+        let mut transcript =
+            handshake_message(HS_MESSAGE_HASH, &self.suite.hash().digest(&self.ch1));
         transcript.extend_from_slice(&self.hrr);
         transcript.extend_from_slice(msg);
         transcript.extend_from_slice(&sh);

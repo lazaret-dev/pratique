@@ -16,8 +16,8 @@
 //!   fields of the request, and the body that was taken is the body that was written, as DATA frames.
 
 use super::*;
-use crate::http::h3::qpack::harness::Choose;
 use crate::http::h2::hpack::FieldRef;
+use crate::http::h3::qpack::harness::Choose;
 use std::collections::HashMap;
 
 // ------------------------------------------------------------------------------------------------ the transport
@@ -58,7 +58,17 @@ pub(crate) struct Fake {
 
 impl Fake {
     pub(crate) fn new() -> Fake {
-        Fake { opened: [0, 0], max_open: [100, 100], sent: HashMap::new(), recv: HashMap::new(), events: VecDeque::new(), stopped_by_us: HashMap::new(), closed: None, room: usize::MAX, log: Vec::new() }
+        Fake {
+            opened: [0, 0],
+            max_open: [100, 100],
+            sent: HashMap::new(),
+            recv: HashMap::new(),
+            events: VecDeque::new(),
+            stopped_by_us: HashMap::new(),
+            closed: None,
+            room: usize::MAX,
+            log: Vec::new(),
+        }
     }
 
     /// The server sends bytes (and perhaps ends the stream) on stream `id`.
@@ -199,7 +209,17 @@ struct Sentry {
     cut: bool,
 }
 
-const RESPONSE_NAMES: &[&str] = &["server", "content-type", "cache-control", "x-a", "x-b", "x-trace", "set-cookie", "etag", "x-long-name-for-the-table"];
+const RESPONSE_NAMES: &[&str] = &[
+    "server",
+    "content-type",
+    "cache-control",
+    "x-a",
+    "x-b",
+    "x-trace",
+    "set-cookie",
+    "etag",
+    "x-long-name-for-the-table",
+];
 
 fn value<C: Choose>(c: &mut C) -> String {
     match c.below(6) {
@@ -220,7 +240,14 @@ fn pattern<C: Choose>(c: &mut C, max: usize) -> Vec<u8> {
 }
 
 fn pairs<C: Choose>(c: &mut C, max: usize) -> Vec<(String, String)> {
-    (0..c.below(max + 1)).map(|_| (RESPONSE_NAMES[c.below(RESPONSE_NAMES.len())].to_string(), value(c))).collect()
+    (0..c.below(max + 1))
+        .map(|_| {
+            (
+                RESPONSE_NAMES[c.below(RESPONSE_NAMES.len())].to_string(),
+                value(c),
+            )
+        })
+        .collect()
 }
 
 fn valid_code(c: u64) -> bool {
@@ -250,7 +277,11 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
         max_header_list: [200, 4096, 64 << 10][c.below(3)],
         qpack_table_capacity: [0, 220, 4096][c.below(3)],
         qpack_blocked_streams: [0, 1, 16][c.below(3)],
-        encoder: EncoderConfig { table_capacity: [100, 4096][c.below(2)], blocked_streams: [0, 1, 4][c.below(3)], only_safe_names: c.below(2) == 0 },
+        encoder: EncoderConfig {
+            table_capacity: [100, 4096][c.below(2)],
+            blocked_streams: [0, 1, 4][c.below(3)],
+            only_safe_names: c.below(2) == 0,
+        },
         body_buffer: [300, 5000, 1 << 20][c.below(3)],
         send_buffer: [100, 4096, 256 << 10][c.below(3)],
     };
@@ -283,8 +314,15 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
     conn.process(&mut t).unwrap();
 
     // the server's encoder: it makes the table the client announced
-    let mut server_enc = Encoder::new(EncoderConfig { table_capacity: 4096, blocked_streams: 16, only_safe_names: false });
-    server_enc.set_peer_settings(cfg.qpack_table_capacity as u64, cfg.qpack_blocked_streams as u64);
+    let mut server_enc = Encoder::new(EncoderConfig {
+        table_capacity: 4096,
+        blocked_streams: 16,
+        only_safe_names: false,
+    });
+    server_enc.set_peer_settings(
+        cfg.qpack_table_capacity as u64,
+        cfg.qpack_blocked_streams as u64,
+    );
     let mut held_instructions: Vec<u8> = vec![];
     let mut decoder_stream_fed = 1; // (the type byte is not an instruction)
 
@@ -305,20 +343,61 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
         if c.exhausted() {
             break;
         }
-        let pick = |c: &mut C, order: &Vec<u64>| -> Option<u64> { if order.is_empty() { None } else { Some(order[c.below(order.len())]) } };
+        let pick = |c: &mut C, order: &Vec<u64>| -> Option<u64> {
+            if order.is_empty() {
+                None
+            } else {
+                Some(order[c.below(order.len())])
+            }
+        };
         match c.below(16) {
             // a request
             0 | 1 => {
                 let path = format!("/{}", ["", "a", "b/c", "index.html?x=1"][c.below(4)]);
-                let extra: Vec<(String, String)> = (0..c.below(3)).map(|_| (["accept", "user-agent", "x-a", "Accept-Encoding"][c.below(4)].to_string(), value(c))).collect();
+                let extra: Vec<(String, String)> = (0..c.below(3))
+                    .map(|_| {
+                        (
+                            ["accept", "user-agent", "x-a", "Accept-Encoding"][c.below(4)]
+                                .to_string(),
+                            value(c),
+                        )
+                    })
+                    .collect();
                 let method = ["GET", "GET", "POST", "HEAD"][c.below(4)];
                 let end = c.below(3) != 0;
-                let req = Request { method, scheme: "https", authority: "example.com", path: &path, headers: &extra, secret: &[] };
+                let req = Request {
+                    method,
+                    scheme: "https",
+                    authority: "example.com",
+                    path: &path,
+                    headers: &extra,
+                    secret: &[],
+                };
                 if let Ok(id) = conn.open_stream(&mut t, &req, end) {
-                    let mut fields = vec![(":method".to_string(), method.to_string()), (":scheme".to_string(), "https".to_string()), (":authority".to_string(), "example.com".to_string()), (":path".to_string(), path.clone())];
-                    fields.extend(extra.iter().map(|(n, v)| (n.to_ascii_lowercase(), v.clone())));
+                    let mut fields = vec![
+                        (":method".to_string(), method.to_string()),
+                        (":scheme".to_string(), "https".to_string()),
+                        (":authority".to_string(), "example.com".to_string()),
+                        (":path".to_string(), path.clone()),
+                    ];
+                    fields.extend(
+                        extra
+                            .iter()
+                            .map(|(n, v)| (n.to_ascii_lowercase(), v.clone())),
+                    );
                     order.push(id);
-                    reqs.insert(id, Sentry { fields, body: vec![], ended_by_us: end, seen: Seen::default(), pristine: true, response: None, cut: false });
+                    reqs.insert(
+                        id,
+                        Sentry {
+                            fields,
+                            body: vec![],
+                            ended_by_us: end,
+                            seen: Seen::default(),
+                            pristine: true,
+                            response: None,
+                            cut: false,
+                        },
+                    );
                 }
             }
             // a response made well, perhaps with its table entries held back
@@ -336,16 +415,31 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
                             vec![]
                         } else if big {
                             let start = c.byte();
-                            (0..66_000 + c.below(60_000)).map(|i| start.wrapping_add(i as u8)).collect()
+                            (0..66_000 + c.below(60_000))
+                                .map(|i| start.wrapping_add(i as u8))
+                                .collect()
                         } else {
                             pattern(c, 400)
                         };
-                        let trailers = if c.below(3) == 0 { Some(pairs(c, 2)) } else { None };
-                        let r = Response { status, headers, body, trailers };
+                        let trailers = if c.below(3) == 0 {
+                            Some(pairs(c, 2))
+                        } else {
+                            None
+                        };
+                        let r = Response {
+                            status,
+                            headers,
+                            body,
+                            trailers,
+                        };
                         let mut bytes = vec![];
                         if c.below(4) == 0 {
                             // an interim response first
-                            let sec = encode(&mut server_enc, id, &[(":status".to_string(), "103".to_string())]);
+                            let sec = encode(
+                                &mut server_enc,
+                                id,
+                                &[(":status".to_string(), "103".to_string())],
+                            );
                             frame::put_headers(&mut bytes, &sec);
                         }
                         let mut fields = vec![(":status".to_string(), status.to_string())];
@@ -411,7 +505,11 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
                             let e = conn.take_stream_data(id, &mut into);
                             if let StreamEvent::Data(n) = &e {
                                 assert_eq!(into.len(), *n);
-                                reqs.get_mut(&id).unwrap().seen.body.extend_from_slice(&into);
+                                reqs.get_mut(&id)
+                                    .unwrap()
+                                    .seen
+                                    .body
+                                    .extend_from_slice(&into);
                                 StreamEvent::Data(*n)
                             } else {
                                 e
@@ -420,12 +518,20 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
                             let mut buf = vec![0u8; size];
                             let e = conn.poll_stream(id, &mut buf);
                             if let StreamEvent::Data(n) = &e {
-                                reqs.get_mut(&id).unwrap().seen.body.extend_from_slice(&buf[..*n]);
+                                reqs.get_mut(&id)
+                                    .unwrap()
+                                    .seen
+                                    .body
+                                    .extend_from_slice(&buf[..*n]);
                             }
                             e
                         };
                         // (what `ready` says is what the application is given: a wake-up for news is never missed or empty)
-                        assert_eq!(ready, !matches!(ev, StreamEvent::Pending), "ready said {ready} and the stream gave {ev:?}");
+                        assert_eq!(
+                            ready,
+                            !matches!(ev, StreamEvent::Pending),
+                            "ready said {ready} and the stream gave {ev:?}"
+                        );
                         let s = &mut reqs.get_mut(&id).unwrap().seen;
                         observe(s, ev);
                     }
@@ -441,10 +547,16 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
                     let writable = conn.writable(id);
                     let result = conn.send_data(&mut t, id, &data, end);
                     // (a writer that waits for room is told when there is some: if there is none it is not told, and nothing is taken)
-                    assert!(writable || result == Ok(0), "writable said no and send_data gave {result:?}");
+                    assert!(
+                        writable || result == Ok(0),
+                        "writable said no and send_data gave {result:?}"
+                    );
                     if let Ok(taken) = result {
                         assert!(taken <= data.len());
-                        assert!(taken <= capacity, "{taken} bytes taken, room for {capacity}");
+                        assert!(
+                            taken <= capacity,
+                            "{taken} bytes taken, room for {capacity}"
+                        );
                         s.body.extend_from_slice(&data[..taken]);
                         if end && taken == data.len() {
                             s.ended_by_us = true;
@@ -465,9 +577,20 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
                 if let Some(id) = pick(c, &order) {
                     let s = reqs.get_mut(&id).unwrap();
                     if c.below(2) == 0 {
-                        t.reset_by_server(id, [code::H3_REQUEST_REJECTED, code::H3_REQUEST_CANCELLED, code::H3_INTERNAL_ERROR, 0x1234][c.below(4)]);
+                        t.reset_by_server(
+                            id,
+                            [
+                                code::H3_REQUEST_REJECTED,
+                                code::H3_REQUEST_CANCELLED,
+                                code::H3_INTERNAL_ERROR,
+                                0x1234,
+                            ][c.below(4)],
+                        );
                     } else {
-                        t.events.push_back(TransportEvent::Stopped(id, [code::H3_NO_ERROR, code::H3_REQUEST_REJECTED][c.below(2)]));
+                        t.events.push_back(TransportEvent::Stopped(
+                            id,
+                            [code::H3_NO_ERROR, code::H3_REQUEST_REJECTED][c.below(2)],
+                        ));
                     }
                     s.cut = true;
                 }
@@ -497,8 +620,18 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
             14 if garbage => {
                 tainted = true;
                 let n = c.below(40);
-                let alphabet = [0u8, 1, 2, 3, 4, 5, 7, 0x0d, 0x21, 0x40, 0x80, 0xc0, 0xff, 8, 9, 6];
-                let bytes: Vec<u8> = (0..n).map(|_| if c.below(3) == 0 { c.byte() } else { alphabet[c.below(alphabet.len())] }).collect();
+                let alphabet = [
+                    0u8, 1, 2, 3, 4, 5, 7, 0x0d, 0x21, 0x40, 0x80, 0xc0, 0xff, 8, 9, 6,
+                ];
+                let bytes: Vec<u8> = (0..n)
+                    .map(|_| {
+                        if c.below(3) == 0 {
+                            c.byte()
+                        } else {
+                            alphabet[c.below(alphabet.len())]
+                        }
+                    })
+                    .collect();
                 let fin = c.below(12) == 0;
                 match c.below(6) {
                     0 => t.push(SERVER_CONTROL, &bytes, fin),
@@ -574,13 +707,25 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
         }
         if let Some(e) = conn.error() {
             if e.local && !before {
-                assert!(valid_code(e.code), "closed with {:#x}, which is not a code of the RFC", e.code);
-                assert_eq!(t.closed_with(), Some(e.code), "the connection is lost and the transport was not closed with its code");
+                assert!(
+                    valid_code(e.code),
+                    "closed with {:#x}, which is not a code of the RFC",
+                    e.code
+                );
+                assert_eq!(
+                    t.closed_with(),
+                    Some(e.code),
+                    "the connection is lost and the transport was not closed with its code"
+                );
             }
         }
         // a server that says only what is well made does not lose the connection
         if !tainted && !transport_gone {
-            assert!(conn.error().is_none(), "a well-made server lost the connection: {:?}", conn.error());
+            assert!(
+                conn.error().is_none(),
+                "a well-made server lost the connection: {:?}",
+                conn.error()
+            );
         }
     }
 
@@ -599,12 +744,19 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
                 let mut into = vec![];
                 let ready = conn.ready(id);
                 let ev = conn.take_stream_data(id, &mut into);
-                assert_eq!(ready, !matches!(ev, StreamEvent::Pending), "ready said {ready} and the stream gave {ev:?}");
+                assert_eq!(
+                    ready,
+                    !matches!(ev, StreamEvent::Pending),
+                    "ready said {ready} and the stream gave {ev:?}"
+                );
                 let s = &mut reqs.get_mut(&id).unwrap().seen;
                 if let StreamEvent::Data(_) = &ev {
                     s.body.extend_from_slice(&into);
                 }
-                let done = matches!(ev, StreamEvent::Pending | StreamEvent::End | StreamEvent::Failed(_));
+                let done = matches!(
+                    ev,
+                    StreamEvent::Pending | StreamEvent::End | StreamEvent::Failed(_)
+                );
                 observe(s, ev);
                 if done {
                     break;
@@ -619,19 +771,30 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
     // a stream of a type that is not known is remembered only while it is open (a connection that is lost reads no more)
     if conn.error().is_none() {
         for id in &conn.ignored {
-            assert!(unfinished_uni.contains(id), "stream {id} ended, and the connection still remembers it as one it turned away");
+            assert!(
+                unfinished_uni.contains(id),
+                "stream {id} ended, and the connection still remembers it as one it turned away"
+            );
         }
     }
     let gone = conn.error().is_some();
     stats.lost = usize::from(gone && !transport_gone);
     if !tainted && !transport_gone {
-        assert!(!gone, "a well-made server lost the connection at the end: {:?}", conn.error());
+        assert!(
+            !gone,
+            "a well-made server lost the connection at the end: {:?}",
+            conn.error()
+        );
     }
 
     // what a well-made response that was read to its end says
     for (id, s) in &reqs {
         if let Some(f) = &s.seen.failed {
-            assert!(valid_code(f.code) || f.code == 0x1234 || f.code == 0, "a stream failed with {:#x}", f.code);
+            assert!(
+                valid_code(f.code) || f.code == 0x1234 || f.code == 0,
+                "a stream failed with {:#x}",
+                f.code
+            );
         }
         if s.seen.ended {
             assert!(s.seen.failed.is_none(), "a stream ended and failed");
@@ -639,7 +802,10 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
         stats.failed += usize::from(s.seen.failed.is_some());
         if s.pristine && s.seen.ended && !table_corrupt {
             stats.responses += 1;
-            let r = s.response.as_ref().expect("a response that was never sent ended");
+            let r = s
+                .response
+                .as_ref()
+                .expect("a response that was never sent ended");
             let (status, headers) = s.seen.head.as_ref().expect("an end with no head");
             assert_eq!(*status, r.status, "stream {id}");
             assert_eq!(headers, &r.headers, "stream {id}");
@@ -648,30 +814,61 @@ pub(crate) fn exchange<C: Choose>(c: &mut C, max_steps: usize, garbage: bool) ->
         }
         // a response that was well made, sent to its end and not cut short is read to its end by an application that reads everything (or it
         // is refused for its size): the end of a stream that waited for the table, or came with the last of the table's entries, is not lost
-        if s.pristine && s.response.is_some() && !s.cut && !table_corrupt && !gone && !transport_gone && !s.seen.ended {
-            let too_large = s.seen.failed.as_ref().is_some_and(|f| f.code == code::H3_EXCESSIVE_LOAD);
+        if s.pristine
+            && s.response.is_some()
+            && !s.cut
+            && !table_corrupt
+            && !gone
+            && !transport_gone
+            && !s.seen.ended
+        {
+            let too_large = s
+                .seen
+                .failed
+                .as_ref()
+                .is_some_and(|f| f.code == code::H3_EXCESSIVE_LOAD);
             // (bytes that mean nothing, put on the control stream, can make a GOAWAY that is well made: the requests it names are
             // rejected, as they must be, though the script never cut them. Found by the field run's fuzzing: 07 01 00 is GOAWAY(0))
-            let rejected = tainted && conn.goaway.is_some_and(|g| *id >= g) && s.seen.failed.as_ref().is_some_and(|f| f.code == code::H3_REQUEST_REJECTED);
-            assert!(too_large || rejected, "a well-made response to stream {id} was not read to its end: {:?}", s.seen);
+            let rejected = tainted
+                && conn.goaway.is_some_and(|g| *id >= g)
+                && s.seen
+                    .failed
+                    .as_ref()
+                    .is_some_and(|f| f.code == code::H3_REQUEST_REJECTED);
+            assert!(
+                too_large || rejected,
+                "a well-made response to stream {id} was not read to its end: {:?}",
+                s.seen
+            );
         }
         if !tainted && !s.cut && !gone {
             if let Some(f) = &s.seen.failed {
                 // (a response that was well made is lost only for being too large to take)
-                assert!(f.code == code::H3_EXCESSIVE_LOAD, "a well-made response to stream {id} failed: {f:?}");
+                assert!(
+                    f.code == code::H3_EXCESSIVE_LOAD,
+                    "a well-made response to stream {id} failed: {f:?}"
+                );
             }
         }
     }
 
     // what the client wrote, read back
     if !gone {
-        stats.inserted = check_client_output(&t, &reqs, server_capacity, server_blocked, &conn, &order);
+        stats.inserted =
+            check_client_output(&t, &reqs, server_capacity, server_blocked, &conn, &order);
     }
     stats
 }
 
 fn encode(e: &mut Encoder, stream: u64, fields: &[(String, String)]) -> Vec<u8> {
-    let refs: Vec<FieldRef<'_>> = fields.iter().map(|(n, v)| FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false }).collect();
+    let refs: Vec<FieldRef<'_>> = fields
+        .iter()
+        .map(|(n, v)| FieldRef {
+            name: n.as_bytes(),
+            value: v.as_bytes(),
+            sensitive: false,
+        })
+        .collect();
     let mut out = vec![];
     e.encode(stream, &refs, &mut out);
     out
@@ -679,18 +876,30 @@ fn encode(e: &mut Encoder, stream: u64, fields: &[(String, String)]) -> Vec<u8> 
 
 /// Notes what the application was told, and checks that it is told in order.
 fn observe(s: &mut Seen, ev: StreamEvent) {
-    assert!(s.failed.is_none() || matches!(ev, StreamEvent::Failed(_) | StreamEvent::Pending), "{ev:?} after a failure");
+    assert!(
+        s.failed.is_none() || matches!(ev, StreamEvent::Failed(_) | StreamEvent::Pending),
+        "{ev:?} after a failure"
+    );
     match ev {
         StreamEvent::Pending => {}
         StreamEvent::Head(h) => {
-            assert!(s.head.is_none() && !s.ended && s.body.is_empty(), "a head that is not the first thing");
+            assert!(
+                s.head.is_none() && !s.ended && s.body.is_empty(),
+                "a head that is not the first thing"
+            );
             s.head = Some((h.status, h.headers));
         }
         StreamEvent::Data(_) => {
-            assert!(s.head.is_some() && !s.ended && s.trailers.is_none(), "data out of its place");
+            assert!(
+                s.head.is_some() && !s.ended && s.trailers.is_none(),
+                "data out of its place"
+            );
         }
         StreamEvent::Trailers(t) => {
-            assert!(s.head.is_some() && !s.ended && s.trailers.is_none(), "trailers out of their place");
+            assert!(
+                s.head.is_some() && !s.ended && s.trailers.is_none(),
+                "trailers out of their place"
+            );
             s.trailers = Some(t);
         }
         StreamEvent::End => {
@@ -711,18 +920,39 @@ fn observe(s: &mut Seen, ev: StreamEvent) {
 /// decoder that has the limits the server announced. Every request's field section must decode (when the entries it waits for have come)
 /// to the fields of the request, and the frames of a request must be its head, its body as it was taken, and its end when the application
 /// said so. Returns how many entries the client's encoder made.
-fn check_client_output(t: &Fake, reqs: &HashMap<u64, Sentry>, server_capacity: u64, server_blocked: u64, conn: &Connection, order: &[u64]) -> usize {
+fn check_client_output(
+    t: &Fake,
+    reqs: &HashMap<u64, Sentry>,
+    server_capacity: u64,
+    server_blocked: u64,
+    conn: &Connection,
+    order: &[u64],
+) -> usize {
     let mut dec = Decoder::new(server_capacity as usize, server_blocked as usize, 1 << 24);
     let mut readers: HashMap<u64, FrameReader> = HashMap::new();
     let mut waiting: Vec<(u64, Vec<u8>)> = vec![];
     let mut decoded: HashMap<u64, Vec<(String, String)>> = HashMap::new();
     let mut bodies: HashMap<u64, Vec<u8>> = HashMap::new();
     let mut sections: HashMap<u64, usize> = HashMap::new();
-    let try_decode = |dec: &mut Decoder, id: u64, block: &[u8], decoded: &mut HashMap<u64, Vec<(String, String)>>, waiting: &mut Vec<(u64, Vec<u8>)>| {
+    let try_decode = |dec: &mut Decoder,
+                      id: u64,
+                      block: &[u8],
+                      decoded: &mut HashMap<u64, Vec<(String, String)>>,
+                      waiting: &mut Vec<(u64, Vec<u8>)>| {
         let mut got = vec![];
         match dec.decode(id, block, &mut got) {
             Ok(Decoded::Done { within_limit: true }) => {
-                decoded.insert(id, got.iter().map(|f| (String::from_utf8_lossy(&f.name).into_owned(), String::from_utf8_lossy(&f.value).into_owned())).collect());
+                decoded.insert(
+                    id,
+                    got.iter()
+                        .map(|f| {
+                            (
+                                String::from_utf8_lossy(&f.name).into_owned(),
+                                String::from_utf8_lossy(&f.value).into_owned(),
+                            )
+                        })
+                        .collect(),
+                );
             }
             Ok(Decoded::Blocked { .. }) => waiting.push((id, block.to_vec())),
             other => panic!("the request on stream {id} does not decode: {other:?}"),
@@ -735,23 +965,31 @@ fn check_client_output(t: &Fake, reqs: &HashMap<u64, Sentry>, server_capacity: u
             6 => {
                 // (the first byte is the stream's type)
                 let instr = if at == 0 { &bytes[1..] } else { bytes };
-                dec.encoder_stream(instr).unwrap_or_else(|e| panic!("the client's encoder stream was refused by a decoder: {e}"));
+                dec.encoder_stream(instr).unwrap_or_else(|e| {
+                    panic!("the client's encoder stream was refused by a decoder: {e}")
+                });
                 // what waited for it
                 for (sid, block) in std::mem::take(&mut waiting) {
                     try_decode(&mut dec, sid, &block, &mut decoded, &mut waiting);
                 }
             }
             _ if id & 3 == 0 => {
-                let reader = readers.entry(id).or_insert_with(|| FrameReader::new(Kind::Request, 1 << 24));
+                let reader = readers
+                    .entry(id)
+                    .or_insert_with(|| FrameReader::new(Kind::Request, 1 << 24));
                 let mut events = vec![];
-                reader.feed(bytes, &mut events).unwrap_or_else(|e| panic!("what the client wrote on stream {id} is not frames: {e:?}"));
+                reader.feed(bytes, &mut events).unwrap_or_else(|e| {
+                    panic!("what the client wrote on stream {id} is not frames: {e:?}")
+                });
                 for e in events {
                     match e {
                         Event::Headers(block) => {
                             *sections.entry(id).or_default() += 1;
                             try_decode(&mut dec, id, &block, &mut decoded, &mut waiting);
                         }
-                        Event::Data(r) => bodies.entry(id).or_default().extend_from_slice(&bytes[r]),
+                        Event::Data(r) => {
+                            bodies.entry(id).or_default().extend_from_slice(&bytes[r])
+                        }
                         other => panic!("{other:?} in a request"),
                     }
                 }
@@ -759,20 +997,40 @@ fn check_client_output(t: &Fake, reqs: &HashMap<u64, Sentry>, server_capacity: u
             _ => {}
         }
     }
-    assert!(waiting.is_empty(), "a request waits for entries of the table that the client never made");
+    assert!(
+        waiting.is_empty(),
+        "a request waits for entries of the table that the client never made"
+    );
     for (id, s) in reqs {
         let Some(sent) = t.sent.get(id) else { continue };
         if s.cut || sent.reset.is_some() {
             continue;
         }
         assert_eq!(sections.get(id), Some(&1), "the field sections of the request on stream {id}: sent {:?} (fin {}), the connection has it: {:?}, order has it: {}", t.sent.get(id).map(|s| s.data.len()), sent.fin, conn_has(conn, *id), order.contains(id));
-        assert_eq!(decoded.get(id), Some(&s.fields), "the fields of the request on stream {id}");
-        assert_eq!(bodies.get(id).cloned().unwrap_or_default(), s.body, "the body written on stream {id}");
-        assert!(readers[id].at_frame_boundary() || !sent.fin, "the client ended stream {id} in the middle of a frame");
+        assert_eq!(
+            decoded.get(id),
+            Some(&s.fields),
+            "the fields of the request on stream {id}"
+        );
+        assert_eq!(
+            bodies.get(id).cloned().unwrap_or_default(),
+            s.body,
+            "the body written on stream {id}"
+        );
+        assert!(
+            readers[id].at_frame_boundary() || !sent.fin,
+            "the client ended stream {id} in the middle of a frame"
+        );
         if s.ended_by_us {
-            assert!(sent.fin, "the end of the request on stream {id} was not written");
+            assert!(
+                sent.fin,
+                "the end of the request on stream {id} was not written"
+            );
         } else {
-            assert!(!sent.fin, "the request on stream {id} was ended when the application had not");
+            assert!(
+                !sent.fin,
+                "the request on stream {id} was ended when the application had not"
+            );
         }
     }
     dec.insert_count() as usize
@@ -781,6 +1039,15 @@ fn check_client_output(t: &Fake, reqs: &HashMap<u64, Sentry>, server_capacity: u
 fn conn_has(c: &Connection, id: u64) -> String {
     match c.streams.get(&id) {
         None => "no".into(),
-        Some(s) => format!("yes: out pending {} fin {} finished {} id {:?} stopped {:?} failure {:?} dirty {}", s.out.pending(), s.out.fin, s.out.finished, s.out.id, s.send_stopped, s.failure, c.dirty.contains(&id)),
+        Some(s) => format!(
+            "yes: out pending {} fin {} finished {} id {:?} stopped {:?} failure {:?} dirty {}",
+            s.out.pending(),
+            s.out.fin,
+            s.out.finished,
+            s.out.id,
+            s.send_stopped,
+            s.failure,
+            c.dirty.contains(&id)
+        ),
     }
 }

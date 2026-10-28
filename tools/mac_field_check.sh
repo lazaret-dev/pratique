@@ -19,6 +19,8 @@
 #   sh tools/mac_field_check.sh quic            B-91: four HTTP/3 servers of other implementations follow the client's key updates,
 #                                               and keep-alive PINGs hold a connection open through a quiet spell (needs UDP to port 443)
 #   sh tools/mac_field_check.sh fuzz [HOURS]    B-66: a fuzz campaign (default 8 hours; HOURS may be 0.5); Ctrl-C ends it early and keeps what it found
+#   sh tools/mac_field_check.sh fuzz-verify [HOURS]
+#                                               B-92 part 5: the same, for the verification targets alone (they get all the cores)
 #   sh tools/mac_field_check.sh package         only (re)make field_results.tgz
 #
 # Run it from the project root, on the Mac, on a network that does NOT re-sign TLS (not a company VPN or proxy with
@@ -65,7 +67,7 @@ usage() {
 }
 
 case "$MODE" in
-    all|smoke|roots|native|capture|revocation|tuf|quic|fuzz|package) ;;
+    all|smoke|roots|native|capture|revocation|tuf|quic|fuzz|fuzz-verify|package) ;;
     -h|--help|help) usage ;;
     *) echo "unknown mode: $MODE" >&2; usage ;;
 esac
@@ -471,6 +473,10 @@ do_revocation() {
 }
 
 # --- B-66
+# The targets of the verification path (B-92 part 5): the 18 of SECURITY_REVIEW.md section 10, and the four that came after
+# it (chain_algs, idna, sct, tuf).
+VERIFY_TARGETS="der certificate hostname idna chain chain_algs purpose_chain ed25519 note tlog sumdb ber cms json sigstore tuf sct trust_root pem crl ocsp revocation_path"
+
 do_fuzz() {
     hours=${1:-8}
     secs=$(awk -v h="$hours" 'BEGIN { printf "%d", h * 3600 }')
@@ -479,7 +485,7 @@ do_fuzz() {
         exit 2
     fi
     say ""
-    say "=== B-66: fuzz campaign, $hours hours ($secs s) on $(uname -m), $(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo '?') cores"
+    say "=== B-66: fuzz campaign, $hours hours ($secs s) on $(uname -m), $(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo '?') cores${FUZZ_TARGETS:+, targets: $FUZZ_TARGETS}"
     say "started $(date -u '+%Y-%m-%d %H:%M UTC'); Ctrl-C ends it early and keeps what was found."
     if command -v caffeinate >/dev/null 2>&1; then
         caffeinate -i -s -w $$ &
@@ -526,6 +532,13 @@ say "pratique field check, mode $MODE, $(date -u '+%Y-%m-%d %H:%M UTC')"
 say "$(cat "$OUT/environment.txt")"
 
 if [ "$MODE" = fuzz ]; then
+    do_fuzz "${2:-8}"
+    do_package
+    exit 0
+fi
+if [ "$MODE" = fuzz-verify ]; then
+    FUZZ_TARGETS=$VERIFY_TARGETS
+    export FUZZ_TARGETS
     do_fuzz "${2:-8}"
     do_package
     exit 0

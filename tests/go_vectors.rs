@@ -16,7 +16,9 @@ const FIXTURES: &str = include_str!("data/note_fixtures.txt");
 
 fn unhex(s: &str) -> Vec<u8> {
     assert!(s.len() % 2 == 0, "odd hex");
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+        .collect()
 }
 
 fn hex(b: &[u8]) -> String {
@@ -32,7 +34,11 @@ fn apply(base: &[u8], edits: &str) -> Vec<u8> {
     }
     for e in edits.split(',') {
         let mut p = e.splitn(3, ':');
-        let (kind, off, arg) = (p.next().unwrap(), p.next().unwrap().parse::<usize>().unwrap(), p.next().unwrap());
+        let (kind, off, arg) = (
+            p.next().unwrap(),
+            p.next().unwrap().parse::<usize>().unwrap(),
+            p.next().unwrap(),
+        );
         match kind {
             "x" => b[off] ^= unhex(arg)[0],
             "d" => {
@@ -79,7 +85,9 @@ fn note_verdict(msg: &[u8], known: &[Verifier]) -> String {
 }
 
 fn tree_verdict(text: &[u8]) -> String {
-    let Ok(text) = std::str::from_utf8(text) else { return "bad".to_string() };
+    let Ok(text) = std::str::from_utf8(text) else {
+        return "bad".to_string();
+    };
     match sumdb::parse_tree(text) {
         Ok(t) => format!("ok:{}:{}", t.size, hex(&t.root)),
         Err(_) => "refused".to_string(),
@@ -110,13 +118,20 @@ fn sumdb_vectors_judged_by_go() {
     let (mut notes, mut tree_cases, mut record_cases) = (0, 0, 0);
     let mut seen = std::collections::BTreeMap::<String, usize>::new();
 
-    for line in SUMDB_VECTORS.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+    for line in SUMDB_VECTORS
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
         let mut p = line.splitn(4, ' ');
         let kind = p.next().unwrap();
         match kind {
             "base" => {
                 let (id, keys, msg) = (p.next().unwrap(), p.next().unwrap(), p.next().unwrap());
-                bases.push((id.to_string(), keys.split(',').map(key).collect(), unhex(msg)));
+                bases.push((
+                    id.to_string(),
+                    keys.split(',').map(key).collect(),
+                    unhex(msg),
+                ));
             }
             "treebase" => {
                 let (id, data) = (p.next().unwrap(), p.next().unwrap());
@@ -132,33 +147,47 @@ fn sumdb_vectors_judged_by_go() {
                 let msg = apply(base, edits);
                 let ours = note_verdict(&msg, known);
                 assert_eq!(go, ours, "note {id} edits {edits}");
-                *seen.entry(ours.split(':').next().unwrap().to_string()).or_default() += 1;
+                *seen
+                    .entry(ours.split(':').next().unwrap().to_string())
+                    .or_default() += 1;
                 notes += 1;
             }
             "tree" => {
                 let (id, edits, go) = (p.next().unwrap(), p.next().unwrap(), p.next().unwrap());
                 let (_, base) = trees.iter().find(|b| b.0 == id).unwrap();
                 let ours = tree_verdict(&apply(base, edits));
-                assert!(agree(go, &ours), "tree {id} edits {edits}: Go says {go}, this crate {ours}");
+                assert!(
+                    agree(go, &ours),
+                    "tree {id} edits {edits}: Go says {go}, this crate {ours}"
+                );
                 tree_cases += 1;
             }
             "treetext" => {
                 let (data, go) = (p.next().unwrap(), p.next().unwrap());
                 let ours = tree_verdict(&unhex(data));
-                assert!(agree(go, &ours), "tree {data}: Go says {go}, this crate {ours}");
+                assert!(
+                    agree(go, &ours),
+                    "tree {data}: Go says {go}, this crate {ours}"
+                );
                 tree_cases += 1;
             }
             "rec" => {
                 let (id, edits, go) = (p.next().unwrap(), p.next().unwrap(), p.next().unwrap());
                 let (_, base) = records.iter().find(|b| b.0 == id).unwrap();
                 let ours = record_verdict(&apply(base, edits));
-                assert!(agree(go, &ours), "record {id} edits {edits}: Go says {go}, this crate {ours}");
+                assert!(
+                    agree(go, &ours),
+                    "record {id} edits {edits}: Go says {go}, this crate {ours}"
+                );
                 record_cases += 1;
             }
             "recraw" => {
                 let (data, go) = (p.next().unwrap(), p.next().unwrap());
                 let ours = record_verdict(&unhex(data));
-                assert!(agree(go, &ours), "record {data}: Go says {go}, this crate {ours}");
+                assert!(
+                    agree(go, &ours),
+                    "record {data}: Go says {go}, this crate {ours}"
+                );
                 record_cases += 1;
             }
             _ => panic!("{line}"),
@@ -166,9 +195,15 @@ fn sumdb_vectors_judged_by_go() {
     }
     // the vectors really cover every kind of verdict, and the file was read whole
     for verdict in ["ok", "malformed", "invalid", "unverified", "ambiguous"] {
-        assert!(seen.get(verdict).copied().unwrap_or(0) > 0, "no note vector says {verdict}");
+        assert!(
+            seen.get(verdict).copied().unwrap_or(0) > 0,
+            "no note vector says {verdict}"
+        );
     }
-    assert!(notes > 700 && tree_cases > 400 && record_cases > 400, "{notes} {tree_cases} {record_cases}");
+    assert!(
+        notes > 700 && tree_cases > 400 && record_cases > 400,
+        "{notes} {tree_cases} {record_cases}"
+    );
 }
 
 fn hash(s: &str) -> Hash {
@@ -188,19 +223,34 @@ fn proof(s: &str) -> Vec<Hash> {
 #[test]
 fn tlog_proof_vectors_judged_by_go() {
     let (mut inclusions, mut consistencies, mut accepted) = (0, 0, 0);
-    for line in TLOG_VECTORS.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+    for line in TLOG_VECTORS
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
         let f: Vec<&str> = line.split(' ').collect();
         let go = *f.last().unwrap();
         let ours = match f[0] {
             // incl SIZE INDEX LEAF ROOT PROOF VERDICT
             "incl" => {
                 inclusions += 1;
-                tlog::verify_inclusion(&proof(f[5]), f[1].parse().unwrap(), &hash(f[4]), f[2].parse().unwrap(), &hash(f[3]))
+                tlog::verify_inclusion(
+                    &proof(f[5]),
+                    f[1].parse().unwrap(),
+                    &hash(f[4]),
+                    f[2].parse().unwrap(),
+                    &hash(f[3]),
+                )
             }
             // cons OLD OLDROOT NEW NEWROOT PROOF VERDICT
             "cons" => {
                 consistencies += 1;
-                tlog::verify_consistency(&proof(f[5]), f[1].parse().unwrap(), &hash(f[2]), f[3].parse().unwrap(), &hash(f[4]))
+                tlog::verify_consistency(
+                    &proof(f[5]),
+                    f[1].parse().unwrap(),
+                    &hash(f[2]),
+                    f[3].parse().unwrap(),
+                    &hash(f[4]),
+                )
             }
             _ => panic!("{line}"),
         };
@@ -208,5 +258,8 @@ fn tlog_proof_vectors_judged_by_go() {
         assert_eq!(go, ours, "{:.200}", line);
         accepted += (ours == "ok") as usize;
     }
-    assert!(inclusions > 150 && consistencies > 200 && accepted > 200, "{inclusions} {consistencies} {accepted}");
+    assert!(
+        inclusions > 150 && consistencies > 200 && accepted > 200,
+        "{inclusions} {consistencies} {accepted}"
+    );
 }

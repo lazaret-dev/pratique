@@ -54,7 +54,11 @@ impl Default for Resumption {
 
 impl fmt::Debug for Resumption {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Resumption").field("enabled", &self.enabled).field("max_age", &self.max_age).field("sessions", &self.sessions()).finish()
+        f.debug_struct("Resumption")
+            .field("enabled", &self.enabled)
+            .field("max_age", &self.max_age)
+            .field("sessions", &self.sessions())
+            .finish()
     }
 }
 
@@ -62,12 +66,19 @@ impl Resumption {
     /// Resumption on, with a new store of its own, and sessions used for at most an hour after the certificate check they
     /// rest on.
     pub fn new() -> Resumption {
-        Resumption { enabled: true, max_age: 3600, store: Arc::new(Mutex::new(Store::default())) }
+        Resumption {
+            enabled: true,
+            max_age: 3600,
+            store: Arc::new(Mutex::new(Store::default())),
+        }
     }
 
     /// No resumption: every connection makes a full handshake, and tickets are not kept.
     pub fn off() -> Resumption {
-        Resumption { enabled: false, ..Resumption::new() }
+        Resumption {
+            enabled: false,
+            ..Resumption::new()
+        }
     }
 
     /// The longest a session is used after the certificate check it rests on, in seconds (at most seven days, the most a
@@ -107,7 +118,10 @@ impl Resumption {
         let queue = &mut store.servers[i].1;
         queue.retain(|s| s.expires > now);
         // the newest first: it is the furthest from expiring
-        let found = queue.iter().rposition(|s| s.scope.same(scope)).and_then(|j| queue.remove(j));
+        let found = queue
+            .iter()
+            .rposition(|s| s.scope.same(scope))
+            .and_then(|j| queue.remove(j));
         if queue.is_empty() {
             store.servers.remove(i);
         }
@@ -126,7 +140,9 @@ impl Resumption {
                 if store.servers.len() == SERVERS {
                     store.servers.pop_front();
                 }
-                store.servers.push_back((server_name.to_string(), VecDeque::new()));
+                store
+                    .servers
+                    .push_back((server_name.to_string(), VecDeque::new()));
                 store.servers.len() - 1
             }
         };
@@ -160,7 +176,9 @@ pub(crate) struct Scope {
 
 impl Scope {
     fn same(&self, other: &Scope) -> bool {
-        Arc::ptr_eq(&self.trust, &other.trust) && self.verify == other.verify && self.revocation == other.revocation
+        Arc::ptr_eq(&self.trust, &other.trust)
+            && self.verify == other.verify
+            && self.revocation == other.revocation
     }
 }
 
@@ -186,7 +204,11 @@ pub(crate) struct Session {
 impl Session {
     /// The age to send: milliseconds since the ticket arrived, plus `age_add` (RFC 8446 section 4.2.11.1).
     pub(crate) fn obfuscated_age(&self) -> u32 {
-        let ms = self.received.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+        let ms = self
+            .received
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u32::MAX)) as u32;
         ms.wrapping_add(self.age_add)
     }
 }
@@ -196,7 +218,11 @@ mod tests {
     use super::*;
 
     fn scope(trust: &Arc<TrustStore>) -> Scope {
-        Scope { trust: trust.clone(), verify: true, revocation: RevocationMode::SoftFail }
+        Scope {
+            trust: trust.clone(),
+            verify: true,
+            revocation: RevocationMode::SoftFail,
+        }
     }
 
     fn session(trust: &Arc<TrustStore>, ticket: u8, expires: i64) -> Session {
@@ -238,8 +264,26 @@ mod tests {
         // another trust store (even an equal one), verification off, another revocation mode: not offered
         let other = Arc::new(TrustStore::empty());
         assert!(r.take("a.test", &scope(&other), 0).is_none());
-        assert!(r.take("a.test", &Scope { verify: false, ..scope(&t) }, 0).is_none());
-        assert!(r.take("a.test", &Scope { revocation: RevocationMode::HardFail, ..scope(&t) }, 0).is_none());
+        assert!(r
+            .take(
+                "a.test",
+                &Scope {
+                    verify: false,
+                    ..scope(&t)
+                },
+                0
+            )
+            .is_none());
+        assert!(r
+            .take(
+                "a.test",
+                &Scope {
+                    revocation: RevocationMode::HardFail,
+                    ..scope(&t)
+                },
+                0
+            )
+            .is_none());
         assert_eq!(r.take("a.test", &scope(&t), 0).unwrap().ticket, [1]);
     }
 
@@ -257,7 +301,10 @@ mod tests {
             r.insert(&format!("h{i}.test"), session(&t, 0, 100));
         }
         assert_eq!(r.lock().servers.len(), SERVERS);
-        assert!(r.take("h0.test", &scope(&t), 0).is_none(), "the oldest servers went first");
+        assert!(
+            r.take("h0.test", &scope(&t), 0).is_none(),
+            "the oldest servers went first"
+        );
         assert!(r.take("h299.test", &scope(&t), 0).is_some());
         r.clear();
         assert_eq!(shared.sessions(), 0);
@@ -276,11 +323,18 @@ mod tests {
     #[test]
     fn a_session_ends_with_its_ticket_or_max_age_after_the_check() {
         let r = Resumption::new();
-        assert_eq!(r.expiry(1000, 7200, 1000), 4600, "an hour after the check, before the ticket's two hours");
+        assert_eq!(
+            r.expiry(1000, 7200, 1000),
+            4600,
+            "an hour after the check, before the ticket's two hours"
+        );
         assert_eq!(r.expiry(1000, 600, 1000), 1600, "the ticket's ten minutes");
         // a ticket received on a resumed connection keeps the original check's time
         assert_eq!(r.expiry(4000, 7200, 1000), 4600);
-        assert_eq!(Resumption::new().max_age(1_000_000).max_age, MAX_TICKET_LIFETIME);
+        assert_eq!(
+            Resumption::new().max_age(1_000_000).max_age,
+            MAX_TICKET_LIFETIME
+        );
     }
 
     #[test]

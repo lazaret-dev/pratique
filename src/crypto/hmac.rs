@@ -25,7 +25,10 @@ impl<H: Hash + Zeroize> Drop for Hmac<H> {
 impl<H: Hash + Zeroize> Hmac<H> {
     pub fn new(key: &[u8]) -> Self {
         let _dit = Dit::on(); // data-independent timing while the key and the data are in use (crypto::dit)
-        assert!(H::BLOCK_LEN <= 128, "a hash with blocks of at most 128 bytes");
+        assert!(
+            H::BLOCK_LEN <= 128,
+            "a hash with blocks of at most 128 bytes"
+        );
         // the key, padded with zeros to a block (hashed first if it is longer), then XOR each pad in turn
         let mut k = Zeroizing::new([0u8; 128]);
         if key.len() > H::BLOCK_LEN {
@@ -100,12 +103,22 @@ pub fn hkdf_expand_with<H: Hash + Zeroize>(prk: &Hmac<H>, info: &[u8], len: usiz
 }
 
 /// TLS 1.3 HKDF-Expand-Label (RFC 8446 section 7.1).
-pub fn hkdf_expand_label<H: Hash + Zeroize>(secret: &[u8], label: &str, context: &[u8], len: usize) -> Vec<u8> {
+pub fn hkdf_expand_label<H: Hash + Zeroize>(
+    secret: &[u8],
+    label: &str,
+    context: &[u8],
+    len: usize,
+) -> Vec<u8> {
     hkdf_expand_label_with(&Hmac::<H>::new(secret), label, context, len)
 }
 
 /// HKDF-Expand-Label with the secret given as an HMAC keyed with it (B-104).
-pub fn hkdf_expand_label_with<H: Hash + Zeroize>(secret: &Hmac<H>, label: &str, context: &[u8], len: usize) -> Vec<u8> {
+pub fn hkdf_expand_label_with<H: Hash + Zeroize>(
+    secret: &Hmac<H>,
+    label: &str,
+    context: &[u8],
+    len: usize,
+) -> Vec<u8> {
     let mut info = Vec::with_capacity(2 + 1 + 6 + label.len() + 1 + context.len());
     info.extend_from_slice(&(len as u16).to_be_bytes());
     info.push((6 + label.len()) as u8);
@@ -117,7 +130,11 @@ pub fn hkdf_expand_label_with<H: Hash + Zeroize>(secret: &Hmac<H>, label: &str, 
 }
 
 /// TLS 1.3 Derive-Secret: HKDF-Expand-Label over a transcript hash.
-pub fn derive_secret<H: Hash + Zeroize>(secret: &[u8], label: &str, transcript_hash: &[u8]) -> Vec<u8> {
+pub fn derive_secret<H: Hash + Zeroize>(
+    secret: &[u8],
+    label: &str,
+    transcript_hash: &[u8],
+) -> Vec<u8> {
     hkdf_expand_label::<H>(secret, label, transcript_hash, H::OUTPUT_LEN)
 }
 
@@ -146,7 +163,10 @@ mod tests {
         // Test case 6: key longer than block size
         let key = vec![0xaa; 131];
         assert_eq!(
-            hex(&Hmac::<Sha256>::mac(&key, b"Test Using Larger Than Block-Size Key - Hash Key First")),
+            hex(&Hmac::<Sha256>::mac(
+                &key,
+                b"Test Using Larger Than Block-Size Key - Hash Key First"
+            )),
             "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
         );
     }
@@ -158,7 +178,10 @@ mod tests {
         let salt = unhex("000102030405060708090a0b0c");
         let info = unhex("f0f1f2f3f4f5f6f7f8f9");
         let prk = hkdf_extract::<Sha256>(&salt, &ikm);
-        assert_eq!(hex(&prk), "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5");
+        assert_eq!(
+            hex(&prk),
+            "077709362c2e32df0ddc3f0dc47bba6390b6c73bb50f9c3122ec844ad7c2b3e5"
+        );
         let okm = hkdf_expand::<Sha256>(&prk, &info, 42);
         assert_eq!(
             hex(&okm),
@@ -183,10 +206,22 @@ mod tests {
                 for msg in [&b""[..], b"abc", &[7u8; 300]] {
                     let mut m = keyed.clone();
                     m.update(msg);
-                    assert_eq!(m.finalize(), Hmac::<H>::mac(&key, msg), "key of {key_len} bytes");
+                    assert_eq!(
+                        m.finalize(),
+                        Hmac::<H>::mac(&key, msg),
+                        "key of {key_len} bytes"
+                    );
                 }
-                for (label, len) in [("key", 16usize), ("iv", 12), ("c hs traffic", H::OUTPUT_LEN), ("long", 3 * H::OUTPUT_LEN + 5)] {
-                    assert_eq!(hkdf_expand_label_with(&keyed, label, b"ctx", len), hkdf_expand_label::<H>(&key, label, b"ctx", len));
+                for (label, len) in [
+                    ("key", 16usize),
+                    ("iv", 12),
+                    ("c hs traffic", H::OUTPUT_LEN),
+                    ("long", 3 * H::OUTPUT_LEN + 5),
+                ] {
+                    assert_eq!(
+                        hkdf_expand_label_with(&keyed, label, b"ctx", len),
+                        hkdf_expand_label::<H>(&key, label, b"ctx", len)
+                    );
                 }
             }
         }
@@ -199,9 +234,15 @@ mod tests {
     fn tls13_expand_label_rfc8448() {
         // RFC 8448 section 3: derive the "derived" secret from the early secret.
         let early = hkdf_extract::<Sha256>(&[], &[0u8; 32]);
-        assert_eq!(hex(&early), "33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a");
+        assert_eq!(
+            hex(&early),
+            "33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a"
+        );
         let empty_hash = Sha256::digest(b"");
         let derived = derive_secret::<Sha256>(&early, "derived", &empty_hash);
-        assert_eq!(hex(&derived), "6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba");
+        assert_eq!(
+            hex(&derived),
+            "6f2615a108c702c5678f54fc9dbab69716c076189c48250cebeac3576c3611ba"
+        );
     }
 }

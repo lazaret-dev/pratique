@@ -130,8 +130,21 @@ impl<S: Read + Write> ServerStream<S> {
         S: Duplex,
     {
         let (conn, reader, writer) = self.into_parts()?;
-        let shared = Arc::new(Shared { conn: Mutex::new(conn), out: Mutex::new(Sender { io: writer, buf: Vec::new() }) });
-        Ok((ServerReadHalf { shared: shared.clone(), io: reader, staging: vec![0u8; 32 * 1024] }, ServerWriteHalf { shared }))
+        let shared = Arc::new(Shared {
+            conn: Mutex::new(conn),
+            out: Mutex::new(Sender {
+                io: writer,
+                buf: Vec::new(),
+            }),
+        });
+        Ok((
+            ServerReadHalf {
+                shared: shared.clone(),
+                io: reader,
+                staging: vec![0u8; 32 * 1024],
+            },
+            ServerWriteHalf { shared },
+        ))
     }
 }
 

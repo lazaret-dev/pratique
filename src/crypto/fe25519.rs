@@ -29,14 +29,44 @@ impl Fe {
     pub(crate) const ONE: Fe = Fe([1, 0, 0, 0, 0]);
 
     /// The curve constant d = -121665/121666 of edwards25519.
-    pub(crate) const D: Fe = Fe([0x34dca135978a3, 0x1a8283b156ebd, 0x5e7a26001c029, 0x739c663a03cbb, 0x52036cee2b6ff]);
+    pub(crate) const D: Fe = Fe([
+        0x34dca135978a3,
+        0x1a8283b156ebd,
+        0x5e7a26001c029,
+        0x739c663a03cbb,
+        0x52036cee2b6ff,
+    ]);
     /// 2d.
-    pub(crate) const D2: Fe = Fe([0x69b9426b2f159, 0x35050762add7a, 0x3cf44c0038052, 0x6738cc7407977, 0x2406d9dc56dff]);
+    pub(crate) const D2: Fe = Fe([
+        0x69b9426b2f159,
+        0x35050762add7a,
+        0x3cf44c0038052,
+        0x6738cc7407977,
+        0x2406d9dc56dff,
+    ]);
     /// A square root of -1: 2^((p-1)/4).
-    pub(crate) const SQRT_M1: Fe = Fe([0x61b274a0ea0b0, 0x0d5a5fc8f189d, 0x7ef5e9cbd0c60, 0x78595a6804c9e, 0x2b8324804fc1d]);
+    pub(crate) const SQRT_M1: Fe = Fe([
+        0x61b274a0ea0b0,
+        0x0d5a5fc8f189d,
+        0x7ef5e9cbd0c60,
+        0x78595a6804c9e,
+        0x2b8324804fc1d,
+    ]);
     /// The x and y coordinates of the edwards25519 base point.
-    pub(crate) const BASE_X: Fe = Fe([0x62d608f25d51a, 0x412a4b4f6592a, 0x75b7171a4b31d, 0x1ff60527118fe, 0x216936d3cd6e5]);
-    pub(crate) const BASE_Y: Fe = Fe([0x6666666666658, 0x4cccccccccccc, 0x1999999999999, 0x3333333333333, 0x6666666666666]);
+    pub(crate) const BASE_X: Fe = Fe([
+        0x62d608f25d51a,
+        0x412a4b4f6592a,
+        0x75b7171a4b31d,
+        0x1ff60527118fe,
+        0x216936d3cd6e5,
+    ]);
+    pub(crate) const BASE_Y: Fe = Fe([
+        0x6666666666658,
+        0x4cccccccccccc,
+        0x1999999999999,
+        0x3333333333333,
+        0x6666666666666,
+    ]);
 
     /// Loads 255 bits, little endian. The top bit of the last byte is ignored, and a value of p or
     /// more is accepted and taken modulo p (so this is not a canonical decoder).
@@ -79,7 +109,14 @@ impl Fe {
     pub(crate) fn add(self, o: Fe) -> Fe {
         let a = self.0;
         let b = o.0;
-        Fe([a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3], a[4] + b[4]]).carry()
+        Fe([
+            a[0] + b[0],
+            a[1] + b[1],
+            a[2] + b[2],
+            a[3] + b[3],
+            a[4] + b[4],
+        ])
+        .carry()
     }
 
     #[inline(always)]
@@ -107,7 +144,13 @@ impl Fe {
     #[inline(always)]
     pub(crate) fn add_lazy(self, o: Fe) -> Fe {
         let (a, b) = (self.0, o.0);
-        Fe([a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3], a[4] + b[4]])
+        Fe([
+            a[0] + b[0],
+            a[1] + b[1],
+            a[2] + b[2],
+            a[3] + b[3],
+            a[4] + b[4],
+        ])
     }
 
     /// `self - o` without the carry pass: `self + 2p - o`, limb by limb, which cannot underflow when `o`'s limbs are
@@ -119,7 +162,13 @@ impl Fe {
         const TWO_P0: u64 = 0xfffffffffffda;
         const TWO_PN: u64 = 0xffffffffffffe;
         let (a, b) = (self.0, o.0);
-        Fe([a[0] + TWO_P0 - b[0], a[1] + TWO_PN - b[1], a[2] + TWO_PN - b[2], a[3] + TWO_PN - b[3], a[4] + TWO_PN - b[4]])
+        Fe([
+            a[0] + TWO_P0 - b[0],
+            a[1] + TWO_PN - b[1],
+            a[2] + TWO_PN - b[2],
+            a[3] + TWO_PN - b[3],
+            a[4] + TWO_PN - b[4],
+        ])
     }
 
     pub(crate) fn neg(self) -> Fe {
@@ -286,22 +335,134 @@ mod tests {
     /// (a, b, a*b, a+b, a-b, 1/a), all little-endian and reduced, generated with Python integers.
     /// The inputs include values at and above p (the encoding is not canonical) and 2^255 - 1.
     const TABLE: &[(&str, &str, &str, &str, &str, &str)] = &[
-        ("6aad39f4c2aaed1a8a27e534ce4aa7426078fe43c27a88b4ada9dd74482b8410", "232cae48c88fff9b500f0b4cca8e9f33a72971aa44125c7294d11bb5c82df818", "4d9c89b13b70b95cd657e3834059cf68e24ce21919e03c3a40f70b9a3d6bf258", "8dd9e73c8b3aedb6da36f08098d9467607a26fee068de426427bf92911597c29", "34818babfa1aee7e3918dae803bc070fb94e8d997d682c4219d8c1bf7ffd8b77", "3eb7b9b06dbd9f24df520e8f63ba87954dd94f0fa3a043496e36afc2a4d8b36e"),
-        ("52c00060c28921553a62c526134241b82b54e7a6e2d5c69174e5e75e2a082b6e", "d99a08e47ccc61a0c7fd186f5fc43b369986715a5578f834b4324705f5921425", "a46acac66a508ef2522eec77771fd8fb697d79a9808a3de5d6f112c0a7effd2f", "3e5b09443f5683f50160de9572067deec4da5801384ebfc628182f641f9b3f13", "7925f87b45bdbfb47264acb7b37d058292cd754c8d5dce5cc0b2a05935751649", "d7e89a389ad79bcce2ee3f2cb85d0b7e9f2c70623f1b3ae4e18603352cea085b"),
-        ("0102016c9e45bf9fcd7bc5036e3c2e972bed6264cf29988e59785274c6502d2b", "57ac9570ee671978bc641eb94c0e31eb21eb4ef5d7853da56a0ecc50676b1848", "8e44c9a0f91ed0c828668a6f8d194b03b139b2ec78d0f05f51a01eb838e03b3c", "58ae96dc8cadd8178ae0e3bcba4a5f824dd8b159a7afd533c4861ec52dbc4573", "97556bfbafdda5271117a74a212efdab0902146ff7a35ae9ee6986235fe51463", "ba1373dc2e542d9b00a90b09726a4581d0fdc7e4d3a384676e74bc8e68127d51"),
-        ("52d68e7732bc13156cefd33dc459bff2be5653a3566c3d4fa23ab942f6766043", "78408cf78b253434bee6f24cf56c3e9a471ec54a6fc4e51e90817f9660fc714a", "6b69dca15f65419b93a64a700e0df743755f48447cd7d88b690ec1c179b6300f", "dd161b6fbee147492ad6c68ab9c6fd8c067518eec530236e32bc38d95673d20d", "c7950280a696dfe0ad08e1f0ceec805877388e58e7a7573012b939ac957aee78", "0acff17d76dddd014c08a7c0a26b51bcb21da07a3b5837a646a31cb206aa8b00"),
-        ("c6f5ebb9d94d0d82716ebba90b240ee61f26ec6bc234178918d842d051ee8a41", "724465604de8b434765c05e53ba85134cd5093f295427106a576e65e1a99c443", "1272cc144eab2a7b4cf9877da962313ecb093fc4491d63e53ea865c4dab16602", "4b3a511a2736c2b6e7cac08e47cc5f1aed767f5e5877888fbd4e292f6c874f05", "41b186598c65584dfb11b6c4cf7bbcb152d558792cf2a58273615c713755c67d", "3336690583128d78716d7f25d904f07ffc816754023a10a5fb079579cd5c8a52"),
-        ("dd93539a31e9c2b5dd66a5bd642f743cd11c6f64d4411757d1a41f0aed60594c", "1132ea3f86b7928a72d12242c66b7e4e484cfea1205d1445613c96bd5a0bf65a", "c3bf9c84243f95502f6582eccc49b842b2b024a6876f3bec4674810e9920247a", "01c63ddab7a055405038c8ff2a9bf28a19696d06f59e2b9c32e1b5c7476c4f27", "b961695aab31302b6b95827b9ec3f5ed88d070c2b3e402127068894c92556371", "822ad8391496830867c2c57b517851c8599ac22de87041a5cf6d10b2db68b036"),
-        ("0e170b151670e2c3d932c254c8643c1e041421c003bb7a0bbffe3eb32c0c3169", "4b77fe0050ade3f673512d0695ee17f8fd13d8972f0392c0b80a3e509a19033d", "9d1e97efa6b53e27ec75d209f5de82aaaea61ab47046572e1fc06c9cb32aff0b", "6c8e0916661dc6ba4d84ef5a5d5354160228f95733be0ccc77097d03c7253426", "c39f0c14c6c2fecc65e1944e3376242606004928d4b7e84a06f4006392f22d2c", "106e3f9abc546ecdf5a16fffa96315d4d9ae0c3615e27aec03cae59a94609a43"),
-        ("13b5e7857d0a0c37b8407af248c56e0c1fe9f4bdc1163d4b27a961356e651735", "1ab405cc295e1e9e307c739d83664b2259de939351012a121212c10a27052805", "1be805f5a35ba109d33ebf1de6ec2a27eb4a1946ebfe942fd4519dbc47fdc52c", "2d69ed51a7682ad5e8bced8fcc2bba2e78c788511318675d39bb2240956a3f3a", "f900e2b953aced9887c40655c55e23eac50a612a701513391597a02a4760ef2f", "b53c80f664e87dd10dd0bbd6363e37135cd8b901f889d9acaa14919f86d4fa6e"),
-        ("f417eccb0e89c5cf84761a5978a1f11fcdccd4d174e6c726ce04f0e27033940b", "7937dfa763bc8d0209100df52b40a1bfcea20c6b8300a2fb21cbe78b70a3c943", "49251a4a6493de863e96069a4abec11085480dfefa9c9c566968970050ce4848", "6d4fcb73724553d28d86274ea4e192df9b6fe13cf8e66922f0cfd76ee1d65d4f", "68e00c24abcc37cd7b660d644c615060fe29c866f1e5252bac3908570090ca47", "f8edde28b217eab83dda64bb4797a8a273ba6f69afee0ef4daa8ee8994b77e4c"),
-        ("9cbd64027f45101008a382429db76492fdf8bc4758c2da3d907fc5b8e9eb2553", "20917875652ee1ac97a229a1f7d2e8b7de7810be457f2f7ff1805355fdafdb1f", "a245fcdf61bed395f72d16ee33af582f3241b916d4d152410c579ce2853ada3d", "bc4edd77e473f1bc9f45ace3948a4d4adc71cd059e410abd8100190ee79b0173", "7c2cec8c19172f63700059a1a5e47bda1e80ac891243abbe9efe7163ec3b4a33", "d8cf460e12e0a7b1826a867ebc5476d8bf385b73a2e7e526e75708d231ee764c"),
-        ("9a36bbfdf02738c80da9f28625665ad61734d49d078bfd88ac7eb7af51a5bc16", "429d15f65699054e24859f4b68a31326dade29d9495205ce125f2896e55fe148", "88e7db24f9f64501b55299cddc11bcb7054fae89e965f89839a66aa17058b153", "dcd3d0f347c13d16322e92d28d096efcf112fe7651dd0257bfdddf4537059e5f", "4599a5079a8e327ae923533bbdc246b03d55aac4bd38f8ba991f8f196c45db4d", "d26b227872364938bf8e1a162d0f41d194e6b810166302bc33d45e14fc962454"),
-        ("1f6a710ee2343d3d8ed954fb9a62e67b4e88aebc303a2b2e762c7feb2ae69268", "8d1613ce3c32923fc658eac66a8040cf5efb61aee99951d591629abb215d7802", "b679c2147b350788c28ed867db9d2796cbc7f81f06553528cd097018c83c4d2e", "ac8084dc1e67cf7c54323fc205e3264bad83106b1ad47c03088f19a74c430b6b", "92535e40a502abfdc7806a3430e2a5acef8c4c0e47a0d958e4c9e42f09891a66", "1d641575d959dd5b2d22426ef6c6c9f6294ae837ceb446c069fecf9a8b3a8d1a"),
-        ("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "0100000000000000000000000000000000000000000000000000000000000000", "ebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "0000000000000000000000000000000000000000000000000000000000000000", "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
-        ("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "f2ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "0000000000000000000000000000000000000000000000000000000000000000", "0500000000000000000000000000000000000000000000000000000000000000", "e8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "0000000000000000000000000000000000000000000000000000000000000000"),
-        ("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "4401000000000000000000000000000000000000000000000000000000000000", "2400000000000000000000000000000000000000000000000000000000000000", "0000000000000000000000000000000000000000000000000000000000000000", "89e3388ee3388ee3388ee3388ee3388ee3388ee3388ee3388ee3388ee3388e23"),
-        ("0000000000000000000000000000000000000000000000000000000000000000", "3930000000000000000000000000000000000000000000000000000000000000", "0000000000000000000000000000000000000000000000000000000000000000", "3930000000000000000000000000000000000000000000000000000000000000", "b4cfffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "0000000000000000000000000000000000000000000000000000000000000000"),
+        (
+            "6aad39f4c2aaed1a8a27e534ce4aa7426078fe43c27a88b4ada9dd74482b8410",
+            "232cae48c88fff9b500f0b4cca8e9f33a72971aa44125c7294d11bb5c82df818",
+            "4d9c89b13b70b95cd657e3834059cf68e24ce21919e03c3a40f70b9a3d6bf258",
+            "8dd9e73c8b3aedb6da36f08098d9467607a26fee068de426427bf92911597c29",
+            "34818babfa1aee7e3918dae803bc070fb94e8d997d682c4219d8c1bf7ffd8b77",
+            "3eb7b9b06dbd9f24df520e8f63ba87954dd94f0fa3a043496e36afc2a4d8b36e",
+        ),
+        (
+            "52c00060c28921553a62c526134241b82b54e7a6e2d5c69174e5e75e2a082b6e",
+            "d99a08e47ccc61a0c7fd186f5fc43b369986715a5578f834b4324705f5921425",
+            "a46acac66a508ef2522eec77771fd8fb697d79a9808a3de5d6f112c0a7effd2f",
+            "3e5b09443f5683f50160de9572067deec4da5801384ebfc628182f641f9b3f13",
+            "7925f87b45bdbfb47264acb7b37d058292cd754c8d5dce5cc0b2a05935751649",
+            "d7e89a389ad79bcce2ee3f2cb85d0b7e9f2c70623f1b3ae4e18603352cea085b",
+        ),
+        (
+            "0102016c9e45bf9fcd7bc5036e3c2e972bed6264cf29988e59785274c6502d2b",
+            "57ac9570ee671978bc641eb94c0e31eb21eb4ef5d7853da56a0ecc50676b1848",
+            "8e44c9a0f91ed0c828668a6f8d194b03b139b2ec78d0f05f51a01eb838e03b3c",
+            "58ae96dc8cadd8178ae0e3bcba4a5f824dd8b159a7afd533c4861ec52dbc4573",
+            "97556bfbafdda5271117a74a212efdab0902146ff7a35ae9ee6986235fe51463",
+            "ba1373dc2e542d9b00a90b09726a4581d0fdc7e4d3a384676e74bc8e68127d51",
+        ),
+        (
+            "52d68e7732bc13156cefd33dc459bff2be5653a3566c3d4fa23ab942f6766043",
+            "78408cf78b253434bee6f24cf56c3e9a471ec54a6fc4e51e90817f9660fc714a",
+            "6b69dca15f65419b93a64a700e0df743755f48447cd7d88b690ec1c179b6300f",
+            "dd161b6fbee147492ad6c68ab9c6fd8c067518eec530236e32bc38d95673d20d",
+            "c7950280a696dfe0ad08e1f0ceec805877388e58e7a7573012b939ac957aee78",
+            "0acff17d76dddd014c08a7c0a26b51bcb21da07a3b5837a646a31cb206aa8b00",
+        ),
+        (
+            "c6f5ebb9d94d0d82716ebba90b240ee61f26ec6bc234178918d842d051ee8a41",
+            "724465604de8b434765c05e53ba85134cd5093f295427106a576e65e1a99c443",
+            "1272cc144eab2a7b4cf9877da962313ecb093fc4491d63e53ea865c4dab16602",
+            "4b3a511a2736c2b6e7cac08e47cc5f1aed767f5e5877888fbd4e292f6c874f05",
+            "41b186598c65584dfb11b6c4cf7bbcb152d558792cf2a58273615c713755c67d",
+            "3336690583128d78716d7f25d904f07ffc816754023a10a5fb079579cd5c8a52",
+        ),
+        (
+            "dd93539a31e9c2b5dd66a5bd642f743cd11c6f64d4411757d1a41f0aed60594c",
+            "1132ea3f86b7928a72d12242c66b7e4e484cfea1205d1445613c96bd5a0bf65a",
+            "c3bf9c84243f95502f6582eccc49b842b2b024a6876f3bec4674810e9920247a",
+            "01c63ddab7a055405038c8ff2a9bf28a19696d06f59e2b9c32e1b5c7476c4f27",
+            "b961695aab31302b6b95827b9ec3f5ed88d070c2b3e402127068894c92556371",
+            "822ad8391496830867c2c57b517851c8599ac22de87041a5cf6d10b2db68b036",
+        ),
+        (
+            "0e170b151670e2c3d932c254c8643c1e041421c003bb7a0bbffe3eb32c0c3169",
+            "4b77fe0050ade3f673512d0695ee17f8fd13d8972f0392c0b80a3e509a19033d",
+            "9d1e97efa6b53e27ec75d209f5de82aaaea61ab47046572e1fc06c9cb32aff0b",
+            "6c8e0916661dc6ba4d84ef5a5d5354160228f95733be0ccc77097d03c7253426",
+            "c39f0c14c6c2fecc65e1944e3376242606004928d4b7e84a06f4006392f22d2c",
+            "106e3f9abc546ecdf5a16fffa96315d4d9ae0c3615e27aec03cae59a94609a43",
+        ),
+        (
+            "13b5e7857d0a0c37b8407af248c56e0c1fe9f4bdc1163d4b27a961356e651735",
+            "1ab405cc295e1e9e307c739d83664b2259de939351012a121212c10a27052805",
+            "1be805f5a35ba109d33ebf1de6ec2a27eb4a1946ebfe942fd4519dbc47fdc52c",
+            "2d69ed51a7682ad5e8bced8fcc2bba2e78c788511318675d39bb2240956a3f3a",
+            "f900e2b953aced9887c40655c55e23eac50a612a701513391597a02a4760ef2f",
+            "b53c80f664e87dd10dd0bbd6363e37135cd8b901f889d9acaa14919f86d4fa6e",
+        ),
+        (
+            "f417eccb0e89c5cf84761a5978a1f11fcdccd4d174e6c726ce04f0e27033940b",
+            "7937dfa763bc8d0209100df52b40a1bfcea20c6b8300a2fb21cbe78b70a3c943",
+            "49251a4a6493de863e96069a4abec11085480dfefa9c9c566968970050ce4848",
+            "6d4fcb73724553d28d86274ea4e192df9b6fe13cf8e66922f0cfd76ee1d65d4f",
+            "68e00c24abcc37cd7b660d644c615060fe29c866f1e5252bac3908570090ca47",
+            "f8edde28b217eab83dda64bb4797a8a273ba6f69afee0ef4daa8ee8994b77e4c",
+        ),
+        (
+            "9cbd64027f45101008a382429db76492fdf8bc4758c2da3d907fc5b8e9eb2553",
+            "20917875652ee1ac97a229a1f7d2e8b7de7810be457f2f7ff1805355fdafdb1f",
+            "a245fcdf61bed395f72d16ee33af582f3241b916d4d152410c579ce2853ada3d",
+            "bc4edd77e473f1bc9f45ace3948a4d4adc71cd059e410abd8100190ee79b0173",
+            "7c2cec8c19172f63700059a1a5e47bda1e80ac891243abbe9efe7163ec3b4a33",
+            "d8cf460e12e0a7b1826a867ebc5476d8bf385b73a2e7e526e75708d231ee764c",
+        ),
+        (
+            "9a36bbfdf02738c80da9f28625665ad61734d49d078bfd88ac7eb7af51a5bc16",
+            "429d15f65699054e24859f4b68a31326dade29d9495205ce125f2896e55fe148",
+            "88e7db24f9f64501b55299cddc11bcb7054fae89e965f89839a66aa17058b153",
+            "dcd3d0f347c13d16322e92d28d096efcf112fe7651dd0257bfdddf4537059e5f",
+            "4599a5079a8e327ae923533bbdc246b03d55aac4bd38f8ba991f8f196c45db4d",
+            "d26b227872364938bf8e1a162d0f41d194e6b810166302bc33d45e14fc962454",
+        ),
+        (
+            "1f6a710ee2343d3d8ed954fb9a62e67b4e88aebc303a2b2e762c7feb2ae69268",
+            "8d1613ce3c32923fc658eac66a8040cf5efb61aee99951d591629abb215d7802",
+            "b679c2147b350788c28ed867db9d2796cbc7f81f06553528cd097018c83c4d2e",
+            "ac8084dc1e67cf7c54323fc205e3264bad83106b1ad47c03088f19a74c430b6b",
+            "92535e40a502abfdc7806a3430e2a5acef8c4c0e47a0d958e4c9e42f09891a66",
+            "1d641575d959dd5b2d22426ef6c6c9f6294ae837ceb446c069fecf9a8b3a8d1a",
+        ),
+        (
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "0100000000000000000000000000000000000000000000000000000000000000",
+            "ebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+        ),
+        (
+            "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "f2ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "0500000000000000000000000000000000000000000000000000000000000000",
+            "e8ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+        (
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "4401000000000000000000000000000000000000000000000000000000000000",
+            "2400000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "89e3388ee3388ee3388ee3388ee3388ee3388ee3388ee3388ee3388ee3388e23",
+        ),
+        (
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "3930000000000000000000000000000000000000000000000000000000000000",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "3930000000000000000000000000000000000000000000000000000000000000",
+            "b4cfffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
     ];
 
     #[test]
@@ -321,12 +482,24 @@ mod tests {
         // p, p + 1 and 2^255 - 1 are all accepted and reduced
         let p = fe("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
         assert!(p.equals(Fe::ZERO));
-        assert_eq!(hex(&fe("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f").to_bytes()), format!("01{}", "00".repeat(31)));
-        assert_eq!(hex(&fe("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f").to_bytes()), format!("12{}", "00".repeat(31)));
+        assert_eq!(
+            hex(&fe("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f").to_bytes()),
+            format!("01{}", "00".repeat(31))
+        );
+        assert_eq!(
+            hex(&fe("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f").to_bytes()),
+            format!("12{}", "00".repeat(31))
+        );
         // the top bit is dropped
-        assert_eq!(fe("0100000000000000000000000000000000000000000000000000000000000080").to_bytes()[0], 1);
+        assert_eq!(
+            fe("0100000000000000000000000000000000000000000000000000000000000080").to_bytes()[0],
+            1
+        );
         // p - 1 is the largest value that stays as it is
-        assert_eq!(hex(&fe("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f").to_bytes()), "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+        assert_eq!(
+            hex(&fe("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f").to_bytes()),
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+        );
     }
 
     #[test]
@@ -337,7 +510,10 @@ mod tests {
         assert!(one.add(one.neg()).equals(Fe::ZERO));
         assert!(Fe::ZERO.neg().equals(Fe::ZERO));
         assert!(!Fe::ZERO.is_negative());
-        assert_eq!(hex(&one.neg().to_bytes()), "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+        assert_eq!(
+            hex(&one.neg().to_bytes()),
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+        );
     }
 
     #[test]
@@ -356,11 +532,26 @@ mod tests {
         assert!(y.mul(small(5)).equals(small(4)));
         assert!(!x.is_negative());
         // and the limbs are what the encodings decode to
-        assert_eq!(hex(&Fe::D.to_bytes()), "a3785913ca4deb75abd841414d0a700098e879777940c78c73fe6f2bee6c0352");
-        assert_eq!(hex(&Fe::D2.to_bytes()), "59f1b226949bd6eb56b183829a14e00030d1f3eef2808e19e7fcdf56dcd90624");
-        assert_eq!(hex(&Fe::SQRT_M1.to_bytes()), "b0a00e4a271beec478e42fad0618432fa7d7fb3d99004d2b0bdfc14f8024832b");
-        assert_eq!(hex(&Fe::BASE_X.to_bytes()), "1ad5258f602d56c9b2a7259560c72c695cdcd6fd31e2a4c0fe536ecdd3366921");
-        assert_eq!(hex(&Fe::BASE_Y.to_bytes()), "5866666666666666666666666666666666666666666666666666666666666666");
+        assert_eq!(
+            hex(&Fe::D.to_bytes()),
+            "a3785913ca4deb75abd841414d0a700098e879777940c78c73fe6f2bee6c0352"
+        );
+        assert_eq!(
+            hex(&Fe::D2.to_bytes()),
+            "59f1b226949bd6eb56b183829a14e00030d1f3eef2808e19e7fcdf56dcd90624"
+        );
+        assert_eq!(
+            hex(&Fe::SQRT_M1.to_bytes()),
+            "b0a00e4a271beec478e42fad0618432fa7d7fb3d99004d2b0bdfc14f8024832b"
+        );
+        assert_eq!(
+            hex(&Fe::BASE_X.to_bytes()),
+            "1ad5258f602d56c9b2a7259560c72c695cdcd6fd31e2a4c0fe536ecdd3366921"
+        );
+        assert_eq!(
+            hex(&Fe::BASE_Y.to_bytes()),
+            "5866666666666666666666666666666666666666666666666666666666666666"
+        );
     }
 
     #[test]
@@ -409,8 +600,14 @@ mod tests {
             };
             let sq = x.square();
             assert!(sq.equals(x.mul(x)), "square");
-            assert!(sq.0.iter().all(|&l| l < (1u64 << 51) + (1 << 12)), "square leaves the slack");
-            assert!(x.mul(x).0.iter().all(|&l| l < (1u64 << 51) + (1 << 12)), "mul leaves the slack");
+            assert!(
+                sq.0.iter().all(|&l| l < (1u64 << 51) + (1 << 12)),
+                "square leaves the slack"
+            );
+            assert!(
+                x.mul(x).0.iter().all(|&l| l < (1u64 << 51) + (1 << 12)),
+                "mul leaves the slack"
+            );
             if i % 20 == 0 {
                 assert!(x.invert().equals(by_bits(x, inv_bits())), "invert");
                 assert!(x.pow22523().equals(by_bits(x, sqrt_bits())), "pow22523");

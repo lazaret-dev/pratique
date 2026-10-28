@@ -197,7 +197,12 @@ fn preferred_address(value: &[u8]) -> Result<PreferredAddress, Error> {
     if !r.is_empty() {
         return err("preferred_address is longer than what it holds");
     }
-    Ok(PreferredAddress { ipv4: (v4, p4), ipv6: (v6, p6), connection_id, stateless_reset_token: token })
+    Ok(PreferredAddress {
+        ipv4: (v4, p4),
+        ipv6: (v6, p6),
+        connection_id,
+        stateless_reset_token: token,
+    })
 }
 
 impl TransportParameters {
@@ -211,9 +216,17 @@ impl TransportParameters {
             let pid = r.varint().or(err("an id that is cut short"))?;
             let len = r.varint().or(err("a length that is cut short"))?;
             let value = usize::try_from(len).ok().and_then(|len| r.bytes(len).ok());
-            let Some(value) = value else { return err("a parameter longer than what is left") };
+            let Some(value) = value else {
+                return err("a parameter longer than what is left");
+            };
             ids.push(pid);
-            let server_only = |sender: Sender| if sender == Sender::Client { err("a client sent a parameter that only a server sends") } else { Ok(()) };
+            let server_only = |sender: Sender| {
+                if sender == Sender::Client {
+                    err("a client sent a parameter that only a server sends")
+                } else {
+                    Ok(())
+                }
+            };
             match pid {
                 id::ORIGINAL_DESTINATION_CONNECTION_ID => {
                     server_only(sender)?;
@@ -222,7 +235,9 @@ impl TransportParameters {
                 id::MAX_IDLE_TIMEOUT => p.max_idle_timeout = number(value)?,
                 id::STATELESS_RESET_TOKEN => {
                     server_only(sender)?;
-                    let Ok(token) = <[u8; 16]>::try_from(value) else { return err("a stateless_reset_token that is not 16 bytes") };
+                    let Ok(token) = <[u8; 16]>::try_from(value) else {
+                        return err("a stateless_reset_token that is not 16 bytes");
+                    };
                     p.stateless_reset_token = Some(token);
                 }
                 id::MAX_UDP_PAYLOAD_SIZE => {
@@ -232,8 +247,12 @@ impl TransportParameters {
                     }
                 }
                 id::INITIAL_MAX_DATA => p.initial_max_data = number(value)?,
-                id::INITIAL_MAX_STREAM_DATA_BIDI_LOCAL => p.initial_max_stream_data_bidi_local = number(value)?,
-                id::INITIAL_MAX_STREAM_DATA_BIDI_REMOTE => p.initial_max_stream_data_bidi_remote = number(value)?,
+                id::INITIAL_MAX_STREAM_DATA_BIDI_LOCAL => {
+                    p.initial_max_stream_data_bidi_local = number(value)?
+                }
+                id::INITIAL_MAX_STREAM_DATA_BIDI_REMOTE => {
+                    p.initial_max_stream_data_bidi_remote = number(value)?
+                }
                 id::INITIAL_MAX_STREAM_DATA_UNI => p.initial_max_stream_data_uni = number(value)?,
                 id::INITIAL_MAX_STREAMS_BIDI => {
                     p.initial_max_streams_bidi = number(value)?;
@@ -276,7 +295,9 @@ impl TransportParameters {
                         return err("active_connection_id_limit below 2");
                     }
                 }
-                id::INITIAL_SOURCE_CONNECTION_ID => p.initial_source_connection_id = Some(connection_id(value)?),
+                id::INITIAL_SOURCE_CONNECTION_ID => {
+                    p.initial_source_connection_id = Some(connection_id(value)?)
+                }
                 id::RETRY_SOURCE_CONNECTION_ID => {
                     server_only(sender)?;
                     p.retry_source_connection_id = Some(connection_id(value)?);
@@ -323,13 +344,26 @@ impl TransportParameters {
             bytes(&mut out, id::STATELESS_RESET_TOKEN, token);
         }
         if self.max_udp_payload_size != DEFAULT_MAX_UDP_PAYLOAD_SIZE {
-            number(&mut out, id::MAX_UDP_PAYLOAD_SIZE, self.max_udp_payload_size);
+            number(
+                &mut out,
+                id::MAX_UDP_PAYLOAD_SIZE,
+                self.max_udp_payload_size,
+            );
         }
         for (pid, v) in [
             (id::INITIAL_MAX_DATA, self.initial_max_data),
-            (id::INITIAL_MAX_STREAM_DATA_BIDI_LOCAL, self.initial_max_stream_data_bidi_local),
-            (id::INITIAL_MAX_STREAM_DATA_BIDI_REMOTE, self.initial_max_stream_data_bidi_remote),
-            (id::INITIAL_MAX_STREAM_DATA_UNI, self.initial_max_stream_data_uni),
+            (
+                id::INITIAL_MAX_STREAM_DATA_BIDI_LOCAL,
+                self.initial_max_stream_data_bidi_local,
+            ),
+            (
+                id::INITIAL_MAX_STREAM_DATA_BIDI_REMOTE,
+                self.initial_max_stream_data_bidi_remote,
+            ),
+            (
+                id::INITIAL_MAX_STREAM_DATA_UNI,
+                self.initial_max_stream_data_uni,
+            ),
             (id::INITIAL_MAX_STREAMS_BIDI, self.initial_max_streams_bidi),
             (id::INITIAL_MAX_STREAMS_UNI, self.initial_max_streams_uni),
         ] {
@@ -338,7 +372,11 @@ impl TransportParameters {
             }
         }
         if self.ack_delay_exponent != DEFAULT_ACK_DELAY_EXPONENT {
-            number(&mut out, id::ACK_DELAY_EXPONENT, self.ack_delay_exponent as u64);
+            number(
+                &mut out,
+                id::ACK_DELAY_EXPONENT,
+                self.ack_delay_exponent as u64,
+            );
         }
         if self.max_ack_delay != DEFAULT_MAX_ACK_DELAY {
             number(&mut out, id::MAX_ACK_DELAY, self.max_ack_delay);
@@ -358,7 +396,11 @@ impl TransportParameters {
             bytes(&mut out, id::PREFERRED_ADDRESS, &v);
         }
         if self.active_connection_id_limit != DEFAULT_ACTIVE_CONNECTION_ID_LIMIT {
-            number(&mut out, id::ACTIVE_CONNECTION_ID_LIMIT, self.active_connection_id_limit);
+            number(
+                &mut out,
+                id::ACTIVE_CONNECTION_ID_LIMIT,
+                self.active_connection_id_limit,
+            );
         }
         if let Some(cid) = &self.initial_source_connection_id {
             bytes(&mut out, id::INITIAL_SOURCE_CONNECTION_ID, cid);
@@ -387,7 +429,9 @@ mod tests {
 
     fn hex(s: &str) -> Vec<u8> {
         let s: String = s.split_whitespace().collect();
-        (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+        (0..s.len() / 2)
+            .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+            .collect()
     }
 
     fn client_params() -> TransportParameters {
@@ -418,7 +462,10 @@ mod tests {
             max_datagram_frame_size: Some(1200),
             preferred_address: Some(PreferredAddress {
                 ipv4: ([192, 0, 2, 1], 4433),
-                ipv6: ([0x20, 0x01, 0xd, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 4434),
+                ipv6: (
+                    [0x20, 0x01, 0xd, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+                    4434,
+                ),
                 connection_id: vec![5; 6],
                 stateless_reset_token: [0xcd; 16],
             }),
@@ -431,24 +478,30 @@ mod tests {
         // hand-computed: id, length, value for each parameter that is not a default. 30000 is a 4-byte varint (0x80007530), so
         // are 2^20 (0x80100000) and 2^18 (0x80040000); 100 is two bytes (0x4064).
         let want = [
-            hex("01 04 80 00 75 30"),       // max_idle_timeout
-            hex("04 04 80 10 00 00"),       // initial_max_data
-            hex("05 04 80 04 00 00"),       // initial_max_stream_data_bidi_local
-            hex("06 04 80 04 00 00"),       // initial_max_stream_data_bidi_remote
-            hex("07 04 80 04 00 00"),       // initial_max_stream_data_uni
-            hex("08 02 40 64"),             // initial_max_streams_bidi
-            hex("09 02 40 64"),             // initial_max_streams_uni
-            hex("0e 01 04"),                // active_connection_id_limit
+            hex("01 04 80 00 75 30"),             // max_idle_timeout
+            hex("04 04 80 10 00 00"),             // initial_max_data
+            hex("05 04 80 04 00 00"),             // initial_max_stream_data_bidi_local
+            hex("06 04 80 04 00 00"),             // initial_max_stream_data_bidi_remote
+            hex("07 04 80 04 00 00"),             // initial_max_stream_data_uni
+            hex("08 02 40 64"),                   // initial_max_streams_bidi
+            hex("09 02 40 64"),                   // initial_max_streams_uni
+            hex("0e 01 04"),                      // active_connection_id_limit
             hex("0f 08 01 02 03 04 05 06 07 08"), // initial_source_connection_id
         ]
         .concat();
         assert_eq!(client_params().encode(Sender::Client), want);
-        assert_eq!(TransportParameters::decode(&want, Sender::Client).unwrap(), client_params());
+        assert_eq!(
+            TransportParameters::decode(&want, Sender::Client).unwrap(),
+            client_params()
+        );
     }
 
     #[test]
     fn what_is_written_is_read_back() {
-        for (p, sender) in [(client_params(), Sender::Client), (server_params(), Sender::Server)] {
+        for (p, sender) in [
+            (client_params(), Sender::Client),
+            (server_params(), Sender::Server),
+        ] {
             let bytes = p.encode(sender);
             assert_eq!(TransportParameters::decode(&bytes, sender).unwrap(), p);
             // and the order of the parameters does not matter: write them backwards
@@ -485,17 +538,39 @@ mod tests {
         let base = client_params().encode(Sender::Client);
         let cases: [(&str, Vec<u8>); 4] = [
             ("original_destination_connection_id", hex("00 01 aa")),
-            ("stateless_reset_token", [hex("02 10").as_slice(), &[0; 16]].concat()),
+            (
+                "stateless_reset_token",
+                [hex("02 10").as_slice(), &[0; 16]].concat(),
+            ),
             ("retry_source_connection_id", hex("10 00")),
-            ("preferred_address", [hex("0d 2d").as_slice(), &[0; 4], &[0, 0], &[0; 16], &[0, 0], &[4], &[1; 4], &[0; 16]].concat()),
+            (
+                "preferred_address",
+                [
+                    hex("0d 2d").as_slice(),
+                    &[0; 4],
+                    &[0, 0],
+                    &[0; 16],
+                    &[0, 0],
+                    &[4],
+                    &[1; 4],
+                    &[0; 16],
+                ]
+                .concat(),
+            ),
         ];
         for (name, extra) in cases {
             let bytes = [base.clone(), extra.clone()].concat();
-            assert!(TransportParameters::decode(&bytes, Sender::Client).is_err(), "{name} from a client");
+            assert!(
+                TransportParameters::decode(&bytes, Sender::Client).is_err(),
+                "{name} from a client"
+            );
             // a server may send it (the id it needs is added)
             let server = [bytes.clone(), hex("00 01 aa")].concat();
             if name != "original_destination_connection_id" {
-                assert!(TransportParameters::decode(&server, Sender::Server).is_ok(), "{name} from a server");
+                assert!(
+                    TransportParameters::decode(&server, Sender::Server).is_ok(),
+                    "{name} from a server"
+                );
             }
         }
     }
@@ -514,7 +589,8 @@ mod tests {
         assert_eq!(p.initial_source_connection_id, Some(vec![]));
         assert_eq!(p.retry_source_connection_id, None);
         // a retry_source_connection_id of no bytes is not the same as none
-        let p = TransportParameters::decode(&with(&["0f 00", "00 00", "10 00"]), Sender::Server).unwrap();
+        let p = TransportParameters::decode(&with(&["0f 00", "00 00", "10 00"]), Sender::Server)
+            .unwrap();
         assert_eq!(p.retry_source_connection_id, Some(vec![]));
     }
 
@@ -531,7 +607,13 @@ mod tests {
         assert_eq!(p.active_connection_id_limit, 2);
         assert_eq!(p.max_datagram_frame_size, None);
         assert!(p.unknown.is_empty());
-        assert_eq!(p, TransportParameters { initial_source_connection_id: Some(vec![]), ..TransportParameters::default() });
+        assert_eq!(
+            p,
+            TransportParameters {
+                initial_source_connection_id: Some(vec![]),
+                ..TransportParameters::default()
+            }
+        );
     }
 
     #[test]
@@ -543,12 +625,24 @@ mod tests {
             ("max_ack_delay 2^14", "0b 04 80 00 40 00"),
             ("active_connection_id_limit 1", "0e 01 01"),
             ("active_connection_id_limit 0", "0e 01 00"),
-            ("initial_max_streams_bidi 2^60 + 1", "08 08 d0 00 00 00 00 00 00 01"),
-            ("initial_max_streams_uni 2^62 - 1", "09 08 ff ff ff ff ff ff ff ff"),
-            ("retry_source_connection_id of 21 bytes", "10 15 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10 11 12 13 14"),
+            (
+                "initial_max_streams_bidi 2^60 + 1",
+                "08 08 d0 00 00 00 00 00 00 01",
+            ),
+            (
+                "initial_max_streams_uni 2^62 - 1",
+                "09 08 ff ff ff ff ff ff ff ff",
+            ),
+            (
+                "retry_source_connection_id of 21 bytes",
+                "10 15 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10 11 12 13 14",
+            ),
             ("disable_active_migration with a byte", "0c 01 00"),
             ("a number cut short inside its length", "04 01 40"),
-            ("a number with a length of two for a one-byte number", "04 02 05 00"),
+            (
+                "a number with a length of two for a one-byte number",
+                "04 02 05 00",
+            ),
             ("an empty number", "04 00"),
             ("a length past the end", "04 05 01"),
             ("a cut-off length", "04"),
@@ -556,8 +650,15 @@ mod tests {
         ];
         for (what, bytes) in refused {
             let bytes = [ok.clone(), hex(bytes)].concat();
-            assert!(TransportParameters::decode(&bytes, Sender::Server).is_err(), "{what}");
-            assert!(TransportParameters::decode(&[bytes, hex("00 00")].concat(), Sender::Server).is_err(), "{what}");
+            assert!(
+                TransportParameters::decode(&bytes, Sender::Server).is_err(),
+                "{what}"
+            );
+            assert!(
+                TransportParameters::decode(&[bytes, hex("00 00")].concat(), Sender::Server)
+                    .is_err(),
+                "{what}"
+            );
         }
         // the limits themselves are fine
         let accepted: &[(&str, &str)] = &[
@@ -565,25 +666,45 @@ mod tests {
             ("ack_delay_exponent 20", "0a 01 14"),
             ("max_ack_delay 2^14 - 1", "0b 02 7f ff"),
             ("active_connection_id_limit 2", "0e 01 02"),
-            ("initial_max_streams_uni 2^60", "09 08 d0 00 00 00 00 00 00 00"),
+            (
+                "initial_max_streams_uni 2^60",
+                "09 08 d0 00 00 00 00 00 00 00",
+            ),
         ];
         for (what, bytes) in accepted {
             let bytes = [ok.clone(), hex(bytes)].concat();
-            assert!(TransportParameters::decode(&bytes, Sender::Client).is_ok(), "{what}");
+            assert!(
+                TransportParameters::decode(&bytes, Sender::Client).is_ok(),
+                "{what}"
+            );
         }
         // a connection id of 20 bytes is carried, one of 21 is not (in each of the three parameters that carry one)
-        let ids = [("initial_source_connection_id", "0f", "00 00"), ("original_destination_connection_id", "00", "0f 00"), ("retry_source_connection_id", "10", "0f 00 00 00")];
+        let ids = [
+            ("initial_source_connection_id", "0f", "00 00"),
+            ("original_destination_connection_id", "00", "0f 00"),
+            ("retry_source_connection_id", "10", "0f 00 00 00"),
+        ];
         for (name, pid, rest) in ids {
             let with = |n: usize| [hex(rest), hex(pid), vec![n as u8], vec![7; n]].concat();
-            assert!(TransportParameters::decode(&with(20), Sender::Server).is_ok(), "{name}: 20 bytes");
-            assert!(TransportParameters::decode(&with(21), Sender::Server).is_err(), "{name}: 21 bytes");
+            assert!(
+                TransportParameters::decode(&with(20), Sender::Server).is_ok(),
+                "{name}: 20 bytes"
+            );
+            assert!(
+                TransportParameters::decode(&with(21), Sender::Server).is_err(),
+                "{name}: 21 bytes"
+            );
         }
     }
 
     #[test]
     fn numbers_may_be_written_in_more_bytes_than_they_need() {
         // RFC 9000 section 16: only the frame type has to be in the fewest bytes
-        let p = TransportParameters::decode(&hex("0f 00 04 04 80 00 00 07 01 02 40 05"), Sender::Client).unwrap();
+        let p = TransportParameters::decode(
+            &hex("0f 00 04 04 80 00 00 07 01 02 40 05"),
+            Sender::Client,
+        )
+        .unwrap();
         assert_eq!(p.initial_max_data, 7);
         assert_eq!(p.max_idle_timeout, 5);
         // and so may the id and the length
@@ -593,11 +714,23 @@ mod tests {
 
     #[test]
     fn a_parameter_sent_twice_is_refused_even_if_the_values_agree() {
-        for dup in ["0f 00 04 01 07 04 01 07", "0f 00 0c 00 0c 00", "0f 00 0f 00", "0f 00 21 00 21 00", "0f 00 04 01 07 04 01 08"] {
-            assert!(TransportParameters::decode(&hex(dup), Sender::Client).is_err(), "{dup}");
+        for dup in [
+            "0f 00 04 01 07 04 01 07",
+            "0f 00 0c 00 0c 00",
+            "0f 00 0f 00",
+            "0f 00 21 00 21 00",
+            "0f 00 04 01 07 04 01 08",
+        ] {
+            assert!(
+                TransportParameters::decode(&hex(dup), Sender::Client).is_err(),
+                "{dup}"
+            );
         }
         // an id in two spellings is still one id
-        assert!(TransportParameters::decode(&hex("0f 00 04 01 07 40 04 01 07"), Sender::Client).is_err());
+        assert!(
+            TransportParameters::decode(&hex("0f 00 04 01 07 40 04 01 07"), Sender::Client)
+                .is_err()
+        );
     }
 
     #[test]
@@ -605,28 +738,46 @@ mod tests {
         let grease = 27 + 31 * 200;
         assert!(is_grease(grease) && is_grease(27) && !is_grease(28) && !is_grease(0));
         let mut p = client_params();
-        p.unknown = vec![(grease, vec![1, 2, 3]), (0x4000_0000, vec![]), (0x21, vec![9; 40])];
+        p.unknown = vec![
+            (grease, vec![1, 2, 3]),
+            (0x4000_0000, vec![]),
+            (0x21, vec![9; 40]),
+        ];
         let bytes = p.encode(Sender::Client);
         let read = TransportParameters::decode(&bytes, Sender::Client).unwrap();
         assert_eq!(read, p);
         assert_eq!(read.unknown.len(), 3);
         // the ones the draft documents that are not known here are unknown too
-        let read = TransportParameters::decode(&[hex("0f 00 c0 00 00 00 ff 04 de 1b 01 05")].concat(), Sender::Client).unwrap();
+        let read = TransportParameters::decode(
+            &[hex("0f 00 c0 00 00 00 ff 04 de 1b 01 05")].concat(),
+            Sender::Client,
+        )
+        .unwrap();
         assert_eq!(read.unknown, vec![(0xff04de1b, vec![5])]);
     }
 
     #[test]
     fn the_preferred_address_is_read_field_by_field() {
-        let p = TransportParameters::decode(&server_params().encode(Sender::Server), Sender::Server).unwrap();
+        let p =
+            TransportParameters::decode(&server_params().encode(Sender::Server), Sender::Server)
+                .unwrap();
         let pa = p.preferred_address.unwrap();
         assert_eq!(pa.ipv4_address(), Some(([192, 0, 2, 1], 4433)));
         assert_eq!(pa.ipv6_address().unwrap().1, 4434);
         assert_eq!(pa.connection_id, vec![5; 6]);
         assert_eq!(pa.stateless_reset_token, [0xcd; 16]);
         // a family that is not offered has zeros, and one with a port and no address (or the other way) is not an address
-        let none = PreferredAddress { ipv4: ([0; 4], 0), ipv6: ([1; 16], 0), connection_id: vec![1], stateless_reset_token: [0; 16] };
+        let none = PreferredAddress {
+            ipv4: ([0; 4], 0),
+            ipv6: ([1; 16], 0),
+            connection_id: vec![1],
+            stateless_reset_token: [0; 16],
+        };
         assert_eq!((none.ipv4_address(), none.ipv6_address()), (None, None));
-        let only_port = PreferredAddress { ipv4: ([0; 4], 80), ..none.clone() };
+        let only_port = PreferredAddress {
+            ipv4: ([0; 4], 80),
+            ..none.clone()
+        };
         assert_eq!(only_port.ipv4_address(), None);
         // too short, too long, a connection id of no bytes or of 21
         let pa_value = |len: usize| {
@@ -649,7 +800,10 @@ mod tests {
         assert!(TransportParameters::decode(&with(&pa_value(21)), Sender::Server).is_err());
         let v = pa_value(4);
         assert!(TransportParameters::decode(&with(&v[..v.len() - 1]), Sender::Server).is_err());
-        assert!(TransportParameters::decode(&with(&[v.clone(), vec![0]].concat()), Sender::Server).is_err());
+        assert!(
+            TransportParameters::decode(&with(&[v.clone(), vec![0]].concat()), Sender::Server)
+                .is_err()
+        );
         assert!(TransportParameters::decode(&with(&v[..10]), Sender::Server).is_err());
         assert!(TransportParameters::decode(&with(&[]), Sender::Server).is_err());
     }
@@ -659,7 +813,10 @@ mod tests {
         let with = |n: usize| [hex("0f 00 00 00 02"), vec![n as u8], vec![1; n]].concat();
         assert!(TransportParameters::decode(&with(16), Sender::Server).is_ok());
         for n in [0, 15, 17] {
-            assert!(TransportParameters::decode(&with(n), Sender::Server).is_err(), "{n} bytes");
+            assert!(
+                TransportParameters::decode(&with(n), Sender::Server).is_err(),
+                "{n} bytes"
+            );
         }
     }
 
@@ -672,7 +829,10 @@ mod tests {
         p.initial_max_streams_bidi = MAX_STREAMS_LIMIT;
         p.max_udp_payload_size = MAX_VARINT;
         let bytes = p.encode(Sender::Client);
-        assert_eq!(TransportParameters::decode(&bytes, Sender::Client).unwrap(), p);
+        assert_eq!(
+            TransportParameters::decode(&bytes, Sender::Client).unwrap(),
+            p
+        );
     }
 
     /// The line that quic-go's tests oracle (`tools/quicgo_oracle`) gives for a set of parameters, field by field.
@@ -682,15 +842,31 @@ mod tests {
         let pa = match &p.preferred_address {
             None => "none".to_string(),
             Some(pa) => {
-                let v4 = pa.ipv4_address().map(|(a, port)| std::net::SocketAddr::from((a, port)).to_string()).unwrap_or("-".into());
-                let v6 = pa.ipv6_address().map(|(a, port)| std::net::SocketAddr::from((a, port)).to_string()).unwrap_or("-".into());
-                format!("{v4},{v6},{},{}", hex(&pa.connection_id), hex(&pa.stateless_reset_token))
+                let v4 = pa
+                    .ipv4_address()
+                    .map(|(a, port)| std::net::SocketAddr::from((a, port)).to_string())
+                    .unwrap_or("-".into());
+                let v6 = pa
+                    .ipv6_address()
+                    .map(|(a, port)| std::net::SocketAddr::from((a, port)).to_string())
+                    .unwrap_or("-".into());
+                format!(
+                    "{v4},{v6},{},{}",
+                    hex(&pa.connection_id),
+                    hex(&pa.stateless_reset_token)
+                )
             }
         };
         vec![
             ("odcid", opt(&p.original_destination_connection_id)),
             ("iscid", opt(&p.initial_source_connection_id)),
-            ("rscid", p.retry_source_connection_id.as_ref().map(|c| hex(c)).unwrap_or("none".into())),
+            (
+                "rscid",
+                p.retry_source_connection_id
+                    .as_ref()
+                    .map(|c| hex(c))
+                    .unwrap_or("none".into()),
+            ),
             ("idle", p.max_idle_timeout.to_string()),
             ("udp", p.max_udp_payload_size.to_string()),
             ("data", p.initial_max_data.to_string()),
@@ -704,8 +880,19 @@ mod tests {
             ("dam", p.disable_active_migration.to_string()),
             ("pa", pa),
             ("ctl", p.active_connection_id_limit.to_string()),
-            ("srt", p.stateless_reset_token.as_ref().map(|t| hex(t)).unwrap_or("none".into())),
-            ("dgram", p.max_datagram_frame_size.map(|v| v.to_string()).unwrap_or("none".into())),
+            (
+                "srt",
+                p.stateless_reset_token
+                    .as_ref()
+                    .map(|t| hex(t))
+                    .unwrap_or("none".into()),
+            ),
+            (
+                "dgram",
+                p.max_datagram_frame_size
+                    .map(|v| v.to_string())
+                    .unwrap_or("none".into()),
+            ),
         ]
     }
 
@@ -725,16 +912,30 @@ mod tests {
             let head = parts.next().unwrap();
             let bytes = parts.next().unwrap();
             let result = parts.next().unwrap();
-            let data: Vec<u8> = (0..bytes.len() / 2).map(|i| u8::from_str_radix(&bytes[2 * i..2 * i + 2], 16).unwrap()).collect();
-            let sender = if head.starts_with('C') { Sender::Client } else { Sender::Server };
+            let data: Vec<u8> = (0..bytes.len() / 2)
+                .map(|i| u8::from_str_radix(&bytes[2 * i..2 * i + 2], 16).unwrap())
+                .collect();
+            let sender = if head.starts_with('C') {
+                Sender::Client
+            } else {
+                Sender::Server
+            };
             let ours = TransportParameters::decode(&data, sender);
             if result == "ERR" {
-                assert!(ours.is_err(), "{line}\nquic-go refuses it, we read {ours:?}");
+                assert!(
+                    ours.is_err(),
+                    "{line}\nquic-go refuses it, we read {ours:?}"
+                );
                 refused += 1;
                 continue;
             }
             let p = ours.unwrap_or_else(|e| panic!("{line}\nquic-go reads it, we refuse it: {e}"));
-            let theirs: Vec<(&str, &str)> = result.strip_prefix("OK ").unwrap().split(' ').map(|kv| kv.split_once('=').unwrap()).collect();
+            let theirs: Vec<(&str, &str)> = result
+                .strip_prefix("OK ")
+                .unwrap()
+                .split(' ')
+                .map(|kv| kv.split_once('=').unwrap())
+                .collect();
             let mine = describe(&p);
             assert_eq!(theirs.len(), mine.len(), "{line}");
             for ((tk, tv), (mk, mv)) in theirs.iter().zip(&mine) {
@@ -742,10 +943,21 @@ mod tests {
                 match *mk {
                     "idle" => {
                         let go_ms: i64 = tv.parse().unwrap();
-                        let ns = (p.max_idle_timeout as i64).wrapping_mul(1_000_000).max(5_000_000_000);
-                        assert!(go_ms == ns / 1_000_000 || (p.max_idle_timeout == 0 && go_ms == 0), "{line}\nidle: quic-go {go_ms} ms, we read {}", p.max_idle_timeout);
+                        let ns = (p.max_idle_timeout as i64)
+                            .wrapping_mul(1_000_000)
+                            .max(5_000_000_000);
+                        assert!(
+                            go_ms == ns / 1_000_000 || (p.max_idle_timeout == 0 && go_ms == 0),
+                            "{line}\nidle: quic-go {go_ms} ms, we read {}",
+                            p.max_idle_timeout
+                        );
                     }
-                    "udp" => assert!(*tv == mv || (*tv == &MAX_VARINT.to_string() && p.max_udp_payload_size == DEFAULT_MAX_UDP_PAYLOAD_SIZE), "{line}\nudp: quic-go {tv}, we read {mv}"),
+                    "udp" => assert!(
+                        *tv == mv
+                            || (*tv == &MAX_VARINT.to_string()
+                                && p.max_udp_payload_size == DEFAULT_MAX_UDP_PAYLOAD_SIZE),
+                        "{line}\nudp: quic-go {tv}, we read {mv}"
+                    ),
                     _ => assert_eq!(tv, mv, "{line}\n{mk}"),
                 }
             }
@@ -757,7 +969,10 @@ mod tests {
         }
         // all of it was used, and a good part of what is read is read by both
         assert_eq!(checked + refused, 2800);
-        assert!(accepted > 800 && refused > 1500, "{accepted} accepted, {refused} refused");
+        assert!(
+            accepted > 800 && refused > 1500,
+            "{accepted} accepted, {refused} refused"
+        );
     }
 
     #[test]

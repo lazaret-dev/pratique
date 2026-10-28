@@ -13,25 +13,55 @@ use std::time::Duration;
 /// A handler that says what it got: method, target, authority and the body (its length and the body itself).
 fn echo(mut req: Request) -> Response {
     let body = req.read_body(1 << 24);
-    let trailers: Vec<String> = req.body().trailers().iter().map(|(n, v)| format!("{n}={v}")).collect();
+    let trailers: Vec<String> = req
+        .body()
+        .trailers()
+        .iter()
+        .map(|(n, v)| format!("{n}={v}"))
+        .collect();
     match body {
-        Ok(b) => Response::text(200, format!("{} {} {} {} {}|{}", req.method(), req.target(), req.authority(), b.len(), String::from_utf8_lossy(&b), trailers.join(","))),
+        Ok(b) => Response::text(
+            200,
+            format!(
+                "{} {} {} {} {}|{}",
+                req.method(),
+                req.target(),
+                req.authority(),
+                b.len(),
+                String::from_utf8_lossy(&b),
+                trailers.join(",")
+            ),
+        ),
         Err(e) => Response::text(400, format!("body: {e}")),
     }
 }
 
 fn statuses(server: &Server, raw: &str) -> Vec<u16> {
-    responses(&server.exchange(raw.as_bytes()), &[]).iter().map(|r| r.status).collect()
+    responses(&server.exchange(raw.as_bytes()), &[])
+        .iter()
+        .map(|r| r.status)
+        .collect()
 }
 
 // ------------------------------------------------------------------------------------------------ the parts
 
 #[test]
 fn request_lines_are_three_parts_and_nothing_else() {
-    let ok = |l: &str| request_line(l.as_bytes()).map(|(m, t, v)| format!("{m} {t} {v}")).map_err(|b| b.status);
+    let ok = |l: &str| {
+        request_line(l.as_bytes())
+            .map(|(m, t, v)| format!("{m} {t} {v}"))
+            .map_err(|b| b.status)
+    };
     assert_eq!(ok("GET / HTTP/1.1"), Ok("GET / HTTP/1.1".into()));
-    assert_eq!(ok("POST /a?b=c HTTP/1.0"), Ok("POST /a?b=c HTTP/1.0".into()));
-    assert_eq!(ok("GET / HTTP/1.2"), Ok("GET / HTTP/1.1".into()), "a later 1.x is answered as 1.1");
+    assert_eq!(
+        ok("POST /a?b=c HTTP/1.0"),
+        Ok("POST /a?b=c HTTP/1.0".into())
+    );
+    assert_eq!(
+        ok("GET / HTTP/1.2"),
+        Ok("GET / HTTP/1.1".into()),
+        "a later 1.x is answered as 1.1"
+    );
     for (line, status) in [
         ("GET  / HTTP/1.1", 400),
         ("GET / HTTP/1.1 ", 400),
@@ -53,15 +83,24 @@ fn request_lines_are_three_parts_and_nothing_else() {
 #[test]
 fn field_lines_are_a_name_a_colon_and_a_clean_value() {
     let f = |l: &[u8]| field_line(l).map_err(|b| b.why);
-    assert_eq!(f(b"Host: example.com").unwrap(), ("host".into(), "example.com".into()));
+    assert_eq!(
+        f(b"Host: example.com").unwrap(),
+        ("host".into(), "example.com".into())
+    );
     assert_eq!(f(b"X-A:\t a b \t").unwrap(), ("x-a".into(), "a b".into()));
     assert_eq!(f(b"X-Empty:").unwrap(), ("x-empty".into(), "".into()));
     assert_eq!(f("X-U: caf\u{e9}".as_bytes()).unwrap().1, "caf\u{e9}");
     for (line, why) in [
         (&b" folded: x"[..], "obsolete line folding"),
         (b"\tfolded: x", "obsolete line folding"),
-        (b"Transfer-Encoding : chunked", "followed by something other than a colon"),
-        (b"Transfer-Encoding\t: chunked", "followed by something other than a colon"),
+        (
+            b"Transfer-Encoding : chunked",
+            "followed by something other than a colon",
+        ),
+        (
+            b"Transfer-Encoding\t: chunked",
+            "followed by something other than a colon",
+        ),
         (b": x", "without a name"),
         (b"X-A: a\x00b", "control character"),
         (b"X-A: a\x7fb", "control character"),
@@ -81,8 +120,28 @@ fn chunk_sizes_are_plain_hexadecimal_and_extensions_well_formed() {
     assert_eq!(chunk_size(b"ffffffffffffffff"), Ok(u64::MAX));
     assert_eq!(chunk_size(b"5;name"), Ok(5));
     assert_eq!(chunk_size(b"5 ; name = value ; other=\"a \\\" b\""), Ok(5));
-    for line in [&b"0x5"[..], b"-5", b" 5", b"+5", b"5 ", b"5;", b"5;=x", b"5;a=", b"5;a=\"x", b"5;a=\"x\x01\"", b"5\tx", b"10000000000000000", b"5;a b", b"", b"g"] {
-        assert!(chunk_size(line).is_err(), "{:?}", String::from_utf8_lossy(line));
+    for line in [
+        &b"0x5"[..],
+        b"-5",
+        b" 5",
+        b"+5",
+        b"5 ",
+        b"5;",
+        b"5;=x",
+        b"5;a=",
+        b"5;a=\"x",
+        b"5;a=\"x\x01\"",
+        b"5\tx",
+        b"10000000000000000",
+        b"5;a b",
+        b"",
+        b"g",
+    ] {
+        assert!(
+            chunk_size(line).is_err(),
+            "{:?}",
+            String::from_utf8_lossy(line)
+        );
     }
 }
 
@@ -95,13 +154,27 @@ fn every_ambiguous_framing_is_refused() {
     let h = |extra: &[(&str, &str)], version: Version| {
         let mut headers = vec![("host".to_string(), "example.com".to_string())];
         headers.extend(extra.iter().map(|(n, v)| (n.to_string(), v.to_string())));
-        check("POST".into(), "/".into(), version, headers, &config).map(|c| c.method).map_err(|b| b.status)
+        check("POST".into(), "/".into(), version, headers, &config)
+            .map(|c| c.method)
+            .map_err(|b| b.status)
     };
     use Version::*;
     for (fields, version, status) in [
-        (&[("content-length", "6"), ("transfer-encoding", "chunked")][..], Http11, 400),
-        (&[("transfer-encoding", "chunked"), ("content-length", "6")], Http11, 400),
-        (&[("transfer-encoding", "chunked"), ("transfer-encoding", "x")], Http11, 400),
+        (
+            &[("content-length", "6"), ("transfer-encoding", "chunked")][..],
+            Http11,
+            400,
+        ),
+        (
+            &[("transfer-encoding", "chunked"), ("content-length", "6")],
+            Http11,
+            400,
+        ),
+        (
+            &[("transfer-encoding", "chunked"), ("transfer-encoding", "x")],
+            Http11,
+            400,
+        ),
         (&[("transfer-encoding", "xchunked")], Http11, 400),
         (&[("transfer-encoding", "chunked, chunked")], Http11, 400),
         (&[("transfer-encoding", "chunked, identity")], Http11, 400),
@@ -112,7 +185,11 @@ fn every_ambiguous_framing_is_refused() {
         (&[("transfer-encoding", "")], Http11, 400),
         (&[("transfer-encoding", "gzip, chunked")], Http11, 501),
         (&[("transfer-encoding", "chunked")], Http10, 400),
-        (&[("content-length", "5"), ("content-length", "5")], Http11, 400),
+        (
+            &[("content-length", "5"), ("content-length", "5")],
+            Http11,
+            400,
+        ),
         (&[("content-length", "5, 5")], Http11, 400),
         (&[("content-length", "+5")], Http11, 400),
         (&[("content-length", "-1")], Http11, 400),
@@ -143,17 +220,50 @@ fn every_ambiguous_framing_is_refused() {
 fn targets_and_hosts_are_checked() {
     let config = HttpConfig::default();
     let c = |method: &str, target: &str, hosts: &[&str], version: Version| {
-        let headers = hosts.iter().map(|h| ("host".to_string(), h.to_string())).collect();
-        check(method.into(), target.into(), version, headers, &config).map(|c| c.authority).map_err(|b| b.status)
+        let headers = hosts
+            .iter()
+            .map(|h| ("host".to_string(), h.to_string()))
+            .collect();
+        check(method.into(), target.into(), version, headers, &config)
+            .map(|c| c.authority)
+            .map_err(|b| b.status)
     };
     use Version::*;
-    assert_eq!(c("GET", "/a", &["example.com:8080"], Http11), Ok("example.com:8080".into()));
-    assert_eq!(c("GET", "http://other.example/x", &["example.com"], Http11), Ok("other.example".into()), "a URL's authority, not Host's");
-    assert_eq!(c("GET", "https://user@other.example:8443?q", &["example.com"], Http11), Ok("other.example:8443".into()));
-    assert_eq!(c("CONNECT", "example.com:443", &["example.com:443"], Http11), Ok("example.com:443".into()));
-    assert_eq!(c("CONNECT", "[2001:db8::1]:443", &["x"], Http11), Ok("[2001:db8::1]:443".into()));
-    assert_eq!(c("OPTIONS", "*", &["example.com"], Http11), Ok("example.com".into()));
-    assert_eq!(c("GET", "/", &[], Http10), Ok("".into()), "HTTP/1.0 needs no Host");
+    assert_eq!(
+        c("GET", "/a", &["example.com:8080"], Http11),
+        Ok("example.com:8080".into())
+    );
+    assert_eq!(
+        c("GET", "http://other.example/x", &["example.com"], Http11),
+        Ok("other.example".into()),
+        "a URL's authority, not Host's"
+    );
+    assert_eq!(
+        c(
+            "GET",
+            "https://user@other.example:8443?q",
+            &["example.com"],
+            Http11
+        ),
+        Ok("other.example:8443".into())
+    );
+    assert_eq!(
+        c("CONNECT", "example.com:443", &["example.com:443"], Http11),
+        Ok("example.com:443".into())
+    );
+    assert_eq!(
+        c("CONNECT", "[2001:db8::1]:443", &["x"], Http11),
+        Ok("[2001:db8::1]:443".into())
+    );
+    assert_eq!(
+        c("OPTIONS", "*", &["example.com"], Http11),
+        Ok("example.com".into())
+    );
+    assert_eq!(
+        c("GET", "/", &[], Http10),
+        Ok("".into()),
+        "HTTP/1.0 needs no Host"
+    );
     for (method, target, hosts) in [
         ("GET", "/", &[][..]),
         ("GET", "/", &["a.example", "b.example"]),
@@ -170,7 +280,11 @@ fn targets_and_hosts_are_checked() {
         ("CONNECT", "example.com:", &["a"]),
         ("CONNECT", ":443", &["a"]),
     ] {
-        assert_eq!(c(method, target, hosts, Http11), Err(400), "{method} {target} {hosts:?}");
+        assert_eq!(
+            c(method, target, hosts, Http11),
+            Err(400),
+            "{method} {target} {hosts:?}"
+        );
     }
 }
 
@@ -231,14 +345,37 @@ fn keep_alive_and_pipelining_answer_in_order_on_one_connection() {
                \r\nGET /four HTTP/1.1\r\nHost: a\r\n\r\n";
     let rs = responses(&s.exchange(raw.as_bytes()), &[]);
     let texts: Vec<String> = rs.iter().map(|r| r.text()).collect();
-    assert_eq!(texts, ["GET /one a 0 |", "POST /two a 5 hello|", "POST /three a 5 abcde|t-one=1,t-two=2", "GET /four a 0 |"]);
-    assert!(rs.iter().all(|r| r.header("connection").is_none() && r.header("date").is_some()));
+    assert_eq!(
+        texts,
+        [
+            "GET /one a 0 |",
+            "POST /two a 5 hello|",
+            "POST /three a 5 abcde|t-one=1,t-two=2",
+            "GET /four a 0 |"
+        ]
+    );
+    assert!(rs
+        .iter()
+        .all(|r| r.header("connection").is_none() && r.header("date").is_some()));
     assert_eq!(s.connections.load(Ordering::SeqCst), 1);
     // HTTP/1.0 closes unless asked not to; Connection: close is honoured
-    let rs = responses(&s.exchange(b"GET /a HTTP/1.0\r\n\r\nGET /b HTTP/1.0\r\n\r\n"), &[]);
+    let rs = responses(
+        &s.exchange(b"GET /a HTTP/1.0\r\n\r\nGET /b HTTP/1.0\r\n\r\n"),
+        &[],
+    );
     assert_eq!((rs.len(), rs[0].header("connection")), (1, Some("close")));
-    let rs = responses(&s.exchange(b"GET /a HTTP/1.0\r\nConnection: keep-alive\r\n\r\nGET /b HTTP/1.0\r\n\r\n"), &[]);
-    assert_eq!((rs.len(), rs[0].header("connection"), rs[1].header("connection")), (2, Some("keep-alive"), Some("close")));
+    let rs = responses(
+        &s.exchange(b"GET /a HTTP/1.0\r\nConnection: keep-alive\r\n\r\nGET /b HTTP/1.0\r\n\r\n"),
+        &[],
+    );
+    assert_eq!(
+        (
+            rs.len(),
+            rs[0].header("connection"),
+            rs[1].header("connection")
+        ),
+        (2, Some("keep-alive"), Some("close"))
+    );
     let rs = responses(&s.exchange(b"GET /a HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\nGET /b HTTP/1.1\r\nHost: a\r\n\r\n"), &[]);
     assert_eq!((rs.len(), rs[0].header("connection")), (1, Some("close")));
 }
@@ -259,7 +396,13 @@ fn a_head_arriving_a_byte_at_a_time_is_read_as_one() {
 
 #[test]
 fn limits_on_the_head_and_the_body_have_their_statuses() {
-    let config = HttpConfig { max_request_line: 100, max_header_bytes: 200, max_headers: 5, max_body: Some(10), ..HttpConfig::default() };
+    let config = HttpConfig {
+        max_request_line: 100,
+        max_header_bytes: 200,
+        max_headers: 5,
+        max_body: Some(10),
+        ..HttpConfig::default()
+    };
     let calls = Arc::new(AtomicUsize::new(0));
     let s = {
         let calls = calls.clone();
@@ -272,14 +415,41 @@ fn limits_on_the_head_and_the_body_have_their_statuses() {
         )
     };
     let long = "a".repeat(120);
-    assert_eq!(statuses(&s, &format!("GET /{long} HTTP/1.1\r\nHost: a\r\n\r\n")), [414]);
-    assert_eq!(statuses(&s, &format!("GET / HTTP/1.1\r\nHost: a\r\nX: {long}{long}\r\n\r\n")), [431]);
-    assert_eq!(statuses(&s, "GET / HTTP/1.1\r\nHost: a\r\nA: 1\r\nB: 2\r\nC: 3\r\nD: 4\r\nE: 5\r\n\r\n"), [431]);
-    assert_eq!(statuses(&s, "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 11\r\n\r\nhello world"), [413]);
+    assert_eq!(
+        statuses(&s, &format!("GET /{long} HTTP/1.1\r\nHost: a\r\n\r\n")),
+        [414]
+    );
+    assert_eq!(
+        statuses(
+            &s,
+            &format!("GET / HTTP/1.1\r\nHost: a\r\nX: {long}{long}\r\n\r\n")
+        ),
+        [431]
+    );
+    assert_eq!(
+        statuses(
+            &s,
+            "GET / HTTP/1.1\r\nHost: a\r\nA: 1\r\nB: 2\r\nC: 3\r\nD: 4\r\nE: 5\r\n\r\n"
+        ),
+        [431]
+    );
+    assert_eq!(
+        statuses(
+            &s,
+            "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 11\r\n\r\nhello world"
+        ),
+        [413]
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     // a chunked body that grows past the limit fails to read
     let rs = responses(&s.exchange(b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nhello \r\n5\r\nworld\r\n0\r\n\r\n"), &[]);
-    assert_eq!((rs[0].status, rs[0].text().contains("larger than this server takes")), (400, true));
+    assert_eq!(
+        (
+            rs[0].status,
+            rs[0].text().contains("larger than this server takes")
+        ),
+        (400, true)
+    );
     // the request after a limited one is never read
     assert_eq!(statuses(&s, "POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\n0123456789GET / HTTP/1.1\r\nHost: a\r\n\r\n"), [200, 200]);
 }
@@ -290,7 +460,9 @@ fn responses_are_framed_by_what_the_server_knows_of_their_length() {
         |req: Request| match req.path() {
             "/bytes" => Response::bytes(200, "application/octet-stream", vec![7; 100_000]),
             "/reader" => Response::reader(200, std::io::Cursor::new(vec![1u8; 70_000]), None),
-            "/sized" => Response::reader(200, std::io::Cursor::new(vec![2u8; 70_000]), Some(50_000)),
+            "/sized" => {
+                Response::reader(200, std::io::Cursor::new(vec![2u8; 70_000]), Some(50_000))
+            }
             "/short" => Response::reader(200, std::io::Cursor::new(vec![2u8; 10]), Some(50)),
             "/stream" => Response::stream(200, |w| {
                 for i in 0..100u8 {
@@ -306,49 +478,94 @@ fn responses_are_framed_by_what_the_server_knows_of_their_length() {
         },
         HttpConfig::default(),
     );
-    let get = |path: &str| responses(&s.exchange(format!("GET {path} HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n").as_bytes()), &[]).remove(0);
+    let get = |path: &str| {
+        responses(
+            &s.exchange(
+                format!("GET {path} HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n").as_bytes(),
+            ),
+            &[],
+        )
+        .remove(0)
+    };
     let r = get("/bytes");
-    assert_eq!((r.body.len(), r.header("content-length"), r.chunked), (100_000, Some("100000"), false));
+    assert_eq!(
+        (r.body.len(), r.header("content-length"), r.chunked),
+        (100_000, Some("100000"), false)
+    );
     let r = get("/reader");
     assert_eq!((r.body.len(), r.chunked), (70_000, true));
     let r = get("/sized");
-    assert_eq!((r.body.len(), r.header("content-length")), (50_000, Some("50000")));
+    assert_eq!(
+        (r.body.len(), r.header("content-length")),
+        (50_000, Some("50000"))
+    );
     let r = get("/stream");
-    assert_eq!((r.body.len(), r.chunked, r.trailers.clone()), (100_000, true, vec![("x-checksum".to_string(), "abc".to_string())]));
+    assert_eq!(
+        (r.body.len(), r.chunked, r.trailers.clone()),
+        (
+            100_000,
+            true,
+            vec![("x-checksum".to_string(), "abc".to_string())]
+        )
+    );
     assert_eq!(r.body[99_999], 99);
     let r = get("/nothing");
-    assert_eq!((r.status, r.header("content-length"), r.body.len()), (204, None, 0));
+    assert_eq!(
+        (r.status, r.header("content-length"), r.body.len()),
+        (204, None, 0)
+    );
     let r = get("/notmod");
     assert_eq!((r.status, r.header("content-length")), (304, Some("1234")));
     // a reader shorter than its length: the body is cut and the connection closed, so the client sees it is short
-    let out = s.exchange(b"GET /short HTTP/1.1\r\nHost: a\r\n\r\nGET /bytes HTTP/1.1\r\nHost: a\r\n\r\n");
-    assert!(responses(&out, &[]).is_empty(), "the cut response is not a whole one");
+    let out =
+        s.exchange(b"GET /short HTTP/1.1\r\nHost: a\r\n\r\nGET /bytes HTTP/1.1\r\nHost: a\r\n\r\n");
+    assert!(
+        responses(&out, &[]).is_empty(),
+        "the cut response is not a whole one"
+    );
     assert!(out.len() < 200);
     // HEAD: the length it would have, no body; the next response on the connection is whole
     let raw = "HEAD /bytes HTTP/1.1\r\nHost: a\r\n\r\nHEAD /stream HTTP/1.1\r\nHost: a\r\n\r\nHEAD /head HTTP/1.1\r\nHost: a\r\n\r\nGET /sized HTTP/1.1\r\nHost: a\r\n\r\n";
     let rs = responses(&s.exchange(raw.as_bytes()), &[true, true, true, false]);
     assert_eq!(rs.len(), 4);
-    assert_eq!((rs[0].header("content-length"), rs[0].body.len()), (Some("100000"), 0));
-    assert_eq!((rs[1].header("content-length"), rs[1].header("transfer-encoding")), (None, None));
+    assert_eq!(
+        (rs[0].header("content-length"), rs[0].body.len()),
+        (Some("100000"), 0)
+    );
+    assert_eq!(
+        (
+            rs[1].header("content-length"),
+            rs[1].header("transfer-encoding")
+        ),
+        (None, None)
+    );
     assert_eq!(rs[2].header("content-length"), Some("42"));
     assert_eq!(rs[3].body.len(), 50_000);
     // HTTP/1.0 gets no chunks: the body runs to the close
     let out = s.exchange(b"GET /stream HTTP/1.0\r\n\r\n");
     let r = responses(&out, &[]).remove(0);
-    assert_eq!((r.body.len(), r.chunked, r.header("connection")), (100_000, false, Some("close")));
+    assert_eq!(
+        (r.body.len(), r.chunked, r.header("connection")),
+        (100_000, false, Some("close"))
+    );
 }
 
 #[test]
 fn bodies_are_streamed_both_ways_at_once() {
     // the response reads the request body as it goes, a chunk at a time
-    let s = Server::plain(|req: Request| Response::reader(200, req.into_body(), None), HttpConfig::default());
+    let s = Server::plain(
+        |req: Request| Response::reader(200, req.into_body(), None),
+        HttpConfig::default(),
+    );
     let mut c = s.connect();
-    c.write_all(b"POST /echo HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n").unwrap();
+    c.write_all(b"POST /echo HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n")
+        .unwrap();
     let mut got = Vec::new();
     let mut buf = [0u8; 65536];
     for i in 0..20u8 {
         let piece = vec![i; 10_000];
-        c.write_all(format!("{:x}\r\n", piece.len()).as_bytes()).unwrap();
+        c.write_all(format!("{:x}\r\n", piece.len()).as_bytes())
+            .unwrap();
         c.write_all(&piece).unwrap();
         c.write_all(b"\r\n").unwrap();
         // the server answers as the body comes: the echo of what was sent arrives before the body ends
@@ -378,7 +595,11 @@ fn hundred_continue_is_sent_when_the_body_is_read_and_not_otherwise() {
         },
         HttpConfig::default(),
     );
-    let head = |path: &str| format!("POST {path} HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n");
+    let head = |path: &str| {
+        format!(
+            "POST {path} HTTP/1.1\r\nHost: a\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\n"
+        )
+    };
     // the client waits for the go-ahead before it sends the body
     let mut c = s.connect();
     c.write_all(head("/take").as_bytes()).unwrap();
@@ -395,14 +616,23 @@ fn hundred_continue_is_sent_when_the_body_is_read_and_not_otherwise() {
     let mut out = Vec::new();
     c.read_to_end(&mut out).unwrap();
     let rs = responses(&out, &[]);
-    assert_eq!((rs.len(), rs[0].status, rs[0].header("connection")), (1, 401, Some("close")));
+    assert_eq!(
+        (rs.len(), rs[0].status, rs[0].header("connection")),
+        (1, 401, Some("close"))
+    );
     assert!(!String::from_utf8_lossy(&out).contains("100 Continue"));
 }
 
 #[test]
 fn a_body_the_handler_leaves_is_read_past_if_it_is_small_and_closes_the_connection_if_not() {
-    let config = HttpConfig { drain_limit: 1000, ..HttpConfig::default() };
-    let s = Server::plain(|_req: Request| Response::text(200, "ignored your body\n"), config);
+    let config = HttpConfig {
+        drain_limit: 1000,
+        ..HttpConfig::default()
+    };
+    let s = Server::plain(
+        |_req: Request| Response::text(200, "ignored your body\n"),
+        config,
+    );
     let small = format!("POST /a HTTP/1.1\r\nHost: a\r\nContent-Length: 500\r\n\r\n{}GET /b HTTP/1.1\r\nHost: a\r\n\r\n", "x".repeat(500));
     assert_eq!(statuses(&s, &small), [200, 200]);
     let large = format!("POST /a HTTP/1.1\r\nHost: a\r\nContent-Length: 5000\r\n\r\n{}GET /b HTTP/1.1\r\nHost: a\r\n\r\n", "x".repeat(5000));
@@ -422,16 +652,44 @@ fn a_bad_handler_gets_the_client_a_500_and_the_connection_closed() {
         },
         HttpConfig::default(),
     );
-    for path in ["/panic", "/badheader", "/badname", "/interim", "/upgrade-without"] {
-        let rs = responses(&s.exchange(format!("GET {path} HTTP/1.1\r\nHost: a\r\n\r\nGET /next HTTP/1.1\r\nHost: a\r\n\r\n").as_bytes()), &[]);
+    for path in [
+        "/panic",
+        "/badheader",
+        "/badname",
+        "/interim",
+        "/upgrade-without",
+    ] {
+        let rs = responses(
+            &s.exchange(
+                format!(
+                    "GET {path} HTTP/1.1\r\nHost: a\r\n\r\nGET /next HTTP/1.1\r\nHost: a\r\n\r\n"
+                )
+                .as_bytes(),
+            ),
+            &[],
+        );
         assert_eq!(rs.len(), 1, "{path}: closed after the 500");
-        assert_eq!((rs[0].status, rs[0].header("connection"), rs[0].header("x-evil")), (500, Some("close"), None), "{path}");
+        assert_eq!(
+            (
+                rs[0].status,
+                rs[0].header("connection"),
+                rs[0].header("x-evil")
+            ),
+            (500, Some("close"), None),
+            "{path}"
+        );
     }
 }
 
 #[test]
 fn a_connection_answers_so_many_requests_and_then_says_close() {
-    let s = Server::plain(echo, HttpConfig { max_requests_per_connection: 3, ..HttpConfig::default() });
+    let s = Server::plain(
+        echo,
+        HttpConfig {
+            max_requests_per_connection: 3,
+            ..HttpConfig::default()
+        },
+    );
     let raw = "GET /1 HTTP/1.1\r\nHost: a\r\n\r\n".repeat(5);
     let rs = responses(&s.exchange(raw.as_bytes()), &[]);
     assert_eq!(rs.len(), 3);
@@ -465,7 +723,8 @@ fn connect_hands_over_the_connection_with_what_came_after_the_head() {
     );
     let mut c = s.connect();
     // the first bytes for the tunnel come in the same write as the CONNECT
-    c.write_all(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\nearly ").unwrap();
+    c.write_all(b"CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\nearly ")
+        .unwrap();
     let mut got = Vec::new();
     let mut buf = [0u8; 1024];
     while !String::from_utf8_lossy(&got).contains("EARLY ") {
@@ -478,7 +737,12 @@ fn connect_hands_over_the_connection_with_what_came_after_the_head() {
     c.read_to_end(&mut got).unwrap();
     let text = String::from_utf8_lossy(&got).into_owned();
     let (head, rest) = text.split_once("\r\n\r\n").unwrap();
-    assert!(head.starts_with("HTTP/1.1 200 OK\r\n") && !head.to_ascii_lowercase().contains("content-length") && !head.to_ascii_lowercase().contains("transfer-encoding"), "{head}");
+    assert!(
+        head.starts_with("HTTP/1.1 200 OK\r\n")
+            && !head.to_ascii_lowercase().contains("content-length")
+            && !head.to_ascii_lowercase().contains("transfer-encoding"),
+        "{head}"
+    );
     assert_eq!(rest, "to example.com:443\nEARLY LATER");
     // a refused CONNECT closes, so that tunnel bytes sent too early are never read as a request
     let rs = responses(&s.exchange(b"GET / HTTP/1.1\r\nHost: a\r\n\r\n"), &[]);
@@ -502,10 +766,18 @@ fn switching_protocols_hands_over_the_connection_after_the_101() {
         },
         HttpConfig::default(),
     );
-    let out = s.exchange(b"GET /ws HTTP/1.1\r\nHost: a\r\nUpgrade: echo\r\nConnection: upgrade\r\n\r\nping");
+    let out = s.exchange(
+        b"GET /ws HTTP/1.1\r\nHost: a\r\nUpgrade: echo\r\nConnection: upgrade\r\n\r\nping",
+    );
     let text = String::from_utf8_lossy(&out).into_owned();
-    assert!(text.starts_with("HTTP/1.1 101 Switching Protocols\r\n"), "{text}");
-    assert!(text.to_ascii_lowercase().contains("upgrade: echo"), "{text}");
+    assert!(
+        text.starts_with("HTTP/1.1 101 Switching Protocols\r\n"),
+        "{text}"
+    );
+    assert!(
+        text.to_ascii_lowercase().contains("upgrade: echo"),
+        "{text}"
+    );
     assert!(text.ends_with("\r\n\r\nping"), "{text}");
 }
 
@@ -528,19 +800,31 @@ fn a_body_kept_past_its_request_reads_nothing_more() {
     let raw = "POST /keep HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\nabcPOST /next HTTP/1.1\r\nHost: a\r\nContent-Length: 3\r\n\r\nxyz";
     let t = std::time::Instant::now();
     let rs = responses(&s.exchange(raw.as_bytes()), &[]);
-    assert!(t.elapsed() < Duration::from_secs(2), "the kept body did not keep the connection open: {:?}", t.elapsed());
+    assert!(
+        t.elapsed() < Duration::from_secs(2),
+        "the kept body did not keep the connection open: {:?}",
+        t.elapsed()
+    );
     assert_eq!(rs[1].text(), "POST /next a 3 xyz|");
     let mut body = kept.lock().unwrap().take().unwrap();
     let mut buf = [0u8; 8];
-    assert!(body.read(&mut buf).is_err(), "the next request's body is not this one's");
+    assert!(
+        body.read(&mut buf).is_err(),
+        "the next request's body is not this one's"
+    );
 }
 
 #[test]
 fn the_tls_connection_carries_http1_when_alpn_says_so() {
     let s = Server::tls(echo, HttpConfig::default(), &["http/1.1"]);
     let client = s.client();
-    let r = client.post(&s.url("/over-tls"), b"secret".to_vec()).unwrap();
-    assert_eq!(r.text(), format!("POST /over-tls 127.0.0.1:{} 6 secret|", s.addr.port()));
+    let r = client
+        .post(&s.url("/over-tls"), b"secret".to_vec())
+        .unwrap();
+    assert_eq!(
+        r.text(),
+        format!("POST /over-tls 127.0.0.1:{} 6 secret|", s.addr.port())
+    );
     assert_eq!(r.version, crate::http::HttpVersion::Http11);
     for i in 0..5 {
         assert_eq!(client.get(&s.url(&format!("/{i}"))).unwrap().status, 200);

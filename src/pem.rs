@@ -79,11 +79,21 @@ pub fn base64_encode(data: &[u8]) -> String {
     const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity((data.len() + 2) / 3 * 4);
     for chunk in data.chunks(3) {
-        let n = (chunk[0] as u32) << 16 | (*chunk.get(1).unwrap_or(&0) as u32) << 8 | *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (chunk[0] as u32) << 16
+            | (*chunk.get(1).unwrap_or(&0) as u32) << 8
+            | *chunk.get(2).unwrap_or(&0) as u32;
         out.push(T[(n >> 18) as usize & 63] as char);
         out.push(T[(n >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { T[(n >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { T[n as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            T[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[n as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -102,7 +112,10 @@ pub fn parse(text: &str) -> Vec<PemBlock> {
     let mut lines = text.lines();
     while let Some(line) = lines.next() {
         let line = line.trim();
-        let Some(label) = line.strip_prefix("-----BEGIN ").and_then(|l| l.strip_suffix("-----")) else {
+        let Some(label) = line
+            .strip_prefix("-----BEGIN ")
+            .and_then(|l| l.strip_suffix("-----"))
+        else {
             continue;
         };
         let end_marker = format!("-----END {}-----", label);
@@ -121,7 +134,10 @@ pub fn parse(text: &str) -> Vec<PemBlock> {
         }
         if terminated {
             if let Ok(data) = base64_decode(&body) {
-                blocks.push(PemBlock { label: label.to_string(), data });
+                blocks.push(PemBlock {
+                    label: label.to_string(),
+                    data,
+                });
             }
         }
     }
@@ -155,11 +171,37 @@ mod tests {
 
     #[test]
     fn strict_base64_has_exactly_one_encoding_of_every_byte_string() {
-        for (text, bytes) in [("", &b""[..]), ("Zg==", b"f"), ("Zm8=", b"fo"), ("Zm9v", b"foo"), ("Zm9vYg==", b"foob"), ("/+8=", b"\xff\xef")] {
+        for (text, bytes) in [
+            ("", &b""[..]),
+            ("Zg==", b"f"),
+            ("Zm8=", b"fo"),
+            ("Zm9v", b"foo"),
+            ("Zm9vYg==", b"foob"),
+            ("/+8=", b"\xff\xef"),
+        ] {
             assert_eq!(base64_decode_strict(text).as_deref(), Some(bytes), "{text}");
         }
         for text in [
-            "Zg", "Zg=", "Zg===", "Z===", "====", "Zh==", "Zm9=", "Zm9v=", "Zm9vYg=", "Zg==Zg==", "Zg=A", "Zm9v\n", " Zm9v", "Zm 9v", "Zm9v\r\n", "Zm9", "Z", "-_8=", "Zm9\u{e9}", "Zm9v\0",
+            "Zg",
+            "Zg=",
+            "Zg===",
+            "Z===",
+            "====",
+            "Zh==",
+            "Zm9=",
+            "Zm9v=",
+            "Zm9vYg=",
+            "Zg==Zg==",
+            "Zg=A",
+            "Zm9v\n",
+            " Zm9v",
+            "Zm 9v",
+            "Zm9v\r\n",
+            "Zm9",
+            "Z",
+            "-_8=",
+            "Zm9\u{e9}",
+            "Zm9v\0",
         ] {
             assert_eq!(base64_decode_strict(text), None, "{text:?}");
         }
@@ -167,7 +209,9 @@ mod tests {
         let alphabet = b"AQgw+/0=";
         let mut accepted = 0;
         for n in 0..alphabet.len().pow(4) {
-            let text: String = (0..4).map(|i| alphabet[n / alphabet.len().pow(i) % alphabet.len()] as char).collect();
+            let text: String = (0..4)
+                .map(|i| alphabet[n / alphabet.len().pow(i) % alphabet.len()] as char)
+                .collect();
             if let Some(bytes) = base64_decode_strict(&text) {
                 assert_eq!(base64_encode(&bytes), text);
                 accepted += 1;

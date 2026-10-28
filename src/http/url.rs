@@ -55,7 +55,9 @@ impl Url {
         };
         let bracketed = hostport.starts_with('[');
         let (host, port) = if let Some(r) = hostport.strip_prefix('[') {
-            let Some(end) = r.find(']') else { return err("unterminated IPv6 literal") };
+            let Some(end) = r.find(']') else {
+                return err("unterminated IPv6 literal");
+            };
             let host = &r[..end];
             if host.parse::<std::net::Ipv6Addr>().is_err() {
                 return err("bad IPv6 literal");
@@ -77,7 +79,11 @@ impl Url {
             return err("empty host");
         }
         // only a bracketed IPv6 literal may contain a colon; "a:b:80" is not a host with a colon in it
-        if !bracketed && !host.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_') {
+        if !bracketed
+            && !host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.' || b == b'_')
+        {
             return err("illegal character in host");
         }
         let port = match port {
@@ -88,7 +94,13 @@ impl Url {
                 Ok(n) => n,
             },
         };
-        Ok(Url { scheme, host: host.to_ascii_lowercase(), port, path_and_query, userinfo })
+        Ok(Url {
+            scheme,
+            host: host.to_ascii_lowercase(),
+            port,
+            path_and_query,
+            userinfo,
+        })
     }
 
     pub fn is_https(&self) -> bool {
@@ -129,7 +141,11 @@ impl Url {
     /// Resolves a Location header value against this URL.
     pub fn join(&self, location: &str) -> Result<Url> {
         let location = location.trim();
-        if location.contains("://") {
+        let first_delimiter = location.find(['/', '?', '#']).unwrap_or(location.len());
+        if location
+            .find(':')
+            .is_some_and(|colon| colon < first_delimiter)
+        {
             return Url::parse(location);
         }
         let base = format!("{}://{}", self.scheme, self.host_header());
@@ -137,6 +153,9 @@ impl Url {
             return Url::parse(&format!("{}://{}", self.scheme, rest));
         }
         let location = location.split('#').next().unwrap();
+        if location.is_empty() {
+            return Ok(self.clone());
+        }
         if location.starts_with('/') {
             return Url::parse(&format!("{}{}", base, location));
         }
@@ -175,7 +194,12 @@ impl UrlLimits {
     /// The tightest set: https only, no credentials in the URL, printable ASCII only (no space, control character or byte over 0x7e), and at
     /// most 2,048 bytes.
     pub fn strict() -> UrlLimits {
-        UrlLimits { max_length: Some(2048), printable_ascii: true, no_credentials: true, https_only: true }
+        UrlLimits {
+            max_length: Some(2048),
+            printable_ascii: true,
+            no_credentials: true,
+            https_only: true,
+        }
     }
 
     /// Refuses a URL (as text) longer than `bytes`.
@@ -262,7 +286,13 @@ fn normalize_dots(path_and_query: &str) -> String {
 
 impl std::fmt::Display for Url {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}://{}{}", self.scheme, self.host_header(), self.path_and_query)
+        write!(
+            f,
+            "{}://{}{}",
+            self.scheme,
+            self.host_header(),
+            self.path_and_query
+        )
     }
 }
 
@@ -273,12 +303,18 @@ mod tests {
     #[test]
     fn parses_basic_urls() {
         let u = Url::parse("https://Example.COM/a/b?x=1#frag").unwrap();
-        assert_eq!((u.scheme.as_str(), u.host.as_str(), u.port), ("https", "example.com", 443));
+        assert_eq!(
+            (u.scheme.as_str(), u.host.as_str(), u.port),
+            ("https", "example.com", 443)
+        );
         assert_eq!(u.path_and_query, "/a/b?x=1");
         assert_eq!(Url::parse("http://h").unwrap().path_and_query, "/");
         assert_eq!(Url::parse("http://h?q=1").unwrap().path_and_query, "/?q=1");
         assert_eq!(Url::parse("http://h:8080/x").unwrap().port, 8080);
-        assert_eq!(Url::parse("http://h:8080/x").unwrap().host_header(), "h:8080");
+        assert_eq!(
+            Url::parse("http://h:8080/x").unwrap().host_header(),
+            "h:8080"
+        );
         assert_eq!(Url::parse("https://h:443/").unwrap().host_header(), "h");
     }
 
@@ -296,10 +332,23 @@ mod tests {
     #[test]
     fn rejects_bad_urls() {
         for bad in [
-            "example.com", "ftp://x/", "https://", "https://:80/", "https://h:0/", "https://h:99999/", "https://h /x",
-            "https://h/\r\nHost: evil", "https://[::1/", "https://h/é", "https://ho$t/",
+            "example.com",
+            "ftp://x/",
+            "https://",
+            "https://:80/",
+            "https://h:0/",
+            "https://h:99999/",
+            "https://h /x",
+            "https://h/\r\nHost: evil",
+            "https://[::1/",
+            "https://h/é",
+            "https://ho$t/",
             // found by the fuzzer: a colon in a host that is not a bracketed IPv6 literal
-            "http://a:b:80/", "https://user:pw:x/", "http://y[::1]/", "http://[::1]x/", "http://a::1/",
+            "http://a:b:80/",
+            "https://user:pw:x/",
+            "http://y[::1]/",
+            "http://[::1]x/",
+            "http://a::1/",
         ] {
             assert!(Url::parse(bad).is_err(), "{:?} should be rejected", bad);
         }
@@ -308,14 +357,46 @@ mod tests {
     #[test]
     fn joins_locations() {
         let base = Url::parse("https://a.example/dir/page?x=1").unwrap();
-        assert_eq!(base.join("https://b.example/z").unwrap().to_string(), "https://b.example/z");
-        assert_eq!(base.join("//c.example/q").unwrap().to_string(), "https://c.example/q");
-        assert_eq!(base.join("/abs").unwrap().to_string(), "https://a.example/abs");
-        assert_eq!(base.join("other").unwrap().to_string(), "https://a.example/dir/other");
-        assert_eq!(base.join("../up").unwrap().to_string(), "https://a.example/up");
-        assert_eq!(base.join("?y=2").unwrap().to_string(), "https://a.example/dir/page?y=2");
-        assert_eq!(base.join("sub/").unwrap().to_string(), "https://a.example/dir/sub/");
-        assert_eq!(base.join("../../../../x").unwrap().to_string(), "https://a.example/x");
+        assert_eq!(
+            base.join("https://b.example/z").unwrap().to_string(),
+            "https://b.example/z"
+        );
+        assert_eq!(
+            base.join("//c.example/q").unwrap().to_string(),
+            "https://c.example/q"
+        );
+        assert_eq!(
+            base.join("/abs").unwrap().to_string(),
+            "https://a.example/abs"
+        );
+        assert_eq!(
+            base.join("other").unwrap().to_string(),
+            "https://a.example/dir/other"
+        );
+        assert_eq!(
+            base.join("../up").unwrap().to_string(),
+            "https://a.example/up"
+        );
+        assert_eq!(
+            base.join("?y=2").unwrap().to_string(),
+            "https://a.example/dir/page?y=2"
+        );
+        assert_eq!(
+            base.join("sub/").unwrap().to_string(),
+            "https://a.example/dir/sub/"
+        );
+        assert_eq!(
+            base.join("../../../../x").unwrap().to_string(),
+            "https://a.example/x"
+        );
+        assert_eq!(
+            base.join("/next?u=https://example.test")
+                .unwrap()
+                .to_string(),
+            "https://a.example/next?u=https://example.test"
+        );
+        assert_eq!(base.join("").unwrap(), base);
+        assert_eq!(base.join("#section").unwrap(), base);
     }
 
     fn refused<T: std::fmt::Debug>(r: std::result::Result<T, String>) -> bool {
@@ -345,7 +426,21 @@ mod tests {
     fn printable_ascii_is_the_bytes_bang_to_tilde() {
         let l = UrlLimits::new().printable_ascii_only(true);
         assert!(l.check_text("https://h/!~").is_ok());
-        for bad in ["a b", " a", "a ", "a\n", "a\r", "a\t", "a\0", "a\u{1f}", "a\u{7f}", "a\u{80}", "caf\u{e9}", "a\u{2028}", "\u{feff}a"] {
+        for bad in [
+            "a b",
+            " a",
+            "a ",
+            "a\n",
+            "a\r",
+            "a\t",
+            "a\0",
+            "a\u{1f}",
+            "a\u{7f}",
+            "a\u{80}",
+            "caf\u{e9}",
+            "a\u{2028}",
+            "\u{feff}a",
+        ] {
             assert!(refused(l.check_text(bad)), "{bad:?}");
         }
     }
@@ -355,22 +450,46 @@ mod tests {
         let url = |s: &str| Url::parse(s).unwrap();
         let creds = UrlLimits::new().refuse_credentials(true);
         assert!(creds.check(&url("https://h/")).is_ok() && creds.check(&url("http://h/")).is_ok());
-        for bad in ["https://u@h/", "https://u:p@h/", "https://:@h/", "https://@h/", "http://u@h:8080/"] {
+        for bad in [
+            "https://u@h/",
+            "https://u:p@h/",
+            "https://:@h/",
+            "https://@h/",
+            "http://u@h:8080/",
+        ] {
             assert!(refused(creds.check(&url(bad))), "{bad}");
         }
         let https = UrlLimits::new().https_only(true);
         assert!(https.check(&url("https://u:p@h/")).is_ok());
-        assert!(refused(https.check(&url("http://h/"))) && refused(https.check(&url("HTTP://h:443/"))));
+        assert!(
+            refused(https.check(&url("http://h/"))) && refused(https.check(&url("HTTP://h:443/")))
+        );
     }
 
     #[test]
     fn strict_is_all_of_them() {
         let s = UrlLimits::strict();
-        assert_eq!(s, UrlLimits::new().max_length(2048).printable_ascii_only(true).refuse_credentials(true).https_only(true));
-        assert!(s.check_text(&format!("https://h/{}", "a".repeat(2048 - 10))).is_ok());
-        assert!(refused(s.check_text(&format!("https://h/{}", "a".repeat(2049 - 10)))));
-        assert!(refused(s.check(&Url::parse("http://h/").unwrap())) && refused(s.check(&Url::parse("https://u@h/").unwrap())));
+        assert_eq!(
+            s,
+            UrlLimits::new()
+                .max_length(2048)
+                .printable_ascii_only(true)
+                .refuse_credentials(true)
+                .https_only(true)
+        );
+        assert!(s
+            .check_text(&format!("https://h/{}", "a".repeat(2048 - 10)))
+            .is_ok());
+        assert!(refused(
+            s.check_text(&format!("https://h/{}", "a".repeat(2049 - 10)))
+        ));
+        assert!(
+            refused(s.check(&Url::parse("http://h/").unwrap()))
+                && refused(s.check(&Url::parse("https://u@h/").unwrap()))
+        );
         assert!(refused(s.check_text("https://h/ ")));
-        assert!(s.check(&Url::parse("https://h:8443/x?y=1").unwrap()).is_ok());
+        assert!(s
+            .check(&Url::parse("https://h:8443/x?y=1").unwrap())
+            .is_ok());
     }
 }

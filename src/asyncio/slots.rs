@@ -57,7 +57,11 @@ impl Drop for Permit {
 impl Slots {
     /// Slots for at most `max` holders per key (at least one).
     pub(crate) fn new(max: usize) -> Arc<Slots> {
-        Arc::new(Slots { max: max.max(1), state: Mutex::new(State::default()), changed: Condvar::new() })
+        Arc::new(Slots {
+            max: max.max(1),
+            state: Mutex::new(State::default()),
+            changed: Condvar::new(),
+        })
     }
 
     pub(crate) fn max(&self) -> usize {
@@ -92,7 +96,10 @@ impl Slots {
         let n = s.held.entry(key.to_string()).or_insert(0);
         if *n < self.max {
             *n += 1;
-            return Ok(Permit { slots: self.clone(), key: key.to_string() });
+            return Ok(Permit {
+                slots: self.clone(),
+                key: key.to_string(),
+            });
         }
         Err(s.generation)
     }
@@ -114,7 +121,11 @@ impl Slots {
                     if left.is_zero() {
                         return false;
                     }
-                    s = self.changed.wait_timeout(s, left).unwrap_or_else(|e| e.into_inner()).0;
+                    s = self
+                        .changed
+                        .wait_timeout(s, left)
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0;
                 }
             }
         }
@@ -124,7 +135,10 @@ impl Slots {
     /// Waits in a task until something changes after generation `seen` (with no limit of its own: the caller puts one
     /// around it).
     pub(crate) fn changed(self: &Arc<Self>, seen: u64) -> Changed {
-        Changed { slots: self.clone(), seen }
+        Changed {
+            slots: self.clone(),
+            seen,
+        }
     }
 }
 
@@ -162,10 +176,16 @@ mod tests {
         let seen = s.try_take("a:443").unwrap_err();
         // another key is counted apart
         let _c = s.try_take("b:443").unwrap();
-        assert_eq!((s.held("a:443"), s.held("b:443"), s.held("c:443")), (2, 1, 0));
+        assert_eq!(
+            (s.held("a:443"), s.held("b:443"), s.held("c:443")),
+            (2, 1, 0)
+        );
         drop(a);
         assert_eq!(s.held("a:443"), 1);
-        assert!(s.wait(seen, Some(Instant::now())), "the release moved the generation on");
+        assert!(
+            s.wait(seen, Some(Instant::now())),
+            "the release moved the generation on"
+        );
         assert!(s.try_take("a:443").is_ok());
         assert_eq!(Slots::new(0).max(), 1);
     }

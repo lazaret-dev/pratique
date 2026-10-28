@@ -5,8 +5,8 @@ use super::bignum::fixed::Field;
 use super::bignum::{self, Mont};
 use super::sha2::HashAlg;
 use crate::asn1::{self, Der};
-use crate::verify_error::{Error, Result};
 use crate::util::ct_eq;
+use crate::verify_error::{Error, Result};
 
 pub struct RsaPublicKey {
     modulus: Modulus,
@@ -88,10 +88,14 @@ impl RsaPublicKey {
         let e_limbs = bignum::from_be_bytes(e);
         let mod_bits = bignum::bit_len(&n_limbs);
         if mod_bits < 1024 {
-            return Err(Error::Certificate("RSA modulus is shorter than 1024 bits".into()));
+            return Err(Error::Certificate(
+                "RSA modulus is shorter than 1024 bits".into(),
+            ));
         }
         if mod_bits > 8192 {
-            return Err(Error::Certificate("RSA modulus is longer than 8192 bits".into()));
+            return Err(Error::Certificate(
+                "RSA modulus is longer than 8192 bits".into(),
+            ));
         }
         if n_limbs[0] & 1 == 0 {
             return Err(Error::Certificate("RSA modulus is even".into()));
@@ -101,12 +105,22 @@ impl RsaPublicKey {
             return Err(Error::Certificate("unsupported RSA public exponent".into()));
         }
         let n_limbs = &n_limbs[..bignum::trimmed_len(&n_limbs)];
-        Ok(RsaPublicKey { modulus: Modulus::new(n_limbs), e: e_limbs[0], k: (mod_bits + 7) / 8, mod_bits })
+        Ok(RsaPublicKey {
+            modulus: Modulus::new(n_limbs),
+            e: e_limbs[0],
+            k: (mod_bits + 7) / 8,
+            mod_bits,
+        })
     }
 
     /// Size of the modulus in bits.
     pub fn bits(&self) -> usize {
         self.mod_bits
+    }
+
+    /// Public exponent, for protocol-specific key policy checks.
+    pub fn exponent(&self) -> u64 {
+        self.e
     }
 
     /// Computes sig^e mod n as exactly `k` bytes, or None if the signature is malformed.
@@ -140,13 +154,18 @@ impl RsaPublicKey {
     /// that [`crate::cms`] can say that a legacy signature is *genuine but weak* instead of calling
     /// it garbage. Nothing else (certificates, CRLs, OCSP, TLS) accepts a SHA-1 signature.
     pub(crate) fn verify_pkcs1_sha1(&self, msg: &[u8], sig: &[u8]) -> bool {
-        const PREFIX: [u8; 15] = [0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04, 0x14];
+        const PREFIX: [u8; 15] = [
+            0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04,
+            0x14,
+        ];
         self.verify_pkcs1_digest(&PREFIX, &super::sha1::digest(msg), sig)
     }
 
     /// The common part: `prefix` is the DER of the DigestInfo up to the digest itself.
     fn verify_pkcs1_digest(&self, prefix: &[u8], digest: &[u8], sig: &[u8]) -> bool {
-        let Some(em) = self.raw(sig) else { return false };
+        let Some(em) = self.raw(sig) else {
+            return false;
+        };
         let t_len = prefix.len() + digest.len();
         if self.k < t_len + 11 {
             return false;
@@ -169,7 +188,14 @@ impl RsaPublicKey {
     /// RSASSA-PSS (RFC 8017 section 8.1.2) with explicit parameters, as an `RSASSA-PSS-params`
     /// structure in a CMS signature algorithm carries them: the message hash, the MGF1 hash and the
     /// salt length. The trailer field is always 0xbc.
-    pub fn verify_pss_with(&self, alg: HashAlg, mgf_alg: HashAlg, salt_len: usize, msg: &[u8], sig: &[u8]) -> bool {
+    pub fn verify_pss_with(
+        &self,
+        alg: HashAlg,
+        mgf_alg: HashAlg,
+        salt_len: usize,
+        msg: &[u8],
+        sig: &[u8],
+    ) -> bool {
         self.pss(alg, mgf_alg, Some(salt_len), msg, sig)
     }
 
@@ -180,8 +206,17 @@ impl RsaPublicKey {
         self.pss(alg, alg, None, msg, sig)
     }
 
-    fn pss(&self, alg: HashAlg, mgf_alg: HashAlg, salt_len: Option<usize>, msg: &[u8], sig: &[u8]) -> bool {
-        let Some(raw) = self.raw(sig) else { return false };
+    fn pss(
+        &self,
+        alg: HashAlg,
+        mgf_alg: HashAlg,
+        salt_len: Option<usize>,
+        msg: &[u8],
+        sig: &[u8],
+    ) -> bool {
+        let Some(raw) = self.raw(sig) else {
+            return false;
+        };
         let em_bits = self.mod_bits - 1;
         let em_len = (em_bits + 7) / 8;
         let (lead, em) = raw.split_at(self.k - em_len);
@@ -200,7 +235,11 @@ impl RsaPublicKey {
             return false;
         }
         let mask = mgf1(mgf_alg, h, db_len);
-        let mut db: Vec<u8> = masked_db.iter().zip(mask.iter()).map(|(a, b)| a ^ b).collect();
+        let mut db: Vec<u8> = masked_db
+            .iter()
+            .zip(mask.iter())
+            .map(|(a, b)| a ^ b)
+            .collect();
         db[0] &= top_mask;
         // the salt is what follows the zeros and the 0x01; its length is fixed by the caller, or read here
         let s_len = match salt_len {
@@ -225,9 +264,18 @@ impl RsaPublicKey {
 /// The DER of PKCS#1 v1.5's DigestInfo for `alg`, up to the digest itself (RFC 8017 section 9.2, note 1).
 pub(crate) fn digest_info_prefix(alg: HashAlg) -> &'static [u8] {
     match alg {
-        HashAlg::Sha256 => &[0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05, 0x00, 0x04, 0x20],
-        HashAlg::Sha384 => &[0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02, 0x05, 0x00, 0x04, 0x30],
-        HashAlg::Sha512 => &[0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40],
+        HashAlg::Sha256 => &[
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x01, 0x05, 0x00, 0x04, 0x20,
+        ],
+        HashAlg::Sha384 => &[
+            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x02, 0x05, 0x00, 0x04, 0x30,
+        ],
+        HashAlg::Sha512 => &[
+            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x03, 0x05, 0x00, 0x04, 0x40,
+        ],
     }
 }
 
@@ -271,8 +319,16 @@ mod tests {
     #[test]
     fn pkcs1_sha384_and_512_verify() {
         let k = key();
-        assert!(k.verify_pkcs1(HashAlg::Sha384, tv::RSA_MSG, &unhex(tv::RSA_PKCS1_SHA384_SIG)));
-        assert!(k.verify_pkcs1(HashAlg::Sha512, tv::RSA_MSG, &unhex(tv::RSA_PKCS1_SHA512_SIG)));
+        assert!(k.verify_pkcs1(
+            HashAlg::Sha384,
+            tv::RSA_MSG,
+            &unhex(tv::RSA_PKCS1_SHA384_SIG)
+        ));
+        assert!(k.verify_pkcs1(
+            HashAlg::Sha512,
+            tv::RSA_MSG,
+            &unhex(tv::RSA_PKCS1_SHA512_SIG)
+        ));
     }
 
     #[test]
@@ -281,7 +337,11 @@ mod tests {
         assert!(k.verify_pss(HashAlg::Sha256, tv::RSA_MSG, &unhex(tv::RSA_PSS_SHA256_SIG)));
         assert!(k.verify_pss(HashAlg::Sha384, tv::RSA_MSG, &unhex(tv::RSA_PSS_SHA384_SIG)));
         assert!(!k.verify_pss(HashAlg::Sha256, b"other", &unhex(tv::RSA_PSS_SHA256_SIG)));
-        assert!(!k.verify_pss(HashAlg::Sha256, tv::RSA_MSG, &unhex(tv::RSA_PKCS1_SHA256_SIG)));
+        assert!(!k.verify_pss(
+            HashAlg::Sha256,
+            tv::RSA_MSG,
+            &unhex(tv::RSA_PKCS1_SHA256_SIG)
+        ));
     }
 
     /// Moduli of the common sizes take the fixed-size code and the others the general code, and both give the same
@@ -300,14 +360,27 @@ mod tests {
             n[0] |= 1;
             n[limbs - 1] |= 1 << 63;
             let m = Modulus::new(&n);
-            assert_eq!(matches!(m, Modulus::Other(_)), ![16, 24, 32, 48, 64].contains(&limbs), "{limbs} limbs");
+            assert_eq!(
+                matches!(m, Modulus::Other(_)),
+                ![16, 24, 32, 48, 64].contains(&limbs),
+                "{limbs} limbs"
+            );
             let general = Mont::new(&n);
             let mut n_minus_1 = n.clone();
             n_minus_1[0] -= 1;
-            for s in [vec![0u64], vec![1], vec![next(), next()], n_minus_1, (0..limbs).map(|i| if i + 1 == limbs { next() >> 1 } else { next() }).collect()] {
+            for s in [
+                vec![0u64],
+                vec![1],
+                vec![next(), next()],
+                n_minus_1,
+                (0..limbs)
+                    .map(|i| if i + 1 == limbs { next() >> 1 } else { next() })
+                    .collect(),
+            ] {
                 let s = &s[..bignum::trimmed_len(&s)];
                 for e in [3u64, 65537] {
-                    let want = general.from_mont(&general.pow(&general.to_mont(&general.fit(s)), &[e]));
+                    let want =
+                        general.from_mont(&general.pow(&general.to_mont(&general.fit(s)), &[e]));
                     assert_eq!(m.pow(s, e), want, "{limbs} limbs, e = {e}");
                 }
             }
@@ -331,10 +404,15 @@ mod tests {
     fn replays_openssl_vectors() {
         let mut k = None;
         let (mut pkcs1, mut pss) = (0, 0);
-        for line in include_str!("../../tests/data/rsa_vectors.txt").lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+        for line in include_str!("../../tests/data/rsa_vectors.txt")
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
             let f: Vec<&str> = line.split(' ').collect();
             match f[0] {
-                "key" => k = Some(RsaPublicKey::from_components(&unhex(f[1]), &unhex(f[2])).unwrap()),
+                "key" => {
+                    k = Some(RsaPublicKey::from_components(&unhex(f[1]), &unhex(f[2])).unwrap())
+                }
                 "pkcs1" => {
                     let k = k.as_ref().unwrap();
                     let (msg, sig) = (unhex(f[2]), unhex(f[3]));
@@ -343,8 +421,15 @@ mod tests {
                         h => k.verify_pkcs1(alg(h), m, s),
                     };
                     assert!(verify(&msg, &sig, f[1]), "{line:.60}");
-                    for other in ["sha1", "sha256", "sha384", "sha512"].into_iter().filter(|o| *o != f[1]) {
-                        assert!(!verify(&msg, &sig, other), "{} signature accepted as {other}", f[1]);
+                    for other in ["sha1", "sha256", "sha384", "sha512"]
+                        .into_iter()
+                        .filter(|o| *o != f[1])
+                    {
+                        assert!(
+                            !verify(&msg, &sig, other),
+                            "{} signature accepted as {other}",
+                            f[1]
+                        );
                     }
                     assert!(!verify(b"another message", &sig, f[1]));
                     for i in [0, sig.len() / 2, sig.len() - 1] {
@@ -368,10 +453,16 @@ mod tests {
                     assert!(salt == 0 || !k.verify_pss_with(hash, mgf, salt - 1, &msg, &sig));
                     for other in [HashAlg::Sha256, HashAlg::Sha384, HashAlg::Sha512] {
                         if other != mgf {
-                            assert!(!k.verify_pss_with(hash, other, salt, &msg, &sig), "{line:.60}");
+                            assert!(
+                                !k.verify_pss_with(hash, other, salt, &msg, &sig),
+                                "{line:.60}"
+                            );
                         }
                         if other != hash {
-                            assert!(!k.verify_pss_with(other, mgf, salt, &msg, &sig), "{line:.60}");
+                            assert!(
+                                !k.verify_pss_with(other, mgf, salt, &msg, &sig),
+                                "{line:.60}"
+                            );
                         }
                     }
                     assert!(!k.verify_pss_with(hash, mgf, salt, b"another message", &sig));

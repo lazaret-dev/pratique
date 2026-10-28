@@ -84,13 +84,19 @@ impl<const N: usize> Modulus<N> {
     pub(crate) fn from_hex(hex: &str) -> Modulus<N> {
         let v = bignum::from_hex(hex);
         let mut m = [0u64; N];
-        assert!(bignum::trimmed_len(&v) == N, "a modulus of exactly {N} limbs");
+        assert!(
+            bignum::trimmed_len(&v) == N,
+            "a modulus of exactly {N} limbs"
+        );
         m.copy_from_slice(&v[..N]);
         Modulus::new(m)
     }
 
     pub(crate) fn new(m: [u64; N]) -> Modulus<N> {
-        assert!(m[0] & 1 == 1 && m[N - 1] != 0, "an odd modulus of {N} full limbs");
+        assert!(
+            m[0] & 1 == 1 && m[N - 1] != 0,
+            "an odd modulus of {N} full limbs"
+        );
         // Newton's iteration for m^-1 mod 2^64 (each step doubles the correct low bits: 1, 2, 4, ..., 64)
         let mut inv = 1u64;
         for _ in 0..6 {
@@ -114,7 +120,13 @@ impl<const N: usize> Modulus<N> {
         });
         debug_assert_eq!(borrow, 0);
         m_minus_2.copy_from_slice(&d);
-        Modulus { m, m0inv: inv.wrapping_neg(), r2, r3, m_minus_2 }
+        Modulus {
+            m,
+            m0inv: inv.wrapping_neg(),
+            r2,
+            r3,
+            m_minus_2,
+        }
     }
 
     /// The arithmetic for a SECRET modulus (an RSA prime): the constants are made without the variable-time code, so
@@ -127,7 +139,13 @@ impl<const N: usize> Modulus<N> {
         let mut two = [0u64; N];
         two[0] = 2;
         let (m_minus_2, _) = sub_borrow(&m, &two);
-        let mut k = Modulus { m, m0inv: inv.wrapping_neg(), r2: [0u64; N], r3: [0u64; N], m_minus_2 };
+        let mut k = Modulus {
+            m,
+            m0inv: inv.wrapping_neg(),
+            r2: [0u64; N],
+            r3: [0u64; N],
+            m_minus_2,
+        };
         // R^2 mod m: 1 doubled 128 N times, each doubling a constant-time addition (a value below m stays below m)
         let mut x = [0u64; N];
         x[0] = 1;
@@ -489,7 +507,9 @@ pub(crate) fn limbs_from_le<const N: usize>(bytes: &[u8]) -> [u64; N] {
 
 /// `N` limbs as exactly `len` little-endian bytes.
 pub(crate) fn limbs_to_le<const N: usize>(l: &[u64; N], len: usize) -> Vec<u8> {
-    (0..len).map(|i| (l[i / 8] >> (8 * (i % 8))) as u8).collect()
+    (0..len)
+        .map(|i| (l[i / 8] >> (8 * (i % 8))) as u8)
+        .collect()
 }
 
 #[cfg(test)]
@@ -514,7 +534,11 @@ mod tests {
         // a top limb of at most m's makes a < 2 m, which one subtraction brings below m
         let mut a = rand_limbs::<N>(rng);
         let top = m.m[N - 1];
-        a[N - 1] = if top == u64::MAX { a[N - 1] } else { a[N - 1] % (top + 1) };
+        a[N - 1] = if top == u64::MAX {
+            a[N - 1]
+        } else {
+            a[N - 1] % (top + 1)
+        };
         m.reduce_below_twice(&a)
     }
 
@@ -540,13 +564,20 @@ mod tests {
             assert_eq!(big(&m.add(a, b)), reference.add(&big(a), &big(b)), "add");
             assert_eq!(big(&m.sub(a, b)), reference.sub(&big(a), &big(b)), "sub");
             assert_eq!(big(&m.to_mont(a)), reference.to_mont(&big(a)), "to_mont");
-            assert_eq!(big(&m.from_mont(a)), reference.from_mont(&big(a)), "from_mont");
+            assert_eq!(
+                big(&m.from_mont(a)),
+                reference.from_mont(&big(a)),
+                "from_mont"
+            );
             if zero_mask(a) == 0 {
-                assert_eq!(m.from_mont(&m.mul(&m.invert(&m.to_mont(a)), &m.to_mont(a))), {
-                    let mut one = [0u64; N];
-                    one[0] = 1;
-                    one
-                });
+                assert_eq!(
+                    m.from_mont(&m.mul(&m.invert(&m.to_mont(a)), &m.to_mont(a))),
+                    {
+                        let mut one = [0u64; N];
+                        one[0] = 1;
+                        one
+                    }
+                );
             }
             assert_eq!(m.below_mask(a), u64::MAX);
         }
@@ -560,9 +591,17 @@ mod tests {
             wide.extend_from_slice(&hi);
             let want = bignum_mod(&wide, &m.m);
             assert_eq!(big(&m.reduce_wide(&lo, &hi)), want, "reduce_wide");
-            assert_eq!(big(&m.from_mont(&m.to_mont(&lo))), bignum_mod(&lo, &m.m), "to_mont of an unreduced value");
+            assert_eq!(
+                big(&m.from_mont(&m.to_mont(&lo))),
+                bignum_mod(&lo, &m.m),
+                "to_mont of an unreduced value"
+            );
         }
-        for (lo, hi) in [([u64::MAX; N], [u64::MAX; N]), ([0; N], [u64::MAX; N]), ([u64::MAX; N], [0; N])] {
+        for (lo, hi) in [
+            ([u64::MAX; N], [u64::MAX; N]),
+            ([0; N], [u64::MAX; N]),
+            ([u64::MAX; N], [0; N]),
+        ] {
             let mut wide = lo.to_vec();
             wide.extend_from_slice(&hi);
             assert_eq!(big(&m.reduce_wide(&lo, &hi)), bignum_mod(&wide, &m.m));
@@ -680,17 +719,28 @@ mod tests {
             }
             for (i, a) in edges.iter().enumerate() {
                 let b = &edges[(i * 5 + 1) % edges.len()];
-                assert_eq!(k.mul_columns(a, b), k.mul_rows(a, b), "{N} limbs, product {i}");
+                assert_eq!(
+                    k.mul_columns(a, b),
+                    k.mul_rows(a, b),
+                    "{N} limbs, product {i}"
+                );
                 assert_eq!(k.sqr_columns(a), k.mul_rows(a, a), "{N} limbs, square {i}");
                 if used == N {
                     // (with a zero top limb Mont's R is 2^64 smaller: the two Montgomery domains differ)
-                    assert_eq!(&k.mul(a, b)[..], &reference.mul(&a[..], &b[..])[..], "{N} limbs, against Mont");
+                    assert_eq!(
+                        &k.mul(a, b)[..],
+                        &reference.mul(&a[..], &b[..])[..],
+                        "{N} limbs, against Mont"
+                    );
                 }
             }
             // an operand that is not reduced, against one in range: what to_mont does
             let any = rand_limbs::<N>(rng);
             assert_eq!(k.mul_columns(&any, &k.r2), k.mul_rows(&any, &k.r2));
-            assert_eq!(k.mul_columns(&[u64::MAX; N], &mm1), k.mul_rows(&[u64::MAX; N], &mm1));
+            assert_eq!(
+                k.mul_columns(&[u64::MAX; N], &mm1),
+                k.mul_rows(&[u64::MAX; N], &mm1)
+            );
         }
         let mut rng = Rng::new(115);
         run::<32>(&mut rng, false);
@@ -710,4 +760,3 @@ mod tests {
         assert_eq!(limbs_from_le::<4>(&be)[0] & 0xff, 1);
     }
 }
-

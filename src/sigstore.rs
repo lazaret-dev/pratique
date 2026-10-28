@@ -41,7 +41,11 @@
 //! Bundles that sign an artifact's digest directly (`messageSignature`) rather than a statement; Rekor v2 entries
 //! (`kindVersion` other than `intoto` 0.0.2 and `dsse` 0.0.1); the envelope hash that Rekor records. The
 //! `integratedTime` of an entry that has no valid signed entry timestamp is not used for anything. Consistency
-//! between checkpoints is not looked at (an inclusion proof is to one signed checkpoint).
+//! between checkpoints is not looked at (an inclusion proof is to one signed checkpoint). The bundle's media type is
+//! not signed: a bundle is held to the rules of the version it says it is, so one stripped of what its version
+//! demands and labelled as a version that demands less (a 0.2 bundle without its inclusion proofs, as 0.1) verifies
+//! on what is left, as in Sigstore's own clients. A caller that wants an inclusion proof for every entry checks
+//! [`VerifiedEntry::inclusion`].
 //!
 //! # Inputs the standard leaves open
 //!
@@ -52,8 +56,8 @@ use std::fmt;
 
 use crate::asn1::{self, Der};
 use crate::cms;
-use crate::ct;
 use crate::crypto::sha2::{Hash as _, HashAlg, Sha256};
+use crate::ct;
 use crate::json::{self, Value};
 use crate::note::{self, Verifier};
 use crate::pem::{self, base64_decode_strict, base64_encode};
@@ -118,14 +122,22 @@ impl fmt::Display for Error {
             Error::PayloadType(t) => write!(f, "payload type {t:?} is not an in-toto statement"),
             Error::Signature => write!(f, "the envelope's signature is not by the signer's key"),
             Error::UnknownKey(k) => write!(f, "no trusted key {k:?}"),
-            Error::Entry { log_index, reason } => write!(f, "transparency log entry {log_index}: {reason}"),
+            Error::Entry { log_index, reason } => {
+                write!(f, "transparency log entry {log_index}: {reason}")
+            }
             Error::Timestamp(m) => write!(f, "time stamp: {m}"),
-            Error::NoVerifiedTime => write!(f, "nothing in the bundle establishes when it was signed"),
+            Error::NoVerifiedTime => {
+                write!(f, "nothing in the bundle establishes when it was signed")
+            }
             Error::Certificate(m) => write!(f, "signing certificate: {m}"),
             Error::CertificateTransparency(m) => write!(f, "certificate transparency: {m}"),
-            Error::KeyNotValid(k) => write!(f, "key {k:?} was not valid when the bundle was signed"),
+            Error::KeyNotValid(k) => {
+                write!(f, "key {k:?} was not valid when the bundle was signed")
+            }
             Error::Statement(m) => write!(f, "statement: {m}"),
-            Error::SubjectMismatch => write!(f, "no subject of the statement has the artifact's digest"),
+            Error::SubjectMismatch => {
+                write!(f, "no subject of the statement has the artifact's digest")
+            }
         }
     }
 }
@@ -161,7 +173,11 @@ impl<'a> Trust<'a> {
     /// Trust in a trusted root only: bundles signed by a Fulcio certificate that carries a signed certificate
     /// timestamp from one of the root's CT logs.
     pub fn new(root: &'a TrustedRoot) -> Trust<'a> {
-        Trust { root, keys: None, sct_threshold: 1 }
+        Trust {
+            root,
+            keys: None,
+            sct_threshold: 1,
+        }
     }
 
     /// Requires signed certificate timestamps from `logs` different CT logs of the root (0: none required).
@@ -215,14 +231,27 @@ impl ArtifactDigest {
     /// A digest the caller already has; its length must be the algorithm's.
     pub fn new(algorithm: DigestAlgorithm, digest: &[u8]) -> Result<ArtifactDigest, Error> {
         if digest.len() != algorithm.hash().output_len() {
-            return malformed("artifact digest", &format!("{} bytes is not the length of a {} digest", digest.len(), algorithm.name()));
+            return malformed(
+                "artifact digest",
+                &format!(
+                    "{} bytes is not the length of a {} digest",
+                    digest.len(),
+                    algorithm.name()
+                ),
+            );
         }
-        Ok(ArtifactDigest { algorithm, digest: digest.to_vec() })
+        Ok(ArtifactDigest {
+            algorithm,
+            digest: digest.to_vec(),
+        })
     }
 
     /// The digest of `data`.
     pub fn of(algorithm: DigestAlgorithm, data: &[u8]) -> ArtifactDigest {
-        ArtifactDigest { algorithm, digest: algorithm.hash().digest(data) }
+        ArtifactDigest {
+            algorithm,
+            digest: algorithm.hash().digest(data),
+        }
     }
 
     /// The algorithm.
@@ -396,16 +425,23 @@ impl Identity {
     /// the older GitHub extensions and was issued for GitHub Actions, `https://github.com/` and its
     /// repository.
     pub fn repository(&self) -> Option<String> {
-        match (&self.source_repository_uri, &self.github_workflow_repository) {
+        match (
+            &self.source_repository_uri,
+            &self.github_workflow_repository,
+        ) {
             (Some(uri), _) => Some(uri.clone()),
-            (None, Some(repo)) if self.issuer.as_deref() == Some(GITHUB_ACTIONS_ISSUER) => Some(format!("https://github.com/{repo}")),
+            (None, Some(repo)) if self.issuer.as_deref() == Some(GITHUB_ACTIONS_ISSUER) => {
+                Some(format!("https://github.com/{repo}"))
+            }
             _ => None,
         }
     }
 
     /// The Git ref the workflow ran for: the source repository ref, or the older GitHub workflow ref.
     pub fn git_ref(&self) -> Option<&str> {
-        self.source_repository_ref.as_deref().or(self.github_workflow_ref.as_deref())
+        self.source_repository_ref
+            .as_deref()
+            .or(self.github_workflow_ref.as_deref())
     }
 }
 
@@ -430,7 +466,9 @@ pub enum BundleFormat {
 enum Material {
     /// The leaf first, then whatever else the bundle carried (untrusted: candidates for intermediates).
     Certificates(Vec<Vec<u8>>),
-    Key { hint: String },
+    Key {
+        hint: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -521,22 +559,29 @@ fn b64(v: &Value, name: &str, path: &str) -> Result<Vec<u8>, Error> {
         Some(s) => s,
         None => return malformed(&format!("{path}.{name}"), "not a string"),
     };
-    base64_decode_strict(s).ok_or_else(|| Error::Malformed(format!("{path}.{name}: not canonical Base64")))
+    base64_decode_strict(s)
+        .ok_or_else(|| Error::Malformed(format!("{path}.{name}: not canonical Base64")))
 }
 
 fn array<'a>(v: &'a Value, name: &str, path: &str) -> Result<&'a [Value], Error> {
     match opt(v, name) {
         None => Ok(&[]),
-        Some(x) => x.as_array().ok_or_else(|| Error::Malformed(format!("{path}.{name}: not an array"))),
+        Some(x) => x
+            .as_array()
+            .ok_or_else(|| Error::Malformed(format!("{path}.{name}: not an array"))),
     }
 }
 
 fn uint64(v: &Value, name: &str, path: &str) -> Result<u64, Error> {
-    get(v, name, path)?.as_uint64().ok_or_else(|| Error::Malformed(format!("{path}.{name}: not an unsigned 64-bit integer")))
+    get(v, name, path)?
+        .as_uint64()
+        .ok_or_else(|| Error::Malformed(format!("{path}.{name}: not an unsigned 64-bit integer")))
 }
 
 fn hash32(v: &Value, name: &str, path: &str) -> Result<Hash, Error> {
-    b64(v, name, path)?.try_into().map_err(|_| Error::Malformed(format!("{path}.{name}: not a 32-byte hash")))
+    b64(v, name, path)?
+        .try_into()
+        .map_err(|_| Error::Malformed(format!("{path}.{name}: not a 32-byte hash")))
 }
 
 fn parse_entry(v: &Value, path: &str) -> Result<LogEntry, Error> {
@@ -544,7 +589,10 @@ fn parse_entry(v: &Value, path: &str) -> Result<LogEntry, Error> {
     let log_index = uint64(v, "logIndex", path)?;
     let log_id = b64(get(v, "logId", path)?, "keyId", &format!("{path}.logId"))?;
     let kv = get(v, "kindVersion", path)?;
-    let (kind, version) = (string(kv, "kind", &format!("{path}.kindVersion"))?, string(kv, "version", &format!("{path}.kindVersion"))?);
+    let (kind, version) = (
+        string(kv, "kind", &format!("{path}.kindVersion"))?,
+        string(kv, "version", &format!("{path}.kindVersion"))?,
+    );
     let integrated_time = match opt(v, "integratedTime") {
         None => None,
         Some(t) => match t.as_int64() {
@@ -555,7 +603,11 @@ fn parse_entry(v: &Value, path: &str) -> Result<LogEntry, Error> {
     };
     let promise = match opt(v, "inclusionPromise") {
         None => None,
-        Some(p) => Some(b64(p, "signedEntryTimestamp", &format!("{path}.inclusionPromise"))?),
+        Some(p) => Some(b64(
+            p,
+            "signedEntryTimestamp",
+            &format!("{path}.inclusionPromise"),
+        )?),
     };
     let proof = match opt(v, "inclusionProof") {
         None => None,
@@ -568,28 +620,48 @@ fn parse_entry(v: &Value, path: &str) -> Result<LogEntry, Error> {
             }
             let mut list = Vec::new();
             for (i, h) in hashes.iter().enumerate() {
-                let s = h.as_str().ok_or_else(|| Error::Malformed(format!("{pp}.hashes[{i}]: not a string")))?;
+                let s = h
+                    .as_str()
+                    .ok_or_else(|| Error::Malformed(format!("{pp}.hashes[{i}]: not a string")))?;
                 let bytes = base64_decode_strict(s).and_then(|b| Hash::try_from(b).ok());
-                list.push(bytes.ok_or_else(|| Error::Malformed(format!("{pp}.hashes[{i}]: not a 32-byte hash")))?);
+                list.push(bytes.ok_or_else(|| {
+                    Error::Malformed(format!("{pp}.hashes[{i}]: not a 32-byte hash"))
+                })?);
             }
             Some(InclusionProof {
                 log_index: uint64(p, "logIndex", &pp)?,
                 root_hash: hash32(p, "rootHash", &pp)?,
                 tree_size: uint64(p, "treeSize", &pp)?,
                 hashes: list,
-                checkpoint: string(get(p, "checkpoint", &pp)?, "envelope", &format!("{pp}.checkpoint"))?,
+                checkpoint: string(
+                    get(p, "checkpoint", &pp)?,
+                    "envelope",
+                    &format!("{pp}.checkpoint"),
+                )?,
             })
         }
     };
     let body = b64(v, "canonicalizedBody", path)?;
-    Ok(LogEntry { log_index, log_id, kind, version, integrated_time, promise, proof, body })
+    Ok(LogEntry {
+        log_index,
+        log_id,
+        kind,
+        version,
+        integrated_time,
+        promise,
+        proof,
+        body,
+    })
 }
 
 fn parse_entries(list: &[Value], path: &str) -> Result<Vec<LogEntry>, Error> {
     if list.len() > MAX_ENTRIES {
         return malformed(path, "too many entries");
     }
-    list.iter().enumerate().map(|(i, e)| parse_entry(e, &format!("{path}[{i}]"))).collect()
+    list.iter()
+        .enumerate()
+        .map(|(i, e)| parse_entry(e, &format!("{path}[{i}]")))
+        .collect()
 }
 
 fn parse_bundle(v: &Value, path: &str) -> Result<Bundle, Error> {
@@ -624,25 +696,44 @@ fn parse_bundle(v: &Value, path: &str) -> Result<Bundle, Error> {
         _ => return malformed(&vpath, "the signer's material is not one thing, or not the kind this version of the format has"),
     };
 
-    let entries = parse_entries(array(vm, "tlogEntries", &vpath)?, &format!("{vpath}.tlogEntries"))?;
+    let entries = parse_entries(
+        array(vm, "tlogEntries", &vpath)?,
+        &format!("{vpath}.tlogEntries"),
+    )?;
     for (i, e) in entries.iter().enumerate() {
         let missing = match format {
             BundleFormat::V0_1 => e.promise.is_none().then_some("a signed entry timestamp"),
-            BundleFormat::V0_2 | BundleFormat::V0_3 => e.proof.is_none().then_some("an inclusion proof"),
+            BundleFormat::V0_2 | BundleFormat::V0_3 => {
+                e.proof.is_none().then_some("an inclusion proof")
+            }
             BundleFormat::Pep740 => None,
         };
         if let Some(what) = missing {
-            return malformed(&format!("{vpath}.tlogEntries[{i}]"), &format!("this version of the format needs {what}"));
+            return malformed(
+                &format!("{vpath}.tlogEntries[{i}]"),
+                &format!("this version of the format needs {what}"),
+            );
         }
     }
     let mut timestamps = Vec::new();
     if let Some(tvd) = opt(vm, "timestampVerificationData") {
-        let list = array(tvd, "rfc3161Timestamps", &format!("{vpath}.timestampVerificationData"))?;
+        let list = array(
+            tvd,
+            "rfc3161Timestamps",
+            &format!("{vpath}.timestampVerificationData"),
+        )?;
         if list.len() > MAX_TIMESTAMPS {
-            return malformed(&format!("{vpath}.timestampVerificationData.rfc3161Timestamps"), "too many");
+            return malformed(
+                &format!("{vpath}.timestampVerificationData.rfc3161Timestamps"),
+                "too many",
+            );
         }
         for (i, t) in list.iter().enumerate() {
-            timestamps.push(b64(t, "signedTimestamp", &format!("{vpath}.timestampVerificationData.rfc3161Timestamps[{i}]"))?);
+            timestamps.push(b64(
+                t,
+                "signedTimestamp",
+                &format!("{vpath}.timestampVerificationData.rfc3161Timestamps[{i}]"),
+            )?);
         }
     }
 
@@ -655,16 +746,32 @@ fn parse_bundle(v: &Value, path: &str) -> Result<Bundle, Error> {
                 let sp = format!("{ep}.signatures[{i}]");
                 let keyid = match opt(s, "keyid") {
                     None => String::new(),
-                    Some(k) => k.as_str().ok_or_else(|| Error::Malformed(format!("{sp}.keyid: not a string")))?.to_string(),
+                    Some(k) => k
+                        .as_str()
+                        .ok_or_else(|| Error::Malformed(format!("{sp}.keyid: not a string")))?
+                        .to_string(),
                 };
                 signatures.push((keyid, b64(s, "sig", &sp)?));
             }
-            Envelope { payload_type: string(e, "payloadType", &ep)?, payload: b64(e, "payload", &ep)?, signatures }
+            Envelope {
+                payload_type: string(e, "payloadType", &ep)?,
+                payload: b64(e, "payload", &ep)?,
+                signatures,
+            }
         }
-        (None, Some(_)) => return Err(Error::Unsupported("a bundle that signs an artifact's digest (messageSignature) instead of a statement".into())),
+        (None, Some(_)) => return Err(Error::Unsupported(
+            "a bundle that signs an artifact's digest (messageSignature) instead of a statement"
+                .into(),
+        )),
         _ => return malformed(path, "not exactly one of dsseEnvelope and messageSignature"),
     };
-    Ok(Bundle { format, material, entries, timestamps, envelope })
+    Ok(Bundle {
+        format,
+        material,
+        entries,
+        timestamps,
+        envelope,
+    })
 }
 
 impl Bundle {
@@ -686,7 +793,10 @@ impl Bundle {
         for (i, a) in list.iter().enumerate() {
             let path = format!("$.attestations[{i}]");
             object(a, &path)?;
-            out.push(NpmAttestation { claimed_predicate_type: string(a, "predicateType", &path)?, bundle: parse_bundle(get(a, "bundle", &path)?, &format!("{path}.bundle"))? });
+            out.push(NpmAttestation {
+                claimed_predicate_type: string(a, "predicateType", &path)?,
+                bundle: parse_bundle(get(a, "bundle", &path)?, &format!("{path}.bundle"))?,
+            });
         }
         Ok(out)
     }
@@ -709,7 +819,9 @@ impl Bundle {
                 let path = format!("{gp}.attestations[{j}]");
                 object(a, &path)?;
                 if a.get("version").and_then(Value::as_int64) != Some(1) {
-                    return Err(Error::Unsupported(format!("{path}: attestation version other than 1")));
+                    return Err(Error::Unsupported(format!(
+                        "{path}: attestation version other than 1"
+                    )));
                 }
                 if out.len() >= MAX_ATTESTATIONS {
                     return malformed("$", "too many attestations");
@@ -718,9 +830,15 @@ impl Bundle {
                 let vpath = format!("{path}.verification_material");
                 object(vm, &vpath)?;
                 let cert = b64(vm, "certificate", &vpath)?;
-                let entries = parse_entries(array(vm, "transparency_entries", &vpath)?, &format!("{vpath}.transparency_entries"))?;
+                let entries = parse_entries(
+                    array(vm, "transparency_entries", &vpath)?,
+                    &format!("{vpath}.transparency_entries"),
+                )?;
                 if let Some(i) = entries.iter().position(|e| e.proof.is_none()) {
-                    return malformed(&format!("{vpath}.transparency_entries[{i}]"), "an entry without an inclusion proof");
+                    return malformed(
+                        &format!("{vpath}.transparency_entries[{i}]"),
+                        "an entry without an inclusion proof",
+                    );
                 }
                 let env = get(a, "envelope", &path)?;
                 let epath = format!("{path}.envelope");
@@ -729,9 +847,16 @@ impl Bundle {
                     material: Material::Certificates(vec![cert]),
                     entries,
                     timestamps: Vec::new(),
-                    envelope: Envelope { payload_type: PAYLOAD_TYPE.to_string(), payload: b64(env, "statement", &epath)?, signatures: vec![(String::new(), b64(env, "signature", &epath)?)] },
+                    envelope: Envelope {
+                        payload_type: PAYLOAD_TYPE.to_string(),
+                        payload: b64(env, "statement", &epath)?,
+                        signatures: vec![(String::new(), b64(env, "signature", &epath)?)],
+                    },
                 };
-                out.push(Pep740Attestation { claimed_publisher: publisher.clone(), bundle });
+                out.push(Pep740Attestation {
+                    claimed_publisher: publisher.clone(),
+                    bundle,
+                });
             }
         }
         Ok(out)
@@ -773,12 +898,25 @@ fn parse_statement(payload: &[u8]) -> Result<Statement, Error> {
     if v.as_object().is_none() {
         return Err(bad("not an object"));
     }
-    let statement_type = v.get("_type").and_then(Value::as_str).ok_or_else(|| bad("no _type"))?;
-    if statement_type != "https://in-toto.io/Statement/v0.1" && statement_type != "https://in-toto.io/Statement/v1" {
-        return Err(Error::Statement(format!("statement type {statement_type:?} is not known")));
+    let statement_type = v
+        .get("_type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| bad("no _type"))?;
+    if statement_type != "https://in-toto.io/Statement/v0.1"
+        && statement_type != "https://in-toto.io/Statement/v1"
+    {
+        return Err(Error::Statement(format!(
+            "statement type {statement_type:?} is not known"
+        )));
     }
-    let predicate_type = v.get("predicateType").and_then(Value::as_str).ok_or_else(|| bad("no predicateType"))?;
-    let list = v.get("subject").and_then(Value::as_array).ok_or_else(|| bad("no subject list"))?;
+    let predicate_type = v
+        .get("predicateType")
+        .and_then(Value::as_str)
+        .ok_or_else(|| bad("no predicateType"))?;
+    let list = v
+        .get("subject")
+        .and_then(Value::as_array)
+        .ok_or_else(|| bad("no subject list"))?;
     if list.is_empty() {
         return Err(bad("the subject list is empty"));
     }
@@ -789,26 +927,50 @@ fn parse_statement(payload: &[u8]) -> Result<Statement, Error> {
             Some(Value::String(n)) => Some(n.clone()),
             Some(_) => return Err(bad("a subject name is not a string")),
         };
-        let digest = s.get("digest").and_then(Value::as_object).ok_or_else(|| bad("a subject has no digest"))?;
+        let digest = s
+            .get("digest")
+            .and_then(Value::as_object)
+            .ok_or_else(|| bad("a subject has no digest"))?;
         let mut digests = Vec::new();
         for (alg, value) in digest.iter() {
-            digests.push((alg.to_string(), value.as_str().ok_or_else(|| bad("a digest is not a string"))?.to_string()));
+            digests.push((
+                alg.to_string(),
+                value
+                    .as_str()
+                    .ok_or_else(|| bad("a digest is not a string"))?
+                    .to_string(),
+            ));
         }
         subjects.push(Subject { name, digests });
     }
     let predicate = opt(&v, "predicate").cloned();
-    Ok(Statement { statement_type: statement_type.to_string(), subjects, predicate_type: predicate_type.to_string(), predicate })
+    Ok(Statement {
+        statement_type: statement_type.to_string(),
+        subjects,
+        predicate_type: predicate_type.to_string(),
+        predicate,
+    })
 }
 
 fn hex_matches(text: &str, bytes: &[u8]) -> bool {
-    text.len() == bytes.len() * 2 && text.bytes().zip(hex(bytes).bytes()).all(|(a, b)| a.eq_ignore_ascii_case(&b))
+    text.len() == bytes.len() * 2
+        && text
+            .bytes()
+            .zip(hex(bytes).bytes())
+            .all(|(a, b)| a.eq_ignore_ascii_case(&b))
 }
 
 // ================================================================================================ DSSE
 
 /// DSSE's pre-authentication encoding (`DSSEv1`, the lengths in decimal), what the signature is over.
 fn pae(payload_type: &str, payload: &[u8]) -> Vec<u8> {
-    let mut out = format!("DSSEv1 {} {} {} ", payload_type.len(), payload_type, payload.len()).into_bytes();
+    let mut out = format!(
+        "DSSEv1 {} {} {} ",
+        payload_type.len(),
+        payload_type,
+        payload.len()
+    )
+    .into_bytes();
     out.extend_from_slice(payload);
     out
 }
@@ -821,11 +983,19 @@ fn fulcio_oid(n: u8) -> Vec<u8> {
 
 /// A Fulcio extension's text: the first six hold raw text, the later ones a DER UTF8String.
 fn fulcio_text(cert: &Certificate, n: u8) -> Result<Option<String>, Error> {
-    let Some(ext) = cert.extension(&fulcio_oid(n)) else { return Ok(None) };
-    let text = if n <= 6 { String::from_utf8(ext.value.clone()).ok() } else { ext.der_string() };
+    let Some(ext) = cert.extension(&fulcio_oid(n)) else {
+        return Ok(None);
+    };
+    let text = if n <= 6 {
+        String::from_utf8(ext.value.clone()).ok()
+    } else {
+        ext.der_string()
+    };
     match text {
         Some(t) => Ok(Some(t)),
-        None => Err(Error::Certificate(format!("extension 1.3.6.1.4.1.57264.1.{n} is not text"))),
+        None => Err(Error::Certificate(format!(
+            "extension 1.3.6.1.4.1.57264.1.{n} is not text"
+        ))),
     }
 }
 
@@ -838,9 +1008,17 @@ fn identity(cert: &Certificate, chain: Vec<Vec<u8>>) -> Result<Identity, Error> 
                 let mut d = Der::new(value);
                 match d.next() {
                     Ok(t) if t.tag == asn1::TAG_UTF8_STRING && d.is_empty() => {
-                        other_names.push(String::from_utf8(t.content.to_vec()).map_err(|_| Error::Certificate("a username in the subjectAltName is not UTF-8".into()))?)
+                        other_names.push(String::from_utf8(t.content.to_vec()).map_err(|_| {
+                            Error::Certificate(
+                                "a username in the subjectAltName is not UTF-8".into(),
+                            )
+                        })?)
                     }
-                    _ => return Err(Error::Certificate("a username in the subjectAltName is not a UTF8String".into())),
+                    _ => {
+                        return Err(Error::Certificate(
+                            "a username in the subjectAltName is not a UTF8String".into(),
+                        ))
+                    }
                 }
             }
         }
@@ -885,43 +1063,88 @@ fn identity(cert: &Certificate, chain: Vec<Vec<u8>>) -> Result<Identity, Error> 
 /// What the entry body must say about the envelope. `signer_ders` are the DER of the certificate, or of the
 /// `SubjectPublicKeyInfo` of each key that verified the signature: the body must name one of them.
 fn check_body(entry: &LogEntry, env: &Envelope, signer_ders: &[&[u8]]) -> Result<(), String> {
-    let body = json::parse(&entry.body).map_err(|e| format!("the entry body is not strict JSON: {e}"))?;
-    if body.get("kind").and_then(Value::as_str) != Some(entry.kind.as_str()) || body.get("apiVersion").and_then(Value::as_str) != Some(entry.version.as_str()) {
+    let body =
+        json::parse(&entry.body).map_err(|e| format!("the entry body is not strict JSON: {e}"))?;
+    if body.get("kind").and_then(Value::as_str) != Some(entry.kind.as_str())
+        || body.get("apiVersion").and_then(Value::as_str) != Some(entry.version.as_str())
+    {
         return Err("the body's kind and version are not the entry's".into());
     }
     let sig = &env.signatures[0].1;
     let spec = body.get("spec").ok_or("the body has no spec")?;
-    let (payload_hash, signature, verifier, payload_type) = match (entry.kind.as_str(), entry.version.as_str()) {
-        ("intoto", "0.0.2") => {
-            let content = spec.get("content").ok_or("no spec.content")?;
-            let envelope = content.get("envelope").ok_or("no spec.content.envelope")?;
-            let sigs = envelope.get("signatures").and_then(Value::as_array).ok_or("no signatures")?;
-            if sigs.len() != 1 {
-                return Err("the body does not have exactly one signature".into());
+    let (payload_hash, signature, verifier, payload_type) =
+        match (entry.kind.as_str(), entry.version.as_str()) {
+            ("intoto", "0.0.2") => {
+                let content = spec.get("content").ok_or("no spec.content")?;
+                let envelope = content.get("envelope").ok_or("no spec.content.envelope")?;
+                let sigs = envelope
+                    .get("signatures")
+                    .and_then(Value::as_array)
+                    .ok_or("no signatures")?;
+                if sigs.len() != 1 {
+                    return Err("the body does not have exactly one signature".into());
+                }
+                // Rekor holds the signature as the Base64 text of the DSSE envelope, Base64-encoded again
+                let twice = sigs[0]
+                    .get("sig")
+                    .and_then(Value::as_str)
+                    .and_then(base64_decode_strict)
+                    .and_then(|t| String::from_utf8(t).ok())
+                    .and_then(|t| base64_decode_strict(&t));
+                let key = sigs[0]
+                    .get("publicKey")
+                    .and_then(Value::as_str)
+                    .and_then(base64_decode_strict);
+                (
+                    content.get("payloadHash"),
+                    twice,
+                    key,
+                    envelope
+                        .get("payloadType")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                )
             }
-            // Rekor holds the signature as the Base64 text of the DSSE envelope, Base64-encoded again
-            let twice = sigs[0].get("sig").and_then(Value::as_str).and_then(base64_decode_strict).and_then(|t| String::from_utf8(t).ok()).and_then(|t| base64_decode_strict(&t));
-            let key = sigs[0].get("publicKey").and_then(Value::as_str).and_then(base64_decode_strict);
-            (content.get("payloadHash"), twice, key, envelope.get("payloadType").and_then(Value::as_str).map(str::to_string))
-        }
-        ("dsse", "0.0.1") => {
-            let sigs = spec.get("signatures").and_then(Value::as_array).ok_or("no signatures")?;
-            if sigs.len() != 1 {
-                return Err("the body does not have exactly one signature".into());
+            ("dsse", "0.0.1") => {
+                let sigs = spec
+                    .get("signatures")
+                    .and_then(Value::as_array)
+                    .ok_or("no signatures")?;
+                if sigs.len() != 1 {
+                    return Err("the body does not have exactly one signature".into());
+                }
+                let once = sigs[0]
+                    .get("signature")
+                    .and_then(Value::as_str)
+                    .and_then(base64_decode_strict);
+                let key = sigs[0]
+                    .get("verifier")
+                    .and_then(Value::as_str)
+                    .and_then(base64_decode_strict);
+                (
+                    spec.get("payloadHash"),
+                    once,
+                    key,
+                    Some(env.payload_type.clone()),
+                )
             }
-            let once = sigs[0].get("signature").and_then(Value::as_str).and_then(base64_decode_strict);
-            let key = sigs[0].get("verifier").and_then(Value::as_str).and_then(base64_decode_strict);
-            (spec.get("payloadHash"), once, key, Some(env.payload_type.clone()))
-        }
-        (kind, version) => return Err(format!("entries of kind {kind} {version} are not handled")),
-    };
+            (kind, version) => {
+                return Err(format!("entries of kind {kind} {version} are not handled"))
+            }
+        };
     if payload_type.as_deref() != Some(env.payload_type.as_str()) {
         return Err("the body's payload type is not the envelope's".into());
     }
     match payload_hash {
         Some(h) if h.get("algorithm").and_then(Value::as_str) == Some("sha256") => {
-            if !h.get("value").and_then(Value::as_str).is_some_and(|v| hex_matches(v, &Sha256::digest(&env.payload))) {
-                return Err("the body's payload hash is not the SHA-256 of the envelope's payload".into());
+            if !h
+                .get("value")
+                .and_then(Value::as_str)
+                .is_some_and(|v| hex_matches(v, &Sha256::digest(&env.payload)))
+            {
+                return Err(
+                    "the body's payload hash is not the SHA-256 of the envelope's payload".into(),
+                );
             }
         }
         _ => return Err("the body has no SHA-256 payload hash".into()),
@@ -929,10 +1152,14 @@ fn check_body(entry: &LogEntry, env: &Envelope, signer_ders: &[&[u8]]) -> Result
     if signature.as_deref() != Some(sig.as_slice()) {
         return Err("the body's signature is not the envelope's".into());
     }
-    let pem_text = verifier.and_then(|v| String::from_utf8(v).ok()).ok_or("the body has no certificate or key")?;
+    let pem_text = verifier
+        .and_then(|v| String::from_utf8(v).ok())
+        .ok_or("the body has no certificate or key")?;
     let blocks = pem::parse(&pem_text);
     if blocks.len() != 1 || (blocks[0].label != "CERTIFICATE" && blocks[0].label != "PUBLIC KEY") {
-        return Err("the body's certificate or key is not one PEM certificate or public key".into());
+        return Err(
+            "the body's certificate or key is not one PEM certificate or public key".into(),
+        );
     }
     if !signer_ders.iter().any(|d| *d == blocks[0].data.as_slice()) {
         return Err("the body's certificate or key is not the signer's".into());
@@ -947,7 +1174,10 @@ fn set_payload(entry: &LogEntry, integrated_time: i64) -> Result<Vec<u8>, String
     o.insert("body", Value::string(&base64_encode(&entry.body)));
     o.insert("integratedTime", Value::int(integrated_time));
     o.insert("logID", Value::string(&hex(&entry.log_id)));
-    o.insert("logIndex", Value::int(i64::try_from(entry.log_index).map_err(|_| "log index too large".to_string())?));
+    o.insert(
+        "logIndex",
+        Value::int(i64::try_from(entry.log_index).map_err(|_| "log index too large".to_string())?),
+    );
     json::canonical(&Value::Object(o)).map_err(|e| e.to_string())
 }
 
@@ -966,40 +1196,86 @@ fn checkpoint_verifier(log: &TransparencyLog) -> Result<Verifier, String> {
 }
 
 /// Checks the inclusion proof against a checkpoint signed by `log`; returns the checkpoint's origin.
-fn check_inclusion(entry: &LogEntry, proof: &InclusionProof, log: &TransparencyLog) -> Result<Inclusion, String> {
+fn check_inclusion(
+    entry: &LogEntry,
+    proof: &InclusionProof,
+    log: &TransparencyLog,
+) -> Result<Inclusion, String> {
     let verifier = checkpoint_verifier(log)?;
-    let opened = note::open(proof.checkpoint.as_bytes(), &[verifier]).map_err(|e| format!("the checkpoint: {e}"))?;
+    let opened = note::open(proof.checkpoint.as_bytes(), &[verifier])
+        .map_err(|e| format!("the checkpoint: {e}"))?;
     let mut lines = opened.text.lines();
     let origin = lines.next().ok_or("the checkpoint has no origin")?;
-    let size: u64 = lines.next().and_then(|l| l.parse().ok()).ok_or("the checkpoint's tree size is not a number")?;
-    let root: Hash = lines.next().and_then(base64_decode_strict).and_then(|b| b.try_into().ok()).ok_or("the checkpoint's root hash is not a 32-byte hash")?;
+    let size: u64 = lines
+        .next()
+        .and_then(|l| l.parse().ok())
+        .ok_or("the checkpoint's tree size is not a number")?;
+    let root: Hash = lines
+        .next()
+        .and_then(base64_decode_strict)
+        .and_then(|b| b.try_into().ok())
+        .ok_or("the checkpoint's root hash is not a 32-byte hash")?;
     let host = log.host();
-    if origin != host && !origin.strip_prefix(host).is_some_and(|r| r.starts_with(" - ")) {
-        return Err(format!("the checkpoint's origin {origin:?} is not the log's ({host})"));
+    if origin != host
+        && !origin
+            .strip_prefix(host)
+            .is_some_and(|r| r.starts_with(" - "))
+    {
+        return Err(format!(
+            "the checkpoint's origin {origin:?} is not the log's ({host})"
+        ));
     }
     if size != proof.tree_size || root != proof.root_hash {
         return Err("the inclusion proof is to a tree other than the checkpoint's".into());
     }
-    tlog::verify_inclusion(&proof.hashes, proof.tree_size, &proof.root_hash, proof.log_index, &tlog::record_hash(&entry.body)).map_err(|e| format!("the inclusion proof: {e}"))?;
-    Ok(Inclusion { leaf_index: proof.log_index, tree_size: size, origin: origin.to_string() })
+    tlog::verify_inclusion(
+        &proof.hashes,
+        proof.tree_size,
+        &proof.root_hash,
+        proof.log_index,
+        &tlog::record_hash(&entry.body),
+    )
+    .map_err(|e| format!("the inclusion proof: {e}"))?;
+    Ok(Inclusion {
+        leaf_index: proof.log_index,
+        tree_size: size,
+        origin: origin.to_string(),
+    })
 }
 
 // ================================================================================================ time stamps
 
-fn verify_timestamps(tokens: &[Vec<u8>], signature: &[u8], root: &TrustedRoot) -> Result<Vec<VerifiedTime>, Error> {
+fn verify_timestamps(
+    tokens: &[Vec<u8>],
+    signature: &[u8],
+    root: &TrustedRoot,
+) -> Result<Vec<VerifiedTime>, Error> {
     let mut out = Vec::new();
     for (i, token) in tokens.iter().enumerate() {
         let mut why = "the trusted root has no time-stamp authority".to_string();
         let mut found = None;
-        let token = cms::timestamp_token(token).map_err(|e| Error::Timestamp(format!("time stamp {i}: {e}")))?;
+        let token = cms::timestamp_token(token)
+            .map_err(|e| Error::Timestamp(format!("time stamp {i}: {e}")))?;
         for authority in &root.timestamp_authorities {
-            let (store, others) = authority.trust().map_err(|e| Error::Timestamp(e.to_string()))?;
+            let (store, others) = authority
+                .trust()
+                .map_err(|e| Error::Timestamp(e.to_string()))?;
             match cms::verify_timestamp_with(&token, signature, &store, false, &others) {
                 Ok(t) if authority.valid_for.contains(t.time) => {
-                    found = Some(VerifiedTime { time: t.time, source: TimeSource::TimeStamp { authority: authority.common_name.clone() } });
+                    found = Some(VerifiedTime {
+                        time: t.time,
+                        source: TimeSource::TimeStamp {
+                            authority: authority.common_name.clone(),
+                        },
+                    });
                     break;
                 }
-                Ok(t) => why = format!("made at {} by {}, outside its validity", t.time, authority.common_name),
+                Ok(t) => {
+                    why = format!(
+                        "made at {} by {}, outside its validity",
+                        t.time, authority.common_name
+                    )
+                }
                 Err(e) => why = e.to_string(),
             }
         }
@@ -1027,7 +1303,9 @@ impl Bundle {
             return Err(Error::PayloadType(env.payload_type.clone()));
         }
         if env.signatures.len() != 1 {
-            return Err(Error::Malformed("the envelope does not have exactly one signature".into()));
+            return Err(Error::Malformed(
+                "the envelope does not have exactly one signature".into(),
+            ));
         }
         let (keyid, signature) = &env.signatures[0];
         let signed = pae(&env.payload_type, &env.payload);
@@ -1035,7 +1313,8 @@ impl Bundle {
         // 1. the signature, by the key of the certificate or of the ring
         let signing = match &self.material {
             Material::Certificates(chain) => {
-                let leaf = Certificate::from_der(&chain[0]).map_err(|e| Error::Certificate(e.to_string()))?;
+                let leaf = Certificate::from_der(&chain[0])
+                    .map_err(|e| Error::Certificate(e.to_string()))?;
                 if !trust_root::verify_signature(&leaf.public_key, &signed, signature) {
                     return Err(Error::Signature);
                 }
@@ -1046,11 +1325,18 @@ impl Bundle {
                 if id.is_empty() {
                     return Err(Error::UnknownKey(String::new()));
                 }
-                let candidates: Vec<&RingKey> = trust.keys.map(|k| k.with_id(id).collect()).unwrap_or_default();
+                let candidates: Vec<&RingKey> = trust
+                    .keys
+                    .map(|k| k.with_id(id).collect())
+                    .unwrap_or_default();
                 if candidates.is_empty() {
                     return Err(Error::UnknownKey(id.clone()));
                 }
-                let good: Vec<RingKey> = candidates.into_iter().filter(|k| k.key.verify(&signed, signature)).cloned().collect();
+                let good: Vec<RingKey> = candidates
+                    .into_iter()
+                    .filter(|k| k.key.verify(&signed, signature))
+                    .cloned()
+                    .collect();
                 if good.is_empty() {
                     return Err(Error::Signature);
                 }
@@ -1067,31 +1353,55 @@ impl Bundle {
             Signing::Keys(keys) => keys.iter().map(|k| k.key.spki()).collect(),
         };
         if self.entries.is_empty() {
-            return Err(Error::Entry { log_index: 0, reason: "the bundle has no transparency log entry".into() });
+            return Err(Error::Entry {
+                log_index: 0,
+                reason: "the bundle has no transparency log entry".into(),
+            });
         }
         let mut times: Vec<VerifiedTime> = Vec::new();
         let mut set_verified = vec![false; self.entries.len()];
         for (i, entry) in self.entries.iter().enumerate() {
-            let fail = |reason: String| Error::Entry { log_index: entry.log_index, reason };
+            let fail = |reason: String| Error::Entry {
+                log_index: entry.log_index,
+                reason,
+            };
             check_body(entry, env, &signer_ders).map_err(fail)?;
-            if self.entries[..i].iter().any(|e| e.body == entry.body && e.log_id == entry.log_id) {
+            if self.entries[..i]
+                .iter()
+                .any(|e| e.body == entry.body && e.log_id == entry.log_id)
+            {
                 return Err(fail("the same entry is in the bundle twice".into()));
             }
             let logs: Vec<&TransparencyLog> = trust.root.tlogs_with_id(&entry.log_id).collect();
             if logs.is_empty() {
-                return Err(fail(format!("no log with id {} in the trusted root", hex(&entry.log_id))));
+                return Err(fail(format!(
+                    "no log with id {} in the trusted root",
+                    hex(&entry.log_id)
+                )));
             }
             if let Some(promise) = &entry.promise {
-                let t = entry.integrated_time.ok_or_else(|| fail("a signed entry timestamp but no integration time".into()))?;
+                let t = entry.integrated_time.ok_or_else(|| {
+                    fail("a signed entry timestamp but no integration time".into())
+                })?;
                 let payload = set_payload(entry, t).map_err(fail)?;
-                if !logs.iter().any(|l| l.valid_for.contains(t) && l.key.verify(&payload, promise)) {
+                if !logs
+                    .iter()
+                    .any(|l| l.valid_for.contains(t) && l.key.verify(&payload, promise))
+                {
                     return Err(fail("the signed entry timestamp is not by a trusted key of the log valid at the integration time".into()));
                 }
                 set_verified[i] = true;
-                times.push(VerifiedTime { time: t, source: TimeSource::LogEntry { log_index: entry.log_index } });
+                times.push(VerifiedTime {
+                    time: t,
+                    source: TimeSource::LogEntry {
+                        log_index: entry.log_index,
+                    },
+                });
             }
             if entry.promise.is_none() && entry.proof.is_none() {
-                return Err(fail("neither a signed entry timestamp nor an inclusion proof".into()));
+                return Err(fail(
+                    "neither a signed entry timestamp nor an inclusion proof".into(),
+                ));
             }
         }
 
@@ -1105,13 +1415,20 @@ impl Bundle {
         // 5a. the inclusion proofs, now that there are times to check the logs' keys at
         let mut entries = Vec::new();
         for (i, entry) in self.entries.iter().enumerate() {
-            let fail = |reason: String| Error::Entry { log_index: entry.log_index, reason };
+            let fail = |reason: String| Error::Entry {
+                log_index: entry.log_index,
+                reason,
+            };
             let logs: Vec<&TransparencyLog> = trust.root.tlogs_with_id(&entry.log_id).collect();
             let mut inclusion = None;
             let mut used = logs[0];
             if let Some(proof) = &entry.proof {
-                let mut last = String::from("no key of the log was valid when the bundle was signed");
-                for log in logs.iter().filter(|l| times.iter().any(|t| l.valid_for.contains(t.time))) {
+                let mut last =
+                    String::from("no key of the log was valid when the bundle was signed");
+                for log in logs
+                    .iter()
+                    .filter(|l| times.iter().any(|t| l.valid_for.contains(t.time)))
+                {
                     match check_inclusion(entry, proof, log) {
                         Ok(i) => {
                             inclusion = Some(i);
@@ -1131,7 +1448,11 @@ impl Bundle {
                 log_url: used.base_url.clone(),
                 kind: entry.kind.clone(),
                 version: entry.version.clone(),
-                integrated_time: if set_verified[i] { entry.integrated_time } else { None },
+                integrated_time: if set_verified[i] {
+                    entry.integrated_time
+                } else {
+                    None
+                },
                 signed_entry_timestamp: set_verified[i],
                 inclusion,
             });
@@ -1140,14 +1461,26 @@ impl Bundle {
         // 5b. the signer, at a time that was established
         let (signer, verified_time) = match &signing {
             Signing::Certificate(leaf) => {
-                let Material::Certificates(chain) = &self.material else { unreachable!("a certificate was read from certificates") };
+                let Material::Certificates(chain) = &self.material else {
+                    unreachable!("a certificate was read from certificates")
+                };
                 let (id, t) = verify_certificate(leaf, &chain[1..], trust.root, &times)?;
                 (Signer::Certificate(Box::new(id)), t)
             }
             Signing::Keys(keys) => {
-                let found = times.iter().find_map(|t| keys.iter().find(|k| k.valid_for.contains(t.time)).map(|k| (k, t.time)));
+                let found = times.iter().find_map(|t| {
+                    keys.iter()
+                        .find(|k| k.valid_for.contains(t.time))
+                        .map(|k| (k, t.time))
+                });
                 match found {
-                    Some((k, t)) => (Signer::Key { id: k.id.clone(), spki_sha256: k.key.sha256() }, t),
+                    Some((k, t)) => (
+                        Signer::Key {
+                            id: k.id.clone(),
+                            spki_sha256: k.key.sha256(),
+                        },
+                        t,
+                    ),
                     None => return Err(Error::KeyNotValid(keys[0].id.clone())),
                 }
             }
@@ -1163,24 +1496,48 @@ impl Bundle {
         let matched_subject = statement
             .subjects
             .iter()
-            .position(|s| s.digests.iter().any(|(alg, value)| alg == artifact.algorithm.name() && hex_matches(value, &artifact.digest)))
+            .position(|s| {
+                s.digests.iter().any(|(alg, value)| {
+                    alg == artifact.algorithm.name() && hex_matches(value, &artifact.digest)
+                })
+            })
             .ok_or(Error::SubjectMismatch)?;
 
-        Ok(Verified { format: self.format, signer, statement, matched_subject, verified_time, times, entries, scts })
+        Ok(Verified {
+            format: self.format,
+            signer,
+            statement,
+            matched_subject,
+            verified_time,
+            times,
+            entries,
+            scts,
+        })
     }
 }
 
 /// Checks the SCTs embedded in a signing certificate (`chain` is the verified path from it, the issuer second) against
 /// the root's CT logs and requires them from `trust.sct_threshold` logs.
-fn check_scts(leaf: &[u8], chain: &[Vec<u8>], trust: &Trust) -> Result<Vec<ct::VerifiedSct>, Error> {
+fn check_scts(
+    leaf: &[u8],
+    chain: &[Vec<u8>],
+    trust: &Trust,
+) -> Result<Vec<ct::VerifiedSct>, Error> {
     let fail = |m: String| Error::CertificateTransparency(m);
     let leaf = Certificate::parse(leaf).map_err(|e| fail(e.to_string()))?;
-    let Some(issuer) = chain.get(1) else { return Err(fail("the certificate is itself a trust anchor: it has no issuer to check SCTs with".into())) };
+    let Some(issuer) = chain.get(1) else {
+        return Err(fail(
+            "the certificate is itself a trust anchor: it has no issuer to check SCTs with".into(),
+        ));
+    };
     let issuer = Certificate::parse(issuer).map_err(|e| fail(e.to_string()))?;
-    let report = ct::verify_embedded(&leaf, &issuer, &trust.root.ctlogs).map_err(|e| fail(e.to_string()))?;
+    let report =
+        ct::verify_embedded(&leaf, &issuer, &trust.root.ctlogs).map_err(|e| fail(e.to_string()))?;
     let logs = report.distinct_logs();
     if logs < trust.sct_threshold {
-        let seen = ct::embedded(&leaf).map(|l| l.scts.len() + l.other_versions).unwrap_or(0);
+        let seen = ct::embedded(&leaf)
+            .map(|l| l.scts.len() + l.other_versions)
+            .unwrap_or(0);
         return Err(fail(format!(
             "signed certificate timestamps from {logs} of the trusted root's CT logs verified and {} are required (the certificate has {seen}, {} from logs the root does not list)",
             trust.sct_threshold,
@@ -1192,13 +1549,26 @@ fn check_scts(leaf: &[u8], chain: &[Vec<u8>], trust: &Trust) -> Result<Vec<ct::V
 
 /// Finds the earliest of `times` at which the certificate verifies under some Fulcio authority that counts
 /// then, and describes it.
-fn verify_certificate(leaf: &Certificate, bundle_extra: &[Vec<u8>], root: &TrustedRoot, times: &[VerifiedTime]) -> Result<(Identity, i64), Error> {
+fn verify_certificate(
+    leaf: &Certificate,
+    bundle_extra: &[Vec<u8>],
+    root: &TrustedRoot,
+    times: &[VerifiedTime],
+) -> Result<(Identity, i64), Error> {
     if root.certificate_authorities.is_empty() {
-        return Err(Error::Certificate("the trusted root has no certificate authority".into()));
+        return Err(Error::Certificate(
+            "the trusted root has no certificate authority".into(),
+        ));
     }
-    let mut why = String::from("no certificate authority of the trusted root counts at any time the bundle established");
+    let mut why = String::from(
+        "no certificate authority of the trusted root counts at any time the bundle established",
+    );
     for t in times {
-        for ca in root.certificate_authorities.iter().filter(|c| c.valid_for.contains(t.time)) {
+        for ca in root
+            .certificate_authorities
+            .iter()
+            .filter(|c| c.valid_for.contains(t.time))
+        {
             let (store, others) = ca.trust().map_err(|e| Error::Certificate(e.to_string()))?;
             let mut chain: Vec<&[u8]> = vec![&leaf.der];
             chain.extend(bundle_extra.iter().map(Vec::as_slice));
@@ -1226,7 +1596,10 @@ mod tests {
     }
 
     fn bundle_json(media: &str, material: &str, entries: &[String], envelope: &str) -> String {
-        format!(r#"{{"mediaType":"{media}","verificationMaterial":{{{material},"tlogEntries":[{}]}},{envelope}}}"#, entries.join(","))
+        format!(
+            r#"{{"mediaType":"{media}","verificationMaterial":{{{material},"tlogEntries":[{}]}},{envelope}}}"#,
+            entries.join(",")
+        )
     }
 
     const V03: &str = "application/vnd.dev.sigstore.bundle.v0.3+json";
@@ -1257,7 +1630,10 @@ mod tests {
 
     #[test]
     fn the_pre_authentication_encoding_is_the_one_in_the_dsse_specification() {
-        assert_eq!(pae("http://example.com/HelloWorld", b"hello world"), b"DSSEv1 29 http://example.com/HelloWorld 11 hello world");
+        assert_eq!(
+            pae("http://example.com/HelloWorld", b"hello world"),
+            b"DSSEv1 29 http://example.com/HelloWorld 11 hello world"
+        );
         assert_eq!(pae("", b""), b"DSSEv1 0  0 ");
         // lengths count bytes, not characters
         assert_eq!(pae("é", "ü".as_bytes()), "DSSEv1 2 é 2 ü".as_bytes());
@@ -1269,10 +1645,29 @@ mod tests {
         assert_eq!(b.format(), BundleFormat::V0_3);
         assert_eq!(b.entries.len(), 1);
         let e = &b.entries[0];
-        assert_eq!((e.log_index, e.integrated_time, e.kind.as_str(), e.version.as_str()), (7, Some(1_700_000_000), "dsse", "0.0.1"));
-        assert_eq!((e.log_id.as_slice(), e.body.as_slice()), (&[1u8, 2, 3][..], &[1u8, 2, 3][..]));
+        assert_eq!(
+            (
+                e.log_index,
+                e.integrated_time,
+                e.kind.as_str(),
+                e.version.as_str()
+            ),
+            (7, Some(1_700_000_000), "dsse", "0.0.1")
+        );
+        assert_eq!(
+            (e.log_id.as_slice(), e.body.as_slice()),
+            (&[1u8, 2, 3][..], &[1u8, 2, 3][..])
+        );
         let p = e.proof.as_ref().unwrap();
-        assert_eq!((p.log_index, p.tree_size, p.hashes.len(), p.checkpoint.as_str()), (3, 9, 0, "x"));
+        assert_eq!(
+            (
+                p.log_index,
+                p.tree_size,
+                p.hashes.len(),
+                p.checkpoint.as_str()
+            ),
+            (3, 9, 0, "x")
+        );
         assert_eq!(b.envelope.signatures, [(String::new(), vec![1, 2, 3])]);
         assert!(b.timestamps.is_empty());
         assert!(matches!(b.material, Material::Certificates(ref c) if c.len() == 1));
@@ -1280,11 +1675,44 @@ mod tests {
 
     #[test]
     fn integers_are_json_numbers_or_decimal_strings() {
-        let with = |idx: &str| entry_json().replace(r#""logIndex":"7""#, &format!(r#""logIndex":{idx}"#));
-        assert_eq!(parse_entry(&json::parse(with("7").as_bytes()).unwrap(), "$").unwrap().log_index, 7);
-        assert_eq!(parse_entry(&json::parse(with(r#""7""#).as_bytes()).unwrap(), "$").unwrap().log_index, 7);
-        assert_eq!(parse_entry(&json::parse(with(r#""18446744073709551615""#).as_bytes()).unwrap(), "$").unwrap().log_index, u64::MAX);
-        for bad in ["-1", "1.5", "1e2", r#""07""#, r#""+7""#, r#""-1""#, r#"" 7""#, r#""18446744073709551616""#, r#""""#, "true", "null", "[]", r#""0x7""#] {
+        let with =
+            |idx: &str| entry_json().replace(r#""logIndex":"7""#, &format!(r#""logIndex":{idx}"#));
+        assert_eq!(
+            parse_entry(&json::parse(with("7").as_bytes()).unwrap(), "$")
+                .unwrap()
+                .log_index,
+            7
+        );
+        assert_eq!(
+            parse_entry(&json::parse(with(r#""7""#).as_bytes()).unwrap(), "$")
+                .unwrap()
+                .log_index,
+            7
+        );
+        assert_eq!(
+            parse_entry(
+                &json::parse(with(r#""18446744073709551615""#).as_bytes()).unwrap(),
+                "$"
+            )
+            .unwrap()
+            .log_index,
+            u64::MAX
+        );
+        for bad in [
+            "-1",
+            "1.5",
+            "1e2",
+            r#""07""#,
+            r#""+7""#,
+            r#""-1""#,
+            r#"" 7""#,
+            r#""18446744073709551616""#,
+            r#""""#,
+            "true",
+            "null",
+            "[]",
+            r#""0x7""#,
+        ] {
             let m = entry_error(&with(bad));
             assert!(m.contains("logIndex"), "{bad}: {m}");
         }
@@ -1292,37 +1720,80 @@ mod tests {
 
     #[test]
     fn an_integration_time_is_a_positive_integer_and_zero_is_none() {
-        let with = |t: &str| entry_json().replace(r#""integratedTime":"1700000000""#, &format!(r#""integratedTime":{t}"#));
-        let time = |t: &str| parse_entry(&json::parse(with(t).as_bytes()).unwrap(), "$").map(|e| e.integrated_time);
+        let with = |t: &str| {
+            entry_json().replace(
+                r#""integratedTime":"1700000000""#,
+                &format!(r#""integratedTime":{t}"#),
+            )
+        };
+        let time = |t: &str| {
+            parse_entry(&json::parse(with(t).as_bytes()).unwrap(), "$").map(|e| e.integrated_time)
+        };
         assert_eq!(time(r#""1700000000""#), Ok(Some(1_700_000_000)));
         assert_eq!(time("1700000000"), Ok(Some(1_700_000_000)));
         assert_eq!(time(r#""0""#), Ok(None));
         assert_eq!(time("null"), Ok(None));
         for bad in [r#""-5""#, "-5", r#""x""#, "1.5", "[]"] {
-            assert!(time(bad).unwrap_err().to_string().contains("integratedTime"), "{bad}");
+            assert!(
+                time(bad)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("integratedTime"),
+                "{bad}"
+            );
         }
         let without = entry_json().replace(r#""integratedTime":"1700000000","#, "");
-        assert_eq!(parse_entry(&json::parse(without.as_bytes()).unwrap(), "$").unwrap().integrated_time, None);
+        assert_eq!(
+            parse_entry(&json::parse(without.as_bytes()).unwrap(), "$")
+                .unwrap()
+                .integrated_time,
+            None
+        );
     }
 
     #[test]
     fn null_is_the_same_as_absent() {
-        let with_null = entry_json().replace(r#""inclusionProof":{"#, r#""inclusionPromise":null,"inclusionProof":null,"x":{"#);
+        let with_null = entry_json().replace(
+            r#""inclusionProof":{"#,
+            r#""inclusionPromise":null,"inclusionProof":null,"x":{"#,
+        );
         let e = parse_entry(&json::parse(with_null.as_bytes()).unwrap(), "$").unwrap();
         assert!(e.proof.is_none() && e.promise.is_none());
         // and a bundle whose time stamp data is null has none
-        let text = v03(&[entry_json()]).replace(r#""tlogEntries""#, r#""timestampVerificationData":null,"tlogEntries""#);
+        let text = v03(&[entry_json()]).replace(
+            r#""tlogEntries""#,
+            r#""timestampVerificationData":null,"tlogEntries""#,
+        );
         assert!(parse(&text).unwrap().timestamps.is_empty());
     }
 
     #[test]
     fn base64_must_be_the_canonical_padded_form() {
-        let with = |b: &str| entry_json().replace(r#""canonicalizedBody":"AQID""#, &format!(r#""canonicalizedBody":"{b}""#));
+        let with = |b: &str| {
+            entry_json().replace(
+                r#""canonicalizedBody":"AQID""#,
+                &format!(r#""canonicalizedBody":"{b}""#),
+            )
+        };
         let body = |b: &str| parse_entry(&json::parse(with(b).as_bytes()).unwrap(), "$");
         assert_eq!(body("AQI=").unwrap().body, [1, 2]);
         assert_eq!(body("AQ==").unwrap().body, [1]);
         assert_eq!(body("").unwrap().body, Vec::<u8>::new());
-        for bad in ["AQI", "AQ", "A", "AQID\\n", "AQ ID", "AQ-_", "AQJ=", "AR==", "AQI==", "====", "AQID AQID", "AQ\\u0000D", "ÀQID"] {
+        for bad in [
+            "AQI",
+            "AQ",
+            "A",
+            "AQID\\n",
+            "AQ ID",
+            "AQ-_",
+            "AQJ=",
+            "AR==",
+            "AQI==",
+            "====",
+            "AQID AQID",
+            "AQ\\u0000D",
+            "ÀQID",
+        ] {
             let m = body(bad).unwrap_err().to_string();
             assert!(m.contains("canonicalizedBody"), "{bad}: {m}");
         }
@@ -1337,8 +1808,19 @@ mod tests {
         assert!(m.contains("hashes[0]"), "{m}");
         let m = entry_error(&entry_json().replace(r#""hashes":[]"#, r#""hashes":[7]"#));
         assert!(m.contains("hashes[0]"), "{m}");
-        let ok = entry_json().replace(r#""hashes":[]"#, &format!(r#""hashes":["{HASH32}","{HASH32}"]"#));
-        assert_eq!(parse_entry(&json::parse(ok.as_bytes()).unwrap(), "$").unwrap().proof.unwrap().hashes.len(), 2);
+        let ok = entry_json().replace(
+            r#""hashes":[]"#,
+            &format!(r#""hashes":["{HASH32}","{HASH32}"]"#),
+        );
+        assert_eq!(
+            parse_entry(&json::parse(ok.as_bytes()).unwrap(), "$")
+                .unwrap()
+                .proof
+                .unwrap()
+                .hashes
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -1349,23 +1831,44 @@ mod tests {
         assert!(parse_error(&v03(&entries)).contains("too many"));
 
         let hashes = vec![format!("\"{HASH32}\""); MAX_PROOF_HASHES + 1].join(",");
-        let m = entry_error(&entry_json().replace(r#""hashes":[]"#, &format!(r#""hashes":[{hashes}]"#)));
+        let m = entry_error(
+            &entry_json().replace(r#""hashes":[]"#, &format!(r#""hashes":[{hashes}]"#)),
+        );
         assert!(m.contains("too many"), "{m}");
 
         let stamps = vec![r#"{"signedTimestamp":"AQID"}"#; MAX_TIMESTAMPS + 1].join(",");
-        let text = v03(&[entry_json()]).replace(r#""tlogEntries""#, &format!(r#""timestampVerificationData":{{"rfc3161Timestamps":[{stamps}]}},"tlogEntries""#));
+        let text = v03(&[entry_json()]).replace(
+            r#""tlogEntries""#,
+            &format!(
+                r#""timestampVerificationData":{{"rfc3161Timestamps":[{stamps}]}},"tlogEntries""#
+            ),
+        );
         assert!(parse_error(&text).contains("too many"));
 
         let certs = vec![r#"{"rawBytes":"AQID"}"#; MAX_CERTIFICATES + 1].join(",");
-        let text = bundle_json("application/vnd.dev.sigstore.bundle+json;version=0.2", &format!(r#""x509CertificateChain":{{"certificates":[{certs}]}}"#), &[entry_json()], ENVELOPE);
+        let text = bundle_json(
+            "application/vnd.dev.sigstore.bundle+json;version=0.2",
+            &format!(r#""x509CertificateChain":{{"certificates":[{certs}]}}"#),
+            &[entry_json()],
+            ENVELOPE,
+        );
         assert!(parse_error(&text).contains("empty or too long"));
-        let text = bundle_json("application/vnd.dev.sigstore.bundle+json;version=0.2", r#""x509CertificateChain":{"certificates":[]}"#, &[entry_json()], ENVELOPE);
+        let text = bundle_json(
+            "application/vnd.dev.sigstore.bundle+json;version=0.2",
+            r#""x509CertificateChain":{"certificates":[]}"#,
+            &[entry_json()],
+            ENVELOPE,
+        );
         assert!(parse_error(&text).contains("empty or too long"));
     }
 
     #[test]
     fn a_bundle_is_strict_json_with_unique_names() {
-        let m = parse_error(&v03(&[entry_json()]).replacen(r#""mediaType""#, r#""mediaType":"x","mediaType""#, 1));
+        let m = parse_error(&v03(&[entry_json()]).replacen(
+            r#""mediaType""#,
+            r#""mediaType":"x","mediaType""#,
+            1,
+        ));
         assert!(m.contains("not strict JSON") && m.contains("twice"), "{m}");
         assert!(matches!(parse("").unwrap_err(), Error::Json(_)));
         assert!(matches!(parse("{").unwrap_err(), Error::Json(_)));
@@ -1373,7 +1876,10 @@ mod tests {
         assert!(parse_error("[]").contains("not an object"));
         assert!(parse_error("{}").contains("mediaType"));
         // a lone surrogate in a string is not text
-        assert!(matches!(parse(r#"{"mediaType":"\ud800"}"#).unwrap_err(), Error::Json(_)));
+        assert!(matches!(
+            parse(r#"{"mediaType":"\ud800"}"#).unwrap_err(),
+            Error::Json(_)
+        ));
         // unknown members are ignored
         let text = v03(&[entry_json()]).replacen('{', r#"{"future":{"anything":[1,2,3]},"#, 1);
         assert!(parse(&text).is_ok());
@@ -1385,15 +1891,41 @@ mod tests {
         let chain = r#""x509CertificateChain":{"certificates":[{"rawBytes":"AQID"}]}"#;
         let key = r#""publicKey":{"hint":"abc"}"#;
         let e = [entry_json()];
-        let proof_less = [entry_json().replace(r#""inclusionProof":"#, r#""inclusionPromise":{"signedEntryTimestamp":"AQID"},"x":"#)];
-        assert!(matches!(parse(&bundle_json(&media("0.1"), chain, &proof_less, ENVELOPE)).unwrap().material, Material::Certificates(_)));
-        assert!(matches!(parse(&bundle_json(&media("0.2"), key, &e, ENVELOPE)).unwrap().material, Material::Key { ref hint } if hint == "abc"));
-        assert!(matches!(parse(&bundle_json(V03, key, &e, ENVELOPE)).unwrap().material, Material::Key { .. }));
-        for (media, material) in [(media("0.2"), CERT), (V03.to_string(), chain), (media("0.2"), r#""x":1"#), (V03.to_string(), &format!("{CERT},{key}")[..])] {
+        let proof_less = [entry_json().replace(
+            r#""inclusionProof":"#,
+            r#""inclusionPromise":{"signedEntryTimestamp":"AQID"},"x":"#,
+        )];
+        assert!(matches!(
+            parse(&bundle_json(&media("0.1"), chain, &proof_less, ENVELOPE))
+                .unwrap()
+                .material,
+            Material::Certificates(_)
+        ));
+        assert!(
+            matches!(parse(&bundle_json(&media("0.2"), key, &e, ENVELOPE)).unwrap().material, Material::Key { ref hint } if hint == "abc")
+        );
+        assert!(matches!(
+            parse(&bundle_json(V03, key, &e, ENVELOPE))
+                .unwrap()
+                .material,
+            Material::Key { .. }
+        ));
+        for (media, material) in [
+            (media("0.2"), CERT),
+            (V03.to_string(), chain),
+            (media("0.2"), r#""x":1"#),
+            (V03.to_string(), &format!("{CERT},{key}")[..]),
+        ] {
             let m = parse_error(&bundle_json(&media, material, &e, ENVELOPE));
             assert!(m.contains("verificationMaterial"), "{m}");
         }
-        assert!(parse_error(&bundle_json("application/vnd.dev.sigstore.bundle+json;version=0.4", CERT, &e, ENVELOPE)).contains("unsupported"));
+        assert!(parse_error(&bundle_json(
+            "application/vnd.dev.sigstore.bundle+json;version=0.4",
+            CERT,
+            &e,
+            ENVELOPE
+        ))
+        .contains("unsupported"));
         assert!(parse_error(&bundle_json("", CERT, &e, ENVELOPE)).contains("unsupported"));
     }
 
@@ -1408,11 +1940,22 @@ mod tests {
         assert!(parse_error(&bundle_json(V03, CERT, &e, &both)).contains("exactly one"));
         // an envelope with no signatures reads, and is refused by verification
         let none = ENVELOPE.replace(r#"[{"sig":"AQID"}]"#, "[]");
-        assert!(parse(&bundle_json(V03, CERT, &e, &none)).unwrap().envelope.signatures.is_empty());
+        assert!(parse(&bundle_json(V03, CERT, &e, &none))
+            .unwrap()
+            .envelope
+            .signatures
+            .is_empty());
         let bad = ENVELOPE.replace(r#"{"sig":"AQID"}"#, r#"{"sig":"AQID","keyid":5}"#);
         assert!(parse_error(&bundle_json(V03, CERT, &e, &bad)).contains("keyid"));
         let keyed = ENVELOPE.replace(r#"{"sig":"AQID"}"#, r#"{"sig":"AQID","keyid":"SHA256:x"}"#);
-        assert_eq!(parse(&bundle_json(V03, CERT, &e, &keyed)).unwrap().envelope.signatures[0].0, "SHA256:x");
+        assert_eq!(
+            parse(&bundle_json(V03, CERT, &e, &keyed))
+                .unwrap()
+                .envelope
+                .signatures[0]
+                .0,
+            "SHA256:x"
+        );
     }
 
     #[test]
@@ -1421,21 +1964,43 @@ mod tests {
         let list = |s: &str| Bundle::parse_npm_attestations(s.as_bytes());
         let ok = list(&format!(r#"{{"attestations":[{{"predicateType":"https://slsa.dev/provenance/v1","bundle":{bundle}}}]}}"#)).unwrap();
         assert_eq!(ok.len(), 1);
-        assert_eq!(ok[0].claimed_predicate_type, "https://slsa.dev/provenance/v1");
+        assert_eq!(
+            ok[0].claimed_predicate_type,
+            "https://slsa.dev/provenance/v1"
+        );
         assert_eq!(ok[0].bundle.format(), BundleFormat::V0_3);
         assert!(list(r#"{"attestations":[]}"#).unwrap().is_empty());
         assert!(list("{}").unwrap().is_empty());
-        for bad in [r#"{"attestations":{}}"#, r#"{"attestations":[1]}"#, "[]", r#"{"attestations":[{"bundle":{}}]}"#] {
+        for bad in [
+            r#"{"attestations":{}}"#,
+            r#"{"attestations":[1]}"#,
+            "[]",
+            r#"{"attestations":[{"bundle":{}}]}"#,
+        ] {
             assert!(matches!(list(bad), Err(Error::Malformed(_))), "{bad}");
         }
-        assert!(matches!(list(r#"{"attestations":[{"predicateType":"x"}]}"#), Err(Error::Malformed(_))));
-        assert!(matches!(list(&format!(r#"{{"attestations":[{{"predicateType":7,"bundle":{bundle}}}]}}"#)), Err(Error::Malformed(_))));
-        let many = vec![format!(r#"{{"predicateType":"x","bundle":{bundle}}}"#); MAX_ATTESTATIONS + 1].join(",");
-        assert!(matches!(list(&format!(r#"{{"attestations":[{many}]}}"#)), Err(Error::Malformed(m)) if m.contains("too many")));
+        assert!(matches!(
+            list(r#"{"attestations":[{"predicateType":"x"}]}"#),
+            Err(Error::Malformed(_))
+        ));
+        assert!(matches!(
+            list(&format!(
+                r#"{{"attestations":[{{"predicateType":7,"bundle":{bundle}}}]}}"#
+            )),
+            Err(Error::Malformed(_))
+        ));
+        let many =
+            vec![format!(r#"{{"predicateType":"x","bundle":{bundle}}}"#); MAX_ATTESTATIONS + 1]
+                .join(",");
+        assert!(
+            matches!(list(&format!(r#"{{"attestations":[{many}]}}"#)), Err(Error::Malformed(m)) if m.contains("too many"))
+        );
     }
 
     fn pep740(attestation: &str) -> String {
-        format!(r#"{{"version":1,"attestation_bundles":[{{"publisher":{{"kind":"GitHub"}},"attestations":[{attestation}]}}]}}"#)
+        format!(
+            r#"{{"version":1,"attestation_bundles":[{{"publisher":{{"kind":"GitHub"}},"attestations":[{attestation}]}}]}}"#
+        )
     }
 
     fn pep740_attestation() -> String {
@@ -1451,22 +2016,60 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].bundle.format(), BundleFormat::Pep740);
         assert_eq!(list[0].bundle.envelope.payload_type, PAYLOAD_TYPE);
-        assert_eq!(list[0].claimed_publisher.as_ref().and_then(|p| p.get("kind")).and_then(Value::as_str), Some("GitHub"));
-        assert!(Bundle::parse_pep740(br#"{"version":1,"attestation_bundles":[]}"#).unwrap().is_empty());
+        assert_eq!(
+            list[0]
+                .claimed_publisher
+                .as_ref()
+                .and_then(|p| p.get("kind"))
+                .and_then(Value::as_str),
+            Some("GitHub")
+        );
+        assert!(
+            Bundle::parse_pep740(br#"{"version":1,"attestation_bundles":[]}"#)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
     fn pep_740_provenance_of_another_version_or_without_proofs_is_refused() {
         let ok = pep740_attestation();
         let parse = |s: String| Bundle::parse_pep740(s.as_bytes());
-        assert!(matches!(parse(pep740(&ok).replace(r#""version":1,"attestation_bundles""#, r#""version":2,"attestation_bundles""#)), Err(Error::Unsupported(_))));
-        assert!(matches!(parse(r#"{"attestation_bundles":[]}"#.to_string()), Err(Error::Unsupported(_))));
-        assert!(matches!(parse(pep740(&ok.replacen(r#""version":1"#, r#""version":2"#, 1))), Err(Error::Unsupported(_))));
+        assert!(matches!(
+            parse(pep740(&ok).replace(
+                r#""version":1,"attestation_bundles""#,
+                r#""version":2,"attestation_bundles""#
+            )),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            parse(r#"{"attestation_bundles":[]}"#.to_string()),
+            Err(Error::Unsupported(_))
+        ));
+        assert!(matches!(
+            parse(pep740(&ok.replacen(r#""version":1"#, r#""version":2"#, 1))),
+            Err(Error::Unsupported(_))
+        ));
         // an entry without its inclusion proof has nothing to be authenticated by here
-        let no_proof = ok.replace(r#""inclusionProof":{"logIndex":"3""#, r#""x":{"logIndex":"3""#);
-        assert!(matches!(parse(pep740(&no_proof)), Err(Error::Malformed(m)) if m.contains("inclusion proof")));
-        assert!(matches!(parse(pep740(&ok.replace(r#""certificate":"AQID""#, r#""certificate":"AQI""#))), Err(Error::Malformed(_))));
-        assert!(matches!(parse(pep740(&ok.replace(r#""statement":"AQID""#, r#""statement":7"#))), Err(Error::Malformed(_))));
+        let no_proof = ok.replace(
+            r#""inclusionProof":{"logIndex":"3""#,
+            r#""x":{"logIndex":"3""#,
+        );
+        assert!(
+            matches!(parse(pep740(&no_proof)), Err(Error::Malformed(m)) if m.contains("inclusion proof"))
+        );
+        assert!(matches!(
+            parse(pep740(
+                &ok.replace(r#""certificate":"AQID""#, r#""certificate":"AQI""#)
+            )),
+            Err(Error::Malformed(_))
+        ));
+        assert!(matches!(
+            parse(pep740(
+                &ok.replace(r#""statement":"AQID""#, r#""statement":7"#)
+            )),
+            Err(Error::Malformed(_))
+        ));
         assert!(matches!(parse("[]".to_string()), Err(Error::Malformed(_))));
     }
 
@@ -1477,7 +2080,13 @@ mod tests {
         assert_eq!(s.predicate_type, "https://example.test/p");
         assert_eq!(s.subjects.len(), 2);
         assert_eq!(s.subjects[0].name.as_deref(), Some("a"));
-        assert_eq!(s.subjects[0].digests, [("sha256".to_string(), "ab".to_string()), ("sha512".to_string(), "cd".to_string())]);
+        assert_eq!(
+            s.subjects[0].digests,
+            [
+                ("sha256".to_string(), "ab".to_string()),
+                ("sha512".to_string(), "cd".to_string())
+            ]
+        );
         assert_eq!(s.subjects[1].name, None);
         assert!(s.predicate.is_some());
         let none = parse_statement(br#"{"_type":"https://in-toto.io/Statement/v0.1","subject":[{"digest":{}}],"predicateType":"p","predicate":null}"#).unwrap();
@@ -1493,7 +2102,10 @@ mod tests {
             r#"{"_type":"https://in-toto.io/Statement/v1","subject":[{"digest":[]}],"predicateType":"p"}"#,
             r#"{"_type":"https://in-toto.io/Statement/v1","subject":[{"digest":{"sha256":"a","sha256":"b"}}],"predicateType":"p"}"#,
         ] {
-            assert!(matches!(parse_statement(bad.as_bytes()), Err(Error::Statement(_))), "{bad}");
+            assert!(
+                matches!(parse_statement(bad.as_bytes()), Err(Error::Statement(_))),
+                "{bad}"
+            );
         }
     }
 
@@ -1513,7 +2125,11 @@ mod tests {
 
     #[test]
     fn an_artifact_digest_has_the_length_of_its_algorithm() {
-        for (alg, len) in [(DigestAlgorithm::Sha256, 32), (DigestAlgorithm::Sha384, 48), (DigestAlgorithm::Sha512, 64)] {
+        for (alg, len) in [
+            (DigestAlgorithm::Sha256, 32),
+            (DigestAlgorithm::Sha384, 48),
+            (DigestAlgorithm::Sha512, 64),
+        ] {
             assert!(ArtifactDigest::new(alg, &vec![0; len]).is_ok());
             assert!(ArtifactDigest::new(alg, &vec![0; len - 1]).is_err());
             assert!(ArtifactDigest::new(alg, &vec![0; len + 1]).is_err());
@@ -1521,17 +2137,25 @@ mod tests {
             assert_eq!((d.algorithm(), d.bytes().len()), (alg, len));
         }
         let sha256_abc = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
-        assert_eq!(hex(ArtifactDigest::of(DigestAlgorithm::Sha256, b"abc").bytes()), sha256_abc);
+        assert_eq!(
+            hex(ArtifactDigest::of(DigestAlgorithm::Sha256, b"abc").bytes()),
+            sha256_abc
+        );
         assert_eq!(DigestAlgorithm::Sha384.name(), "sha384");
     }
 
     #[test]
-    fn the_repository_and_ref_of_an_identity_fall_back_to_the_old_github_extensions_only_for_github() {
+    fn the_repository_and_ref_of_an_identity_fall_back_to_the_old_github_extensions_only_for_github(
+    ) {
         let mut id = Identity::default();
         assert_eq!((id.repository(), id.git_ref()), (None, None));
         id.github_workflow_repository = Some("o/r".into());
         id.github_workflow_ref = Some("refs/heads/main".into());
-        assert_eq!(id.repository(), None, "the old extensions mean GitHub only when GitHub's issuer says so");
+        assert_eq!(
+            id.repository(),
+            None,
+            "the old extensions mean GitHub only when GitHub's issuer says so"
+        );
         id.issuer = Some("https://accounts.example.test".into());
         assert_eq!(id.repository(), None);
         id.issuer = Some(GITHUB_ACTIONS_ISSUER.into());
@@ -1546,13 +2170,19 @@ mod tests {
     #[test]
     fn every_error_says_what_it_is() {
         let errors = [
-            Error::Json(json::Error { offset: 0, kind: json::ErrorKind::Eof }),
+            Error::Json(json::Error {
+                offset: 0,
+                kind: json::ErrorKind::Eof,
+            }),
             Error::Malformed("a".into()),
             Error::Unsupported("b".into()),
             Error::PayloadType("c".into()),
             Error::Signature,
             Error::UnknownKey("d".into()),
-            Error::Entry { log_index: 5, reason: "e".into() },
+            Error::Entry {
+                log_index: 5,
+                reason: "e".into(),
+            },
             Error::Timestamp("f".into()),
             Error::NoVerifiedTime,
             Error::Certificate("g".into()),
@@ -1563,7 +2193,10 @@ mod tests {
         let texts: Vec<String> = errors.iter().map(ToString::to_string).collect();
         for (i, t) in texts.iter().enumerate() {
             assert!(!t.is_empty());
-            assert!(texts.iter().enumerate().all(|(j, o)| i == j || o != t), "{t}");
+            assert!(
+                texts.iter().enumerate().all(|(j, o)| i == j || o != t),
+                "{t}"
+            );
         }
         assert!(texts[6].contains("5") && texts[6].contains('e'));
     }

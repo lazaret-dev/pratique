@@ -110,7 +110,10 @@ fn get_int(buf: &[u8], pos: &mut usize, prefix_bits: u32) -> Result<u64, Bad> {
         if part > (MAX_INT >> shift) {
             return Err(Bad::Invalid("an integer over 62 bits"));
         }
-        value = value.checked_add(part << shift).filter(|v| *v <= MAX_INT).ok_or(Bad::Invalid("an integer over 62 bits"))?;
+        value = value
+            .checked_add(part << shift)
+            .filter(|v| *v <= MAX_INT)
+            .ok_or(Bad::Invalid("an integer over 62 bits"))?;
         if b & 0x80 == 0 {
             return Ok(value);
         }
@@ -138,12 +141,25 @@ fn put_int(out: &mut Vec<u8>, prefix_bits: u32, flags: u8, value: u64) {
 /// in the other `prefix_bits - 1`). At most `limit` bytes once decoded are kept: `Ok(true)` if it was, `Ok(false)` if it was longer
 /// (it is read past and not kept). A string whose coded length is over `wait_limit` is an error at once, whether or not the bytes
 /// are there yet (on a stream, so that no one waits for ever for what could never be used).
-fn get_string(buf: &[u8], pos: &mut usize, prefix_bits: u32, limit: usize, wait_limit: usize, out: &mut Vec<u8>) -> Result<bool, Bad> {
+fn get_string(
+    buf: &[u8],
+    pos: &mut usize,
+    prefix_bits: u32,
+    limit: usize,
+    wait_limit: usize,
+    out: &mut Vec<u8>,
+) -> Result<bool, Bad> {
     let first = *buf.get(*pos).ok_or(Bad::Short)?;
     let coded = first & (1 << (prefix_bits - 1)) != 0;
     let len = get_int(buf, pos, prefix_bits - 1)?;
-    let len = usize::try_from(len).ok().filter(|l| *l <= wait_limit).ok_or(Bad::Invalid("a string that is too long"))?;
-    let end = pos.checked_add(len).filter(|e| *e <= buf.len()).ok_or(Bad::Short)?;
+    let len = usize::try_from(len)
+        .ok()
+        .filter(|l| *l <= wait_limit)
+        .ok_or(Bad::Invalid("a string that is too long"))?;
+    let end = pos
+        .checked_add(len)
+        .filter(|e| *e <= buf.len())
+        .ok_or(Bad::Short)?;
     let raw = &buf[*pos..end];
     *pos = end;
     if coded {
@@ -164,7 +180,12 @@ fn get_string(buf: &[u8], pos: &mut usize, prefix_bits: u32, limit: usize, wait_
 fn put_string(out: &mut Vec<u8>, prefix_bits: u32, flags: u8, s: &[u8]) {
     let coded = huffman::encoded_len(s);
     if coded < s.len() {
-        put_int(out, prefix_bits - 1, flags | (1 << (prefix_bits - 1)), coded as u64);
+        put_int(
+            out,
+            prefix_bits - 1,
+            flags | (1 << (prefix_bits - 1)),
+            coded as u64,
+        );
         huffman::encode(s, out);
     } else {
         put_int(out, prefix_bits - 1, flags, s.len() as u64);
@@ -175,7 +196,10 @@ fn put_string(out: &mut Vec<u8>, prefix_bits: u32, flags: u8, s: &[u8]) {
 // ------------------------------------------------------------------------------------------------ the tables
 
 fn static_entry(index: u64) -> Result<(&'static [u8], &'static [u8]), Bad> {
-    let i = usize::try_from(index).ok().filter(|i| *i < STATIC.len()).ok_or(Bad::Invalid("a static table index that does not exist"))?;
+    let i = usize::try_from(index)
+        .ok()
+        .filter(|i| *i < STATIC.len())
+        .ok_or(Bad::Invalid("a static table index that does not exist"))?;
     Ok((STATIC[i].0.as_bytes(), STATIC[i].1.as_bytes()))
 }
 
@@ -276,8 +300,21 @@ pub(crate) struct Decoder {
 impl Decoder {
     /// `max_table_capacity` and `max_blocked_streams` are the values of the two QPACK settings that are sent to the peer (0 and 0:
     /// no dynamic table); `max_list_size` is the largest field list to keep.
-    pub(crate) fn new(max_table_capacity: usize, max_blocked_streams: usize, max_list_size: usize) -> Decoder {
-        Decoder { table: DynTable::default(), max_capacity: max_table_capacity, max_blocked: max_blocked_streams, max_list_size, inbox: Vec::new(), out: Vec::new(), known_received: 0, blocked: BTreeMap::new() }
+    pub(crate) fn new(
+        max_table_capacity: usize,
+        max_blocked_streams: usize,
+        max_list_size: usize,
+    ) -> Decoder {
+        Decoder {
+            table: DynTable::default(),
+            max_capacity: max_table_capacity,
+            max_blocked: max_blocked_streams,
+            max_list_size,
+            inbox: Vec::new(),
+            out: Vec::new(),
+            known_received: 0,
+            blocked: BTreeMap::new(),
+        }
     }
 
     /// How many entries the encoder has inserted so far.
@@ -342,7 +379,9 @@ impl Decoder {
             // Insert With Literal Name
             let mut name = Vec::new();
             let mut value = Vec::new();
-            if !get_string(buf, &mut pos, 6, limit, wait, &mut name)? || !get_string(buf, &mut pos, 8, limit, wait, &mut value)? {
+            if !get_string(buf, &mut pos, 6, limit, wait, &mut name)?
+                || !get_string(buf, &mut pos, 8, limit, wait, &mut value)?
+            {
                 return Err(Bad::Invalid("an entry larger than the table"));
             }
             self.insert(Field { name, value })?;
@@ -364,8 +403,17 @@ impl Decoder {
 
     /// The entry with this relative index in an instruction (0 is the newest).
     fn dynamic_relative_to_end(&self, index: u64) -> Result<&Entry, Bad> {
-        let abs = self.table.inserted().checked_sub(index).and_then(|n| n.checked_sub(1)).ok_or(Bad::Invalid("a reference to an entry that was never inserted"))?;
-        self.table.get(abs).ok_or(Bad::Invalid("a reference to an entry that was evicted"))
+        let abs = self
+            .table
+            .inserted()
+            .checked_sub(index)
+            .and_then(|n| n.checked_sub(1))
+            .ok_or(Bad::Invalid(
+                "a reference to an entry that was never inserted",
+            ))?;
+        self.table
+            .get(abs)
+            .ok_or(Bad::Invalid("a reference to an entry that was evicted"))
     }
 
     fn insert(&mut self, field: Field) -> Result<(), Bad> {
@@ -381,14 +429,24 @@ impl Decoder {
     /// A section that refers to entries that are not here yet is [`Decoded::Blocked`]: it has to be given again, from the start, after
     /// more of the encoder stream. Too many streams blocked at once is an error. An error of any kind means the connection can no
     /// longer be trusted to decode (RFC 9204 section 2.2.3).
-    pub(crate) fn decode(&mut self, stream: u64, block: &[u8], out: &mut Vec<Field>) -> Result<Decoded, Error> {
+    pub(crate) fn decode(
+        &mut self,
+        stream: u64,
+        block: &[u8],
+        out: &mut Vec<Field>,
+    ) -> Result<Decoded, Error> {
         let mut pos = 0;
         let encoded_count = get_int(block, &mut pos, 8).map_err(Bad::in_section)?;
         let required = self.required_insert_count(encoded_count)?;
-        let negative = block.get(pos).ok_or(Error::Decompression("the field section ends inside its prefix"))? & 0x80 != 0;
+        let negative = block.get(pos).ok_or(Error::Decompression(
+            "the field section ends inside its prefix",
+        ))? & 0x80
+            != 0;
         let delta = get_int(block, &mut pos, 7).map_err(Bad::in_section)?;
         let base = if !negative {
-            required.checked_add(delta).ok_or(Error::Decompression("a base that does not fit"))?
+            required
+                .checked_add(delta)
+                .ok_or(Error::Decompression("a base that does not fit"))?
         } else {
             // (the base would be negative)
             if required <= delta {
@@ -398,10 +456,14 @@ impl Decoder {
         };
         if required > self.table.inserted() {
             if !self.blocked.contains_key(&stream) && self.blocked.len() >= self.max_blocked {
-                return Err(Error::Decompression("more blocked streams than were allowed"));
+                return Err(Error::Decompression(
+                    "more blocked streams than were allowed",
+                ));
             }
             self.blocked.insert(stream, required);
-            return Ok(Decoded::Blocked { required_insert_count: required });
+            return Ok(Decoded::Blocked {
+                required_insert_count: required,
+            });
         }
         self.blocked.remove(&stream);
 
@@ -421,18 +483,29 @@ impl Decoder {
                 // Indexed Field Line
                 let from_static = first & 0x40 != 0;
                 let index = get_int(block, &mut pos, 6).map_err(Bad::in_section)?;
-                (name, value) = if from_static { static_entry(index).map_err(Bad::in_section)? } else { self.entry_before_base(base, index, required)? };
+                (name, value) = if from_static {
+                    static_entry(index).map_err(Bad::in_section)?
+                } else {
+                    self.entry_before_base(base, index, required)?
+                };
             } else if first & 0x40 != 0 {
                 // Literal Field Line With Name Reference
                 let from_static = first & 0x10 != 0;
                 let index = get_int(block, &mut pos, 4).map_err(Bad::in_section)?;
-                name = if from_static { static_entry(index).map_err(Bad::in_section)?.0 } else { self.entry_before_base(base, index, required)?.0 };
-                kept = get_string(block, &mut pos, 8, limit, usize::MAX, &mut value_buf).map_err(Bad::in_section)?;
+                name = if from_static {
+                    static_entry(index).map_err(Bad::in_section)?.0
+                } else {
+                    self.entry_before_base(base, index, required)?.0
+                };
+                kept = get_string(block, &mut pos, 8, limit, usize::MAX, &mut value_buf)
+                    .map_err(Bad::in_section)?;
                 value = &value_buf;
             } else if first & 0x20 != 0 {
                 // Literal Field Line With Literal Name
-                kept = get_string(block, &mut pos, 4, limit, usize::MAX, &mut name_buf).map_err(Bad::in_section)?;
-                kept &= get_string(block, &mut pos, 8, limit, usize::MAX, &mut value_buf).map_err(Bad::in_section)?;
+                kept = get_string(block, &mut pos, 4, limit, usize::MAX, &mut name_buf)
+                    .map_err(Bad::in_section)?;
+                kept &= get_string(block, &mut pos, 8, limit, usize::MAX, &mut value_buf)
+                    .map_err(Bad::in_section)?;
                 name = &name_buf;
                 value = &value_buf;
             } else if first & 0x10 != 0 {
@@ -443,7 +516,8 @@ impl Decoder {
                 // Literal Field Line With Post-Base Name Reference
                 let index = get_int(block, &mut pos, 3).map_err(Bad::in_section)?;
                 name = self.entry_after_base(base, index, required)?.0;
-                kept = get_string(block, &mut pos, 8, limit, usize::MAX, &mut value_buf).map_err(Bad::in_section)?;
+                kept = get_string(block, &mut pos, 8, limit, usize::MAX, &mut value_buf)
+                    .map_err(Bad::in_section)?;
                 value = &value_buf;
             }
             if !kept {
@@ -454,7 +528,10 @@ impl Decoder {
             if list > limit {
                 within = false;
             } else {
-                out.push(Field { name: name.to_vec(), value: value.to_vec() });
+                out.push(Field {
+                    name: name.to_vec(),
+                    value: value.to_vec(),
+                });
             }
         }
         if required > 0 {
@@ -462,26 +539,49 @@ impl Decoder {
             put_int(&mut self.out, 7, 0x80, stream);
             self.known_received = self.known_received.max(required);
         }
-        Ok(Decoded::Done { within_limit: within })
+        Ok(Decoded::Done {
+            within_limit: within,
+        })
     }
 
     /// The entry that a relative index in a field section names (0 is the one before the base), as a name and a value.
-    fn entry_before_base(&self, base: u64, index: u64, required: u64) -> Result<(&[u8], &[u8]), Error> {
-        let abs = base.checked_sub(index).and_then(|n| n.checked_sub(1)).ok_or(Error::Decompression("a reference to an entry before the first"))?;
+    fn entry_before_base(
+        &self,
+        base: u64,
+        index: u64,
+        required: u64,
+    ) -> Result<(&[u8], &[u8]), Error> {
+        let abs = base
+            .checked_sub(index)
+            .and_then(|n| n.checked_sub(1))
+            .ok_or(Error::Decompression(
+                "a reference to an entry before the first",
+            ))?;
         self.entry_at(abs, required)
     }
 
     /// The entry that a post-base index names (0 is the base itself).
-    fn entry_after_base(&self, base: u64, index: u64, required: u64) -> Result<(&[u8], &[u8]), Error> {
-        let abs = base.checked_add(index).ok_or(Error::Decompression("a reference that does not fit"))?;
+    fn entry_after_base(
+        &self,
+        base: u64,
+        index: u64,
+        required: u64,
+    ) -> Result<(&[u8], &[u8]), Error> {
+        let abs = base
+            .checked_add(index)
+            .ok_or(Error::Decompression("a reference that does not fit"))?;
         self.entry_at(abs, required)
     }
 
     fn entry_at(&self, abs: u64, required: u64) -> Result<(&[u8], &[u8]), Error> {
         if abs >= required {
-            return Err(Error::Decompression("a reference to an entry at or above the required insert count"));
+            return Err(Error::Decompression(
+                "a reference to an entry at or above the required insert count",
+            ));
         }
-        let e = self.table.get(abs).ok_or(Error::Decompression("a reference to an entry that was evicted"))?;
+        let e = self.table.get(abs).ok_or(Error::Decompression(
+            "a reference to an entry that was evicted",
+        ))?;
         Ok((&e.field.name, &e.field.value))
     }
 
@@ -493,19 +593,25 @@ impl Decoder {
         let max_entries = (self.max_capacity / ENTRY_OVERHEAD) as u64;
         let full_range = 2 * max_entries;
         if encoded > full_range {
-            return Err(Error::Decompression("a required insert count that no encoder could have made"));
+            return Err(Error::Decompression(
+                "a required insert count that no encoder could have made",
+            ));
         }
         let max_value = self.table.inserted() + max_entries;
         let max_wrapped = max_value / full_range * full_range;
         let mut required = max_wrapped + encoded - 1;
         if required > max_value {
             if required <= full_range {
-                return Err(Error::Decompression("a required insert count that no encoder could have made"));
+                return Err(Error::Decompression(
+                    "a required insert count that no encoder could have made",
+                ));
             }
             required -= full_range;
         }
         if required == 0 {
-            return Err(Error::Decompression("a required insert count of 0 that is not coded as 0"));
+            return Err(Error::Decompression(
+                "a required insert count of 0 that is not coded as 0",
+            ));
         }
         Ok(required)
     }
@@ -553,7 +659,11 @@ pub(crate) struct EncoderConfig {
 
 impl Default for EncoderConfig {
     fn default() -> EncoderConfig {
-        EncoderConfig { table_capacity: 4096, blocked_streams: 0, only_safe_names: true }
+        EncoderConfig {
+            table_capacity: 4096,
+            blocked_streams: 0,
+            only_safe_names: true,
+        }
     }
 }
 
@@ -561,7 +671,15 @@ impl Default for EncoderConfig {
 const MAX_ANNOUNCED: usize = 1 << 20;
 
 /// Names of fields that are worth indexing and that tell little to anyone who learns that a guess of their value was right.
-const SAFE_NAMES: &[&[u8]] = &[b":authority", b"user-agent", b"accept", b"accept-encoding", b"accept-language", b"content-type", b"cache-control"];
+const SAFE_NAMES: &[&[u8]] = &[
+    b":authority",
+    b"user-agent",
+    b"accept",
+    b"accept-encoding",
+    b"accept-language",
+    b"content-type",
+    b"cache-control",
+];
 
 /// An encoded field section that the decoder has not acknowledged yet.
 #[derive(Debug)]
@@ -591,7 +709,16 @@ pub(crate) struct Encoder {
 
 impl Encoder {
     pub(crate) fn new(cfg: EncoderConfig) -> Encoder {
-        Encoder { cfg, table: DynTable::default(), peer_max_capacity: 0, peer_max_blocked: 0, known_received: 0, out: Vec::new(), outstanding: HashMap::new(), inbox: Vec::new() }
+        Encoder {
+            cfg,
+            table: DynTable::default(),
+            peer_max_capacity: 0,
+            peer_max_blocked: 0,
+            known_received: 0,
+            out: Vec::new(),
+            outstanding: HashMap::new(),
+            inbox: Vec::new(),
+        }
     }
 
     /// The peer's SETTINGS arrived (RFC 9204 section 5). Until they do, the table is not used.
@@ -618,7 +745,10 @@ impl Encoder {
 
     /// How many streams have a section that the decoder may be waiting on entries for.
     fn blocked_count(&self) -> usize {
-        self.outstanding.values().filter(|q| q.iter().any(|s| s.required > self.known_received)).count()
+        self.outstanding
+            .values()
+            .filter(|q| q.iter().any(|s| s.required > self.known_received))
+            .count()
     }
 
     /// Whether a section of `stream` may refer to entries that are not acknowledged.
@@ -627,7 +757,10 @@ impl Encoder {
         if allowed == 0 {
             return false;
         }
-        let already = self.outstanding.get(&stream).is_some_and(|q| q.iter().any(|s| s.required > self.known_received));
+        let already = self
+            .outstanding
+            .get(&stream)
+            .is_some_and(|q| q.iter().any(|s| s.required > self.known_received));
         already || self.blocked_count() < allowed
     }
 
@@ -645,7 +778,11 @@ impl Encoder {
             self.field(*f, base, may_block, &mut lines, &mut refs);
         }
         let required = refs.iter().max().map_or(0, |m| m + 1);
-        let encoded_count = if required == 0 { 0 } else { required % (2 * (self.peer_max_capacity / ENTRY_OVERHEAD) as u64) + 1 };
+        let encoded_count = if required == 0 {
+            0
+        } else {
+            required % (2 * (self.peer_max_capacity / ENTRY_OVERHEAD) as u64) + 1
+        };
         put_int(out, 8, 0, encoded_count);
         if required == 0 {
             // (a section that needs nothing has the base 0, as in the sample algorithm of RFC 9204 appendix B: it could say more, and
@@ -659,11 +796,21 @@ impl Encoder {
         out.extend_from_slice(&lines);
         if required > 0 {
             // (the entries were counted as the lines were made, so that no insertion for a later line could evict one)
-            self.outstanding.entry(stream).or_default().push_back(Outstanding { required, refs });
+            self.outstanding
+                .entry(stream)
+                .or_default()
+                .push_back(Outstanding { required, refs });
         }
     }
 
-    fn field(&mut self, f: FieldRef<'_>, base: u64, may_block: bool, lines: &mut Vec<u8>, refs: &mut Vec<u64>) {
+    fn field(
+        &mut self,
+        f: FieldRef<'_>,
+        base: u64,
+        may_block: bool,
+        lines: &mut Vec<u8>,
+        refs: &mut Vec<u64>,
+    ) {
         let never = if f.sensitive { 0x20 } else { 0 };
         let (static_full, static_name) = static_lookup(f.name, f.value);
         if !f.sensitive {
@@ -692,7 +839,12 @@ impl Encoder {
         // a literal, with the name from a table if it is in one
         if let Some(i) = static_name {
             put_int(lines, 4, 0x50 | never, i as u64);
-        } else if let Some(abs) = if f.sensitive { None } else { self.find_dynamic(f.name, None).filter(|a| self.referenceable(*a, may_block) && *a < base) } {
+        } else if let Some(abs) = if f.sensitive {
+            None
+        } else {
+            self.find_dynamic(f.name, None)
+                .filter(|a| self.referenceable(*a, may_block) && *a < base)
+        } {
             self.note(abs, refs);
             put_int(lines, 4, 0x40 | never, base - abs - 1);
         } else {
@@ -728,7 +880,13 @@ impl Encoder {
 
     /// The newest entry with this name (and this value, if given).
     fn find_dynamic(&self, name: &[u8], value: Option<&[u8]>) -> Option<u64> {
-        self.table.entries.iter().enumerate().rev().find(|(_, e)| e.field.name == name && value.is_none_or(|v| e.field.value == v)).map(|(i, _)| self.table.dropped + i as u64)
+        self.table
+            .entries
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, e)| e.field.name == name && value.is_none_or(|v| e.field.value == v))
+            .map(|(i, _)| self.table.dropped + i as u64)
     }
 
     /// Puts the field in the table, if it may be and it fits without evicting what must stay. Returns whether it did.
@@ -751,7 +909,9 @@ impl Encoder {
         let mut freed = 0;
         let mut evicted = 0;
         while self.table.size - freed + size > fill {
-            let Some(e) = self.table.entries.get(evicted) else { return false };
+            let Some(e) = self.table.entries.get(evicted) else {
+                return false;
+            };
             if self.table.dropped + (evicted as u64) >= self.known_received || e.refs > 0 {
                 return false;
             }
@@ -783,7 +943,10 @@ impl Encoder {
         for _ in 0..evicted {
             self.table.evict_oldest();
         }
-        self.table.push(Field { name: f.name.to_vec(), value: f.value.to_vec() });
+        self.table.push(Field {
+            name: f.name.to_vec(),
+            value: f.value.to_vec(),
+        });
         true
     }
 
@@ -819,7 +982,13 @@ impl Encoder {
     fn instruction(&mut self, i: Instruction) -> Result<(), Error> {
         match i {
             Instruction::Acknowledge(stream) => {
-                let section = self.outstanding.get_mut(&stream).and_then(|q| q.pop_front()).ok_or(Error::DecoderStream("an acknowledgment of a stream with no section waiting"))?;
+                let section = self
+                    .outstanding
+                    .get_mut(&stream)
+                    .and_then(|q| q.pop_front())
+                    .ok_or(Error::DecoderStream(
+                        "an acknowledgment of a stream with no section waiting",
+                    ))?;
                 if self.outstanding.get(&stream).is_some_and(|q| q.is_empty()) {
                     self.outstanding.remove(&stream);
                 }
@@ -839,7 +1008,11 @@ impl Encoder {
                 }
                 match self.known_received.checked_add(n) {
                     Some(total) if total <= self.table.inserted() => self.known_received = total,
-                    _ => return Err(Error::DecoderStream("an insert count increment beyond what was sent")),
+                    _ => {
+                        return Err(Error::DecoderStream(
+                            "an insert count increment beyond what was sent",
+                        ))
+                    }
                 }
             }
         }
@@ -876,9 +1049,9 @@ fn static_lookup(name: &[u8], value: &[u8]) -> (Option<usize>, Option<usize>) {
 }
 
 // The tests, and the model-based exchange that the tests and the fuzzer both run.
-#[cfg(test)]
-#[path = "qpack_tests.rs"]
-mod tests;
 #[cfg(any(test, pratique_fuzzing))]
 #[path = "qpack_harness.rs"]
 pub(crate) mod harness;
+#[cfg(test)]
+#[path = "qpack_tests.rs"]
+mod tests;

@@ -42,14 +42,22 @@ pub(crate) struct Policy {
 
 impl Default for Policy {
     fn default() -> Policy {
-        Policy { keep_alive: true, idle_timeout: Duration::from_secs(90), max_idle_per_host: 8, max_idle_total: 64 }
+        Policy {
+            keep_alive: true,
+            idle_timeout: Duration::from_secs(90),
+            max_idle_per_host: 8,
+            max_idle_total: 64,
+        }
     }
 }
 
 impl Policy {
     /// True if finished connections should be parked.
     pub(crate) fn parks(&self) -> bool {
-        self.keep_alive && self.max_idle_per_host > 0 && self.max_idle_total > 0 && !self.idle_timeout.is_zero()
+        self.keep_alive
+            && self.max_idle_per_host > 0
+            && self.max_idle_total > 0
+            && !self.idle_timeout.is_zero()
     }
 }
 
@@ -71,7 +79,12 @@ pub(crate) struct IdlePool<T> {
 
 impl<T> IdlePool<T> {
     pub(crate) fn new() -> IdlePool<T> {
-        IdlePool { inner: Mutex::new(Inner { hosts: HashMap::new(), total: 0 }) }
+        IdlePool {
+            inner: Mutex::new(Inner {
+                hosts: HashMap::new(),
+                total: 0,
+            }),
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner<T>> {
@@ -85,7 +98,9 @@ impl<T> IdlePool<T> {
     pub(crate) fn take(&self, key: &Key, now: Instant) -> Option<T> {
         let (found, expired) = {
             let mut inner = self.lock();
-            let Some(list) = inner.hosts.get_mut(key) else { return None };
+            let Some(list) = inner.hosts.get_mut(key) else {
+                return None;
+            };
             let mut expired = Vec::new();
             let mut i = 0;
             while i < list.len() {
@@ -112,12 +127,18 @@ impl<T> IdlePool<T> {
     /// per-host limit, and the oldest of all beyond the total limit.
     pub(crate) fn put(&self, key: Key, conn: T, idle_for: Duration, policy: &Policy, now: Instant) {
         let idle_for = idle_for.min(policy.idle_timeout);
-        let Some(expires) = now.checked_add(idle_for) else { return };
+        let Some(expires) = now.checked_add(idle_for) else {
+            return;
+        };
         let mut dropped = Vec::new();
         {
             let mut inner = self.lock();
             let list = inner.hosts.entry(key).or_default();
-            list.push_back(Idle { conn, parked: now, expires });
+            list.push_back(Idle {
+                conn,
+                parked: now,
+                expires,
+            });
             while list.len() > policy.max_idle_per_host {
                 dropped.extend(list.pop_front().map(|e| e.conn));
             }
@@ -125,7 +146,11 @@ impl<T> IdlePool<T> {
             inner.total -= dropped.len();
             while inner.total > policy.max_idle_total {
                 // the oldest parked connection of any key
-                let oldest = inner.hosts.iter().filter_map(|(k, l)| l.front().map(|e| (e.parked, k.clone()))).min_by_key(|(p, _)| *p);
+                let oldest = inner
+                    .hosts
+                    .iter()
+                    .filter_map(|(k, l)| l.front().map(|e| (e.parked, k.clone())))
+                    .min_by_key(|(p, _)| *p);
                 let Some((_, k)) = oldest else { break };
                 if let Some(list) = inner.hosts.get_mut(&k) {
                     dropped.extend(list.pop_front().map(|e| e.conn));
@@ -195,7 +220,13 @@ mod tests {
     }
 
     fn key(host: &str) -> Key {
-        Key { tls: true, host: host.to_string(), port: 443, proxy: None, min_tls: crate::tls::TlsVersion::Tls12 }
+        Key {
+            tls: true,
+            host: host.to_string(),
+            port: 443,
+            proxy: None,
+            min_tls: crate::tls::TlsVersion::Tls12,
+        }
     }
 
     fn policy() -> Policy {
@@ -205,18 +236,31 @@ mod tests {
     const SECOND: Duration = Duration::from_secs(1);
 
     fn fixture() -> (IdlePool<Conn>, Arc<AtomicUsize>, Instant) {
-        (IdlePool::new(), Arc::new(AtomicUsize::new(0)), Instant::now())
+        (
+            IdlePool::new(),
+            Arc::new(AtomicUsize::new(0)),
+            Instant::now(),
+        )
     }
 
     fn conn(id: usize, dropped: &Arc<AtomicUsize>) -> Conn {
-        Conn { id, dropped: dropped.clone() }
+        Conn {
+            id,
+            dropped: dropped.clone(),
+        }
     }
 
     #[test]
     fn the_newest_parked_connection_comes_out_first() {
         let (pool, dropped, t0) = fixture();
         for id in 1..=3 {
-            pool.put(key("a"), conn(id, &dropped), 60 * SECOND, &policy(), t0 + SECOND * id as u32);
+            pool.put(
+                key("a"),
+                conn(id, &dropped),
+                60 * SECOND,
+                &policy(),
+                t0 + SECOND * id as u32,
+            );
         }
         assert_eq!(pool.len(), 3);
         let now = t0 + 10 * SECOND;
@@ -231,12 +275,43 @@ mod tests {
     fn a_connection_is_only_for_the_key_it_was_parked_under() {
         let (pool, dropped, t0) = fixture();
         pool.put(key("a"), conn(1, &dropped), 60 * SECOND, &policy(), t0);
-        for other in [key("b"), Key { tls: false, ..key("a") }, Key { port: 8443, ..key("a") }, Key { proxy: Some(("p".into(), 3128, None)), ..key("a") }] {
+        for other in [
+            key("b"),
+            Key {
+                tls: false,
+                ..key("a")
+            },
+            Key {
+                port: 8443,
+                ..key("a")
+            },
+            Key {
+                proxy: Some(("p".into(), 3128, None)),
+                ..key("a")
+            },
+        ] {
             assert!(pool.take(&other, t0).is_none(), "{other:?}");
         }
         // a proxy with other credentials is another place
-        pool.put(Key { proxy: Some(("p".into(), 3128, Some("u:1".into()))), ..key("a") }, conn(2, &dropped), 60 * SECOND, &policy(), t0);
-        assert!(pool.take(&Key { proxy: Some(("p".into(), 3128, Some("u:2".into()))), ..key("a") }, t0).is_none());
+        pool.put(
+            Key {
+                proxy: Some(("p".into(), 3128, Some("u:1".into()))),
+                ..key("a")
+            },
+            conn(2, &dropped),
+            60 * SECOND,
+            &policy(),
+            t0,
+        );
+        assert!(pool
+            .take(
+                &Key {
+                    proxy: Some(("p".into(), 3128, Some("u:2".into()))),
+                    ..key("a")
+                },
+                t0
+            )
+            .is_none());
         assert_eq!(pool.take(&key("a"), t0).map(|c| c.id), Some(1));
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
     }
@@ -244,13 +319,52 @@ mod tests {
     #[test]
     fn the_oldest_connection_to_a_host_of_any_key_can_be_taken_to_make_room() {
         let (pool, dropped, t0) = fixture();
-        pool.put(key("a"), conn(1, &dropped), 60 * SECOND, &policy(), t0 + SECOND);
-        pool.put(Key { min_tls: crate::tls::TlsVersion::Tls13, ..key("a") }, conn(2, &dropped), 60 * SECOND, &policy(), t0);
+        pool.put(
+            key("a"),
+            conn(1, &dropped),
+            60 * SECOND,
+            &policy(),
+            t0 + SECOND,
+        );
+        pool.put(
+            Key {
+                min_tls: crate::tls::TlsVersion::Tls13,
+                ..key("a")
+            },
+            conn(2, &dropped),
+            60 * SECOND,
+            &policy(),
+            t0,
+        );
         pool.put(key("b"), conn(3, &dropped), 60 * SECOND, &policy(), t0);
-        pool.put(Key { port: 8443, ..key("a") }, conn(4, &dropped), 60 * SECOND, &policy(), t0);
+        pool.put(
+            Key {
+                port: 8443,
+                ..key("a")
+            },
+            conn(4, &dropped),
+            60 * SECOND,
+            &policy(),
+            t0,
+        );
         // not the key of the request that wants the room: that one it would use
-        assert!(pool.take_oldest_to("a", 443, Some(&Key { min_tls: crate::tls::TlsVersion::Tls13, ..key("a") })).is_some_and(|c| c.id == 1));
-        pool.put(key("a"), conn(1, &dropped), 60 * SECOND, &policy(), t0 + SECOND);
+        assert!(pool
+            .take_oldest_to(
+                "a",
+                443,
+                Some(&Key {
+                    min_tls: crate::tls::TlsVersion::Tls13,
+                    ..key("a")
+                })
+            )
+            .is_some_and(|c| c.id == 1));
+        pool.put(
+            key("a"),
+            conn(1, &dropped),
+            60 * SECOND,
+            &policy(),
+            t0 + SECOND,
+        );
         assert_eq!(pool.take_oldest_to("a", 443, None).map(|c| c.id), Some(2));
         assert!(pool.take_oldest_to("a", 443, Some(&key("a"))).is_none());
         assert_eq!(pool.take_oldest_to("a", 443, None).map(|c| c.id), Some(1));
@@ -262,38 +376,83 @@ mod tests {
     fn an_expired_connection_is_dropped_not_handed_out() {
         let (pool, dropped, t0) = fixture();
         pool.put(key("a"), conn(1, &dropped), 10 * SECOND, &policy(), t0);
-        pool.put(key("a"), conn(2, &dropped), 100 * SECOND, &policy(), t0 + SECOND);
+        pool.put(
+            key("a"),
+            conn(2, &dropped),
+            100 * SECOND,
+            &policy(),
+            t0 + SECOND,
+        );
         // at exactly the expiry the connection is no longer good
-        let taken = pool.take(&key("a"), t0 + 10 * SECOND).expect("the second connection is still good");
+        let taken = pool
+            .take(&key("a"), t0 + 10 * SECOND)
+            .expect("the second connection is still good");
         assert_eq!(taken.id, 2);
-        assert_eq!(dropped.load(Ordering::SeqCst), 1, "the expired one was dropped");
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            1,
+            "the expired one was dropped"
+        );
         assert_eq!(pool.len(), 0);
         // an expiry in the middle of the list is found too, whichever end the newer one is on
         pool.put(key("b"), conn(3, &dropped), 100 * SECOND, &policy(), t0);
-        pool.put(key("b"), conn(4, &dropped), 5 * SECOND, &policy(), t0 + SECOND);
-        let taken = pool.take(&key("b"), t0 + 20 * SECOND).expect("the first of b's connections is still good");
+        pool.put(
+            key("b"),
+            conn(4, &dropped),
+            5 * SECOND,
+            &policy(),
+            t0 + SECOND,
+        );
+        let taken = pool
+            .take(&key("b"), t0 + 20 * SECOND)
+            .expect("the first of b's connections is still good");
         assert_eq!(taken.id, 3);
-        assert_eq!(dropped.load(Ordering::SeqCst), 2, "the expired one of b was dropped");
+        assert_eq!(
+            dropped.load(Ordering::SeqCst),
+            2,
+            "the expired one of b was dropped"
+        );
     }
 
     #[test]
     fn the_policy_caps_how_long_a_server_may_ask_for() {
         let (pool, dropped, t0) = fixture();
-        let p = Policy { idle_timeout: 30 * SECOND, ..policy() };
+        let p = Policy {
+            idle_timeout: 30 * SECOND,
+            ..policy()
+        };
         pool.put(key("a"), conn(1, &dropped), 3600 * SECOND, &p, t0);
         assert!(pool.take(&key("a"), t0 + 31 * SECOND).is_none());
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
         // a connection parked "for ever" must not overflow the clock either
-        pool.put(key("a"), conn(2, &dropped), Duration::MAX, &Policy { idle_timeout: Duration::MAX, ..p }, t0);
+        pool.put(
+            key("a"),
+            conn(2, &dropped),
+            Duration::MAX,
+            &Policy {
+                idle_timeout: Duration::MAX,
+                ..p
+            },
+            t0,
+        );
         assert!(pool.len() <= 1);
     }
 
     #[test]
     fn the_per_host_limit_drops_the_oldest() {
         let (pool, dropped, t0) = fixture();
-        let p = Policy { max_idle_per_host: 2, ..policy() };
+        let p = Policy {
+            max_idle_per_host: 2,
+            ..policy()
+        };
         for id in 1..=4 {
-            pool.put(key("a"), conn(id, &dropped), 60 * SECOND, &p, t0 + SECOND * id as u32);
+            pool.put(
+                key("a"),
+                conn(id, &dropped),
+                60 * SECOND,
+                &p,
+                t0 + SECOND * id as u32,
+            );
         }
         assert_eq!(pool.len(), 2);
         assert_eq!(dropped.load(Ordering::SeqCst), 2);
@@ -304,15 +463,34 @@ mod tests {
     #[test]
     fn the_total_limit_drops_the_oldest_of_all_hosts() {
         let (pool, dropped, t0) = fixture();
-        let p = Policy { max_idle_total: 3, ..policy() };
+        let p = Policy {
+            max_idle_total: 3,
+            ..policy()
+        };
         pool.put(key("a"), conn(1, &dropped), 60 * SECOND, &p, t0);
         pool.put(key("b"), conn(2, &dropped), 60 * SECOND, &p, t0 + SECOND);
-        pool.put(key("a"), conn(3, &dropped), 60 * SECOND, &p, t0 + 2 * SECOND);
-        pool.put(key("c"), conn(4, &dropped), 60 * SECOND, &p, t0 + 3 * SECOND);
+        pool.put(
+            key("a"),
+            conn(3, &dropped),
+            60 * SECOND,
+            &p,
+            t0 + 2 * SECOND,
+        );
+        pool.put(
+            key("c"),
+            conn(4, &dropped),
+            60 * SECOND,
+            &p,
+            t0 + 3 * SECOND,
+        );
         assert_eq!(pool.len(), 3);
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
         let now = t0 + 4 * SECOND;
-        assert_eq!(pool.take(&key("a"), now).map(|c| c.id), Some(3), "the older of a's two was the one dropped");
+        assert_eq!(
+            pool.take(&key("a"), now).map(|c| c.id),
+            Some(3),
+            "the older of a's two was the one dropped"
+        );
         assert!(pool.take(&key("a"), now).is_none());
         assert_eq!(pool.take(&key("b"), now).map(|c| c.id), Some(2));
         assert_eq!(pool.take(&key("c"), now).map(|c| c.id), Some(4));
@@ -334,10 +512,22 @@ mod tests {
     fn nothing_is_parked_when_the_policy_says_no() {
         assert!(policy().parks());
         for off in [
-            Policy { keep_alive: false, ..policy() },
-            Policy { max_idle_per_host: 0, ..policy() },
-            Policy { max_idle_total: 0, ..policy() },
-            Policy { idle_timeout: Duration::ZERO, ..policy() },
+            Policy {
+                keep_alive: false,
+                ..policy()
+            },
+            Policy {
+                max_idle_per_host: 0,
+                ..policy()
+            },
+            Policy {
+                max_idle_total: 0,
+                ..policy()
+            },
+            Policy {
+                idle_timeout: Duration::ZERO,
+                ..policy()
+            },
         ] {
             assert!(!off.parks(), "{off:?}");
         }
@@ -357,11 +547,27 @@ mod tests {
         }
         let pool = Arc::new(IdlePool::new());
         let t0 = Instant::now();
-        let p = Policy { max_idle_per_host: 1, max_idle_total: 1, ..policy() };
+        let p = Policy {
+            max_idle_per_host: 1,
+            max_idle_total: 1,
+            ..policy()
+        };
         for _ in 0..3 {
-            pool.put(key("a"), Reentrant { pool: pool.clone() }, 60 * SECOND, &p, t0);
+            pool.put(
+                key("a"),
+                Reentrant { pool: pool.clone() },
+                60 * SECOND,
+                &p,
+                t0,
+            );
         }
-        pool.put(key("b"), Reentrant { pool: pool.clone() }, 1 * SECOND, &p, t0);
+        pool.put(
+            key("b"),
+            Reentrant { pool: pool.clone() },
+            1 * SECOND,
+            &p,
+            t0,
+        );
         assert!(pool.take(&key("b"), t0 + 5 * SECOND).is_none());
         pool.clear();
     }
@@ -376,7 +582,13 @@ mod tests {
                 let (pool, dropped) = (pool.clone(), dropped.clone());
                 std::thread::spawn(move || {
                     for i in 0..500 {
-                        pool.put(key("a"), conn(t * 1000 + i, &dropped), 60 * SECOND, &policy(), t0);
+                        pool.put(
+                            key("a"),
+                            conn(t * 1000 + i, &dropped),
+                            60 * SECOND,
+                            &policy(),
+                            t0,
+                        );
                         let _ = pool.take(&key("a"), t0);
                     }
                 })

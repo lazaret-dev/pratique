@@ -60,7 +60,9 @@ pub struct CookieJar {
 }
 
 fn now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 impl CookieJar {
@@ -86,7 +88,10 @@ impl CookieJar {
 
     /// The names and values of the cookies a request to `url` would carry now, in the order they would be sent.
     pub fn cookies_for(&self, url: &Url) -> Vec<(String, String)> {
-        self.matching(url, now()).into_iter().map(|c| (c.name, c.value)).collect()
+        self.matching(url, now())
+            .into_iter()
+            .map(|c| (c.name, c.value))
+            .collect()
     }
 
     /// How many cookies the jar holds (some may have expired and not been dropped yet).
@@ -122,29 +127,59 @@ impl CookieJar {
         if cookies.is_empty() {
             return None;
         }
-        Some(cookies.iter().map(|c| format!("{}={}", c.name, c.value)).collect::<Vec<_>>().join("; "))
+        Some(
+            cookies
+                .iter()
+                .map(|c| format!("{}={}", c.name, c.value))
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
     }
 
     fn matching(&self, url: &Url, t: i64) -> Vec<Cookie> {
         let path = request_path(url);
         let mut store = self.lock();
         store.cookies.retain(|c| c.expires.map_or(true, |e| e > t));
-        let mut out: Vec<Cookie> = store.cookies.iter().filter(|c| c.host == url.host && path_matches(&path, &c.path) && (!c.secure || url.is_https())).cloned().collect();
+        let mut out: Vec<Cookie> = store
+            .cookies
+            .iter()
+            .filter(|c| {
+                c.host == url.host && path_matches(&path, &c.path) && (!c.secure || url.is_https())
+            })
+            .cloned()
+            .collect();
         // longer paths first, then the older cookie (RFC 6265, 5.4)
-        out.sort_by(|a, b| b.path.len().cmp(&a.path.len()).then(a.created.cmp(&b.created)));
+        out.sort_by(|a, b| {
+            b.path
+                .len()
+                .cmp(&a.path.len())
+                .then(a.created.cmp(&b.created))
+        });
         out
     }
 
     pub(crate) fn set_cookie_at(&self, url: &Url, header: &str, t: i64) -> bool {
-        let Some(mut cookie) = parse(url, header, t) else { return false };
+        let Some(mut cookie) = parse(url, header, t) else {
+            return false;
+        };
         let mut store = self.lock();
         let s = &mut *store;
         s.cookies.retain(|c| c.expires.map_or(true, |e| e > t));
         // plain http does not get to replace (or shadow) a Secure cookie (RFC 6265bis, 5.7, step 14)
-        if !url.is_https() && s.cookies.iter().any(|c| c.secure && c.name == cookie.name && c.host == cookie.host && (path_matches(&cookie.path, &c.path) || path_matches(&c.path, &cookie.path))) {
+        if !url.is_https()
+            && s.cookies.iter().any(|c| {
+                c.secure
+                    && c.name == cookie.name
+                    && c.host == cookie.host
+                    && (path_matches(&cookie.path, &c.path) || path_matches(&c.path, &cookie.path))
+            })
+        {
             return false;
         }
-        let old = s.cookies.iter().position(|c| c.name == cookie.name && c.host == cookie.host && c.path == cookie.path);
+        let old = s
+            .cookies
+            .iter()
+            .position(|c| c.name == cookie.name && c.host == cookie.host && c.path == cookie.path);
         if let Some(i) = old {
             cookie.created = s.cookies[i].created;
             s.cookies.remove(i);
@@ -160,11 +195,24 @@ impl CookieJar {
         // the limits: the oldest of the host, then the oldest of all
         let host = s.cookies.last().map(|c| c.host.clone()).unwrap_or_default();
         while s.cookies.iter().filter(|c| c.host == host).count() > MAX_PER_HOST {
-            let i = s.cookies.iter().enumerate().filter(|(_, c)| c.host == host).min_by_key(|(_, c)| c.created).map(|(i, _)| i).unwrap();
+            let i = s
+                .cookies
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.host == host)
+                .min_by_key(|(_, c)| c.created)
+                .map(|(i, _)| i)
+                .unwrap();
             s.cookies.remove(i);
         }
         while s.cookies.len() > MAX_TOTAL {
-            let i = s.cookies.iter().enumerate().min_by_key(|(_, c)| c.created).map(|(i, _)| i).unwrap();
+            let i = s
+                .cookies
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, c)| c.created)
+                .map(|(i, _)| i)
+                .unwrap();
             s.cookies.remove(i);
         }
         true
@@ -192,7 +240,9 @@ fn default_path(url: &Url) -> String {
 
 /// RFC 6265, 5.1.4.
 fn path_matches(request: &str, cookie: &str) -> bool {
-    request == cookie || (request.starts_with(cookie) && (cookie.ends_with('/') || request.as_bytes().get(cookie.len()) == Some(&b'/')))
+    request == cookie
+        || (request.starts_with(cookie)
+            && (cookie.ends_with('/') || request.as_bytes().get(cookie.len()) == Some(&b'/')))
 }
 
 fn is_ip(host: &str) -> bool {
@@ -234,7 +284,10 @@ fn parse(url: &Url, header: &str, t: i64) -> Option<Cookie> {
                 max_age = Some(if val.starts_with('-') { -1 } else { n });
             }
         } else if key.eq_ignore_ascii_case("domain") {
-            let d = val.trim_start_matches('.').trim_end_matches('.').to_ascii_lowercase();
+            let d = val
+                .trim_start_matches('.')
+                .trim_end_matches('.')
+                .to_ascii_lowercase();
             domain = (!d.is_empty()).then_some(d);
         } else if key.eq_ignore_ascii_case("path") {
             path = val.starts_with('/').then(|| val.to_string());
@@ -267,13 +320,27 @@ fn parse(url: &Url, header: &str, t: i64) -> Option<Cookie> {
         Some(n) => Some(t.saturating_add(n).min(MAX_EXPIRY)),
         None => expires.map(|e| e.min(MAX_EXPIRY)),
     };
-    Some(Cookie { name: name.to_string(), value: value.to_string(), host: url.host.clone(), path, secure, expires, created: 0 })
+    Some(Cookie {
+        name: name.to_string(),
+        value: value.to_string(),
+        host: url.host.clone(),
+        path,
+        secure,
+        expires,
+        created: 0,
+    })
 }
 
 /// A date in a cookie (RFC 6265, 5.1.1), as seconds since 1970: the forgiving reading that browsers share, which takes the formats of
 /// RFC 1123, RFC 850 and asctime alike.
 pub(crate) fn parse_cookie_date(text: &str) -> Option<i64> {
-    let delimiter = |c: char| c == '\t' || (' '..='/').contains(&c) || (';'..='@').contains(&c) || ('['..='`').contains(&c) || ('{'..='~').contains(&c);
+    let delimiter = |c: char| {
+        c == '\t'
+            || (' '..='/').contains(&c)
+            || (';'..='@').contains(&c)
+            || ('['..='`').contains(&c)
+            || ('{'..='~').contains(&c)
+    };
     let (mut time, mut day, mut month, mut year) = (None, None, None, None);
     // a token's leading digits (1 to `max` of them) and whether anything follows them
     fn digits(token: &str, min: usize, max: usize) -> Option<(u32, &str)> {
@@ -289,7 +356,9 @@ pub(crate) fn parse_cookie_date(text: &str) -> Option<i64> {
                 let (h, rest) = digits(token, 1, 2)?;
                 let (m, rest) = digits(rest.strip_prefix(':')?, 1, 2)?;
                 let (s, rest) = digits(rest.strip_prefix(':')?, 1, 2)?;
-                rest.bytes().all(|b| !b.is_ascii_digit()).then_some((h, m, s))
+                rest.bytes()
+                    .all(|b| !b.is_ascii_digit())
+                    .then_some((h, m, s))
             })();
             if parsed.is_some() {
                 time = parsed;
@@ -305,8 +374,13 @@ pub(crate) fn parse_cookie_date(text: &str) -> Option<i64> {
             }
         }
         if month.is_none() && token.len() >= 3 {
-            const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-            if let Some(m) = MONTHS.iter().position(|m| token[..3].eq_ignore_ascii_case(m)) {
+            const MONTHS: [&str; 12] = [
+                "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+            ];
+            let prefix = token.get(..3);
+            if let Some(m) =
+                prefix.and_then(|p| MONTHS.iter().position(|m| p.eq_ignore_ascii_case(m)))
+            {
                 month = Some(m as u32 + 1);
                 continue;
             }
@@ -328,7 +402,20 @@ pub(crate) fn parse_cookie_date(text: &str) -> Option<i64> {
         y += 2000;
     }
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let days_in_month = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo as usize - 1];
+    let days_in_month = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ][mo as usize - 1];
     if y < 1601 || d < 1 || d > days_in_month || h > 23 || mi > 59 || s > 59 {
         return None;
     }
@@ -372,45 +459,121 @@ mod tests {
     fn dates_in_every_format_that_is_out_there() {
         // 1994-11-06 08:49:37 UTC
         let want = Some(784_111_777);
-        for d in ["Sun, 06 Nov 1994 08:49:37 GMT", "Sunday, 06-Nov-94 08:49:37 GMT", "Sun Nov  6 08:49:37 1994", "06 nov 1994 8:49:37", "Sun, 06-Nov-1994 08:49:37 UTC", "1994 Nov 6 08:49:37"] {
+        for d in [
+            "Sun, 06 Nov 1994 08:49:37 GMT",
+            "Sunday, 06-Nov-94 08:49:37 GMT",
+            "Sun Nov  6 08:49:37 1994",
+            "06 nov 1994 8:49:37",
+            "Sun, 06-Nov-1994 08:49:37 UTC",
+            "1994 Nov 6 08:49:37",
+        ] {
             assert_eq!(parse_cookie_date(d), want, "{d}");
         }
         assert_eq!(parse_cookie_date("Thu, 01 Jan 1970 00:00:00 GMT"), Some(0));
-        assert_eq!(parse_cookie_date("Wed, 21 Oct 2015 07:28:00 GMT"), Some(1_445_412_480));
-        assert_eq!(parse_cookie_date("Fri, 31 Dec 9999 23:59:59 GMT"), Some(MAX_EXPIRY));
-        assert_eq!(parse_cookie_date("Tue, 29 Feb 2028 12:00:00 GMT"), Some(1_835_438_400));
+        assert_eq!(
+            parse_cookie_date("Wed, 21 Oct 2015 07:28:00 GMT"),
+            Some(1_445_412_480)
+        );
+        assert_eq!(
+            parse_cookie_date("Fri, 31 Dec 9999 23:59:59 GMT"),
+            Some(MAX_EXPIRY)
+        );
+        assert_eq!(
+            parse_cookie_date("Tue, 29 Feb 2028 12:00:00 GMT"),
+            Some(1_835_438_400)
+        );
         // two-digit years: 70 to 99 are the 1900s, the rest the 2000s
-        assert_eq!(parse_cookie_date("01 Jan 69 00:00:00"), parse_cookie_date("01 Jan 2069 00:00:00"));
+        assert_eq!(
+            parse_cookie_date("01 Jan 69 00:00:00"),
+            parse_cookie_date("01 Jan 2069 00:00:00")
+        );
         assert_eq!(parse_cookie_date("01 Jan 70 00:00:00"), Some(0));
-        for bad in ["", "yesterday", "Sun, 06 Nov 1994", "06 Nov 1994 25:00:00", "31 Feb 2026 00:00:00", "29 Feb 2027 00:00:00", "06 Xyz 1994 08:49:37", "06 Nov 1600 08:49:37", "0 Nov 1994 08:49:37", "06 Nov 12345 08:49:37"] {
+        for bad in [
+            "",
+            "yesterday",
+            "Sun, 06 Nov 1994",
+            "06 Nov 1994 25:00:00",
+            "31 Feb 2026 00:00:00",
+            "29 Feb 2027 00:00:00",
+            "06 Xyz 1994 08:49:37",
+            "06 Nov 1600 08:49:37",
+            "0 Nov 1994 08:49:37",
+            "06 Nov 12345 08:49:37",
+        ] {
             assert_eq!(parse_cookie_date(bad), None, "{bad:?}");
         }
     }
 
     #[test]
+    fn a_non_ascii_cookie_date_is_ignored_without_panicking() {
+        assert_eq!(parse_cookie_date("aaé"), None);
+        let jar = jar_with("https://a.test/", &["x=y; Expires=aaé"]);
+        assert_eq!(sent(&jar, "https://a.test/").as_deref(), Some("x=y"));
+    }
+
+    #[test]
     fn a_cookie_goes_back_to_its_host_and_its_path_only() {
-        let jar = jar_with("https://api.example.com/v1/login", &["a=1", "b=2; Path=/", "c=3; Path=/v1/items"]);
+        let jar = jar_with(
+            "https://api.example.com/v1/login",
+            &["a=1", "b=2; Path=/", "c=3; Path=/v1/items"],
+        );
         // a (default path /v1), b (/), c (/v1/items): longer paths first
-        assert_eq!(sent(&jar, "https://api.example.com/v1/items/7").as_deref(), Some("c=3; a=1; b=2"));
-        assert_eq!(sent(&jar, "https://api.example.com/v1").as_deref(), Some("a=1; b=2"));
-        assert_eq!(sent(&jar, "https://api.example.com/v10").as_deref(), Some("b=2"));
-        assert_eq!(sent(&jar, "https://api.example.com/").as_deref(), Some("b=2"));
+        assert_eq!(
+            sent(&jar, "https://api.example.com/v1/items/7").as_deref(),
+            Some("c=3; a=1; b=2")
+        );
+        assert_eq!(
+            sent(&jar, "https://api.example.com/v1").as_deref(),
+            Some("a=1; b=2")
+        );
+        assert_eq!(
+            sent(&jar, "https://api.example.com/v10").as_deref(),
+            Some("b=2")
+        );
+        assert_eq!(
+            sent(&jar, "https://api.example.com/").as_deref(),
+            Some("b=2")
+        );
         // any port and scheme of the host (a cookie is a host's), and no other host
-        assert_eq!(sent(&jar, "http://api.example.com:8080/").as_deref(), Some("b=2"));
-        for other in ["https://example.com/", "https://www.example.com/", "https://x.api.example.com/", "https://api.example.com.evil.test/"] {
+        assert_eq!(
+            sent(&jar, "http://api.example.com:8080/").as_deref(),
+            Some("b=2")
+        );
+        for other in [
+            "https://example.com/",
+            "https://www.example.com/",
+            "https://x.api.example.com/",
+            "https://api.example.com.evil.test/",
+        ] {
             assert_eq!(sent(&jar, other), None, "{other}");
         }
     }
 
     #[test]
     fn a_domain_attribute_does_not_widen_a_cookie() {
-        let jar = jar_with("https://login.example.com/", &["sso=1; Domain=example.com; Path=/", "own=2; Domain=.login.example.com; Path=/"]);
-        assert_eq!(sent(&jar, "https://login.example.com/").as_deref(), Some("sso=1; own=2"));
+        let jar = jar_with(
+            "https://login.example.com/",
+            &[
+                "sso=1; Domain=example.com; Path=/",
+                "own=2; Domain=.login.example.com; Path=/",
+            ],
+        );
+        assert_eq!(
+            sent(&jar, "https://login.example.com/").as_deref(),
+            Some("sso=1; own=2")
+        );
         assert_eq!(sent(&jar, "https://www.example.com/"), None);
         assert_eq!(sent(&jar, "https://example.com/"), None);
         // a domain the host is not in is refused outright
-        for h in ["x=1; Domain=other.com", "x=1; Domain=ample.com", "x=1; Domain=www.login.example.com"] {
-            assert!(!jar.set_cookie_at(&u("https://login.example.com/"), h, T), "{h}");
+        for h in [
+            "x=1; Domain=other.com",
+            "x=1; Domain=ample.com",
+            "x=1; Domain=www.login.example.com",
+        ] {
+            assert!(
+                !jar.set_cookie_at(&u("https://login.example.com/"), h, T),
+                "{h}"
+            );
         }
         // an address is its own domain and no other
         assert!(jar.set_cookie_at(&u("https://10.0.0.1/"), "ip=1; Domain=10.0.0.1", T));
@@ -432,7 +595,11 @@ mod tests {
         assert!(!jar.set_cookie_at(&u("https://a.test/"), "__Secure-x=1", T));
         assert!(jar.set_cookie_at(&u("https://a.test/"), "__Secure-x=1; Secure", T));
         assert!(!jar.set_cookie_at(&u("https://a.test/"), "__Host-y=1; Secure", T)); // the default path is /, but Path must be said
-        assert!(!jar.set_cookie_at(&u("https://a.test/"), "__Host-y=1; Secure; Path=/; Domain=a.test", T));
+        assert!(!jar.set_cookie_at(
+            &u("https://a.test/"),
+            "__Host-y=1; Secure; Path=/; Domain=a.test",
+            T
+        ));
         assert!(jar.set_cookie_at(&u("https://a.test/"), "__Host-y=1; Secure; Path=/", T));
         assert!(!jar.set_cookie_at(&u("https://a.test/"), "__HOST-z=1; Path=/", T));
     }
@@ -442,41 +609,85 @@ mod tests {
         let jar = CookieJar::new();
         let url = u("https://a.test/");
         assert!(jar.set_cookie_at(&url, "k=1; Max-Age=60; Path=/", T));
-        assert!(jar.set_cookie_at(&url, "old=1; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/", T) == false);
+        assert!(
+            jar.set_cookie_at(
+                &url,
+                "old=1; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Path=/",
+                T
+            ) == false
+        );
         assert!(jar.set_cookie_at(&url, "session=1; Path=/", T));
-        assert_eq!(jar.header_for_at(&url, T + 59).as_deref(), Some("k=1; session=1"));
-        assert_eq!(jar.header_for_at(&url, T + 60).as_deref(), Some("session=1"));
+        assert_eq!(
+            jar.header_for_at(&url, T + 59).as_deref(),
+            Some("k=1; session=1")
+        );
+        assert_eq!(
+            jar.header_for_at(&url, T + 60).as_deref(),
+            Some("session=1")
+        );
         // Max-Age wins over Expires
-        assert!(jar.set_cookie_at(&url, "m=1; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=100; Path=/", T));
-        assert_eq!(jar.header_for_at(&url, T + 99).as_deref(), Some("session=1; m=1"));
+        assert!(jar.set_cookie_at(
+            &url,
+            "m=1; Expires=Wed, 21 Oct 2015 07:28:00 GMT; Max-Age=100; Path=/",
+            T
+        ));
+        assert_eq!(
+            jar.header_for_at(&url, T + 99).as_deref(),
+            Some("session=1; m=1")
+        );
         // the same name, host and path replaces (and keeps its place), Max-Age=0 deletes
         assert!(jar.set_cookie_at(&url, "session=2; Path=/", T));
-        assert_eq!(jar.header_for_at(&url, T).as_deref(), Some("session=2; m=1"));
+        assert_eq!(
+            jar.header_for_at(&url, T).as_deref(),
+            Some("session=2; m=1")
+        );
         assert!(!jar.set_cookie_at(&url, "session=x; Max-Age=0; Path=/", T));
         assert!(!jar.set_cookie_at(&url, "m=x; Max-Age=-5; Path=/", T));
         assert_eq!(jar.header_for_at(&url, T), None);
         // a Max-Age that is not a number is no Max-Age; one that is too long to read is a long time
         assert!(jar.set_cookie_at(&url, "n=1; Max-Age=soon; Path=/", T));
         assert!(jar.set_cookie_at(&url, "f=1; Max-Age=99999999999999999999999; Path=/", T));
-        assert_eq!(jar.header_for_at(&url, MAX_EXPIRY - 1).as_deref(), Some("n=1; f=1"));
+        assert_eq!(
+            jar.header_for_at(&url, MAX_EXPIRY - 1).as_deref(),
+            Some("n=1; f=1")
+        );
     }
 
     #[test]
     fn what_is_not_a_cookie_is_ignored() {
         let jar = CookieJar::new();
         let url = u("https://a.test/");
-        for h in ["", "novalue", "=nameless", " =x", "a b=1", "x=\u{1}", "x=a\u{7f}b", &format!("big={}", "v".repeat(MAX_PAIR))] {
+        for h in [
+            "",
+            "novalue",
+            "=nameless",
+            " =x",
+            "a b=1",
+            "x=\u{1}",
+            "x=a\u{7f}b",
+            &format!("big={}", "v".repeat(MAX_PAIR)),
+        ] {
             assert!(!jar.set_cookie_at(&url, h, T), "{h:?}");
         }
         assert!(jar.is_empty());
         // quotes, spaces around, an empty value and odd attributes are all fine
-        assert!(jar.set_cookie_at(&url, " q = \"a b\" ; Path = / ; HttpOnly; SameSite=Strict; Unknown", T));
+        assert!(jar.set_cookie_at(
+            &url,
+            " q = \"a b\" ; Path = / ; HttpOnly; SameSite=Strict; Unknown",
+            T
+        ));
         assert!(jar.set_cookie_at(&url, "e=; Path=/", T));
         assert_eq!(jar.header_for_at(&url, T).as_deref(), Some("q=\"a b\"; e="));
         // a path that does not start with / is the default path
         assert!(jar.set_cookie_at(&u("https://a.test/dir/page"), "p=1; Path=relative", T));
-        assert_eq!(jar.header_for_at(&u("https://a.test/dir/x"), T).as_deref(), Some("p=1; q=\"a b\"; e="));
-        assert_eq!(jar.header_for_at(&u("https://a.test/other"), T).as_deref(), Some("q=\"a b\"; e="));
+        assert_eq!(
+            jar.header_for_at(&u("https://a.test/dir/x"), T).as_deref(),
+            Some("p=1; q=\"a b\"; e=")
+        );
+        assert_eq!(
+            jar.header_for_at(&u("https://a.test/other"), T).as_deref(),
+            Some("q=\"a b\"; e=")
+        );
     }
 
     #[test]
@@ -487,7 +698,12 @@ mod tests {
         }
         assert_eq!(jar.len(), MAX_PER_HOST);
         let sent = jar.header_for_at(&u("https://many.test/"), T).unwrap();
-        assert!(!sent.contains("c0=") && !sent.contains("c4=") && sent.contains("c5=") && sent.contains(&format!("c{}=", MAX_PER_HOST + 4)));
+        assert!(
+            !sent.contains("c0=")
+                && !sent.contains("c4=")
+                && sent.contains("c5=")
+                && sent.contains(&format!("c{}=", MAX_PER_HOST + 4))
+        );
         for h in 0..(MAX_TOTAL / MAX_PER_HOST + 2) {
             for i in 0..MAX_PER_HOST {
                 jar.set_cookie_at(&u(&format!("https://h{h}.test/")), &format!("c{i}=1"), T);
@@ -496,7 +712,12 @@ mod tests {
         assert_eq!(jar.len(), MAX_TOTAL);
         // the newest hosts are whole, the oldest are gone
         assert_eq!(jar.header_for_at(&u("https://many.test/"), T), None);
-        assert!(jar.header_for_at(&u(&format!("https://h{}.test/", MAX_TOTAL / MAX_PER_HOST + 1)), T).is_some());
+        assert!(jar
+            .header_for_at(
+                &u(&format!("https://h{}.test/", MAX_TOTAL / MAX_PER_HOST + 1)),
+                T
+            )
+            .is_some());
         jar.clear_host("H61.test.");
         jar.clear();
         assert!(jar.is_empty());

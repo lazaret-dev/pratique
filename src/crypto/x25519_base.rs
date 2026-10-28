@@ -55,12 +55,21 @@ pub(super) fn mul_base(k: &[u8; 32]) -> Point {
     e[63] += carry;
 
     let table = table();
-    let mut h = Point { x: Fe::ZERO, y: Fe::ONE, z: Fe::ONE, t: Fe::ZERO };
+    let mut h = Point {
+        x: Fe::ZERO,
+        y: Fe::ONE,
+        z: Fe::ONE,
+        t: Fe::ZERO,
+    };
     for i in (1..64).step_by(2) {
         h = h.add_affine(&select(&table[i / 2], e[i])).to_extended();
     }
     // times 16
-    let mut s = Projective { x: h.x, y: h.y, z: h.z };
+    let mut s = Projective {
+        x: h.x,
+        y: h.y,
+        z: h.z,
+    };
     for _ in 0..3 {
         s = s.double().to_projective();
     }
@@ -81,7 +90,11 @@ fn select(row: &[Affine; 8], digit: i8) -> Affine {
     let negative = ((digit as u8) >> 7) as u64;
     let sign = digit >> 7; // -1 or 0
     let size = ((digit ^ sign) - sign) as u64; // |digit|, 0 to 8
-    let mut t = Affine { ypx: Fe::ONE, ymx: Fe::ONE, xy2d: Fe::ZERO };
+    let mut t = Affine {
+        ypx: Fe::ONE,
+        ymx: Fe::ONE,
+        xy2d: Fe::ZERO,
+    };
     for (j, entry) in row.iter().enumerate() {
         // 1 where size == j + 1: (size ^ (j + 1)) - 1 has its top bit set only when the xor is 0
         let hit = (size ^ (j as u64 + 1)).wrapping_sub(1) >> 63;
@@ -90,7 +103,11 @@ fn select(row: &[Affine; 8], digit: i8) -> Affine {
         cmov(&mut t.xy2d, &entry.xy2d, hit);
     }
     // -(x, y) = (-x, y): y + x and y - x trade places, 2dxy changes sign
-    let minus = Affine { ypx: t.ymx, ymx: t.ypx, xy2d: t.xy2d.neg() };
+    let minus = Affine {
+        ypx: t.ymx,
+        ymx: t.ypx,
+        xy2d: t.xy2d.neg(),
+    };
     cmov(&mut t.ypx, &minus.ypx, negative);
     cmov(&mut t.ymx, &minus.ymx, negative);
     cmov(&mut t.xy2d, &minus.xy2d, negative);
@@ -131,7 +148,11 @@ fn table() -> &'static [[Affine; 8]; 32] {
             all = all.mul(p.z);
         }
         let mut inv = all.invert(); // then the inverse of the product of the Z up to the current point
-        let mut out = [[Affine { ypx: Fe::ONE, ymx: Fe::ONE, xy2d: Fe::ZERO }; 8]; 32];
+        let mut out = [[Affine {
+            ypx: Fe::ONE,
+            ymx: Fe::ONE,
+            xy2d: Fe::ZERO,
+        }; 8]; 32];
         for k in (0..256).rev() {
             out[k / 8][k % 8] = points[k].to_affine_given(inv.mul(before[k]));
             inv = inv.mul(points[k].z);
@@ -174,7 +195,12 @@ mod tests {
             for (j, entry) in entries.iter().enumerate() {
                 let zinv = q.z.invert();
                 let want = q.to_affine_given(zinv);
-                assert!(entry.ypx.equals(want.ypx) && entry.ymx.equals(want.ymx) && entry.xy2d.equals(want.xy2d), "entry {i}, {j}");
+                assert!(
+                    entry.ypx.equals(want.ypx)
+                        && entry.ymx.equals(want.ymx)
+                        && entry.xy2d.equals(want.xy2d),
+                    "entry {i}, {j}"
+                );
                 q = q.add(&row);
             }
             for _ in 0..8 {
@@ -200,7 +226,10 @@ mod tests {
                     (e.ymx, e.ypx, e.xy2d.neg())
                 }
             };
-            assert!(got.ypx.equals(ypx) && got.ymx.equals(ymx) && got.xy2d.equals(xy2d), "digit {digit}");
+            assert!(
+                got.ypx.equals(ypx) && got.ymx.equals(ymx) && got.xy2d.equals(xy2d),
+                "digit {digit}"
+            );
         }
     }
 
@@ -209,7 +238,14 @@ mod tests {
     #[test]
     fn the_table_multiplication_agrees_with_the_verifiers() {
         let mut seed = 0x0123_4567_89ab_cdefu64;
-        let mut scalars = vec![[0u8; 32], [0x77u8; 32], [0x88; 32], [0x99; 32], [0x11; 32], [0xff; 32]];
+        let mut scalars = vec![
+            [0u8; 32],
+            [0x77u8; 32],
+            [0x88; 32],
+            [0x99; 32],
+            [0x11; 32],
+            [0xff; 32],
+        ];
         scalars[5][31] = 0x7f;
         let mut one = [0u8; 32];
         one[0] = 1;
@@ -226,7 +262,8 @@ mod tests {
         for k in &scalars {
             let mut k = *k;
             k[31] &= 127;
-            let want = crate::crypto::ed25519::double_scalar_mul_base(&[0u8; 32], &base, &k).encode();
+            let want =
+                crate::crypto::ed25519::double_scalar_mul_base(&[0u8; 32], &base, &k).encode();
             assert_eq!(mul_base(&k).encode(), want, "k = {k:02x?}");
         }
     }

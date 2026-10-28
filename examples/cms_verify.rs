@@ -60,7 +60,11 @@ fn name(oid: String) -> String {
         ("1.2.840.10045.4.3.4", "ECDSA with SHA-512"),
         ("1.3.101.112", "Ed25519"),
     ];
-    known.iter().find(|(o, _)| *o == oid).map(|(_, n)| n.to_string()).unwrap_or(oid)
+    known
+        .iter()
+        .find(|(o, _)| *o == oid)
+        .map(|(_, n)| n.to_string())
+        .unwrap_or(oid)
 }
 
 fn when(t: i64) -> String {
@@ -75,13 +79,19 @@ fn when(t: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02} UTC", secs / 3600, secs % 3600 / 60, secs % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02} UTC",
+        secs / 3600,
+        secs % 3600 / 60,
+        secs % 60
+    )
 }
 
 fn run() -> Result<bool, Box<dyn Error>> {
     let (mut detached, mut cacert, mut message) = (None::<String>, None::<String>, None::<String>);
     let mut purpose = Purpose::CodeSigning;
-    let (mut at, mut allow_sha1, mut stamps, mut signature_only) = (None::<i64>, false, Timestamps::Verify, false);
+    let (mut at, mut allow_sha1, mut stamps, mut signature_only) =
+        (None::<i64>, false, Timestamps::Verify, false);
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -98,7 +108,13 @@ fn run() -> Result<bool, Box<dyn Error>> {
                     _ => usage(),
                 }
             }
-            "--at" => at = Some(args.next().and_then(|v| v.parse().ok()).unwrap_or_else(|| usage())),
+            "--at" => {
+                at = Some(
+                    args.next()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or_else(|| usage()),
+                )
+            }
             "--allow-sha1" => allow_sha1 = true,
             "--timestamps" => {
                 stamps = match args.next().as_deref() {
@@ -119,20 +135,31 @@ fn run() -> Result<bool, Box<dyn Error>> {
 
     // PEM armor (PKCS7 or CMS) or the DER/BER itself
     let der = match std::str::from_utf8(&message) {
-        Ok(text) if text.contains("-----BEGIN ") => pem::parse(text)
-            .into_iter()
-            .find(|b| b.label == "PKCS7" || b.label == "CMS")
-            .ok_or("no PKCS7 or CMS block in the PEM file")?
-            .data,
+        Ok(text) if text.contains("-----BEGIN ") => {
+            pem::parse(text)
+                .into_iter()
+                .find(|b| b.label == "PKCS7" || b.label == "CMS")
+                .ok_or("no PKCS7 or CMS block in the PEM file")?
+                .data
+        }
         _ => message,
     };
     let sd = SignedData::parse(&der)?;
-    println!("content type {}, {} signer(s), {} certificate(s) in the message ({} unreadable)", sd.content_type(), sd.signers().len(), sd.certificates().len(), sd.skipped_certificates());
-    println!("content: {}", match (sd.content(), &detached) {
-        (Some(c), _) => format!("attached, {} bytes", c.len()),
-        (None, Some(d)) => format!("detached, {} bytes supplied", d.len()),
-        (None, None) => "detached, none supplied".to_string(),
-    });
+    println!(
+        "content type {}, {} signer(s), {} certificate(s) in the message ({} unreadable)",
+        sd.content_type(),
+        sd.signers().len(),
+        sd.certificates().len(),
+        sd.skipped_certificates()
+    );
+    println!(
+        "content: {}",
+        match (sd.content(), &detached) {
+            (Some(c), _) => format!("attached, {} bytes", c.len()),
+            (None, Some(d)) => format!("detached, {} bytes supplied", d.len()),
+            (None, None) => "detached, none supplied".to_string(),
+        }
+    );
 
     let trust = match &cacert {
         Some(path) => sys::trust_store_from_pem_file(path)?,
@@ -145,21 +172,40 @@ fn run() -> Result<bool, Box<dyn Error>> {
 
     let mut all_ok = !sd.signers().is_empty();
     for (i, signer) in sd.signers().iter().enumerate() {
-        println!("\nsigner {i}: digest {}, signature {}", name(signer.digest_algorithm()), name(signer.signature_algorithm()));
+        println!(
+            "\nsigner {i}: digest {}, signature {}",
+            name(signer.digest_algorithm()),
+            name(signer.signature_algorithm())
+        );
         if let Some(t) = signer.claimed_signing_time() {
             println!("  signingTime the signer wrote (not trusted): {}", when(t));
         }
         let result = if signature_only {
-            sd.verify_signature(i, detached.as_deref(), &[]).map(|check| {
-                if let Ok(cert) = Certificate::from_der(&check.certificate_der) {
-                    println!("  certificate {} (issuer {})", cert.subject_summary(), cert.issuer_summary());
-                }
-                println!("  digest and signature are valid; nothing is said about who the signer is");
-                check.weaknesses
-            })
+            sd.verify_signature(i, detached.as_deref(), &[])
+                .map(|check| {
+                    if let Ok(cert) = Certificate::from_der(&check.certificate_der) {
+                        println!(
+                            "  certificate {} (issuer {})",
+                            cert.subject_summary(),
+                            cert.issuer_summary()
+                        );
+                    }
+                    println!(
+                        "  digest and signature are valid; nothing is said about who the signer is"
+                    );
+                    check.weaknesses
+                })
         } else {
             sd.verify_signer(i, detached.as_deref(), &options).map(|v| {
-                println!("  chain to a trusted root, valid at {}{}:", when(v.chain_time), if v.timestamp.is_some() { " (the time stamp's time)" } else { "" });
+                println!(
+                    "  chain to a trusted root, valid at {}{}:",
+                    when(v.chain_time),
+                    if v.timestamp.is_some() {
+                        " (the time stamp's time)"
+                    } else {
+                        ""
+                    }
+                );
                 for der in &v.chain.path {
                     match Certificate::from_der(der) {
                         Ok(c) => println!("    {}", c.subject_summary()),
@@ -167,7 +213,12 @@ fn run() -> Result<bool, Box<dyn Error>> {
                     }
                 }
                 if let Some(t) = &v.timestamp {
-                    println!("  time stamp: {} by {}, policy {}", when(t.time), t.chain.leaf.subject_summary(), t.policy);
+                    println!(
+                        "  time stamp: {} by {}, policy {}",
+                        when(t.time),
+                        t.chain.leaf.subject_summary(),
+                        t.policy
+                    );
                 }
                 v.weaknesses
             })
@@ -181,7 +232,11 @@ fn run() -> Result<bool, Box<dyn Error>> {
             }
             Err(e) => {
                 all_ok = false;
-                let hint = if matches!(e, cms::Error::WeakDigest) { " (--allow-sha1 lets SHA-1 through)" } else { "" };
+                let hint = if matches!(e, cms::Error::WeakDigest) {
+                    " (--allow-sha1 lets SHA-1 through)"
+                } else {
+                    ""
+                };
                 println!("  NOT verified: {e}{hint}");
             }
         }

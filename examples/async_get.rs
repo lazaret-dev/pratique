@@ -9,7 +9,9 @@ use pratique::asyncio::block_on;
 use pratique::Client;
 
 fn main() {
-    let url = std::env::args().nth(1).unwrap_or_else(|| "https://example.com/".to_string());
+    let url = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "https://example.com/".to_string());
     let client = match Client::new() {
         Ok(c) => c.proxy_from_env().into_async(),
         Err(e) => {

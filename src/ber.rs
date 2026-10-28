@@ -60,7 +60,9 @@ pub fn parse_exact(data: &[u8]) -> Result<Node<'_>> {
 }
 
 fn byte(data: &[u8], pos: &mut usize) -> Result<u8> {
-    let b = *data.get(*pos).ok_or(Error::Asn1("unexpected end of data"))?;
+    let b = *data
+        .get(*pos)
+        .ok_or(Error::Asn1("unexpected end of data"))?;
     *pos += 1;
     Ok(b)
 }
@@ -72,7 +74,9 @@ fn read<'a>(data: &'a [u8], pos: &mut usize, depth: usize) -> Result<Node<'a>> {
         return Err(Error::Asn1("high tag numbers are not supported"));
     }
     if tag == 0 {
-        return Err(Error::Asn1("end-of-contents octets where an element must start"));
+        return Err(Error::Asn1(
+            "end-of-contents octets where an element must start",
+        ));
     }
     let constructed = tag & 0x20 != 0;
     let first = byte(data, pos)?;
@@ -92,7 +96,10 @@ fn read<'a>(data: &'a [u8], pos: &mut usize, depth: usize) -> Result<Node<'a>> {
             }
             children.push(read(data, pos, depth + 1)?);
         }
-        return Ok(Node { tag, body: Body::Constructed(children) });
+        return Ok(Node {
+            tag,
+            body: Body::Constructed(children),
+        });
     }
 
     let len = if first < 0x80 {
@@ -102,7 +109,9 @@ fn read<'a>(data: &'a [u8], pos: &mut usize, depth: usize) -> Result<Node<'a>> {
             return Err(Error::Asn1("reserved length octet"));
         }
         let n = (first & 0x7f) as usize;
-        let bytes = data.get(*pos..*pos + n).ok_or(Error::Asn1("truncated length"))?;
+        let bytes = data
+            .get(*pos..*pos + n)
+            .ok_or(Error::Asn1("truncated length"))?;
         *pos += n;
         let mut len = 0usize;
         for b in bytes {
@@ -115,10 +124,18 @@ fn read<'a>(data: &'a [u8], pos: &mut usize, depth: usize) -> Result<Node<'a>> {
         len
     };
     let end = pos.checked_add(len).ok_or(Error::Asn1("length overflow"))?;
-    let content = data.get(*pos..end).ok_or(Error::Asn1("content exceeds buffer"))?;
+    let content = data
+        .get(*pos..end)
+        .ok_or(Error::Asn1("content exceeds buffer"))?;
     *pos = end;
     if !constructed {
-        return Ok(Node { tag, body: Body::Primitive { content, raw: &data[start..end] } });
+        return Ok(Node {
+            tag,
+            body: Body::Primitive {
+                content,
+                raw: &data[start..end],
+            },
+        });
     }
     if depth >= MAX_DEPTH {
         return Err(Error::Asn1("nesting too deep"));
@@ -128,7 +145,10 @@ fn read<'a>(data: &'a [u8], pos: &mut usize, depth: usize) -> Result<Node<'a>> {
     while p < content.len() {
         children.push(read(content, &mut p, depth + 1)?);
     }
-    Ok(Node { tag, body: Body::Constructed(children) })
+    Ok(Node {
+        tag,
+        body: Body::Constructed(children),
+    })
 }
 
 impl<'a> Node<'a> {
@@ -151,7 +171,10 @@ impl<'a> Node<'a> {
 
     /// A cursor over the children of a constructed element.
     pub fn items(&self) -> Result<Items<'_, 'a>> {
-        Ok(Items { nodes: self.children()?, pos: 0 })
+        Ok(Items {
+            nodes: self.children()?,
+            pos: 0,
+        })
     }
 
     /// The content octets of a primitive element.
@@ -165,7 +188,11 @@ impl<'a> Node<'a> {
     /// A primitive element as a [`Tlv`], for the readers in [`crate::asn1`] (integers, OIDs, times).
     pub fn tlv(&self) -> Result<Tlv<'a>> {
         match &self.body {
-            Body::Primitive { content, raw } => Ok(Tlv { tag: self.tag, content, raw }),
+            Body::Primitive { content, raw } => Ok(Tlv {
+                tag: self.tag,
+                content,
+                raw,
+            }),
             Body::Constructed(_) => Err(Error::Asn1("expected a primitive element")),
         }
     }
@@ -233,7 +260,9 @@ impl<'a> Node<'a> {
     /// put together here, because only that one is needed for CMS.
     fn refuse_constructed_string(&self) -> Result<()> {
         if self.tag & 0xc0 == 0 && matches!(self.tag & 0x1f, 3 | 12 | 18..=30) {
-            return Err(Error::Asn1("a constructed string type other than OCTET STRING"));
+            return Err(Error::Asn1(
+                "a constructed string type other than OCTET STRING",
+            ));
         }
         Ok(())
     }
@@ -265,7 +294,11 @@ fn collect_chunks(children: &[Node<'_>], out: &mut Vec<u8>) -> Result<()> {
         match (&c.body, c.tag) {
             (Body::Primitive { content, .. }, 0x04) => out.extend_from_slice(content),
             (Body::Constructed(grandchildren), 0x24) => collect_chunks(grandchildren, out)?,
-            _ => return Err(Error::Asn1("a chunk of a constructed OCTET STRING is not an OCTET STRING")),
+            _ => {
+                return Err(Error::Asn1(
+                    "a chunk of a constructed OCTET STRING is not an OCTET STRING",
+                ))
+            }
         }
     }
     Ok(())
@@ -301,7 +334,10 @@ impl<'n, 'a> Items<'n, 'a> {
     }
 
     pub fn next(&mut self) -> Result<&'n Node<'a>> {
-        let n = self.nodes.get(self.pos).ok_or(Error::Asn1("unexpected end of data"))?;
+        let n = self
+            .nodes
+            .get(self.pos)
+            .ok_or(Error::Asn1("unexpected end of data"))?;
         self.pos += 1;
         Ok(n)
     }
@@ -345,7 +381,12 @@ mod tests {
     #[test]
     fn der_input_comes_back_byte_for_byte() {
         // SEQUENCE { INTEGER 5, OCTET STRING "hi", SEQUENCE {}, [0] { NULL } }
-        let der = seq(&[&[0x02, 1, 5], &[0x04, 2, b'h', b'i'], &[0x30, 0], &[0xa0, 2, 0x05, 0]]);
+        let der = seq(&[
+            &[0x02, 1, 5],
+            &[0x04, 2, b'h', b'i'],
+            &[0x30, 0],
+            &[0xa0, 2, 0x05, 0],
+        ]);
         let n = parse_exact(&der).unwrap();
         assert_eq!(n.der().unwrap(), der);
         assert_eq!(n.der_content().unwrap(), der[2..]);
@@ -367,13 +408,20 @@ mod tests {
         let n = parse_exact(&ber).unwrap();
         assert_eq!(n.der().unwrap(), [0x30, 7, 0x02, 1, 1, 0x30, 2, 0x05, 0]);
         // the same element with a [0] tag on the outside, as signed attributes are digested
-        assert_eq!(n.der_as(0xa0).unwrap(), [0xa0, 7, 0x02, 1, 1, 0x30, 2, 0x05, 0]);
+        assert_eq!(
+            n.der_as(0xa0).unwrap(),
+            [0xa0, 7, 0x02, 1, 1, 0x30, 2, 0x05, 0]
+        );
         assert_eq!(n.der_content().unwrap(), [0x02, 1, 1, 0x30, 2, 0x05, 0]);
     }
 
     #[test]
     fn long_form_lengths_need_not_be_minimal() {
-        for ber in [&[0x04u8, 0x81, 0x02, 7, 8][..], &[0x04, 0x82, 0x00, 0x02, 7, 8], &[0x04, 0x84, 0, 0, 0, 2, 7, 8]] {
+        for ber in [
+            &[0x04u8, 0x81, 0x02, 7, 8][..],
+            &[0x04, 0x82, 0x00, 0x02, 7, 8],
+            &[0x04, 0x84, 0, 0, 0, 2, 7, 8],
+        ] {
             let n = parse_exact(ber).unwrap();
             assert_eq!(&*n.octets().unwrap(), [7, 8]);
             assert_eq!(n.der().unwrap(), [0x04, 2, 7, 8]);
@@ -394,7 +442,9 @@ mod tests {
     #[test]
     fn constructed_octet_strings_are_put_together() {
         // indefinite, chunks of 2, 0 and 3 bytes, and a nested constructed chunk
-        let ber = [0x24, 0x80, 0x04, 2, 1, 2, 0x04, 0, 0x24, 0x80, 0x04, 1, 3, 0x04, 2, 4, 5, 0, 0, 0, 0];
+        let ber = [
+            0x24, 0x80, 0x04, 2, 1, 2, 0x04, 0, 0x24, 0x80, 0x04, 1, 3, 0x04, 2, 4, 5, 0, 0, 0, 0,
+        ];
         let n = parse_exact(&ber).unwrap();
         assert_eq!(n.tag(), 0x24);
         assert!(n.is_constructed());
@@ -410,8 +460,14 @@ mod tests {
         assert_eq!(&*n.octets().unwrap(), [9, 8]);
         assert_eq!(n.der().unwrap(), [0xa0, 6, 0x04, 1, 9, 0x04, 1, 8]);
         // a chunk that is not an OCTET STRING
-        assert!(parse_exact(&[0x24, 0x03, 0x02, 1, 7]).unwrap().octets().is_err());
-        assert!(parse_exact(&[0x24, 0x02, 0xa0, 0x00]).unwrap().octets().is_err());
+        assert!(parse_exact(&[0x24, 0x03, 0x02, 1, 7])
+            .unwrap()
+            .octets()
+            .is_err());
+        assert!(parse_exact(&[0x24, 0x02, 0xa0, 0x00])
+            .unwrap()
+            .octets()
+            .is_err());
     }
 
     #[test]
@@ -456,7 +512,10 @@ mod tests {
         assert!(parse_exact(&[0x30, 0]).unwrap().tlv().is_err());
         assert!(parse_exact(&[0x05, 0]).unwrap().with_tag(0x06).is_err());
         let t = parse_exact(&[0x02, 1, 7]).unwrap().tlv().unwrap();
-        assert_eq!((t.tag, t.content, t.raw), (0x02, &[7u8][..], &[0x02u8, 1, 7][..]));
+        assert_eq!(
+            (t.tag, t.content, t.raw),
+            (0x02, &[7u8][..], &[0x02u8, 1, 7][..])
+        );
     }
 
     #[test]

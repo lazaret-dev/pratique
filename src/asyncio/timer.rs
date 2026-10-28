@@ -39,7 +39,12 @@ struct State {
 fn timers() -> &'static Timers {
     static TIMERS: OnceLock<Timers> = OnceLock::new();
     TIMERS.get_or_init(|| Timers {
-        state: Mutex::new(State { heap: BinaryHeap::new(), waiting: HashMap::new(), next_id: 0, thread: None }),
+        state: Mutex::new(State {
+            heap: BinaryHeap::new(),
+            waiting: HashMap::new(),
+            next_id: 0,
+            thread: None,
+        }),
         changed: Condvar::new(),
     })
 }
@@ -53,7 +58,10 @@ impl Timers {
     fn register(&'static self, deadline: Instant, waker: &Waker) -> Option<u64> {
         let mut s = self.lock();
         if s.thread.is_none() {
-            let started = thread::Builder::new().name("pratique timer".into()).spawn(move || self.run()).is_ok();
+            let started = thread::Builder::new()
+                .name("pratique timer".into())
+                .spawn(move || self.run())
+                .is_ok();
             s.thread = Some(started);
         }
         if s.thread != Some(true) {
@@ -66,7 +74,11 @@ impl Timers {
         s.waiting.insert(id, (deadline, waker.clone()));
         if s.heap.len() > 64 && s.heap.len() > 2 * s.waiting.len() {
             // mostly dropped timers: build the heap again from the ones that wait
-            s.heap = s.waiting.iter().map(|(&id, &(t, _))| Reverse((t, id))).collect();
+            s.heap = s
+                .waiting
+                .iter()
+                .map(|(&id, &(t, _))| Reverse((t, id)))
+                .collect();
         }
         drop(s);
         if earliest.is_none_or(|t| deadline < t) {
@@ -121,7 +133,12 @@ impl Timers {
                 continue;
             }
             s = match next {
-                Some(t) => self.changed.wait_timeout(s, t.saturating_duration_since(now)).unwrap_or_else(|e| e.into_inner()).0,
+                Some(t) => {
+                    self.changed
+                        .wait_timeout(s, t.saturating_duration_since(now))
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0
+                }
                 None => self.changed.wait(s).unwrap_or_else(|e| e.into_inner()),
             };
         }
@@ -139,7 +156,11 @@ pub struct Sleep {
 
 /// A future that is ready `duration` from now.
 pub fn sleep(duration: Duration) -> Sleep {
-    sleep_until(Instant::now().checked_add(duration).unwrap_or_else(far_future))
+    sleep_until(
+        Instant::now()
+            .checked_add(duration)
+            .unwrap_or_else(far_future),
+    )
 }
 
 /// A future that is ready at `deadline` (at once if that has passed).
@@ -206,7 +227,9 @@ impl Drop for Sleep {
 
 impl fmt::Debug for Sleep {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Sleep").field("deadline", &self.deadline).finish()
+        f.debug_struct("Sleep")
+            .field("deadline", &self.deadline)
+            .finish()
     }
 }
 
@@ -240,12 +263,18 @@ pub struct Timeout<F> {
 /// Runs `future` for at most `duration`: its output, or [`Elapsed`] if the time ran out first (the future is then dropped
 /// when the `Timeout` is).
 pub fn timeout<F: Future>(duration: Duration, future: F) -> Timeout<F> {
-    Timeout { future: Box::pin(future), sleep: sleep(duration) }
+    Timeout {
+        future: Box::pin(future),
+        sleep: sleep(duration),
+    }
 }
 
 /// [`timeout`] with a point in time instead of a duration.
 pub fn timeout_at<F: Future>(deadline: Instant, future: F) -> Timeout<F> {
-    Timeout { future: Box::pin(future), sleep: sleep_until(deadline) }
+    Timeout {
+        future: Box::pin(future),
+        sleep: sleep_until(deadline),
+    }
 }
 
 impl<F: Future> Future for Timeout<F> {
@@ -290,7 +319,15 @@ struct Waiting {
 impl<S> Timed<S> {
     /// `inner` with no limits yet.
     pub fn new(inner: S) -> Timed<S> {
-        Timed { inner, read_timeout: None, write_timeout: None, deadline: None, reading: None, writing: None, permit: None }
+        Timed {
+            inner,
+            read_timeout: None,
+            write_timeout: None,
+            deadline: None,
+            reading: None,
+            writing: None,
+            permit: None,
+        }
     }
 
     /// The longest one read may wait.
@@ -312,7 +349,12 @@ impl<S> Timed<S> {
     }
 
     /// Replaces all three limits (`None`: no limit): for a stream that is used again for something else.
-    pub fn set_limits(&mut self, read_timeout: Option<Duration>, write_timeout: Option<Duration>, deadline: Option<Instant>) {
+    pub fn set_limits(
+        &mut self,
+        read_timeout: Option<Duration>,
+        write_timeout: Option<Duration>,
+        deadline: Option<Instant>,
+    ) {
         self.read_timeout = read_timeout;
         self.write_timeout = write_timeout;
         self.deadline = deadline;
@@ -344,7 +386,13 @@ fn timed_out(at_deadline: bool, what: &str, limit: Option<Duration>) -> io::Erro
     if at_deadline {
         super::net::deadline_error()
     } else {
-        io::Error::new(io::ErrorKind::TimedOut, format!("no progress on a {what} within {:?}", limit.unwrap_or_default()))
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "no progress on a {what} within {:?}",
+                limit.unwrap_or_default()
+            ),
+        )
     }
 }
 
@@ -375,8 +423,13 @@ fn poll_limited<T>(
                     (None, Some(d)) => Some((d, true)),
                     (None, None) => None,
                 };
-                let Some((t, at_deadline)) = chosen else { return Poll::Pending };
-                *slot = Some(Waiting { sleep: sleep_until(t), at_deadline });
+                let Some((t, at_deadline)) = chosen else {
+                    return Poll::Pending;
+                };
+                *slot = Some(Waiting {
+                    sleep: sleep_until(t),
+                    at_deadline,
+                });
             }
             let waiting = slot.as_mut().expect("a timer");
             match Pin::new(&mut waiting.sleep).poll(cx) {
@@ -392,22 +445,49 @@ fn poll_limited<T>(
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for Timed<S> {
-    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
         let this = &mut *self;
         let inner = &mut this.inner;
-        poll_limited(&mut this.reading, this.read_timeout, this.deadline, cx, "read", |cx| Pin::new(inner).poll_read(cx, buf))
+        poll_limited(
+            &mut this.reading,
+            this.read_timeout,
+            this.deadline,
+            cx,
+            "read",
+            |cx| Pin::new(inner).poll_read(cx, buf),
+        )
     }
 }
 
 impl<S: AsyncWrite + Unpin> Timed<S> {
-    fn poll_write_side<T>(&mut self, cx: &mut Context<'_>, what: &str, op: impl FnOnce(&mut S, &mut Context<'_>) -> Poll<io::Result<T>>) -> Poll<io::Result<T>> {
+    fn poll_write_side<T>(
+        &mut self,
+        cx: &mut Context<'_>,
+        what: &str,
+        op: impl FnOnce(&mut S, &mut Context<'_>) -> Poll<io::Result<T>>,
+    ) -> Poll<io::Result<T>> {
         let inner = &mut self.inner;
-        poll_limited(&mut self.writing, self.write_timeout, self.deadline, cx, what, |cx| op(inner, cx))
+        poll_limited(
+            &mut self.writing,
+            self.write_timeout,
+            self.deadline,
+            cx,
+            what,
+            |cx| op(inner, cx),
+        )
     }
 }
 
 impl<S: AsyncWrite + Unpin> AsyncWrite for Timed<S> {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         self.poll_write_side(cx, "write", |s, cx| Pin::new(s).poll_write(cx, buf))
     }
 

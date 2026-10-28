@@ -16,10 +16,10 @@
 //! Both are compiled in test builds so the same vectors run against each on any host. Both are
 //! constant-time: no secret-dependent branches, indices or variable-time instructions.
 
-#[cfg(target_pointer_width = "64")]
-pub(crate) use radix64::Poly1305;
 #[cfg(not(target_pointer_width = "64"))]
 pub(crate) use limbs32::Poly1305;
+#[cfg(target_pointer_width = "64")]
+pub(crate) use radix64::Poly1305;
 
 #[cfg(any(test, not(target_pointer_width = "64")))]
 #[inline(always)]
@@ -70,7 +70,11 @@ pub(crate) mod radix64 {
         pub(crate) fn new(key: &[u8; 32]) -> Self {
             let r0 = le64(&key[0..8]) & 0x0fff_fffc_0fff_ffff;
             let r1 = le64(&key[8..16]) & 0x0fff_fffc_0fff_fffc;
-            Poly1305 { r: [r0, r1], h: [0; 3], pad: [le64(&key[16..24]), le64(&key[24..32])] }
+            Poly1305 {
+                r: [r0, r1],
+                h: [0; 3],
+                pad: [le64(&key[16..24]), le64(&key[24..32])],
+            }
         }
 
         /// Absorbs one 16-byte block. `hibit` is the 2^128 padding bit that every full block of the
@@ -185,7 +189,12 @@ pub(crate) mod limbs32 {
                 (le32(&key[9..13]) >> 6) & 0x3f0_3fff,
                 (le32(&key[12..16]) >> 8) & 0x00f_ffff,
             ];
-            let s = [le32(&key[16..20]), le32(&key[20..24]), le32(&key[24..28]), le32(&key[28..32])];
+            let s = [
+                le32(&key[16..20]),
+                le32(&key[20..24]),
+                le32(&key[24..28]),
+                le32(&key[28..32]),
+            ];
             Poly1305 { r, h: [0; 5], s }
         }
 
@@ -400,13 +409,20 @@ mod avx2 {
 
     /// `radix64`'s (h0, h1, h2) as 26-bit limbs. h2 is at most 4, so the top limb is below 2^27.
     fn to26(h: [u64; 3]) -> [u64; 5] {
-        [h[0] & M26, (h[0] >> 26) & M26, ((h[0] >> 52) | (h[1] << 12)) & M26, (h[1] >> 14) & M26, (h[1] >> 40) | (h[2] << 24)]
+        [
+            h[0] & M26,
+            (h[0] >> 26) & M26,
+            ((h[0] >> 52) | (h[1] << 12)) & M26,
+            (h[1] >> 14) & M26,
+            (h[1] >> 40) | (h[2] << 24),
+        ]
     }
 
     /// Back to (h0, h1, h2), from limbs as `carry26` leaves them: the value is below 2^130 + 2^53, so h2 is at most 4, as
     /// `radix64` needs.
     fn from26(l: [u64; 5]) -> [u64; 3] {
-        let low = l[0] as u128 + ((l[1] as u128) << 26) + ((l[2] as u128) << 52) + ((l[3] as u128) << 78);
+        let low =
+            l[0] as u128 + ((l[1] as u128) << 26) + ((l[2] as u128) << 52) + ((l[3] as u128) << 78);
         let (t, c) = low.overflowing_add(((l[4] & ((1 << 24) - 1)) as u128) << 104);
         [t as u64, (t >> 64) as u64, (l[4] >> 24) + c as u64]
     }
@@ -445,11 +461,41 @@ mod avx2 {
     fn mul(h: &[__m256i; 5], r: &[__m256i; 5], s: &[__m256i; 5]) -> [__m256i; 5] {
         let m = |a, b| _mm256_mul_epu32(a, b);
         let add = |a, b| _mm256_add_epi64(a, b);
-        let d0 = add(add(add(m(h[0], r[0]), m(h[1], s[4])), add(m(h[2], s[3]), m(h[3], s[2]))), m(h[4], s[1]));
-        let d1 = add(add(add(m(h[0], r[1]), m(h[1], r[0])), add(m(h[2], s[4]), m(h[3], s[3]))), m(h[4], s[2]));
-        let d2 = add(add(add(m(h[0], r[2]), m(h[1], r[1])), add(m(h[2], r[0]), m(h[3], s[4]))), m(h[4], s[3]));
-        let d3 = add(add(add(m(h[0], r[3]), m(h[1], r[2])), add(m(h[2], r[1]), m(h[3], r[0]))), m(h[4], s[4]));
-        let d4 = add(add(add(m(h[0], r[4]), m(h[1], r[3])), add(m(h[2], r[2]), m(h[3], r[1]))), m(h[4], r[0]));
+        let d0 = add(
+            add(
+                add(m(h[0], r[0]), m(h[1], s[4])),
+                add(m(h[2], s[3]), m(h[3], s[2])),
+            ),
+            m(h[4], s[1]),
+        );
+        let d1 = add(
+            add(
+                add(m(h[0], r[1]), m(h[1], r[0])),
+                add(m(h[2], s[4]), m(h[3], s[3])),
+            ),
+            m(h[4], s[2]),
+        );
+        let d2 = add(
+            add(
+                add(m(h[0], r[2]), m(h[1], r[1])),
+                add(m(h[2], r[0]), m(h[3], s[4])),
+            ),
+            m(h[4], s[3]),
+        );
+        let d3 = add(
+            add(
+                add(m(h[0], r[3]), m(h[1], r[2])),
+                add(m(h[2], r[1]), m(h[3], r[0])),
+            ),
+            m(h[4], s[4]),
+        );
+        let d4 = add(
+            add(
+                add(m(h[0], r[4]), m(h[1], r[3])),
+                add(m(h[2], r[2]), m(h[3], r[1])),
+            ),
+            m(h[4], r[0]),
+        );
         let mask = splat(M26);
         let (mut d0, mut d1, mut d2, mut d3, mut d4) = (d0, d1, d2, d3, d4);
         let c = _mm256_srli_epi64::<26>(d0);
@@ -492,7 +538,10 @@ mod avx2 {
         [
             _mm256_and_si256(lo, mask),
             _mm256_and_si256(_mm256_srli_epi64::<26>(lo), mask),
-            _mm256_and_si256(_mm256_or_si256(_mm256_srli_epi64::<52>(lo), _mm256_slli_epi64::<12>(hi)), mask),
+            _mm256_and_si256(
+                _mm256_or_si256(_mm256_srli_epi64::<52>(lo), _mm256_slli_epi64::<12>(hi)),
+                mask,
+            ),
             _mm256_and_si256(_mm256_srli_epi64::<14>(hi), mask),
             _mm256_or_si256(_mm256_srli_epi64::<40>(hi), splat(1 << 24)),
         ]
@@ -600,7 +649,12 @@ mod tests {
             // one more block each (from the state `blocks` left), then the tags
             a.block(&[0xff; 16], true);
             b.block(&[0xff; 16], true);
-            assert_eq!(a.finish(), b.finish(), "round {round}: key {}, {pre} blocks before, {len} bytes", hex(&key));
+            assert_eq!(
+                a.finish(),
+                b.finish(),
+                "round {round}: key {}, {pre} blocks before, {len} bytes",
+                hex(&key)
+            );
         }
     }
 
@@ -625,10 +679,19 @@ mod tests {
 
     #[test]
     fn rfc8439_2_5_2_both_implementations() {
-        let key: [u8; 32] = unhex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b").try_into().unwrap();
+        let key: [u8; 32] =
+            unhex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b")
+                .try_into()
+                .unwrap();
         let msg = b"Cryptographic Forum Research Group";
-        assert_eq!(hex(&mac!(radix64, &key, msg)), "a8061dc1305136c6c22b8baf0c0127a9");
-        assert_eq!(hex(&mac!(limbs32, &key, msg)), "a8061dc1305136c6c22b8baf0c0127a9");
+        assert_eq!(
+            hex(&mac!(radix64, &key, msg)),
+            "a8061dc1305136c6c22b8baf0c0127a9"
+        );
+        assert_eq!(
+            hex(&mac!(limbs32, &key, msg)),
+            "a8061dc1305136c6c22b8baf0c0127a9"
+        );
     }
 
     /// The two implementations agree where the arithmetic is at its limits: r with every bit the clamp allows, blocks of
@@ -648,14 +711,22 @@ mod tests {
             keys.push(core::array::from_fn(|_| next() as u8));
         }
         let mut messages: Vec<Vec<u8>> = Vec::new();
-        for len in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 255, 256, 1000, 4096] {
+        for len in [
+            0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64, 65, 255, 256, 1000, 4096,
+        ] {
             messages.push(vec![0xff; len]);
             messages.push(vec![0; len]);
             messages.push((0..len).map(|_| next() as u8).collect());
         }
         for key in &keys {
             for msg in &messages {
-                assert_eq!(mac!(radix64, key, msg), mac!(limbs32, key, msg), "key {} length {}", hex(key), msg.len());
+                assert_eq!(
+                    mac!(radix64, key, msg),
+                    mac!(limbs32, key, msg),
+                    "key {} length {}",
+                    hex(key),
+                    msg.len()
+                );
                 // and every block with the high bit, as the AEAD feeds them
                 let mut a = super::radix64::Poly1305::new(key);
                 let mut b = super::limbs32::Poly1305::new(key);
@@ -672,7 +743,12 @@ mod tests {
         // 2^128 and one of 2^128 - 5 - k make h = p - k, whose tag is h mod p
         let mut key = [0u8; 32];
         key[0] = 1;
-        for (k, tag) in [(1i64, "faffffffffffffffffffffffffffffff"), (0, "00000000000000000000000000000000"), (-1, "01000000000000000000000000000000"), (-4, "04000000000000000000000000000000")] {
+        for (k, tag) in [
+            (1i64, "faffffffffffffffffffffffffffffff"),
+            (0, "00000000000000000000000000000000"),
+            (-1, "01000000000000000000000000000000"),
+            (-4, "04000000000000000000000000000000"),
+        ] {
             let v = (u128::MAX - 4).wrapping_sub(k as u128); // 2^128 - 5 - k
             let last = v.to_le_bytes();
             let mut a = super::radix64::Poly1305::new(&key);
@@ -683,7 +759,11 @@ mod tests {
             }
             a.block(&last, false);
             b.block(&last, false);
-            assert_eq!((hex(&a.finish()), hex(&b.finish())), (tag.to_string(), tag.to_string()), "h = p - ({k})");
+            assert_eq!(
+                (hex(&a.finish()), hex(&b.finish())),
+                (tag.to_string(), tag.to_string()),
+                "h = p - ({k})"
+            );
         }
     }
 

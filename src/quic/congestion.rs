@@ -99,7 +99,8 @@ impl NewReno {
         if in_flight >= self.window {
             return true;
         }
-        (self.in_slow_start() && in_flight > self.window / 2) || self.window - in_flight <= LIMITED_BY_PACKETS * self.max_datagram_size
+        (self.in_slow_start() && in_flight > self.window / 2)
+            || self.window - in_flight <= LIMITED_BY_PACKETS * self.max_datagram_size
     }
 
     fn in_recovery(&self, sent: Instant) -> bool {
@@ -142,7 +143,8 @@ impl NewReno {
             return false;
         }
         self.recovery_start = Some(now);
-        self.ssthresh = (self.window / LOSS_REDUCTION_DEN * LOSS_REDUCTION_NUM).max(minimum_window(self.max_datagram_size));
+        self.ssthresh = (self.window / LOSS_REDUCTION_DEN * LOSS_REDUCTION_NUM)
+            .max(minimum_window(self.max_datagram_size));
         self.window = self.ssthresh;
         self.acked_in_avoidance = 0;
         true
@@ -176,7 +178,11 @@ const GRANULARITY: f64 = 0.001;
 
 impl Pacer {
     pub fn new(max_datagram_size: usize) -> Pacer {
-        Pacer { tokens: BURST_PACKETS * max_datagram_size as f64, last: None, max_datagram_size }
+        Pacer {
+            tokens: BURST_PACKETS * max_datagram_size as f64,
+            last: None,
+            max_datagram_size,
+        }
     }
 
     pub fn set_max_datagram_size(&mut self, size: usize) {
@@ -194,7 +200,8 @@ impl Pacer {
     fn refill(&mut self, now: Instant, rate: f64) {
         if let Some(last) = self.last {
             let elapsed = now.saturating_duration_since(last).as_secs_f64();
-            self.tokens = (self.tokens + elapsed * rate).min(BURST_PACKETS * self.max_datagram_size as f64);
+            self.tokens =
+                (self.tokens + elapsed * rate).min(BURST_PACKETS * self.max_datagram_size as f64);
         }
         self.last = Some(now);
     }
@@ -243,7 +250,15 @@ mod tests {
         for _ in 0..10 {
             cc.on_sent(MDS);
         }
-        assert_eq!((cc.window(), cc.bytes_in_flight(), cc.available(), cc.blocked()), (12000, 12000, 0, true));
+        assert_eq!(
+            (
+                cc.window(),
+                cc.bytes_in_flight(),
+                cc.available(),
+                cc.blocked()
+            ),
+            (12000, 12000, 0, true)
+        );
         cc.on_acked(MDS, t0, 12000);
         assert_eq!((cc.window(), cc.bytes_in_flight()), (13200, 10800));
         assert!(cc.in_slow_start());
@@ -283,7 +298,10 @@ mod tests {
         }
         cc.on_lost(MDS);
         assert!(cc.on_congestion_event(t0 + ms(100), t0));
-        assert_eq!((cc.window(), cc.ssthresh(), cc.in_slow_start()), (6000, 6000, false));
+        assert_eq!(
+            (cc.window(), cc.ssthresh(), cc.in_slow_start()),
+            (6000, 6000, false)
+        );
         // another packet sent before the recovery began is lost: the same event
         cc.on_lost(MDS);
         assert!(!cc.on_congestion_event(t0 + ms(110), t0 + ms(50)));
@@ -338,7 +356,11 @@ mod tests {
             cc2.on_sent(MDS);
             cc2.on_acked(MDS, t0 + ms(10), 14400);
         }
-        assert_eq!(cc2.window(), 6000 + MDS, "four packets of 1200 are not a window of 7200");
+        assert_eq!(
+            cc2.window(),
+            6000 + MDS,
+            "four packets of 1200 are not a window of 7200"
+        );
     }
 
     #[test]
@@ -350,7 +372,10 @@ mod tests {
         assert_eq!(cc.window(), 2400);
         // slow start again? (ssthresh is what the congestion event set: 6000, so yes, until the window gets there)
         assert!(cc.in_slow_start());
-        assert!(cc.on_congestion_event(t0 + ms(5), t0 + ms(1)), "recovery was ended");
+        assert!(
+            cc.on_congestion_event(t0 + ms(5), t0 + ms(1)),
+            "recovery was ended"
+        );
     }
 
     #[test]
@@ -380,7 +405,11 @@ mod tests {
         assert_eq!(burst, 11);
         let wait = p.next_send_time(t0, rate).expect("the bucket is empty");
         // 1200 bytes in debt, less a millisecond (240 bytes) of leeway, at 240 bytes a millisecond: 4 ms
-        assert!((wait - t0).as_secs_f64() > 0.0039 && (wait - t0).as_secs_f64() < 0.0041, "{:?}", wait - t0);
+        assert!(
+            (wait - t0).as_secs_f64() > 0.0039 && (wait - t0).as_secs_f64() < 0.0041,
+            "{:?}",
+            wait - t0
+        );
         assert!(p.next_send_time(t0 + ms(3), rate).is_some());
         assert_eq!(p.next_send_time(t0 + ms(4), rate), None);
         p.on_sent(t0 + ms(4), MDS, rate);

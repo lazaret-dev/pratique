@@ -7,6 +7,22 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Wake, Waker};
 use std::thread::{self, Thread};
 
+/// Yields once to the caller's executor, including enclosing timeout futures.
+/// It does not wait for another thread and wakes itself without allocating a task.
+pub async fn yield_now() {
+    let mut first = true;
+    std::future::poll_fn(|cx| {
+        if first {
+            first = false;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
+    })
+    .await
+}
+
 struct Unpark {
     thread: Thread,
     woken: AtomicBool,
@@ -28,7 +44,10 @@ impl Wake for Unpark {
 /// many at once use a real executor, which can drive the futures from this crate as well.
 pub fn block_on<F: Future>(fut: F) -> F::Output {
     let mut fut = pin!(fut);
-    let signal = Arc::new(Unpark { thread: thread::current(), woken: AtomicBool::new(false) });
+    let signal = Arc::new(Unpark {
+        thread: thread::current(),
+        woken: AtomicBool::new(false),
+    });
     let waker = Waker::from(signal.clone());
     let mut cx = Context::from_waker(&waker);
     loop {

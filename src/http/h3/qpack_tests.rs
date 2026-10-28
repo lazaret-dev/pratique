@@ -6,15 +6,27 @@ use super::*;
 
 fn unhex(s: &str) -> Vec<u8> {
     let s: String = s.split_whitespace().collect();
-    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+    (0..s.len() / 2)
+        .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+        .collect()
 }
 
 fn f(name: &str, value: &str) -> Field {
-    Field { name: name.as_bytes().to_vec(), value: value.as_bytes().to_vec() }
+    Field {
+        name: name.as_bytes().to_vec(),
+        value: value.as_bytes().to_vec(),
+    }
 }
 
 fn refs(fields: &[Field]) -> Vec<FieldRef<'_>> {
-    fields.iter().map(|f| FieldRef { name: &f.name, value: &f.value, sensitive: false }).collect()
+    fields
+        .iter()
+        .map(|f| FieldRef {
+            name: &f.name,
+            value: &f.value,
+            sensitive: false,
+        })
+        .collect()
 }
 
 fn decoder() -> Decoder {
@@ -23,7 +35,10 @@ fn decoder() -> Decoder {
 
 fn decode_ok(d: &mut Decoder, stream: u64, block: &[u8]) -> Vec<Field> {
     let mut out = Vec::new();
-    assert_eq!(d.decode(stream, block, &mut out), Ok(Decoded::Done { within_limit: true }));
+    assert_eq!(
+        d.decode(stream, block, &mut out),
+        Ok(Decoded::Done { within_limit: true })
+    );
     out
 }
 
@@ -40,7 +55,11 @@ fn integers_as_in_rfc_7541_appendix_c1() {
     v.clear();
     put_int(&mut v, 8, 0, 42);
     assert_eq!(v, [0x2a]);
-    for (bytes, prefix, value) in [(&[0x0a][..], 5, 10), (&[0x1f, 0x9a, 0x0a][..], 5, 1337), (&[0x2a][..], 8, 42)] {
+    for (bytes, prefix, value) in [
+        (&[0x0a][..], 5, 10),
+        (&[0x1f, 0x9a, 0x0a][..], 5, 1337),
+        (&[0x2a][..], 8, 42),
+    ] {
         let mut pos = 0;
         assert_eq!(get_int(bytes, &mut pos, prefix), Ok(value));
         assert_eq!(pos, bytes.len());
@@ -50,11 +69,31 @@ fn integers_as_in_rfc_7541_appendix_c1() {
 #[test]
 fn integers_round_trip_at_every_prefix_and_the_edges() {
     for prefix in 1..=8u32 {
-        for value in [0, 1, (1u64 << prefix) - 2, (1 << prefix) - 1, 1 << prefix, 127, 128, 255, 256, 16383, 16384, 1 << 31, (1 << 32) + 5, MAX_INT - 1, MAX_INT] {
+        for value in [
+            0,
+            1,
+            (1u64 << prefix) - 2,
+            (1 << prefix) - 1,
+            1 << prefix,
+            127,
+            128,
+            255,
+            256,
+            16383,
+            16384,
+            1 << 31,
+            (1 << 32) + 5,
+            MAX_INT - 1,
+            MAX_INT,
+        ] {
             let mut v = vec![];
             put_int(&mut v, prefix, 0, value);
             let mut pos = 0;
-            assert_eq!(get_int(&v, &mut pos, prefix), Ok(value), "prefix {prefix}, value {value}");
+            assert_eq!(
+                get_int(&v, &mut pos, prefix),
+                Ok(value),
+                "prefix {prefix}, value {value}"
+            );
             assert_eq!(pos, v.len());
             // every proper prefix of it is short, not wrong
             for cut in 0..v.len() {
@@ -94,7 +133,10 @@ fn strings_are_huffman_coded_when_that_is_shorter() {
             put_string(&mut v, prefix, 0, s);
             let mut out = vec![];
             let mut pos = 0;
-            assert_eq!(get_string(&v, &mut pos, prefix, 1000, 1000, &mut out), Ok(true));
+            assert_eq!(
+                get_string(&v, &mut pos, prefix, 1000, 1000, &mut out),
+                Ok(true)
+            );
             assert_eq!(out, s);
             assert_eq!(pos, v.len());
         }
@@ -111,7 +153,10 @@ fn a_string_over_the_limit_is_read_past() {
     assert_eq!(get_string(&v, &mut pos, 8, 10, 1000, &mut out), Ok(false));
     assert_eq!(pos, v.len() - 1);
     // one longer than the wait limit is an error before its bytes are there
-    assert!(matches!(get_string(&[0x7f, 0xff, 0x7f], &mut 0, 8, 10, 1000, &mut vec![]), Err(Bad::Invalid(_))));
+    assert!(matches!(
+        get_string(&[0x7f, 0xff, 0x7f], &mut 0, 8, 10, 1000, &mut vec![]),
+        Err(Bad::Invalid(_))
+    ));
 }
 
 #[test]
@@ -135,25 +180,45 @@ fn appendix_b_a_literal_with_a_static_name() {
     let mut d = decoder();
     let got = decode_ok(&mut d, 0, &unhex("0000 510b 2f69 6e64 6578 2e68 746d 6c"));
     assert_eq!(got, [f(":path", "/index.html")]);
-    assert!(d.take_output().is_empty(), "no entry was used: nothing to acknowledge");
+    assert!(
+        d.take_output().is_empty(),
+        "no entry was used: nothing to acknowledge"
+    );
 }
 
 #[test]
 fn appendix_b_the_whole_exchange() {
     let mut d = decoder();
     // the dynamic table, a blocking section, its acknowledgment
-    d.encoder_stream(&unhex("3fbd01 c00f 7777772e6578616d706c652e636f6d c10c 2f73616d706c652f70617468")).unwrap();
+    d.encoder_stream(&unhex(
+        "3fbd01 c00f 7777772e6578616d706c652e636f6d c10c 2f73616d706c652f70617468",
+    ))
+    .unwrap();
     assert_eq!((d.insert_count(), d.table_state()), (2, (2, 106)));
     let got = decode_ok(&mut d, 4, &unhex("0381 10 11"));
-    assert_eq!(got, [f(":authority", "www.example.com"), f(":path", "/sample/path")]);
+    assert_eq!(
+        got,
+        [
+            f(":authority", "www.example.com"),
+            f(":path", "/sample/path")
+        ]
+    );
     assert_eq!(d.take_output(), unhex("84"));
     // a speculative insert, acknowledged by an increment
-    d.encoder_stream(&unhex("4a63 7573 746f 6d2d 6b65 790c 6375 7374 6f6d 2d76 616c 7565")).unwrap();
+    d.encoder_stream(&unhex(
+        "4a63 7573 746f 6d2d 6b65 790c 6375 7374 6f6d 2d76 616c 7565",
+    ))
+    .unwrap();
     assert_eq!((d.insert_count(), d.table_state()), (3, (3, 160)));
     assert_eq!(d.take_output(), unhex("01"));
     // the section that comes before the duplicate it needs: blocked, then cancelled
     let mut out = vec![];
-    assert_eq!(d.decode(8, &unhex("0500 80 c1 81"), &mut out), Ok(Decoded::Blocked { required_insert_count: 4 }));
+    assert_eq!(
+        d.decode(8, &unhex("0500 80 c1 81"), &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 4
+        })
+    );
     assert_eq!(d.blocked_streams(), 1);
     d.cancel_stream(8);
     assert_eq!(d.blocked_streams(), 0);
@@ -162,15 +227,28 @@ fn appendix_b_the_whole_exchange() {
     d.encoder_stream(&unhex("02")).unwrap();
     assert_eq!((d.insert_count(), d.table_state()), (4, (4, 217)));
     let got = decode_ok(&mut d, 8, &unhex("0500 80 c1 81"));
-    assert_eq!(got, [f(":authority", "www.example.com"), f(":path", "/"), f("custom-key", "custom-value")]);
+    assert_eq!(
+        got,
+        [
+            f(":authority", "www.example.com"),
+            f(":path", "/"),
+            f("custom-key", "custom-value")
+        ]
+    );
     assert_eq!(d.take_output(), unhex("88"));
     // an insertion that evicts the oldest entry
-    d.encoder_stream(&unhex("810d 6375 7374 6f6d 2d76 616c 7565 32")).unwrap();
+    d.encoder_stream(&unhex("810d 6375 7374 6f6d 2d76 616c 7565 32"))
+        .unwrap();
     assert_eq!((d.insert_count(), d.table_state()), (5, (4, 215)));
     assert_eq!(d.take_output(), unhex("01"));
     // entry 0 is gone: a section that names it is refused (the prefix: required 5, base 5; index 4 is absolute 0)
     let mut out = vec![];
-    assert_eq!(d.decode(12, &unhex("0600 84"), &mut out), Err(Error::Decompression("a reference to an entry that was evicted")));
+    assert_eq!(
+        d.decode(12, &unhex("0600 84"), &mut out),
+        Err(Error::Decompression(
+            "a reference to an entry that was evicted"
+        ))
+    );
     // and entry 4 is the newest (relative 0)
     let got = decode_ok(&mut d, 12, &unhex("0600 80"));
     assert_eq!(got, [f("custom-key", "custom-value2")]);
@@ -196,7 +274,10 @@ fn instructions_in_any_pieces_come_out_the_same() {
 
 fn two_entries() -> Decoder {
     let mut d = decoder();
-    d.encoder_stream(&unhex("3fbd01 c00f 7777772e6578616d706c652e636f6d c10c 2f73616d706c652f70617468")).unwrap();
+    d.encoder_stream(&unhex(
+        "3fbd01 c00f 7777772e6578616d706c652e636f6d c10c 2f73616d706c652f70617468",
+    ))
+    .unwrap();
     d
 }
 
@@ -206,8 +287,14 @@ fn the_decoder_refuses_what_no_encoder_would_send() {
         ("not even a prefix", ""),
         ("no base", "00"),
         ("a required insert count past the range", "ff02 00"),
-        ("a required insert count of zero that is not coded as zero", "01 00"),
-        ("a required insert count that is too far ahead of the table", "c8 00"),
+        (
+            "a required insert count of zero that is not coded as zero",
+            "01 00",
+        ),
+        (
+            "a required insert count that is too far ahead of the table",
+            "c8 00",
+        ),
         ("a negative base", "03 82"),
         ("a static index that does not exist", "0000 ff24"),
         ("an entry at or above the required insert count", "0300 12"),
@@ -215,14 +302,23 @@ fn the_decoder_refuses_what_no_encoder_would_send() {
         ("a literal that is cut before its value", "0000 51"),
         ("a value that is cut", "0000 510b 2f"),
         ("an integer over 62 bits", "0000 ff ffffffffffffffffff 7f"),
-        ("a Huffman string with padding that is too long", "0000 51 81 ff"),
+        (
+            "a Huffman string with padding that is too long",
+            "0000 51 81 ff",
+        ),
         ("a name that is cut", "0000 2b 6162"),
-        ("a post-base name reference to an entry at or above the required insert count", "0300 00 01 78"),
+        (
+            "a post-base name reference to an entry at or above the required insert count",
+            "0300 00 01 78",
+        ),
     ] {
         let mut d = two_entries();
         let mut out = vec![];
         let r = d.decode(0, &unhex(block), &mut out);
-        assert!(matches!(r, Err(Error::Decompression(_))), "{why} ({block}): {r:?}");
+        assert!(
+            matches!(r, Err(Error::Decompression(_))),
+            "{why} ({block}): {r:?}"
+        );
     }
 }
 
@@ -233,21 +329,36 @@ fn a_section_may_not_refer_to_an_entry_the_encoder_did_not_say_it_needed() {
     let mut d = two_entries();
     let mut out = vec![];
     // base 1 (delta 0), post-base index 0: absolute index 1
-    assert!(matches!(d.decode(0, &unhex("02 00 10"), &mut out), Err(Error::Decompression(_))));
+    assert!(matches!(
+        d.decode(0, &unhex("02 00 10"), &mut out),
+        Err(Error::Decompression(_))
+    ));
     // base 2 (delta 1), relative index 0: absolute index 1
     let mut d = two_entries();
-    assert!(matches!(d.decode(0, &unhex("02 01 80"), &mut out), Err(Error::Decompression(_))));
+    assert!(matches!(
+        d.decode(0, &unhex("02 01 80"), &mut out),
+        Err(Error::Decompression(_))
+    ));
     // and the entry below it is fine, by either way
     let mut d = two_entries();
     out.clear();
-    assert_eq!(d.decode(0, &unhex("02 00 80"), &mut out), Ok(Decoded::Done { within_limit: true }));
+    assert_eq!(
+        d.decode(0, &unhex("02 00 80"), &mut out),
+        Ok(Decoded::Done { within_limit: true })
+    );
     assert_eq!(out, vec![f(":authority", "www.example.com")]);
     // a base below the required count (the sign bit set, delta 0: base 0): post-base index 0 is entry 0, and 1 is the one that was not asked for
     let mut d = two_entries();
     out.clear();
-    assert_eq!(d.decode(0, &unhex("02 80 10"), &mut out), Ok(Decoded::Done { within_limit: true }));
+    assert_eq!(
+        d.decode(0, &unhex("02 80 10"), &mut out),
+        Ok(Decoded::Done { within_limit: true })
+    );
     assert_eq!(out, vec![f(":authority", "www.example.com")]);
-    assert!(matches!(d.decode(4, &unhex("02 80 11"), &mut out), Err(Error::Decompression(_))));
+    assert!(matches!(
+        d.decode(4, &unhex("02 80 11"), &mut out),
+        Err(Error::Decompression(_))
+    ));
 }
 
 #[test]
@@ -275,7 +386,11 @@ fn a_section_may_have_no_lines() {
     assert_eq!(decode_ok(&mut d, 0, &unhex("0000")), []);
     // (it refers to nothing, though it declares what it needs: the table is ahead of that, so it is read at once)
     assert_eq!(decode_ok(&mut d, 4, &unhex("0300")), []);
-    assert_eq!(d.take_output(), unhex("84"), "a section that declares entries is acknowledged, used or not");
+    assert_eq!(
+        d.take_output(),
+        unhex("84"),
+        "a section that declares entries is acknowledged, used or not"
+    );
 }
 
 #[test]
@@ -284,12 +399,27 @@ fn too_many_blocked_streams_are_an_error() {
     let mut out = vec![];
     // required 3 (encoded 4), base 3: nothing is there yet
     for stream in [0, 4] {
-        assert_eq!(d.decode(stream, &unhex("04 00 80"), &mut out), Ok(Decoded::Blocked { required_insert_count: 3 }));
+        assert_eq!(
+            d.decode(stream, &unhex("04 00 80"), &mut out),
+            Ok(Decoded::Blocked {
+                required_insert_count: 3
+            })
+        );
     }
     // the same stream again is the same stream
-    assert_eq!(d.decode(4, &unhex("04 00 80"), &mut out), Ok(Decoded::Blocked { required_insert_count: 3 }));
+    assert_eq!(
+        d.decode(4, &unhex("04 00 80"), &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 3
+        })
+    );
     assert_eq!(d.blocked_streams(), 2);
-    assert_eq!(d.decode(8, &unhex("04 00 80"), &mut out), Err(Error::Decompression("more blocked streams than were allowed")));
+    assert_eq!(
+        d.decode(8, &unhex("04 00 80"), &mut out),
+        Err(Error::Decompression(
+            "more blocked streams than were allowed"
+        ))
+    );
     // none at all, when the decoder said none
     let mut d = Decoder::new(4096, 0, 1 << 20);
     assert!(d.decode(0, &unhex("04 00 80"), &mut out).is_err());
@@ -301,14 +431,30 @@ fn a_stream_that_has_what_it_waited_for_is_not_counted_as_blocked() {
     // not been tried again, so stream 4, which waits for the second, is the one blocked stream and not a second.
     let mut d = Decoder::new(4096, 1, 1 << 20);
     let mut out = vec![];
-    assert_eq!(d.decode(0, &unhex("02 00 80"), &mut out), Ok(Decoded::Blocked { required_insert_count: 1 }));
+    assert_eq!(
+        d.decode(0, &unhex("02 00 80"), &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 1
+        })
+    );
     assert_eq!(d.blocked_streams(), 1);
-    d.encoder_stream(&unhex("3fbd01 c00f 7777772e6578616d706c652e636f6d")).unwrap();
+    d.encoder_stream(&unhex("3fbd01 c00f 7777772e6578616d706c652e636f6d"))
+        .unwrap();
     assert_eq!(d.blocked_streams(), 0);
-    assert_eq!(d.decode(4, &unhex("03 00 80"), &mut out), Ok(Decoded::Blocked { required_insert_count: 2 }));
+    assert_eq!(
+        d.decode(4, &unhex("03 00 80"), &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 2
+        })
+    );
     assert_eq!(d.blocked_streams(), 1);
     // and a third, with the second still waiting, is one too many
-    assert_eq!(d.decode(8, &unhex("03 00 80"), &mut out), Err(Error::Decompression("more blocked streams than were allowed")));
+    assert_eq!(
+        d.decode(8, &unhex("03 00 80"), &mut out),
+        Err(Error::Decompression(
+            "more blocked streams than were allowed"
+        ))
+    );
 }
 
 #[test]
@@ -319,18 +465,36 @@ fn a_section_may_wait_for_as_many_entries_as_the_table_could_hold_at_once() {
     let mut d = Decoder::new(64, 100, 1 << 20);
     let mut out = vec![];
     // nothing in; the section needs 2 (written 3)
-    assert_eq!(d.decode(0, &unhex("03 00 80"), &mut out), Ok(Decoded::Blocked { required_insert_count: 2 }));
+    assert_eq!(
+        d.decode(0, &unhex("03 00 80"), &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 2
+        })
+    );
     // one in; it needs 3 (written 4)
     d.encoder_stream(&unhex("3f21 4000")).unwrap();
     assert_eq!(d.insert_count(), 1);
-    assert_eq!(d.decode(4, &unhex("04 00 80"), &mut out), Ok(Decoded::Blocked { required_insert_count: 3 }));
+    assert_eq!(
+        d.decode(4, &unhex("04 00 80"), &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 3
+        })
+    );
     // two in; it needs 4 (written 1: the count has gone round)
     d.encoder_stream(&unhex("4000")).unwrap();
     assert_eq!(d.insert_count(), 2);
-    assert_eq!(d.decode(8, &unhex("01 00 80"), &mut out), Ok(Decoded::Blocked { required_insert_count: 4 }));
+    assert_eq!(
+        d.decode(8, &unhex("01 00 80"), &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 4
+        })
+    );
     // (written 2, the count has gone round and it is a section for the first entry, which is there)
     out.clear();
-    assert_eq!(d.decode(12, &unhex("02 00 80"), &mut out), Ok(Decoded::Done { within_limit: true }));
+    assert_eq!(
+        d.decode(12, &unhex("02 00 80"), &mut out),
+        Ok(Decoded::Done { within_limit: true })
+    );
     assert_eq!(out, vec![f("", "")]);
 }
 
@@ -339,11 +503,23 @@ fn a_blocked_section_is_decoded_when_what_it_needs_has_come() {
     let mut d = decoder();
     let mut out = vec![];
     // the section of stream 4 of the appendix, before the instructions that make its entries
-    assert_eq!(d.decode(4, &unhex("0381 10 11"), &mut out), Ok(Decoded::Blocked { required_insert_count: 2 }));
-    d.encoder_stream(&unhex("3fbd01 c00f 7777772e6578616d706c652e636f6d")).unwrap();
-    assert_eq!(d.decode(4, &unhex("0381 10 11"), &mut out), Ok(Decoded::Blocked { required_insert_count: 2 }));
+    assert_eq!(
+        d.decode(4, &unhex("0381 10 11"), &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 2
+        })
+    );
+    d.encoder_stream(&unhex("3fbd01 c00f 7777772e6578616d706c652e636f6d"))
+        .unwrap();
+    assert_eq!(
+        d.decode(4, &unhex("0381 10 11"), &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 2
+        })
+    );
     assert_eq!(d.blocked_streams(), 1);
-    d.encoder_stream(&unhex("c10c 2f73616d706c652f70617468")).unwrap();
+    d.encoder_stream(&unhex("c10c 2f73616d706c652f70617468"))
+        .unwrap();
     assert_eq!(decode_ok(&mut d, 4, &unhex("0381 10 11")).len(), 2);
     assert_eq!(d.blocked_streams(), 0);
 }
@@ -352,23 +528,44 @@ fn a_blocked_section_is_decoded_when_what_it_needs_has_come() {
 fn the_decoder_refuses_instructions_that_cannot_be_carried_out() {
     for (why, wire) in [
         ("a capacity over what the decoder allows", "3fe21f"),
-        ("an entry that does not fit the table (it has no capacity yet)", "4161 0162"),
-        ("a name reference to a static entry that does not exist", "3fbd01 ff24 01 78"),
-        ("a name reference to a dynamic entry that is not there", "3fbd01 8000"),
+        (
+            "an entry that does not fit the table (it has no capacity yet)",
+            "4161 0162",
+        ),
+        (
+            "a name reference to a static entry that does not exist",
+            "3fbd01 ff24 01 78",
+        ),
+        (
+            "a name reference to a dynamic entry that is not there",
+            "3fbd01 8000",
+        ),
         ("a duplicate of an entry that is not there", "3fbd01 02"),
         ("a Huffman string that does not decode", "3fbd01 c0 81ff"),
-        ("a string longer than any entry could be", "3fbd01 c0 7fffff01"),
-        ("an integer over 62 bits", "3fbd01 c0 ff ffffffffffffffffff 7f"),
+        (
+            "a string longer than any entry could be",
+            "3fbd01 c0 7fffff01",
+        ),
+        (
+            "an integer over 62 bits",
+            "3fbd01 c0 ff ffffffffffffffffff 7f",
+        ),
     ] {
         let mut d = decoder();
         let r = d.encoder_stream(&unhex(wire));
-        assert!(matches!(r, Err(Error::EncoderStream(_))), "{why} ({wire}): {r:?}");
+        assert!(
+            matches!(r, Err(Error::EncoderStream(_))),
+            "{why} ({wire}): {r:?}"
+        );
     }
     // an entry bigger than the capacity, though it is not 0
     let mut d = decoder();
     let mut wire = unhex("2a"); // capacity 10
     wire.extend(unhex("4161 0162"));
-    assert!(matches!(d.encoder_stream(&wire), Err(Error::EncoderStream(_))));
+    assert!(matches!(
+        d.encoder_stream(&wire),
+        Err(Error::EncoderStream(_))
+    ));
 }
 
 #[test]
@@ -395,7 +592,12 @@ fn a_header_list_over_the_limit_is_read_to_its_end() {
         block.extend(v.as_bytes());
     }
     let mut out = vec![];
-    assert_eq!(d.decode(0, &block, &mut out), Ok(Decoded::Done { within_limit: false }));
+    assert_eq!(
+        d.decode(0, &block, &mut out),
+        Ok(Decoded::Done {
+            within_limit: false
+        })
+    );
     assert_eq!(out, [f("xyz", "aaa"), f("xyz", "bbb")]);
     // a value larger than the limit by itself
     let mut block = vec![0, 0, 0x51];
@@ -403,7 +605,12 @@ fn a_header_list_over_the_limit_is_read_to_its_end() {
     block.extend(vec![b'v'; 300]);
     block.extend(unhex("d1")); // and :method GET after it
     let mut out = vec![];
-    assert_eq!(d.decode(0, &block, &mut out), Ok(Decoded::Done { within_limit: false }));
+    assert_eq!(
+        d.decode(0, &block, &mut out),
+        Ok(Decoded::Done {
+            within_limit: false
+        })
+    );
     assert_eq!(out, [f(":method", "GET")]);
 }
 
@@ -422,9 +629,18 @@ fn many_lines_naming_a_large_entry_cost_nothing_beyond_the_limit() {
     block.extend(vec![0x80; 100_000]);
     let start = std::time::Instant::now();
     let mut out = vec![];
-    assert_eq!(d.decode(0, &block, &mut out), Ok(Decoded::Done { within_limit: false }));
+    assert_eq!(
+        d.decode(0, &block, &mut out),
+        Ok(Decoded::Done {
+            within_limit: false
+        })
+    );
     assert!(out.is_empty());
-    assert!(start.elapsed() < std::time::Duration::from_secs(1), "{:?}", start.elapsed());
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(1),
+        "{:?}",
+        start.elapsed()
+    );
 }
 
 // ---------------------------------------------------------------------------------------------------- the encoder and the decoder
@@ -439,7 +655,10 @@ impl Link {
     fn new(cfg: EncoderConfig, decoder_capacity: usize, decoder_blocked: usize) -> Link {
         let mut enc = Encoder::new(cfg);
         enc.set_peer_settings(decoder_capacity as u64, decoder_blocked as u64);
-        Link { enc, dec: Decoder::new(decoder_capacity, decoder_blocked, 1 << 20) }
+        Link {
+            enc,
+            dec: Decoder::new(decoder_capacity, decoder_blocked, 1 << 20),
+        }
     }
 
     /// Sends a request, delivers the encoder stream first and the acknowledgment after; returns the bytes of the section.
@@ -475,7 +694,14 @@ fn with_no_dynamic_table_the_encoder_uses_none() {
     assert!(link.enc.take_output().is_empty());
     assert_eq!(link.enc.table_state(), (0, 0));
     // and the same when the peer allows one and the encoder is told not to
-    let mut link = Link::new(EncoderConfig { table_capacity: 0, ..EncoderConfig::default() }, 4096, 16);
+    let mut link = Link::new(
+        EncoderConfig {
+            table_capacity: 0,
+            ..EncoderConfig::default()
+        },
+        4096,
+        16,
+    );
     link.send(0, &request("/a"));
     assert_eq!(link.enc.table_state(), (0, 0));
 }
@@ -493,13 +719,26 @@ fn until_the_peers_settings_are_known_nothing_is_inserted() {
 fn what_was_acknowledged_is_used_by_the_next_request() {
     let mut link = Link::new(EncoderConfig::default(), 4096, 16);
     let first = link.send(0, &request("/a"));
-    assert_eq!(&first[..2], [0, 0], "the first request refers to nothing that is not acknowledged, so no stream waits");
+    assert_eq!(
+        &first[..2],
+        [0, 0],
+        "the first request refers to nothing that is not acknowledged, so no stream waits"
+    );
     // user-agent, :authority and accept-encoding were put in the table: the safe names of this request that are not in the static table
     assert_eq!(link.enc.table_state().0, 3);
     let second = link.send(4, &request("/b"));
-    assert!(second.len() < first.len() - 20, "{} then {}", first.len(), second.len());
+    assert!(
+        second.len() < first.len() - 20,
+        "{} then {}",
+        first.len(),
+        second.len()
+    );
     assert_ne!(second[0], 0, "it names entries");
-    assert_eq!(link.enc.table_state().0, 3, "and inserts nothing more: they are all there");
+    assert_eq!(
+        link.enc.table_state().0,
+        3,
+        "and inserts nothing more: they are all there"
+    );
     // the encoder says nothing on its stream for a request like the second
     assert!(link.enc.take_output().is_empty());
     assert_eq!(link.enc.blocked_count(), 0);
@@ -510,26 +749,58 @@ fn what_was_acknowledged_is_used_by_the_next_request() {
 #[test]
 fn nothing_but_the_safe_names_is_inserted_unless_asked() {
     let mut link = Link::new(EncoderConfig::default(), 4096, 16);
-    link.send(0, &[f("x-secret-ish", "abc"), f("cookie", "a=b"), f("authorization", "Bearer x")]);
+    link.send(
+        0,
+        &[
+            f("x-secret-ish", "abc"),
+            f("cookie", "a=b"),
+            f("authorization", "Bearer x"),
+        ],
+    );
     assert_eq!(link.enc.table_state(), (0, 0));
-    let mut link = Link::new(EncoderConfig { only_safe_names: false, ..EncoderConfig::default() }, 4096, 16);
+    let mut link = Link::new(
+        EncoderConfig {
+            only_safe_names: false,
+            ..EncoderConfig::default()
+        },
+        4096,
+        16,
+    );
     link.send(0, &[f("x-secret-ish", "abc"), f("cookie", "a=b")]);
     assert_eq!(link.enc.table_state().0, 2);
 }
 
 #[test]
 fn a_sensitive_field_is_never_put_in_the_table_and_is_marked() {
-    let mut enc = Encoder::new(EncoderConfig { only_safe_names: false, ..EncoderConfig::default() });
+    let mut enc = Encoder::new(EncoderConfig {
+        only_safe_names: false,
+        ..EncoderConfig::default()
+    });
     enc.set_peer_settings(4096, 16);
     let mut dec = decoder();
     for (name, value) in [("authorization", "Bearer abc"), ("x-token", "t0ken")] {
         let mut block = vec![];
-        enc.encode(0, &[FieldRef { name: name.as_bytes(), value: value.as_bytes(), sensitive: true }], &mut block);
+        enc.encode(
+            0,
+            &[FieldRef {
+                name: name.as_bytes(),
+                value: value.as_bytes(),
+                sensitive: true,
+            }],
+            &mut block,
+        );
         assert!(enc.take_output().is_empty(), "{name}");
         assert_eq!(&block[..2], [0, 0]);
-        assert_ne!(block[2] & 0x20, 0, "{name}: the N bit says no one in between may index it");
+        assert_ne!(
+            block[2] & 0x20,
+            0,
+            "{name}: the N bit says no one in between may index it"
+        );
         let mut out = vec![];
-        assert_eq!(dec.decode(0, &block, &mut out), Ok(Decoded::Done { within_limit: true }));
+        assert_eq!(
+            dec.decode(0, &block, &mut out),
+            Ok(Decoded::Done { within_limit: true })
+        );
         assert_eq!(out, [f(name, value)]);
     }
     assert_eq!(enc.table_state(), (0, 0));
@@ -556,7 +827,10 @@ fn a_field_with_a_value_that_was_inserted_is_not_inserted_twice() {
 
 #[test]
 fn a_stream_may_wait_only_if_the_encoder_is_set_to_let_it() {
-    let cfg = EncoderConfig { blocked_streams: 2, ..EncoderConfig::default() };
+    let cfg = EncoderConfig {
+        blocked_streams: 2,
+        ..EncoderConfig::default()
+    };
     let mut link = Link::new(cfg, 4096, 16);
     let mut wire = vec![];
     let mut blocks = vec![];
@@ -568,11 +842,19 @@ fn a_stream_may_wait_only_if_the_encoder_is_set_to_let_it() {
     }
     assert_ne!(blocks[0][0], 0, "the first refers to what it inserts");
     assert_ne!(blocks[1][0], 0, "and so does the second");
-    assert_eq!(blocks[2][0], 0, "the third would be a third stream waiting: it is all literals and static");
+    assert_eq!(
+        blocks[2][0], 0,
+        "the third would be a third stream waiting: it is all literals and static"
+    );
     assert_eq!(link.enc.blocked_count(), 2);
     // the sections arrive before the encoder stream: they wait
     let mut out = vec![];
-    assert_eq!(link.dec.decode(0, &blocks[0], &mut out), Ok(Decoded::Blocked { required_insert_count: 3 }));
+    assert_eq!(
+        link.dec.decode(0, &blocks[0], &mut out),
+        Ok(Decoded::Blocked {
+            required_insert_count: 3
+        })
+    );
     for w in &wire {
         link.dec.encoder_stream(w).unwrap();
     }
@@ -585,7 +867,10 @@ fn a_stream_may_wait_only_if_the_encoder_is_set_to_let_it() {
 
 #[test]
 fn the_peers_limit_on_blocked_streams_is_kept_whatever_the_encoder_is_set_to() {
-    let cfg = EncoderConfig { blocked_streams: 100, ..EncoderConfig::default() };
+    let cfg = EncoderConfig {
+        blocked_streams: 100,
+        ..EncoderConfig::default()
+    };
     let mut link = Link::new(cfg, 4096, 1);
     let mut b = vec![];
     link.enc.encode(0, &refs(&request("/a")), &mut b);
@@ -599,9 +884,21 @@ fn the_peers_limit_on_blocked_streams_is_kept_whatever_the_encoder_is_set_to() {
 #[test]
 fn a_table_that_is_full_makes_room_only_with_what_the_decoder_has_acknowledged() {
     // capacity 220 holds three entries of 71
-    let cfg = EncoderConfig { table_capacity: 220, ..EncoderConfig::default() };
+    let cfg = EncoderConfig {
+        table_capacity: 220,
+        ..EncoderConfig::default()
+    };
     let mut link = Link::new(cfg, 4096, 16);
-    for (i, ua) in ["agent-aaaaaaaaaaaaaaaaaaaaaaa", "agent-bbbbbbbbbbbbbbbbbbbbbbb", "agent-ccccccccccccccccccccccc", "agent-ddddddddddddddddddddddd", "agent-eeeeeeeeeeeeeeeeeeeeeeee"].iter().enumerate() {
+    for (i, ua) in [
+        "agent-aaaaaaaaaaaaaaaaaaaaaaa",
+        "agent-bbbbbbbbbbbbbbbbbbbbbbb",
+        "agent-ccccccccccccccccccccccc",
+        "agent-ddddddddddddddddddddddd",
+        "agent-eeeeeeeeeeeeeeeeeeeeeeee",
+    ]
+    .iter()
+    .enumerate()
+    {
         link.send(4 * i as u64, &[f(":method", "GET"), f("user-agent", ua)]);
         assert!(link.enc.table_state().1 <= 220);
     }
@@ -612,9 +909,18 @@ fn a_table_that_is_full_makes_room_only_with_what_the_decoder_has_acknowledged()
     // now the decoder's acknowledgments are held back: the encoder inserts nothing it would have to evict for
     let mut wire = vec![];
     let mut blocks = vec![];
-    for (i, ua) in ["agent-1111111111111111111111", "agent-2222222222222222222222", "agent-3333333333333333333333", "agent-4444444444444444444444"].iter().enumerate() {
+    for (i, ua) in [
+        "agent-1111111111111111111111",
+        "agent-2222222222222222222222",
+        "agent-3333333333333333333333",
+        "agent-4444444444444444444444",
+    ]
+    .iter()
+    .enumerate()
+    {
         let mut b = vec![];
-        link.enc.encode(100 + 4 * i as u64, &refs(&[f("user-agent", ua)]), &mut b);
+        link.enc
+            .encode(100 + 4 * i as u64, &refs(&[f("user-agent", ua)]), &mut b);
         wire.extend(link.enc.take_output());
         blocks.push((100 + 4 * i as u64, b, ua));
     }
@@ -632,12 +938,21 @@ fn a_table_that_is_full_makes_room_only_with_what_the_decoder_has_acknowledged()
 fn the_capacity_announced_is_the_peers_maximum_and_the_encoder_keeps_to_less() {
     // ls-qpack (LiteSpeed, aioquic) counts the entries a Required Insert Count wraps around from the capacity it was last given
     // instead of the maximum it announced; the two are the same when the encoder announces the maximum
-    let cfg = EncoderConfig { table_capacity: 300, ..EncoderConfig::default() };
+    let cfg = EncoderConfig {
+        table_capacity: 300,
+        ..EncoderConfig::default()
+    };
     let mut link = Link::new(cfg, 1024, 16);
     link.send(0, &request("/a"));
     assert_eq!(link.dec.table.capacity, 1024);
     for i in 0..50 {
-        link.send(4 + 4 * i, &[f("user-agent", &format!("agent-number-{i:04}-xxxxxxxxxxxxxxxxxxxxxxxx"))]);
+        link.send(
+            4 + 4 * i,
+            &[f(
+                "user-agent",
+                &format!("agent-number-{i:04}-xxxxxxxxxxxxxxxxxxxxxxxx"),
+            )],
+        );
         assert!(link.enc.table_state().1 <= 300);
         assert!(link.dec.table_state().1 <= 1024);
     }
@@ -648,34 +963,66 @@ fn the_capacity_announced_is_the_peers_maximum_and_the_encoder_keeps_to_less() {
 #[test]
 fn an_entry_that_a_section_refers_to_is_not_evicted_by_the_same_section() {
     // the table has room for two entries; the section refers to the first and then inserts a second and a third
-    let cfg = EncoderConfig { table_capacity: 150, only_safe_names: false, ..EncoderConfig::default() };
+    let cfg = EncoderConfig {
+        table_capacity: 150,
+        only_safe_names: false,
+        ..EncoderConfig::default()
+    };
     let mut link = Link::new(cfg, 4096, 16);
     link.send(0, &[f("x-a", "1111111111111111111111")]);
     link.send(4, &[f("x-b", "2222222222222222222222")]);
     assert_eq!(link.enc.table_state().0, 2);
-    link.send(8, &[f("x-a", "1111111111111111111111"), f("x-c", "3333333333333333333333"), f("x-d", "4444444444444444444444")]);
+    link.send(
+        8,
+        &[
+            f("x-a", "1111111111111111111111"),
+            f("x-c", "3333333333333333333333"),
+            f("x-d", "4444444444444444444444"),
+        ],
+    );
 }
 
 #[test]
 fn an_acknowledgment_that_does_not_fit_is_an_error() {
     let mut enc = Encoder::new(EncoderConfig::default());
     enc.set_peer_settings(4096, 16);
-    assert_eq!(enc.decoder_stream(&unhex("84")), Err(Error::DecoderStream("an acknowledgment of a stream with no section waiting")));
+    assert_eq!(
+        enc.decoder_stream(&unhex("84")),
+        Err(Error::DecoderStream(
+            "an acknowledgment of a stream with no section waiting"
+        ))
+    );
     let mut enc = Encoder::new(EncoderConfig::default());
-    assert_eq!(enc.decoder_stream(&unhex("00")), Err(Error::DecoderStream("an insert count increment of 0")));
-    assert_eq!(enc.decoder_stream(&unhex("01")), Err(Error::DecoderStream("an insert count increment beyond what was sent")));
+    assert_eq!(
+        enc.decoder_stream(&unhex("00")),
+        Err(Error::DecoderStream("an insert count increment of 0"))
+    );
+    assert_eq!(
+        enc.decoder_stream(&unhex("01")),
+        Err(Error::DecoderStream(
+            "an insert count increment beyond what was sent"
+        ))
+    );
     // cancelling a stream with nothing outstanding is allowed
     let mut enc = Encoder::new(EncoderConfig::default());
     assert_eq!(enc.decoder_stream(&unhex("48")), Ok(()));
     // and the decoder stream may come in pieces
     let mut enc = Encoder::new(EncoderConfig::default());
     assert_eq!(enc.decoder_stream(&unhex("ff")), Ok(()));
-    assert_eq!(enc.decoder_stream(&unhex("7f")), Err(Error::DecoderStream("an acknowledgment of a stream with no section waiting")));
+    assert_eq!(
+        enc.decoder_stream(&unhex("7f")),
+        Err(Error::DecoderStream(
+            "an acknowledgment of a stream with no section waiting"
+        ))
+    );
 }
 
 #[test]
 fn a_cancelled_stream_frees_what_it_held() {
-    let cfg = EncoderConfig { blocked_streams: 4, ..EncoderConfig::default() };
+    let cfg = EncoderConfig {
+        blocked_streams: 4,
+        ..EncoderConfig::default()
+    };
     let mut enc = Encoder::new(cfg);
     enc.set_peer_settings(4096, 16);
     let mut b = vec![];
@@ -694,20 +1041,30 @@ fn random_exchanges_decode_to_what_was_encoded() {
     // some streams are abandoned (see `harness::exchange`)
     let mut total = harness::Stats::default();
     for seed in 1..=600u64 {
-        let s = harness::exchange(&mut harness::Xorshift(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1), 300);
+        let s = harness::exchange(
+            &mut harness::Xorshift(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1),
+            300,
+        );
         total.waited += s.waited;
         total.evicted += s.evicted;
         total.inserted += s.inserted;
     }
     // (that the exchanges did what they are for: sections waited, the table was cycled through, entries were inserted)
-    assert!(total.waited > 100 && total.evicted > 1000 && total.inserted > 5000, "{total:?}");
+    assert!(
+        total.waited > 100 && total.evicted > 1000 && total.inserted > 5000,
+        "{total:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------------------------------- against ls-qpack
 
 enum Event {
     Enc(Vec<u8>),
-    Block { stream: u64, block: Vec<u8>, fields: Vec<Field> },
+    Block {
+        stream: u64,
+        block: Vec<u8>,
+        fields: Vec<Field>,
+    },
     Cancel(u64),
 }
 
@@ -718,15 +1075,33 @@ fn parse_fixture(text: &str) -> Vec<(usize, usize, Vec<Event>)> {
         let w: Vec<&str> = line.split_whitespace().collect();
         let unhex_or_empty = |s: &str| if s == "-" { vec![] } else { unhex(s) };
         match w.first().copied() {
-            Some("session") => sessions.push((w[1].parse().unwrap(), w[2].parse().unwrap(), vec![])),
-            Some("enc") => sessions.last_mut().unwrap().2.push(Event::Enc(unhex_or_empty(w[1]))),
-            Some("block") => sessions.last_mut().unwrap().2.push(Event::Block { stream: w[1].parse().unwrap(), block: unhex_or_empty(w[2]), fields: vec![] }),
+            Some("session") => {
+                sessions.push((w[1].parse().unwrap(), w[2].parse().unwrap(), vec![]))
+            }
+            Some("enc") => sessions
+                .last_mut()
+                .unwrap()
+                .2
+                .push(Event::Enc(unhex_or_empty(w[1]))),
+            Some("block") => sessions.last_mut().unwrap().2.push(Event::Block {
+                stream: w[1].parse().unwrap(),
+                block: unhex_or_empty(w[2]),
+                fields: vec![],
+            }),
             Some("field") => {
-                if let Some(Event::Block { fields, .. }) = sessions.last_mut().unwrap().2.last_mut() {
-                    fields.push(Field { name: unhex_or_empty(w[1]), value: unhex_or_empty(w[2]) });
+                if let Some(Event::Block { fields, .. }) = sessions.last_mut().unwrap().2.last_mut()
+                {
+                    fields.push(Field {
+                        name: unhex_or_empty(w[1]),
+                        value: unhex_or_empty(w[2]),
+                    });
                 }
             }
-            Some("cancel") => sessions.last_mut().unwrap().2.push(Event::Cancel(w[1].parse().unwrap())),
+            Some("cancel") => sessions
+                .last_mut()
+                .unwrap()
+                .2
+                .push(Event::Cancel(w[1].parse().unwrap())),
             _ => {}
         }
     }
@@ -759,7 +1134,8 @@ fn decodes_what_lsqpack_encoded() {
         for event in events {
             match event {
                 Event::Enc(bytes) => {
-                    dec.encoder_stream(bytes).unwrap_or_else(|e| panic!("session {i}: {e}"));
+                    dec.encoder_stream(bytes)
+                        .unwrap_or_else(|e| panic!("session {i}: {e}"));
                     let mut still = vec![];
                     for (stream, block, fields) in std::mem::take(&mut pending) {
                         if try_decode(&mut dec, stream, block, fields) {
@@ -770,7 +1146,11 @@ fn decodes_what_lsqpack_encoded() {
                     }
                     pending = still;
                 }
-                Event::Block { stream, block, fields } => {
+                Event::Block {
+                    stream,
+                    block,
+                    fields,
+                } => {
                     if try_decode(&mut dec, *stream, block, fields) {
                         sections += 1;
                     } else {
@@ -785,12 +1165,18 @@ fn decodes_what_lsqpack_encoded() {
             }
             assert!(dec.blocked_streams() <= *blocked);
         }
-        assert!(pending.is_empty(), "session {i}: sections are still waiting");
+        assert!(
+            pending.is_empty(),
+            "session {i}: sections are still waiting"
+        );
         evicted += dec.table.dropped;
         inserted += dec.insert_count();
     }
     // (that the fixture has what it is for)
-    assert!(sections > 500 && waited > 40 && evicted > 20 && inserted > 150, "{sections} {waited} {evicted} {inserted}");
+    assert!(
+        sections > 500 && waited > 40 && evicted > 20 && inserted > 150,
+        "{sections} {waited} {evicted} {inserted}"
+    );
 }
 
 /// A peer that `tools/qpack_interop.py` talks to over standard input and output, one line a command, so that ls-qpack (through
@@ -811,10 +1197,18 @@ fn decodes_what_lsqpack_encoded() {
 fn qpack_peer() {
     use std::io::{BufRead, Write};
     fn h(b: &[u8]) -> String {
-        if b.is_empty() { "-".into() } else { b.iter().map(|x| format!("{x:02x}")).collect() }
+        if b.is_empty() {
+            "-".into()
+        } else {
+            b.iter().map(|x| format!("{x:02x}")).collect()
+        }
     }
     fn u(s: &str) -> Vec<u8> {
-        if s == "-" { vec![] } else { unhex(s) }
+        if s == "-" {
+            vec![]
+        } else {
+            unhex(s)
+        }
     }
     let mut enc = Encoder::new(EncoderConfig::default());
     let mut dec = decoder();
@@ -826,7 +1220,11 @@ fn qpack_peer() {
             Some("init") => {
                 let n: Vec<usize> = w[1..].iter().map(|x| x.parse().unwrap()).collect();
                 dec = Decoder::new(n[0], n[1], 1 << 20);
-                enc = Encoder::new(EncoderConfig { table_capacity: n[2], blocked_streams: n[3], only_safe_names: n[6] != 0 });
+                enc = Encoder::new(EncoderConfig {
+                    table_capacity: n[2],
+                    blocked_streams: n[3],
+                    only_safe_names: n[6] != 0,
+                });
                 enc.set_peer_settings(n[4] as u64, n[5] as u64);
                 "ok".to_string()
             }
@@ -844,7 +1242,9 @@ fn qpack_peer() {
                         }
                         r
                     }
-                    Ok(Decoded::Blocked { required_insert_count }) => format!("blocked {required_insert_count}"),
+                    Ok(Decoded::Blocked {
+                        required_insert_count,
+                    }) => format!("blocked {required_insert_count}"),
                     Err(e) => format!("err {e}"),
                 }
             }
@@ -861,7 +1261,14 @@ fn qpack_peer() {
                         (u(p[0]), u(p[1]), p.get(2) == Some(&"s"))
                     })
                     .collect();
-                let list: Vec<FieldRef<'_>> = owned.iter().map(|(n, v, s)| FieldRef { name: n, value: v, sensitive: *s }).collect();
+                let list: Vec<FieldRef<'_>> = owned
+                    .iter()
+                    .map(|(n, v, s)| FieldRef {
+                        name: n,
+                        value: v,
+                        sensitive: *s,
+                    })
+                    .collect();
                 let mut block = vec![];
                 enc.encode(w[1].parse().unwrap(), &list, &mut block);
                 format!("block {} {}", h(&block), h(&enc.take_output()))

@@ -130,7 +130,9 @@ pub struct Object {
 
 impl Object {
     pub fn new() -> Object {
-        Object { members: Vec::new() }
+        Object {
+            members: Vec::new(),
+        }
     }
 
     /// Adds a member. Panics if the name is already there (a program error, not an input error).
@@ -175,7 +177,9 @@ impl Value {
 
     /// An integer value.
     pub fn int(n: i64) -> Value {
-        Value::Number(Number { text: n.to_string() })
+        Value::Number(Number {
+            text: n.to_string(),
+        })
     }
 
     /// The member of an object, if this is one that has it.
@@ -273,12 +277,25 @@ pub fn parse(input: &[u8]) -> Result<Value, Error> {
 pub fn parse_with_depth(input: &[u8], max_depth: usize) -> Result<Value, Error> {
     let text = match std::str::from_utf8(input) {
         Ok(t) => t,
-        Err(e) => return Err(Error { offset: e.valid_up_to(), kind: ErrorKind::Utf8 }),
+        Err(e) => {
+            return Err(Error {
+                offset: e.valid_up_to(),
+                kind: ErrorKind::Utf8,
+            })
+        }
     };
     if text.starts_with('\u{feff}') {
-        return Err(Error { offset: 0, kind: ErrorKind::Utf8 });
+        return Err(Error {
+            offset: 0,
+            kind: ErrorKind::Utf8,
+        });
     }
-    let mut p = Parser { s: text.as_bytes(), text, pos: 0, max_depth: max_depth.min(HARD_MAX_DEPTH) };
+    let mut p = Parser {
+        s: text.as_bytes(),
+        text,
+        pos: 0,
+        max_depth: max_depth.min(HARD_MAX_DEPTH),
+    };
     p.skip_ws();
     let v = p.value(0)?;
     p.skip_ws();
@@ -297,7 +314,10 @@ struct Parser<'a> {
 
 impl Parser<'_> {
     fn err(&self, kind: ErrorKind) -> Error {
-        Error { offset: self.pos, kind }
+        Error {
+            offset: self.pos,
+            kind,
+        }
     }
 
     fn skip_ws(&mut self) {
@@ -307,7 +327,10 @@ impl Parser<'_> {
     }
 
     fn peek(&self) -> Result<u8, Error> {
-        self.s.get(self.pos).copied().ok_or_else(|| self.err(ErrorKind::Eof))
+        self.s
+            .get(self.pos)
+            .copied()
+            .ok_or_else(|| self.err(ErrorKind::Eof))
     }
 
     fn literal(&mut self, word: &[u8], v: Value) -> Result<Value, Error> {
@@ -400,14 +423,20 @@ impl Parser<'_> {
         let mut order: Vec<usize> = (0..members.len()).collect();
         order.sort_by(|&a, &b| members[a].0.cmp(&members[b].0));
         if order.windows(2).any(|w| members[w[0]].0 == members[w[1]].0) {
-            return Err(Error { offset: start_of_members, kind: ErrorKind::DuplicateName });
+            return Err(Error {
+                offset: start_of_members,
+                kind: ErrorKind::DuplicateName,
+            });
         }
         Ok(Value::Object(Object { members }))
     }
 
     fn number(&mut self) -> Result<Value, Error> {
         let start = self.pos;
-        let bad = |p: &Parser| Error { offset: p.pos, kind: ErrorKind::Number };
+        let bad = |p: &Parser| Error {
+            offset: p.pos,
+            kind: ErrorKind::Number,
+        };
         if self.s[self.pos] == b'-' {
             self.pos += 1;
         }
@@ -448,10 +477,15 @@ impl Parser<'_> {
             }
         }
         // the number must end here: `1x`, `01`, `1.5.2` and the like are not numbers followed by something
-        if matches!(self.s.get(self.pos), Some(b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')) {
+        if matches!(
+            self.s.get(self.pos),
+            Some(b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-')
+        ) {
             return Err(bad(self));
         }
-        Ok(Value::Number(Number { text: self.text[start..self.pos].to_string() }))
+        Ok(Value::Number(Number {
+            text: self.text[start..self.pos].to_string(),
+        }))
     }
 
     fn hex4(&mut self) -> Result<u32, Error> {
@@ -507,7 +541,9 @@ impl Parser<'_> {
                             let ch = match hi {
                                 0xD800..=0xDBFF => {
                                     // must be followed by an escaped low surrogate
-                                    if self.s.get(self.pos) != Some(&b'\\') || self.s.get(self.pos + 1) != Some(&b'u') {
+                                    if self.s.get(self.pos) != Some(&b'\\')
+                                        || self.s.get(self.pos + 1) != Some(&b'u')
+                                    {
                                         return Err(self.err(ErrorKind::String));
                                     }
                                     self.pos += 2;
@@ -558,10 +594,17 @@ fn write_canonical(v: &Value, out: &mut Vec<u8>) -> Result<(), Error> {
         Value::Bool(true) => out.extend_from_slice(b"true"),
         Value::Bool(false) => out.extend_from_slice(b"false"),
         Value::Number(n) => match n.as_i64() {
-            Some(i) if (-SAFE_INT..=SAFE_INT).contains(&i) => out.extend_from_slice(i.to_string().as_bytes()),
+            Some(i) if (-SAFE_INT..=SAFE_INT).contains(&i) => {
+                out.extend_from_slice(i.to_string().as_bytes())
+            }
             // ECMAScript writes minus zero as `0`, so RFC 8785 does
             None if n.text == "-0" => out.push(b'0'),
-            _ => return Err(Error { offset: 0, kind: ErrorKind::NotCanonical }),
+            _ => {
+                return Err(Error {
+                    offset: 0,
+                    kind: ErrorKind::NotCanonical,
+                })
+            }
         },
         Value::String(s) => write_string(s, out),
         Value::Array(a) => {
@@ -603,7 +646,9 @@ fn write_string(s: &str, out: &mut Vec<u8>) {
             '\n' => out.extend_from_slice(b"\\n"),
             '\u{c}' => out.extend_from_slice(b"\\f"),
             '\r' => out.extend_from_slice(b"\\r"),
-            c if (c as u32) < 0x20 => out.extend_from_slice(format!("\\u{:04x}", c as u32).as_bytes()),
+            c if (c as u32) < 0x20 => {
+                out.extend_from_slice(format!("\\u{:04x}", c as u32).as_bytes())
+            }
             c => {
                 let mut buf = [0u8; 4];
                 out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
@@ -636,7 +681,10 @@ mod tests {
         assert_eq!(ok("{}"), Value::Object(Object::new()));
         assert_eq!(ok("[]"), Value::Array(vec![]));
         let v = ok(r#"{"a":{"b":[true,null,"x"]},"c":-12}"#);
-        assert_eq!(v.get("a").unwrap().get("b").unwrap().as_array().unwrap()[2].as_str(), Some("x"));
+        assert_eq!(
+            v.get("a").unwrap().get("b").unwrap().as_array().unwrap()[2].as_str(),
+            Some("x")
+        );
         assert_eq!(v.get("c").unwrap().as_int64(), Some(-12));
         assert_eq!(v.get("zz"), None);
         // members stay in the order written
@@ -648,11 +696,57 @@ mod tests {
     #[test]
     fn the_grammar_is_rfc_8259_and_nothing_else() {
         for s in [
-            "", " ", "nul", "nulL", "True", "TRUE", "NaN", "Infinity", "-Infinity", "undefined", "'a'", "[1,]", "[,1]", "[1 2]", "{\"a\":1,}", "{,}", "{\"a\"}", "{\"a\":}", "{a:1}",
-            "{'a':1}", "[1}", "{\"a\":1]", "[", "{", "]", "}", "\"", "\"abc", "// c\n1", "/* c */1", "1 // c", "[1]]", "1 2", "{} {}", "\u{a0}1", "\u{b}1", "\u{c}1", "1\u{0}",
+            "",
+            " ",
+            "nul",
+            "nulL",
+            "True",
+            "TRUE",
+            "NaN",
+            "Infinity",
+            "-Infinity",
+            "undefined",
+            "'a'",
+            "[1,]",
+            "[,1]",
+            "[1 2]",
+            "{\"a\":1,}",
+            "{,}",
+            "{\"a\"}",
+            "{\"a\":}",
+            "{a:1}",
+            "{'a':1}",
+            "[1}",
+            "{\"a\":1]",
+            "[",
+            "{",
+            "]",
+            "}",
+            "\"",
+            "\"abc",
+            "// c\n1",
+            "/* c */1",
+            "1 // c",
+            "[1]]",
+            "1 2",
+            "{} {}",
+            "\u{a0}1",
+            "\u{b}1",
+            "\u{c}1",
+            "1\u{0}",
         ] {
             let k = bad(s);
-            assert!(matches!(k, ErrorKind::Eof | ErrorKind::Syntax | ErrorKind::TrailingData | ErrorKind::Number | ErrorKind::String), "{s:?} {k:?}");
+            assert!(
+                matches!(
+                    k,
+                    ErrorKind::Eof
+                        | ErrorKind::Syntax
+                        | ErrorKind::TrailingData
+                        | ErrorKind::Number
+                        | ErrorKind::String
+                ),
+                "{s:?} {k:?}"
+            );
         }
         assert_eq!(bad("1 2"), ErrorKind::TrailingData);
         assert_eq!(bad("[1]]"), ErrorKind::TrailingData);
@@ -660,16 +754,37 @@ mod tests {
         assert_eq!(bad("tru"), ErrorKind::Eof);
         assert_eq!(bad("\u{feff}1"), ErrorKind::Utf8);
         // white space is these four and no others
-        assert_eq!(ok(" \t\n\r1\r\n\t "), Value::Number(Number { text: "1".into() }));
+        assert_eq!(
+            ok(" \t\n\r1\r\n\t "),
+            Value::Number(Number { text: "1".into() })
+        );
     }
 
     #[test]
     fn numbers_are_the_grammar_and_exact() {
-        for s in ["0", "-0", "1", "-1", "10", "123456789012345678901234567890", "0.5", "-0.5", "1e5", "1E+5", "1e-5", "0e0", "1.5E3", "0.0", "-0.0e-0"] {
+        for s in [
+            "0",
+            "-0",
+            "1",
+            "-1",
+            "10",
+            "123456789012345678901234567890",
+            "0.5",
+            "-0.5",
+            "1e5",
+            "1E+5",
+            "1e-5",
+            "0e0",
+            "1.5E3",
+            "0.0",
+            "-0.0e-0",
+        ] {
             ok(s);
         }
         for s in [
-            "01", "-01", "00", "+1", "1.", ".5", "-.5", "1.e5", "1e", "1e+", "1e-", "--1", "-", "0x10", "1_0", "1,0", "0b1", "٣", "1.5.2", "1e5e5", "0.5e", "Infinity", "-NaN", "1f", "1d", "1L", "- 1", "1 .5",
+            "01", "-01", "00", "+1", "1.", ".5", "-.5", "1.e5", "1e", "1e+", "1e-", "--1", "-",
+            "0x10", "1_0", "1,0", "0b1", "٣", "1.5.2", "1e5e5", "0.5e", "Infinity", "-NaN", "1f",
+            "1d", "1L", "- 1", "1 .5",
         ] {
             bad(s);
         }
@@ -682,7 +797,10 @@ mod tests {
         assert_eq!(n("9223372036854775807").as_i64(), Some(i64::MAX));
         assert_eq!(n("-9223372036854775808").as_i64(), Some(i64::MIN));
         assert_eq!(n("9223372036854775808").as_i64(), None);
-        assert_eq!(n("9223372036854775808").as_u64(), Some(9_223_372_036_854_775_808));
+        assert_eq!(
+            n("9223372036854775808").as_u64(),
+            Some(9_223_372_036_854_775_808)
+        );
         assert_eq!(n("18446744073709551615").as_u64(), Some(u64::MAX));
         assert_eq!(n("18446744073709551616").as_u64(), None);
         assert_eq!(n("-1").as_u64(), None);
@@ -699,17 +817,44 @@ mod tests {
 
     #[test]
     fn protobuf_json_writes_64_bit_integers_as_decimal_strings() {
-        let v = ok(r#"{"s":"3075544565","n":3075544565,"neg":"-5","big":"9223372036854775808","bigu":"18446744073709551615"}"#);
+        let v = ok(
+            r#"{"s":"3075544565","n":3075544565,"neg":"-5","big":"9223372036854775808","bigu":"18446744073709551615"}"#,
+        );
         assert_eq!(v.get("s").unwrap().as_int64(), Some(3_075_544_565));
         assert_eq!(v.get("n").unwrap().as_int64(), Some(3_075_544_565));
         assert_eq!(v.get("neg").unwrap().as_int64(), Some(-5));
         assert_eq!(v.get("big").unwrap().as_int64(), None);
-        assert_eq!(v.get("big").unwrap().as_uint64(), Some(9_223_372_036_854_775_808));
+        assert_eq!(
+            v.get("big").unwrap().as_uint64(),
+            Some(9_223_372_036_854_775_808)
+        );
         assert_eq!(v.get("bigu").unwrap().as_uint64(), Some(u64::MAX));
-        for s in ["", "+1", "01", "00", "-0", " 1", "1 ", "1.0", "1e3", "0x1", "١", "-", "--1", "-01", "1_000", "9223372036854775808", "-9223372036854775809", "NaN"] {
+        for s in [
+            "",
+            "+1",
+            "01",
+            "00",
+            "-0",
+            " 1",
+            "1 ",
+            "1.0",
+            "1e3",
+            "0x1",
+            "١",
+            "-",
+            "--1",
+            "-01",
+            "1_000",
+            "9223372036854775808",
+            "-9223372036854775809",
+            "NaN",
+        ] {
             assert_eq!(Value::string(s).as_int64(), None, "{s:?}");
         }
-        assert_eq!(Value::string("-9223372036854775808").as_int64(), Some(i64::MIN));
+        assert_eq!(
+            Value::string("-9223372036854775808").as_int64(),
+            Some(i64::MIN)
+        );
         assert_eq!(Value::string("0").as_int64(), Some(0));
         assert_eq!(Value::Null.as_int64(), None);
         assert_eq!(Value::Bool(true).as_uint64(), None);
@@ -717,23 +862,61 @@ mod tests {
 
     #[test]
     fn strings_escapes_and_surrogates() {
-        assert_eq!(ok(r#""a\"b\\c\/d\b\f\n\r\t""#).as_str(), Some("a\"b\\c/d\u{8}\u{c}\n\r\t"));
-        assert_eq!(ok(r#""\u0041\u00e9\u20AC""#).as_str(), Some("A\u{e9}\u{20ac}"));
+        assert_eq!(
+            ok(r#""a\"b\\c\/d\b\f\n\r\t""#).as_str(),
+            Some("a\"b\\c/d\u{8}\u{c}\n\r\t")
+        );
+        assert_eq!(
+            ok(r#""\u0041\u00e9\u20AC""#).as_str(),
+            Some("A\u{e9}\u{20ac}")
+        );
         assert_eq!(ok(r#""\ud83d\ude00""#).as_str(), Some("\u{1f600}"));
         assert_eq!(ok(r#""\uD83D\uDE00""#).as_str(), Some("\u{1f600}"));
-        assert_eq!(ok("\"\u{1f600} \u{e9} \u{20ac}\"").as_str(), Some("\u{1f600} \u{e9} \u{20ac}"));
+        assert_eq!(
+            ok("\"\u{1f600} \u{e9} \u{20ac}\"").as_str(),
+            Some("\u{1f600} \u{e9} \u{20ac}")
+        );
         assert_eq!(ok(r#""\u0000""#).as_str(), Some("\0"));
         assert_eq!(ok(r#""\uffff \ufffe""#).as_str(), Some("\u{ffff} \u{fffe}"));
         // lone and misordered surrogates are refused, however they are written
         for s in [
-            r#""\ud800""#, r#""\udbff""#, r#""\udc00""#, r#""\udfff""#, r#""\ud800a""#, r#""\ud800\u0041""#, r#""\ud800\ud800""#, r#""\udc00\ud800""#, r#""\ud800\\udc00""#, r#""\ud800 \udc00""#, r#""\ud800\n""#,
+            r#""\ud800""#,
+            r#""\udbff""#,
+            r#""\udc00""#,
+            r#""\udfff""#,
+            r#""\ud800a""#,
+            r#""\ud800\u0041""#,
+            r#""\ud800\ud800""#,
+            r#""\udc00\ud800""#,
+            r#""\ud800\\udc00""#,
+            r#""\ud800 \udc00""#,
+            r#""\ud800\n""#,
             r#""\udc00\udc00""#,
         ] {
             assert_eq!(bad(s), ErrorKind::String, "{s}");
         }
         // bad escapes, control characters, bad hex
-        for s in [r#""\x41""#, r#""\a""#, r#""\u12""#, r#""\u12G4""#, r#""\u""#, r#""\ ""#, r#""\'""#, r#""\U0041""#, "\"\\u+041\"", "\"a\u{1}b\"", "\"a\nb\"", "\"a\tb\"", "\"\u{0}\"", "\"\u{1f}\"", "\"\\"] {
-            assert!(matches!(bad(s), ErrorKind::String | ErrorKind::Eof), "{s:?}");
+        for s in [
+            r#""\x41""#,
+            r#""\a""#,
+            r#""\u12""#,
+            r#""\u12G4""#,
+            r#""\u""#,
+            r#""\ ""#,
+            r#""\'""#,
+            r#""\U0041""#,
+            "\"\\u+041\"",
+            "\"a\u{1}b\"",
+            "\"a\nb\"",
+            "\"a\tb\"",
+            "\"\u{0}\"",
+            "\"\u{1f}\"",
+            "\"\\",
+        ] {
+            assert!(
+                matches!(bad(s), ErrorKind::String | ErrorKind::Eof),
+                "{s:?}"
+            );
         }
         // DEL and other printable-ish characters are fine
         assert_eq!(ok("\"\u{7f}\"").as_str(), Some("\u{7f}"));
@@ -743,18 +926,18 @@ mod tests {
     fn the_input_must_be_utf_8() {
         for bytes in [
             &b"\"\xff\""[..],
-            b"\"\xc0\xaf\"",      // overlong '/'
-            b"\"\xc1\x81\"",      // overlong 'A'
-            b"\"\xe0\x80\xaf\"",  // overlong
-            b"\"\xed\xa0\x80\"",  // an encoded surrogate
-            b"\"\xed\xbf\xbf\"",  // an encoded surrogate
+            b"\"\xc0\xaf\"",         // overlong '/'
+            b"\"\xc1\x81\"",         // overlong 'A'
+            b"\"\xe0\x80\xaf\"",     // overlong
+            b"\"\xed\xa0\x80\"",     // an encoded surrogate
+            b"\"\xed\xbf\xbf\"",     // an encoded surrogate
             b"\"\xf4\x90\x80\x80\"", // beyond U+10FFFF
             b"\"\xf8\x88\x80\x80\x80\"",
             b"\"\x80\"",
             b"\"\xe2\x82\"",
             b"\"abc\xe2\"",
-            b"\xef\xbb\xbf1",     // a byte order mark
-            b"\xff\xfe1\x00",      // UTF-16
+            b"\xef\xbb\xbf1", // a byte order mark
+            b"\xff\xfe1\x00", // UTF-16
         ] {
             let e = parse(bytes).unwrap_err();
             assert_eq!(e.kind, ErrorKind::Utf8, "{bytes:?}");
@@ -766,8 +949,17 @@ mod tests {
     #[test]
     fn an_object_may_not_name_a_member_twice() {
         for s in [
-            r#"{"a":1,"a":2}"#, r#"{"a":1,"a":1}"#, r#"{"a":1,"b":2,"a":3}"#, r#"{"a":1,"\u0061":2}"#, r#"{"\u0061":1,"a":2}"#, r#"{"a":{"b":1,"b":2}}"#, r#"[{"a":1,"a":2}]"#,
-            r#"{"é":1,"\u00e9":2}"#, r#"{"\ud83d\ude00":1,"😀":2}"#, r#"{"":1,"":2}"#, r#"{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"a":10}"#,
+            r#"{"a":1,"a":2}"#,
+            r#"{"a":1,"a":1}"#,
+            r#"{"a":1,"b":2,"a":3}"#,
+            r#"{"a":1,"\u0061":2}"#,
+            r#"{"\u0061":1,"a":2}"#,
+            r#"{"a":{"b":1,"b":2}}"#,
+            r#"[{"a":1,"a":2}]"#,
+            r#"{"é":1,"\u00e9":2}"#,
+            r#"{"\ud83d\ude00":1,"😀":2}"#,
+            r#"{"":1,"":2}"#,
+            r#"{"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"a":10}"#,
         ] {
             assert_eq!(bad(s), ErrorKind::DuplicateName, "{s}");
         }
@@ -798,12 +990,23 @@ mod tests {
         assert_eq!(bad(&s), ErrorKind::Depth);
         // a caller can ask for more or less, up to a hard limit
         assert!(parse_with_depth(nest(64).as_bytes(), 64).is_ok());
-        assert_eq!(parse_with_depth(nest(5).as_bytes(), 4).unwrap_err().kind, ErrorKind::Depth);
+        assert_eq!(
+            parse_with_depth(nest(5).as_bytes(), 4).unwrap_err().kind,
+            ErrorKind::Depth
+        );
         assert!(parse_with_depth(nest(256).as_bytes(), 100_000).is_ok());
-        assert_eq!(parse_with_depth(nest(257).as_bytes(), 100_000).unwrap_err().kind, ErrorKind::Depth);
+        assert_eq!(
+            parse_with_depth(nest(257).as_bytes(), 100_000)
+                .unwrap_err()
+                .kind,
+            ErrorKind::Depth
+        );
         // a million levels do not overflow the stack
         assert_eq!(bad(&"[".repeat(1_000_000)), ErrorKind::Depth);
-        assert_eq!(bad(&format!("{}1", "{\"a\":".repeat(1_000_000))), ErrorKind::Depth);
+        assert_eq!(
+            bad(&format!("{}1", "{\"a\":".repeat(1_000_000))),
+            ErrorKind::Depth
+        );
     }
 
     #[test]
@@ -820,18 +1023,44 @@ mod tests {
     fn canonical_form_is_rfc_8785() {
         let c = |s: &str| String::from_utf8(canonical(&ok(s)).unwrap()).unwrap();
         // the example of RFC 8785 section 3.2.3 (sorting), with numbers that are integers
-        assert_eq!(c(r#"{ "b" : [ 1 , 2 ] , "a" : "x" , "" : null }"#), r#"{"":null,"a":"x","b":[1,2]}"#);
+        assert_eq!(
+            c(r#"{ "b" : [ 1 , 2 ] , "a" : "x" , "" : null }"#),
+            r#"{"":null,"a":"x","b":[1,2]}"#
+        );
         // sorted by UTF-16 code units, not by code points or UTF-8 bytes: U+20AC (€) before U+1F600 (a surrogate pair d83d)
-        assert_eq!(c("{\"\u{1f600}\":1,\"\u{20ac}\":2,\"\u{ffff}\":3,\"a\":4}"), "{\"a\":4,\"\u{20ac}\":2,\"\u{1f600}\":1,\"\u{ffff}\":3}");
+        assert_eq!(
+            c("{\"\u{1f600}\":1,\"\u{20ac}\":2,\"\u{ffff}\":3,\"a\":4}"),
+            "{\"a\":4,\"\u{20ac}\":2,\"\u{1f600}\":1,\"\u{ffff}\":3}"
+        );
         // escapes
-        assert_eq!(c(r#""\u0041\/\u00e9\u0001\u001f\u007f\"\\\b\f\n\r\t""#), "\"A/\u{e9}\\u0001\\u001f\u{7f}\\\"\\\\\\b\\f\\n\\r\\t\"");
+        assert_eq!(
+            c(r#""\u0041\/\u00e9\u0001\u001f\u007f\"\\\b\f\n\r\t""#),
+            "\"A/\u{e9}\\u0001\\u001f\u{7f}\\\"\\\\\\b\\f\\n\\r\\t\""
+        );
         assert_eq!(c("\"\u{2028}\u{2029}\""), "\"\u{2028}\u{2029}\""); // written as they are
-        assert_eq!(c("[true,false,null,0,-1,9007199254740991,-9007199254740991]"), "[true,false,null,0,-1,9007199254740991,-9007199254740991]");
-        assert_eq!(c("{\"a\":{\"c\":1,\"b\":2},\"0\":[ ]}"), "{\"0\":[],\"a\":{\"b\":2,\"c\":1}}");
+        assert_eq!(
+            c("[true,false,null,0,-1,9007199254740991,-9007199254740991]"),
+            "[true,false,null,0,-1,9007199254740991,-9007199254740991]"
+        );
+        assert_eq!(
+            c("{\"a\":{\"c\":1,\"b\":2},\"0\":[ ]}"),
+            "{\"0\":[],\"a\":{\"b\":2,\"c\":1}}"
+        );
         // numbers outside what is written exactly are refused
         assert_eq!(c("-0"), "0");
-        for s in ["1.5", "1e3", "1.0", "9007199254740992", "-9007199254740992", "18446744073709551615"] {
-            assert_eq!(canonical(&ok(s)).unwrap_err().kind, ErrorKind::NotCanonical, "{s}");
+        for s in [
+            "1.5",
+            "1e3",
+            "1.0",
+            "9007199254740992",
+            "-9007199254740992",
+            "18446744073709551615",
+        ] {
+            assert_eq!(
+                canonical(&ok(s)).unwrap_err().kind,
+                ErrorKind::NotCanonical,
+                "{s}"
+            );
         }
         // writing and reading again gives the same bytes
         let v = ok(r#"{"z":[1,{"y":"\u00e9\ud83d\ude00","x":null}],"a":"\n"}"#);
@@ -845,7 +1074,10 @@ mod tests {
         let mut o = Object::new();
         o.insert("logIndex", Value::int(8_668_626));
         o.insert("integratedTime", Value::int(1_670_516_322));
-        o.insert("logID", Value::string("c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d"));
+        o.insert(
+            "logID",
+            Value::string("c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d"),
+        );
         o.insert("body", Value::string("eyJhcGk="));
         assert_eq!(
             String::from_utf8(canonical(&Value::Object(o)).unwrap()).unwrap(),
@@ -854,7 +1086,9 @@ mod tests {
     }
 
     fn unhex(s: &str) -> Vec<u8> {
-        (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+        (0..s.len() / 2)
+            .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap())
+            .collect()
     }
 
     /// 2,762 texts (tests/data/json_vectors.txt, made by tools/gen_json_vectors.py): valid and damaged ones, with
@@ -863,30 +1097,54 @@ mod tests {
     #[test]
     fn agrees_with_python_and_rfc8785() {
         let (mut accepted, mut refused, mut canon) = (0, 0, 0);
-        for line in include_str!("../tests/data/json_vectors.txt").lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+        for line in include_str!("../tests/data/json_vectors.txt")
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
             let f: Vec<&str> = line.split(' ').collect();
             assert_eq!(f[0], "case");
             let text = unhex(f[1]);
             let mine = parse(&text);
             match f[2] {
                 "bad" => {
-                    assert!(mine.is_err(), "Python refuses {:?}, this reader accepts", String::from_utf8_lossy(&text));
+                    assert!(
+                        mine.is_err(),
+                        "Python refuses {:?}, this reader accepts",
+                        String::from_utf8_lossy(&text)
+                    );
                     refused += 1;
                 }
                 _ => {
-                    let v = mine.unwrap_or_else(|e| panic!("Python accepts {:?}, this reader refuses: {e}", String::from_utf8_lossy(&text)));
+                    let v = mine.unwrap_or_else(|e| {
+                        panic!(
+                            "Python accepts {:?}, this reader refuses: {e}",
+                            String::from_utf8_lossy(&text)
+                        )
+                    });
                     accepted += 1;
                     match f[3] {
-                        "-" => assert!(canonical(&v).is_err(), "{:?}", String::from_utf8_lossy(&text)),
+                        "-" => assert!(
+                            canonical(&v).is_err(),
+                            "{:?}",
+                            String::from_utf8_lossy(&text)
+                        ),
                         want => {
-                            assert_eq!(hex(&canonical(&v).unwrap()), want, "{:?}", String::from_utf8_lossy(&text));
+                            assert_eq!(
+                                hex(&canonical(&v).unwrap()),
+                                want,
+                                "{:?}",
+                                String::from_utf8_lossy(&text)
+                            );
                             canon += 1;
                         }
                     }
                 }
             }
         }
-        assert!(accepted > 600 && refused > 1500 && canon > 400, "{accepted} {refused} {canon}");
+        assert!(
+            accepted > 600 && refused > 1500 && canon > 400,
+            "{accepted} {refused} {canon}"
+        );
     }
 
     fn hex(b: &[u8]) -> String {
@@ -897,7 +1155,10 @@ mod tests {
     struct Rng(u64);
     impl Rng {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0 >> 33
         }
         fn below(&mut self, n: u64) -> u64 {
@@ -906,14 +1167,31 @@ mod tests {
     }
 
     fn gen(rng: &mut Rng, depth: u32, out: &mut String) {
-        match if depth > 3 { rng.below(5) } else { rng.below(7) } {
+        match if depth > 3 {
+            rng.below(5)
+        } else {
+            rng.below(7)
+        } {
             0 => out.push_str("null"),
             1 => out.push_str(if rng.below(2) == 0 { "true" } else { "false" }),
             2 => out.push_str(&format!("{}", rng.next() as i64 - (1 << 30))),
             3 => {
                 out.push('"');
                 for _ in 0..rng.below(8) {
-                    out.push_str(["a", "b", "\\n", "\\u00e9", "\\ud83d\\ude00", "é", "😀", "\\\"", " ", "\\/"][rng.below(10) as usize]);
+                    out.push_str(
+                        [
+                            "a",
+                            "b",
+                            "\\n",
+                            "\\u00e9",
+                            "\\ud83d\\ude00",
+                            "é",
+                            "😀",
+                            "\\\"",
+                            " ",
+                            "\\/",
+                        ][rng.below(10) as usize],
+                    );
                 }
                 out.push('"');
             }

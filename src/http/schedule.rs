@@ -110,7 +110,15 @@ impl Scheduler {
     }
 
     fn with(max_in_flight: usize, max_per_host: usize, byte_budget: u64) -> Scheduler {
-        Scheduler { inner: Arc::new(Inner { max_in_flight, max_per_host, byte_budget, state: Mutex::new(State::default()), changed: Condvar::new() }) }
+        Scheduler {
+            inner: Arc::new(Inner {
+                max_in_flight,
+                max_per_host,
+                byte_budget,
+                state: Mutex::new(State::default()),
+                changed: Condvar::new(),
+            }),
+        }
     }
 
     /// At most `n` requests in flight in all (0: no limit).
@@ -150,17 +158,37 @@ impl Scheduler {
 
     /// Lets a new request to `host` go, waiting for its turn until `until` at most (forever with `None`), or until
     /// `running` is cancelled.
-    pub(crate) fn admit(&self, host: &str, cost: u64, until: Option<Instant>, running: Option<&Running>) -> Result<Ticket> {
+    pub(crate) fn admit(
+        &self,
+        host: &str,
+        cost: u64,
+        until: Option<Instant>,
+        running: Option<&Running>,
+    ) -> Result<Ticket> {
         let id = self.inner.enqueue(host, true, cost, false);
         self.inner.wait_for(id, until, running)?;
-        Ok(Ticket { sched: self.inner.clone(), host: Some(host.to_string()), bytes: cost })
+        Ok(Ticket {
+            sched: self.inner.clone(),
+            host: Some(host.to_string()),
+            bytes: cost,
+        })
     }
 
     /// The same for a task.
-    pub(crate) async fn admit_async(&self, host: &str, cost: u64, until: Option<Instant>, running: Option<&Running>) -> Result<Ticket> {
+    pub(crate) async fn admit_async(
+        &self,
+        host: &str,
+        cost: u64,
+        until: Option<Instant>,
+        running: Option<&Running>,
+    ) -> Result<Ticket> {
         let id = self.inner.enqueue(host, true, cost, false);
         self.inner.wait_for_async(id, until, running).await?;
-        Ok(Ticket { sched: self.inner.clone(), host: Some(host.to_string()), bytes: cost })
+        Ok(Ticket {
+            sched: self.inner.clone(),
+            host: Some(host.to_string()),
+            bytes: cost,
+        })
     }
 }
 
@@ -172,8 +200,12 @@ impl Inner {
 
     fn fits(&self, s: &State, w: &Waiter) -> bool {
         let global = !w.global || self.max_in_flight == 0 || s.in_flight < self.max_in_flight;
-        let host = self.max_per_host == 0 || s.hosts.get(&w.host).copied().unwrap_or(0) < self.max_per_host;
-        let bytes = !w.global || self.byte_budget == 0 || s.bytes == 0 || s.bytes.saturating_add(w.cost) <= self.byte_budget;
+        let host = self.max_per_host == 0
+            || s.hosts.get(&w.host).copied().unwrap_or(0) < self.max_per_host;
+        let bytes = !w.global
+            || self.byte_budget == 0
+            || s.bytes == 0
+            || s.bytes.saturating_add(w.cost) <= self.byte_budget;
         global && host && bytes
     }
 
@@ -184,7 +216,9 @@ impl Inner {
         loop {
             let mut granted = None;
             for (i, host) in s.turns.iter().enumerate() {
-                let Some(&id) = s.queues.get(host).and_then(|q| q.front()) else { continue };
+                let Some(&id) = s.queues.get(host).and_then(|q| q.front()) else {
+                    continue;
+                };
                 if self.fits(s, &s.waiters[&id]) {
                     granted = Some((i, id));
                     break;
@@ -226,7 +260,16 @@ impl Inner {
         let mut s = self.lock();
         let id = s.next_id;
         s.next_id += 1;
-        s.waiters.insert(id, Waiter { host: host.to_string(), global, cost, granted: false, waker: None });
+        s.waiters.insert(
+            id,
+            Waiter {
+                host: host.to_string(),
+                global,
+                cost,
+                granted: false,
+                waker: None,
+            },
+        );
         let queue = s.queues.entry(host.to_string()).or_default();
         if first {
             queue.push_front(id);
@@ -252,7 +295,9 @@ impl Inner {
     /// Takes `id` out of the queue (it gave up); a grant that came in the meantime is given back.
     fn abandon(&self, id: u64) {
         let mut s = self.lock();
-        let Some(w) = s.waiters.remove(&id) else { return };
+        let Some(w) = s.waiters.remove(&id) else {
+            return;
+        };
         if w.granted {
             Inner::release(&mut s, &w.host, w.global, w.cost);
         } else if let Some(q) = s.queues.get_mut(&w.host) {
@@ -278,7 +323,12 @@ impl Inner {
         }
     }
 
-    fn wait_for(self: &Arc<Self>, id: u64, until: Option<Instant>, running: Option<&Running>) -> Result<()> {
+    fn wait_for(
+        self: &Arc<Self>,
+        id: u64,
+        until: Option<Instant>,
+        running: Option<&Running>,
+    ) -> Result<()> {
         // a cancel wakes this thread through the condition variable
         let _waiting = running.map(|r| Waiting::new(r, self));
         let mut s = self.lock();
@@ -300,13 +350,21 @@ impl Inner {
                         self.abandon(id);
                         return Err(waited_too_long());
                     }
-                    self.changed.wait_timeout(s, left).unwrap_or_else(|e| e.into_inner()).0
+                    self.changed
+                        .wait_timeout(s, left)
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0
                 }
             };
         }
     }
 
-    async fn wait_for_async(&self, id: u64, until: Option<Instant>, running: Option<&Running>) -> Result<()> {
+    async fn wait_for_async(
+        &self,
+        id: u64,
+        until: Option<Instant>,
+        running: Option<&Running>,
+    ) -> Result<()> {
         // gives the place back if the task gives up (its future is dropped) before it is let go
         struct Leave<'a> {
             inner: &'a Inner,
@@ -320,7 +378,11 @@ impl Inner {
                 }
             }
         }
-        let mut leave = Leave { inner: self, id, done: false };
+        let mut leave = Leave {
+            inner: self,
+            id,
+            done: false,
+        };
         let mut sleep = until.map(crate::asyncio::sleep_until);
         std::future::poll_fn(|cx| {
             if running.is_some_and(Running::is_cancelled) {
@@ -366,7 +428,12 @@ pub(crate) struct Ticket {
 impl Ticket {
     /// Moves to `host` (a redirect): gives the place at the old host back and waits for one at the new, ahead of the
     /// requests that have not started.
-    pub(crate) fn move_to(&mut self, host: &str, until: Option<Instant>, running: Option<&Running>) -> Result<()> {
+    pub(crate) fn move_to(
+        &mut self,
+        host: &str,
+        until: Option<Instant>,
+        running: Option<&Running>,
+    ) -> Result<()> {
         if self.host.as_deref() == Some(host) {
             return Ok(());
         }
@@ -378,7 +445,12 @@ impl Ticket {
     }
 
     /// The same for a task.
-    pub(crate) async fn move_to_async(&mut self, host: &str, until: Option<Instant>, running: Option<&Running>) -> Result<()> {
+    pub(crate) async fn move_to_async(
+        &mut self,
+        host: &str,
+        until: Option<Instant>,
+        running: Option<&Running>,
+    ) -> Result<()> {
         if self.host.as_deref() == Some(host) {
             return Ok(());
         }
@@ -463,7 +535,10 @@ struct BatchInner {
 
 impl fmt::Debug for Batch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Batch").field("deadline", &self.inner.deadline).field("cancelled", &self.is_cancelled()).finish()
+        f.debug_struct("Batch")
+            .field("deadline", &self.inner.deadline)
+            .field("cancelled", &self.is_cancelled())
+            .finish()
     }
 }
 
@@ -490,7 +565,13 @@ impl Batch {
     }
 
     fn make(deadline: Option<Instant>) -> Batch {
-        Batch { inner: Arc::new(BatchInner { deadline, cancelled: AtomicBool::new(false), members: Mutex::new((0, HashMap::new())) }) }
+        Batch {
+            inner: Arc::new(BatchInner {
+                deadline,
+                cancelled: AtomicBool::new(false),
+                members: Mutex::new((0, HashMap::new())),
+            }),
+        }
     }
 
     pub fn deadline(&self) -> Option<Instant> {
@@ -500,7 +581,15 @@ impl Batch {
     /// Fails the requests of the batch that wait, stops those under way, and fails any made from now on.
     pub fn cancel(&self) {
         self.inner.cancelled.store(true, Ordering::SeqCst);
-        let members: Vec<Running> = self.inner.members.lock().unwrap_or_else(|e| e.into_inner()).1.values().cloned().collect();
+        let members: Vec<Running> = self
+            .inner
+            .members
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .1
+            .values()
+            .cloned()
+            .collect();
         for m in members {
             m.cancel();
         }
@@ -523,7 +612,11 @@ impl Batch {
         if self.is_cancelled() {
             running.cancel();
         }
-        Membership { batch: self.clone(), id, running }
+        Membership {
+            batch: self.clone(),
+            id,
+            running,
+        }
     }
 }
 
@@ -542,7 +635,13 @@ impl Membership {
 
 impl Drop for Membership {
     fn drop(&mut self) {
-        self.batch.inner.members.lock().unwrap_or_else(|e| e.into_inner()).1.remove(&self.id);
+        self.batch
+            .inner
+            .members
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .1
+            .remove(&self.id);
     }
 }
 
@@ -576,7 +675,12 @@ struct RunningNow {
 
 impl Running {
     pub(crate) fn new() -> Running {
-        Running { inner: Arc::new(RunningInner { cancelled: AtomicBool::new(false), now: Mutex::new(RunningNow::default()) }) }
+        Running {
+            inner: Arc::new(RunningInner {
+                cancelled: AtomicBool::new(false),
+                now: Mutex::new(RunningNow::default()),
+            }),
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, RunningNow> {
@@ -662,13 +766,23 @@ mod tests {
     /// The ids let go so far among `ids`.
     fn granted(s: &Scheduler, ids: &[u64]) -> Vec<u64> {
         let st = s.lock();
-        ids.iter().copied().filter(|id| st.waiters.get(id).is_some_and(|w| w.granted)).collect()
+        ids.iter()
+            .copied()
+            .filter(|id| st.waiters.get(id).is_some_and(|w| w.granted))
+            .collect()
     }
 
     /// A ticket for a waiter that has been let go.
     fn ticket(s: &Scheduler, id: u64, host: &str, cost: u64) -> Ticket {
-        assert!(Inner::take_grant(&mut s.lock(), id).is_some(), "{id} was let go");
-        Ticket { sched: s.inner.clone(), host: Some(host.to_string()), bytes: cost }
+        assert!(
+            Inner::take_grant(&mut s.lock(), id).is_some(),
+            "{id} was let go"
+        );
+        Ticket {
+            sched: s.inner.clone(),
+            host: Some(host.to_string()),
+            bytes: cost,
+        }
     }
 
     #[test]
@@ -678,7 +792,14 @@ mod tests {
         let _b = s.admit("b:443", 0, None, None).unwrap();
         assert_eq!(s.in_flight(), 2);
         let s2 = s.clone();
-        let waiter = thread::spawn(move || s2.admit("c:443", 0, Some(Instant::now() + Duration::from_secs(5)), None));
+        let waiter = thread::spawn(move || {
+            s2.admit(
+                "c:443",
+                0,
+                Some(Instant::now() + Duration::from_secs(5)),
+                None,
+            )
+        });
         while s.waiting() == 0 {
             thread::sleep(Duration::from_millis(2));
         }
@@ -686,7 +807,10 @@ mod tests {
         let _c = waiter.join().unwrap().unwrap();
         // and one that waits too long gives up, and its place is not kept
         let t = Instant::now();
-        let e = s.admit("d:443", 0, Some(t + Duration::from_millis(50)), None).err().unwrap();
+        let e = s
+            .admit("d:443", 0, Some(t + Duration::from_millis(50)), None)
+            .err()
+            .unwrap();
         assert!(e.to_string().contains("total time limit"), "{e}");
         assert!(t.elapsed() >= Duration::from_millis(50));
         assert_eq!((s.waiting(), s.in_flight()), (0, 2));
@@ -696,7 +820,10 @@ mod tests {
     fn hosts_take_turns_and_requests_keep_their_order_within_a_host() {
         let s = Scheduler::new().max_in_flight(1);
         let first = s.admit("a:443", 0, None, None).unwrap();
-        let ids: Vec<u64> = ["a:443", "a:443", "a:443", "b:443", "c:443"].iter().map(|h| s.inner.enqueue(h, true, 0, false)).collect();
+        let ids: Vec<u64> = ["a:443", "a:443", "a:443", "b:443", "c:443"]
+            .iter()
+            .map(|h| s.inner.enqueue(h, true, 0, false))
+            .collect();
         assert!(granted(&s, &ids).is_empty());
         // one at a time: a, b, c, then a's next two (a's turn came first, the others' after)
         let mut order = Vec::new();
@@ -741,7 +868,10 @@ mod tests {
         big.received(25);
         assert_eq!(s.bytes_in_flight(), 105);
         let late = s.inner.enqueue("c:443", true, 1, false);
-        assert!(granted(&s, &[late]).is_empty(), "over the budget: nothing new starts");
+        assert!(
+            granted(&s, &[late]).is_empty(),
+            "over the budget: nothing new starts"
+        );
         let t50 = ticket(&s, fifty, "a:443", 50);
         let t30 = ticket(&s, thirty, "b:443", 30);
         drop(t50);
@@ -764,7 +894,8 @@ mod tests {
         let b_new = s.inner.enqueue("b:443", true, 0, false);
         let s2 = s.clone();
         let mover = thread::spawn(move || {
-            t.move_to("b:443", Some(Instant::now() + Duration::from_secs(5)), None).unwrap();
+            t.move_to("b:443", Some(Instant::now() + Duration::from_secs(5)), None)
+                .unwrap();
             t
         });
         while s.waiting() < 2 {
@@ -775,7 +906,11 @@ mod tests {
         drop(b1);
         let t = mover.join().unwrap();
         assert!(granted(&s2, &[b_new]).is_empty(), "the redirect went first");
-        assert_eq!(s.in_flight(), 1 + 0, "the redirect kept its place among all; the new one waits");
+        assert_eq!(
+            s.in_flight(),
+            1 + 0,
+            "the redirect kept its place among all; the new one waits"
+        );
         drop(t);
         assert_eq!(granted(&s, &[b_new]), [b_new]);
     }
@@ -788,16 +923,26 @@ mod tests {
         let m = batch.join();
         let s2 = s.clone();
         let running = m.running.clone();
-        let waiter = thread::spawn(move || s2.admit("a:443", 0, None, Some(&running)).err().map(|e| e.to_string()));
+        let waiter = thread::spawn(move || {
+            s2.admit("a:443", 0, None, Some(&running))
+                .err()
+                .map(|e| e.to_string())
+        });
         while s.waiting() == 0 {
             thread::sleep(Duration::from_millis(2));
         }
         let t = Instant::now();
         batch.cancel();
-        assert_eq!(waiter.join().unwrap().as_deref(), Some("cancelled: the request's batch was cancelled"));
+        assert_eq!(
+            waiter.join().unwrap().as_deref(),
+            Some("cancelled: the request's batch was cancelled")
+        );
         assert!(t.elapsed() < Duration::from_secs(1));
         assert_eq!(s.waiting(), 0, "its place in the queue is gone");
-        assert!(batch.join().running.check().is_err(), "a request made after the cancel fails");
+        assert!(
+            batch.join().running.check().is_err(),
+            "a request made after the cancel fails"
+        );
         // an interrupt set after the cancel is used at once
         let (a, b) = {
             let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -807,7 +952,11 @@ mod tests {
         m.running.set(Interrupt::Socket(a.try_clone().unwrap()));
         let mut buf = [0u8; 1];
         use std::io::Read;
-        assert_eq!((&a).read(&mut buf).unwrap_or(0), 0, "the socket was shut down");
+        assert_eq!(
+            (&a).read(&mut buf).unwrap_or(0),
+            0,
+            "the socket was shut down"
+        );
         drop(b);
     }
 
@@ -816,7 +965,9 @@ mod tests {
         let s = Scheduler::new().max_in_flight(1);
         let held = s.admit("a:443", 0, None, None).unwrap();
         let s2 = s.clone();
-        let task = thread::spawn(move || crate::asyncio::block_on(s2.admit_async("b:443", 0, None, None)).map(|_| ()));
+        let task = thread::spawn(move || {
+            crate::asyncio::block_on(s2.admit_async("b:443", 0, None, None)).map(|_| ())
+        });
         while s.waiting() == 0 {
             thread::sleep(Duration::from_millis(2));
         }
@@ -840,7 +991,11 @@ mod tests {
         let batch = Batch::new();
         let m = batch.join();
         let (s2, r) = (s.clone(), m.running.clone());
-        let task = thread::spawn(move || crate::asyncio::block_on(s2.admit_async("b:443", 0, None, Some(&r))).err().map(|e| e.to_string()));
+        let task = thread::spawn(move || {
+            crate::asyncio::block_on(s2.admit_async("b:443", 0, None, Some(&r)))
+                .err()
+                .map(|e| e.to_string())
+        });
         while s.waiting() == 0 {
             thread::sleep(Duration::from_millis(2));
         }

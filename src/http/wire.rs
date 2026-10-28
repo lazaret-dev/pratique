@@ -19,7 +19,10 @@ pub struct Limits {
 
 impl Default for Limits {
     fn default() -> Self {
-        Limits { max_header_bytes: 64 * 1024, max_body_bytes: 64 * 1024 * 1024 }
+        Limits {
+            max_header_bytes: 64 * 1024,
+            max_body_bytes: 64 * 1024 * 1024,
+        }
     }
 }
 
@@ -63,7 +66,12 @@ pub fn write_request_head(method: &str, target: &str, headers: &[(String, String
 
 /// Serializes a request head + body into one buffer (for small bodies).
 #[cfg(test)]
-pub fn write_request(method: &str, target: &str, headers: &[(String, String)], body: &[u8]) -> Vec<u8> {
+pub fn write_request(
+    method: &str,
+    target: &str,
+    headers: &[(String, String)],
+    body: &[u8],
+) -> Vec<u8> {
     let mut out = write_request_head(method, target, headers);
     out.reserve(body.len());
     out.extend_from_slice(body);
@@ -76,7 +84,11 @@ const READ_CHUNK: usize = 32 * 1024;
 
 /// Reads one complete response (skipping 1xx interim responses) from a blocking reader.
 #[cfg(test)]
-pub fn read_response<R: Read>(reader: &mut R, request_method: &str, limits: Limits) -> Result<RawResponse> {
+pub fn read_response<R: Read>(
+    reader: &mut R,
+    request_method: &str,
+    limits: Limits,
+) -> Result<RawResponse> {
     let mut parser = Buffered::new(request_method, limits);
     let mut scratch = vec![0u8; READ_CHUNK];
     while !parser.is_done() {
@@ -103,7 +115,11 @@ mod tests {
 
     #[test]
     fn content_length_body() {
-        let r = parse(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-A:  v \r\n\r\nhelloEXTRA", "GET").unwrap();
+        let r = parse(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nX-A:  v \r\n\r\nhelloEXTRA",
+            "GET",
+        )
+        .unwrap();
         assert_eq!((r.status, r.reason.as_str()), (200, "OK"));
         assert_eq!(r.body, b"hello");
         assert_eq!(r.headers[1], ("X-A".to_string(), "v".to_string()));
@@ -123,20 +139,43 @@ mod tests {
 
     #[test]
     fn no_body_cases() {
-        assert!(parse(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n", "HEAD").unwrap().body.is_empty());
-        assert!(parse(b"HTTP/1.1 204 No Content\r\n\r\n", "GET").unwrap().body.is_empty());
-        assert!(parse(b"HTTP/1.1 304 Not Modified\r\nContent-Length: 4\r\n\r\n", "GET").unwrap().body.is_empty());
+        assert!(
+            parse(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n", "HEAD")
+                .unwrap()
+                .body
+                .is_empty()
+        );
+        assert!(parse(b"HTTP/1.1 204 No Content\r\n\r\n", "GET")
+            .unwrap()
+            .body
+            .is_empty());
+        assert!(parse(
+            b"HTTP/1.1 304 Not Modified\r\nContent-Length: 4\r\n\r\n",
+            "GET"
+        )
+        .unwrap()
+        .body
+        .is_empty());
     }
 
     #[test]
     fn skips_interim_100_continue() {
-        let r = parse(b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\nok", "POST").unwrap();
+        let r = parse(
+            b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201 Created\r\nContent-Length: 2\r\n\r\nok",
+            "POST",
+        )
+        .unwrap();
         assert_eq!((r.status, r.body.as_slice()), (201, &b"ok"[..]));
     }
 
     #[test]
     fn tolerates_bare_lf() {
-        assert_eq!(parse(b"HTTP/1.1 200 OK\nContent-Length: 2\n\nhi", "GET").unwrap().body, b"hi");
+        assert_eq!(
+            parse(b"HTTP/1.1 200 OK\nContent-Length: 2\n\nhi", "GET")
+                .unwrap()
+                .body,
+            b"hi"
+        );
     }
 
     #[test]
@@ -155,18 +194,26 @@ mod tests {
             b"HTTP/1.1 101 Switching Protocols\r\n\r\n",
         ];
         for raw in bad {
-            assert!(parse(raw, "GET").is_err(), "should reject {:?}", String::from_utf8_lossy(raw));
+            assert!(
+                parse(raw, "GET").is_err(),
+                "should reject {:?}",
+                String::from_utf8_lossy(raw)
+            );
         }
     }
 
     #[test]
     fn enforces_limits() {
-        let tiny = Limits { max_header_bytes: 64, max_body_bytes: 8 };
+        let tiny = Limits {
+            max_header_bytes: 64,
+            max_body_bytes: 8,
+        };
         let big_header = format!("HTTP/1.1 200 OK\r\nX: {}\r\n\r\n", "a".repeat(200));
         assert!(read_response(&mut Cursor::new(big_header.into_bytes()), "GET", tiny).is_err());
         let r = b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n123456789".to_vec();
         assert!(read_response(&mut Cursor::new(r), "GET", tiny).is_err());
-        let r = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n9\r\n123456789\r\n0\r\n\r\n".to_vec();
+        let r = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n9\r\n123456789\r\n0\r\n\r\n"
+            .to_vec();
         assert!(read_response(&mut Cursor::new(r), "GET", tiny).is_err());
         let r = b"HTTP/1.1 200 OK\r\n\r\n123456789".to_vec();
         assert!(read_response(&mut Cursor::new(r), "GET", tiny).is_err());
@@ -195,7 +242,8 @@ mod tests {
     #[test]
     fn bodies_survive_any_read_pattern() {
         let body = big_body(100_000);
-        let mut cl = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
+        let mut cl =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len()).into_bytes();
         cl.extend_from_slice(&body);
         let mut chunked = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n".to_vec();
         for piece in body.chunks(7777) {
@@ -209,7 +257,11 @@ mod tests {
 
         for step in [1usize, 2, 3, 100, 4096, 16 * 1024, 16 * 1024 + 1, 1 << 20] {
             for raw in [&cl, &chunked, &until_close] {
-                let mut r = Trickle { data: raw.clone(), pos: 0, step };
+                let mut r = Trickle {
+                    data: raw.clone(),
+                    pos: 0,
+                    step,
+                };
                 let resp = read_response(&mut r, "GET", Limits::default()).unwrap();
                 assert!(resp.body == body, "step {step}");
             }
@@ -221,12 +273,24 @@ mod tests {
         // Bytes after the body belong to the next message and must not be consumed from the reader
         // beyond what the buffer already holds; here everything arrives in one read, so just check
         // the body is cut at the right place.
-        let r = parse(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcNEXT", "GET").unwrap();
+        let r = parse(
+            b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcNEXT",
+            "GET",
+        )
+        .unwrap();
         assert_eq!(r.body, b"abc");
-        let mut t = Trickle { data: b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcNEXT".to_vec(), pos: 0, step: 1 };
+        let mut t = Trickle {
+            data: b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabcNEXT".to_vec(),
+            pos: 0,
+            step: 1,
+        };
         let r = read_response(&mut t, "GET", Limits::default()).unwrap();
         assert_eq!(r.body, b"abc");
-        assert_eq!(&t.data[t.pos..], b"NEXT", "reader must not be drained past the body");
+        assert_eq!(
+            &t.data[t.pos..],
+            b"NEXT",
+            "reader must not be drained past the body"
+        );
     }
 
     #[test]
@@ -234,13 +298,20 @@ mod tests {
         let value = "v".repeat(40_000);
         let raw = format!("HTTP/1.1 200 OK\r\nX-Long: {value}\r\nContent-Length: 2\r\n\r\nok");
         for step in [1usize << 20, 5000, 1] {
-            let mut r = Trickle { data: raw.clone().into_bytes(), pos: 0, step };
+            let mut r = Trickle {
+                data: raw.clone().into_bytes(),
+                pos: 0,
+                step,
+            };
             let resp = read_response(&mut r, "GET", Limits::default()).unwrap();
             assert_eq!(resp.headers[0].1.len(), 40_000);
             assert_eq!(resp.body, b"ok");
         }
         // ... but the limit still applies.
-        let limits = Limits { max_header_bytes: 30_000, max_body_bytes: 100 };
+        let limits = Limits {
+            max_header_bytes: 30_000,
+            max_body_bytes: 100,
+        };
         assert!(read_response(&mut Cursor::new(raw.into_bytes()), "GET", limits).is_err());
     }
 
@@ -249,12 +320,29 @@ mod tests {
         let body = big_body(5000);
         let mut raw = b"HTTP/1.0 200 OK\r\n\r\n".to_vec();
         raw.extend_from_slice(&body);
-        let at_limit = Limits { max_header_bytes: 4096, max_body_bytes: 5000 };
-        let under = Limits { max_header_bytes: 4096, max_body_bytes: 4999 };
+        let at_limit = Limits {
+            max_header_bytes: 4096,
+            max_body_bytes: 5000,
+        };
+        let under = Limits {
+            max_header_bytes: 4096,
+            max_body_bytes: 4999,
+        };
         for step in [1usize << 20, 777] {
-            let mut r = Trickle { data: raw.clone(), pos: 0, step };
-            assert_eq!(read_response(&mut r, "GET", at_limit).unwrap().body.len(), 5000);
-            let mut r = Trickle { data: raw.clone(), pos: 0, step };
+            let mut r = Trickle {
+                data: raw.clone(),
+                pos: 0,
+                step,
+            };
+            assert_eq!(
+                read_response(&mut r, "GET", at_limit).unwrap().body.len(),
+                5000
+            );
+            let mut r = Trickle {
+                data: raw.clone(),
+                pos: 0,
+                step,
+            };
             assert!(read_response(&mut r, "GET", under).is_err());
         }
     }
@@ -265,17 +353,33 @@ mod tests {
         let mut raw = b"HTTP/1.1 200 OK\r\nContent-Length: 50000\r\n\r\n".to_vec();
         raw.extend_from_slice(&body[..49_999]);
         for step in [1usize << 20, 1000] {
-            let mut r = Trickle { data: raw.clone(), pos: 0, step };
+            let mut r = Trickle {
+                data: raw.clone(),
+                pos: 0,
+                step,
+            };
             assert!(read_response(&mut r, "GET", Limits::default()).is_err());
         }
-        let chunked = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n10\r\nonly-eight".to_vec();
+        let chunked =
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n10\r\nonly-eight".to_vec();
         assert!(read_response(&mut Cursor::new(chunked), "GET", Limits::default()).is_err());
     }
 
     #[test]
     fn request_serialization() {
-        let req = write_request("POST", "/x?y=1", &[("Host".into(), "h".into()), ("Content-Length".into(), "2".into())], b"hi");
-        assert_eq!(req, b"POST /x?y=1 HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\n\r\nhi");
+        let req = write_request(
+            "POST",
+            "/x?y=1",
+            &[
+                ("Host".into(), "h".into()),
+                ("Content-Length".into(), "2".into()),
+            ],
+            b"hi",
+        );
+        assert_eq!(
+            req,
+            b"POST /x?y=1 HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\n\r\nhi"
+        );
     }
 
     #[test]

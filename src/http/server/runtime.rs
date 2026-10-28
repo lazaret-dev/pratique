@@ -101,7 +101,12 @@ enum ReadLimit {
     Until(Instant),
     Each(Duration),
     /// At least `rate` bytes a second after `grace`, counted from `start`.
-    Rate { start: Instant, grace: Duration, rate: u64, read: u64 },
+    Rate {
+        start: Instant,
+        grace: Duration,
+        rate: u64,
+        read: u64,
+    },
 }
 
 /// The deadlines of one connection, which the protocol layer moves from phase to phase and its socket keeps to.
@@ -112,7 +117,9 @@ pub(crate) struct Timer {
 
 impl Timer {
     pub(crate) fn new() -> Arc<Timer> {
-        Arc::new(Timer { limit: Mutex::new(ReadLimit::None) })
+        Arc::new(Timer {
+            limit: Mutex::new(ReadLimit::None),
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, ReadLimit> {
@@ -131,7 +138,12 @@ impl Timer {
 
     /// Reads keep to a minimum rate from now.
     pub(crate) fn rate(&self, grace: Duration, rate: u64) {
-        *self.lock() = ReadLimit::Rate { start: Instant::now(), grace, rate: rate.max(1), read: 0 };
+        *self.lock() = ReadLimit::Rate {
+            start: Instant::now(),
+            grace,
+            rate: rate.max(1),
+            read: 0,
+        };
     }
 
     /// No deadline.
@@ -145,11 +157,19 @@ impl Timer {
             ReadLimit::None => return Ok(None),
             ReadLimit::Each(d) => return Ok(Some(d.max(Duration::from_millis(1)))),
             ReadLimit::Until(t) => t,
-            ReadLimit::Rate { start, grace, rate, read } => start + grace + Duration::from_secs_f64(read as f64 / rate as f64),
+            ReadLimit::Rate {
+                start,
+                grace,
+                rate,
+                read,
+            } => start + grace + Duration::from_secs_f64(read as f64 / rate as f64),
         };
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return Err(io::Error::new(io::ErrorKind::TimedOut, "the client took too long"));
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the client took too long",
+            ));
         }
         Ok(Some(left.max(Duration::from_millis(1))))
     }
@@ -170,9 +190,17 @@ pub(crate) struct Timed<S: Socket> {
 }
 
 impl<S: Socket> Timed<S> {
-    pub(crate) fn new(inner: S, timer: Arc<Timer>, write_timeout: Duration) -> io::Result<Timed<S>> {
+    pub(crate) fn new(
+        inner: S,
+        timer: Arc<Timer>,
+        write_timeout: Duration,
+    ) -> io::Result<Timed<S>> {
         inner.set_write_timeout(Some(write_timeout.max(Duration::from_millis(1))))?;
-        Ok(Timed { inner, timer, set: None })
+        Ok(Timed {
+            inner,
+            timer,
+            set: None,
+        })
     }
 }
 
@@ -195,13 +223,24 @@ impl<S: Socket> Read for Timed<S> {
                     return Ok(n);
                 }
                 // the socket's timeout ran out: the phase's deadline decides (a rate may have moved on)
-                Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
                     if limited.is_none() {
-                        return Err(io::Error::new(io::ErrorKind::WouldBlock, "no deadline: look again"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::WouldBlock,
+                            "no deadline: look again",
+                        ));
                     }
                     self.timer.wait()?;
                     if matches!(*self.timer.lock(), ReadLimit::Each(_)) {
-                        return Err(io::Error::new(io::ErrorKind::TimedOut, "the connection was idle too long"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "the connection was idle too long",
+                        ));
                     }
                 }
                 Err(e) => return Err(e),
@@ -213,7 +252,10 @@ impl<S: Socket> Read for Timed<S> {
 impl<S: Socket> Write for Timed<S> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.inner.write(buf).map_err(|e| {
-            if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) {
+            if matches!(
+                e.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+            ) {
                 io::Error::new(io::ErrorKind::TimedOut, "the client did not read in time")
             } else {
                 e
@@ -227,7 +269,11 @@ impl<S: Socket> Write for Timed<S> {
 
 impl<S: Socket> Duplex for Timed<S> {
     fn duplicate(&self) -> io::Result<Self> {
-        Ok(Timed { inner: self.inner.duplicate()?, timer: self.timer.clone(), set: None })
+        Ok(Timed {
+            inner: self.inner.duplicate()?,
+            timer: self.timer.clone(),
+            set: None,
+        })
     }
 }
 
@@ -274,7 +320,16 @@ pub(crate) trait GoAway: Send + Sync {
 
 impl Ctl {
     pub(crate) fn detached() -> Arc<Ctl> {
-        Arc::new(Ctl { timer: None, limits: Limits::default(), closing: AtomicBool::new(false), idle: AtomicBool::new(false), h2: Mutex::new(None), log: None, handlers: None, stop_reading: None })
+        Arc::new(Ctl {
+            timer: None,
+            limits: Limits::default(),
+            closing: AtomicBool::new(false),
+            idle: AtomicBool::new(false),
+            h2: Mutex::new(None),
+            log: None,
+            handlers: None,
+            stop_reading: None,
+        })
     }
 
     pub(crate) fn is_closing(&self) -> bool {
@@ -319,7 +374,12 @@ impl Ctl {
     /// Asks the connection to finish: say GOAWAY, or close at the end of the response, or close now if it is idle.
     fn begin_close(&self) {
         self.closing.store(true, Ordering::SeqCst);
-        let h2 = self.h2.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(Weak::upgrade);
+        let h2 = self
+            .h2
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(Weak::upgrade);
         if let Some(h) = h2 {
             if h.go_away() {
                 self.stop();
@@ -403,9 +463,17 @@ impl Pending {
 // ------------------------------------------------------------------------------------------------ the server
 
 enum Listen {
-    Tls { addr: String, config: Arc<ServerConfig> },
-    Plain { addr: String, handler: Option<Arc<dyn Handler>> },
-    H2c { addr: String },
+    Tls {
+        addr: String,
+        config: Arc<ServerConfig>,
+    },
+    Plain {
+        addr: String,
+        handler: Option<Arc<dyn Handler>>,
+    },
+    H2c {
+        addr: String,
+    },
 }
 
 /// Called with what ended a connection badly: a handshake that failed, a client that broke the protocol, a timeout.
@@ -424,31 +492,49 @@ pub struct ServerBuilder {
 impl ServerBuilder {
     /// A server whose listeners answer with `handler` (unless a plain listener has a handler of its own).
     pub fn new(handler: impl Handler) -> ServerBuilder {
-        ServerBuilder { handler: Arc::new(handler), listen: Vec::new(), http: HttpConfig::default(), limits: Limits::default(), log: None, errors: None }
+        ServerBuilder {
+            handler: Arc::new(handler),
+            listen: Vec::new(),
+            http: HttpConfig::default(),
+            limits: Limits::default(),
+            log: None,
+            errors: None,
+        }
     }
 
     /// Listens for TLS on `addr` (HTTP/2 or HTTP/1.1, as the configuration's ALPN protocols and the client agree).
     pub fn tls(mut self, addr: &str, config: Arc<ServerConfig>) -> ServerBuilder {
-        self.listen.push(Listen::Tls { addr: addr.to_string(), config });
+        self.listen.push(Listen::Tls {
+            addr: addr.to_string(),
+            config,
+        });
         self
     }
 
     /// Listens for plain HTTP on `addr` (HTTP/1.1, or HTTP/2 with prior knowledge), with the server's handler.
     pub fn plain(mut self, addr: &str) -> ServerBuilder {
-        self.listen.push(Listen::Plain { addr: addr.to_string(), handler: None });
+        self.listen.push(Listen::Plain {
+            addr: addr.to_string(),
+            handler: None,
+        });
         self
     }
 
     /// Listens for plain HTTP on `addr` with a handler of its own: [`redirect_to_https`](super::redirect_to_https), say,
     /// wrapped by [`AcmeHttp01`](super::AcmeHttp01).
     pub fn plain_with(mut self, addr: &str, handler: impl Handler) -> ServerBuilder {
-        self.listen.push(Listen::Plain { addr: addr.to_string(), handler: Some(Arc::new(handler)) });
+        self.listen.push(Listen::Plain {
+            addr: addr.to_string(),
+            handler: Some(Arc::new(handler)),
+        });
         self
     }
 
     /// Listens for plain HTTP/2 with prior knowledge on `addr`, and nothing else (behind a proxy that speaks it).
     pub fn h2c(mut self, addr: &str) -> ServerBuilder {
-        self.listen.push(Listen::H2c { addr: addr.to_string() });
+        self.listen.push(Listen::H2c {
+            addr: addr.to_string(),
+        });
         self
     }
 
@@ -463,13 +549,19 @@ impl ServerBuilder {
     }
 
     /// Calls `log` after each response.
-    pub fn access_log(mut self, log: impl Fn(&AccessEntry<'_>) + Send + Sync + 'static) -> ServerBuilder {
+    pub fn access_log(
+        mut self,
+        log: impl Fn(&AccessEntry<'_>) + Send + Sync + 'static,
+    ) -> ServerBuilder {
         self.log = Some(Arc::new(log));
         self
     }
 
     /// Calls `log` with what ended a connection badly (a failed handshake, a protocol error, a timeout).
-    pub fn error_log(mut self, log: impl Fn(Option<SocketAddr>, &io::Error) + Send + Sync + 'static) -> ServerBuilder {
+    pub fn error_log(
+        mut self,
+        log: impl Fn(Option<SocketAddr>, &io::Error) + Send + Sync + 'static,
+    ) -> ServerBuilder {
         self.errors = Some(Arc::new(log));
         self
     }
@@ -477,7 +569,10 @@ impl ServerBuilder {
     /// Binds the listeners and starts accepting.
     pub fn start(self) -> io::Result<Server> {
         if self.listen.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "a server with no listeners"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a server with no listeners",
+            ));
         }
         let inner = Arc::new(Inner {
             http: self.http,
@@ -496,10 +591,15 @@ impl ServerBuilder {
         for l in self.listen {
             let (addr, kind) = match l {
                 Listen::Tls { addr, config } => (addr, Kind::Tls(config)),
-                Listen::Plain { addr, handler } => (addr, Kind::Plain(handler.unwrap_or_else(|| self.handler.clone()))),
+                Listen::Plain { addr, handler } => (
+                    addr,
+                    Kind::Plain(handler.unwrap_or_else(|| self.handler.clone())),
+                ),
                 Listen::H2c { addr } => (addr, Kind::H2c),
             };
-            let sockaddr = addr.to_socket_addrs()?.next().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("no address in {addr}")))?;
+            let sockaddr = addr.to_socket_addrs()?.next().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, format!("no address in {addr}"))
+            })?;
             let listener = TcpListener::bind(sockaddr)?;
             addrs.push(listener.local_addr()?);
             listeners.push((listener, kind));
@@ -508,9 +608,17 @@ impl ServerBuilder {
         for (listener, kind) in listeners {
             let inner = inner.clone();
             let handler = self.handler.clone();
-            threads.push(thread::Builder::new().name("pratique-accept".into()).spawn(move || accept_loop(inner, listener, kind, handler))?);
+            threads.push(
+                thread::Builder::new()
+                    .name("pratique-accept".into())
+                    .spawn(move || accept_loop(inner, listener, kind, handler))?,
+            );
         }
-        Ok(Server { inner, threads: Mutex::new(threads), addrs })
+        Ok(Server {
+            inner,
+            threads: Mutex::new(threads),
+            addrs,
+        })
     }
 }
 
@@ -579,7 +687,12 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
             Err(_) if inner.stopping.load(Ordering::SeqCst) => return,
             Err(e) => {
                 // out of file descriptors, say: wait a little rather than spin
-                if !matches!(e.kind(), io::ErrorKind::ConnectionAborted | io::ErrorKind::ConnectionReset | io::ErrorKind::Interrupted) {
+                if !matches!(
+                    e.kind(),
+                    io::ErrorKind::ConnectionAborted
+                        | io::ErrorKind::ConnectionReset
+                        | io::ErrorKind::Interrupted
+                ) {
                     thread::sleep(Duration::from_millis(50));
                 }
                 continue;
@@ -593,13 +706,17 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
         let ctl = {
             let mut conns = inner.conns();
             let from_ip = conns.per_ip.get(&key).copied().unwrap_or(0);
-            if conns.open.len() >= inner.limits.max_connections || from_ip >= inner.limits.max_connections_per_ip {
+            if conns.open.len() >= inner.limits.max_connections
+                || from_ip >= inner.limits.max_connections_per_ip
+            {
                 inner.stats.refused.fetch_add(1, Ordering::SeqCst);
                 drop(conns);
                 let _ = socket.shutdown(std::net::Shutdown::Both);
                 continue;
             }
-            let Ok(control) = socket.try_clone() else { continue };
+            let Ok(control) = socket.try_clone() else {
+                continue;
+            };
             let stopper = socket.try_clone().ok();
             let ctl = Arc::new(Ctl {
                 timer: Some(Timer::new()),
@@ -609,32 +726,42 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
                 h2: Mutex::new(None),
                 log: inner.log.clone(),
                 handlers: Some(inner.handlers.clone()),
-                stop_reading: stopper.map(|s| Box::new(move || {
-                    let _ = s.shutdown(std::net::Shutdown::Read);
-                }) as Box<dyn Fn() + Send + Sync>),
+                stop_reading: stopper.map(|s| {
+                    Box::new(move || {
+                        let _ = s.shutdown(std::net::Shutdown::Read);
+                    }) as Box<dyn Fn() + Send + Sync>
+                }),
             });
-            conns.open.insert(id, Arc::new(ConnEntry { ctl: ctl.clone(), socket: control }));
+            conns.open.insert(
+                id,
+                Arc::new(ConnEntry {
+                    ctl: ctl.clone(),
+                    socket: control,
+                }),
+            );
             *conns.per_ip.entry(key).or_insert(0) += 1;
             ctl
         };
         inner.stats.accepted.fetch_add(1, Ordering::SeqCst);
         let (inner2, kind, handler) = (inner.clone(), kind.clone(), handler.clone());
-        let spawned = thread::Builder::new().name("pratique-conn".into()).spawn(move || {
-            let inner = inner2;
-            let _ = socket.set_nodelay(true);
-            serve_one(&inner, socket, peer, kind, handler, &ctl);
-            let mut conns = inner.conns();
-            conns.open.remove(&id);
-            if let Some(n) = conns.per_ip.get_mut(&key) {
-                *n -= 1;
-                if *n == 0 {
-                    conns.per_ip.remove(&key);
+        let spawned = thread::Builder::new()
+            .name("pratique-conn".into())
+            .spawn(move || {
+                let inner = inner2;
+                let _ = socket.set_nodelay(true);
+                serve_one(&inner, socket, peer, kind, handler, &ctl);
+                let mut conns = inner.conns();
+                conns.open.remove(&id);
+                if let Some(n) = conns.per_ip.get_mut(&key) {
+                    *n -= 1;
+                    if *n == 0 {
+                        conns.per_ip.remove(&key);
+                    }
                 }
-            }
-            if conns.open.is_empty() {
-                inner.all_closed.notify_all();
-            }
-        });
+                if conns.open.is_empty() {
+                    inner.all_closed.notify_all();
+                }
+            });
         if spawned.is_err() {
             let mut conns = inner.conns();
             if let Some(entry) = conns.open.remove(&id) {
@@ -647,17 +774,40 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
     }
 }
 
-fn serve_one(inner: &Inner, socket: TcpStream, peer: SocketAddr, kind: Kind, handler: Arc<dyn Handler>, ctl: &Arc<Ctl>) {
-    let timer = ctl.timer.clone().expect("the runtime's connections have a timer");
+fn serve_one(
+    inner: &Inner,
+    socket: TcpStream,
+    peer: SocketAddr,
+    kind: Kind,
+    handler: Arc<dyn Handler>,
+    ctl: &Arc<Ctl>,
+) {
+    let timer = ctl
+        .timer
+        .clone()
+        .expect("the runtime's connections have a timer");
     let local = socket.local_addr().ok();
-    let Ok(timed) = Timed::new(socket, timer.clone(), inner.limits.write_timeout) else { return };
-    let info = super::ConnInfo { peer: Some(peer), local, tls: None };
+    let Ok(timed) = Timed::new(socket, timer.clone(), inner.limits.write_timeout) else {
+        return;
+    };
+    let info = super::ConnInfo {
+        peer: Some(peer),
+        local,
+        tls: None,
+    };
     let result = match kind {
         Kind::Plain(h) => super::serve_plain_ctl(timed, info, h, &inner.http, ctl.clone()),
         Kind::H2c => {
             timer.until(Instant::now() + inner.limits.idle_timeout);
             match timed.duplicate() {
-                Ok(writer) => super::h2::serve(Box::new(timed), Box::new(writer), Arc::new(info), handler, &inner.http, ctl.clone()),
+                Ok(writer) => super::h2::serve(
+                    Box::new(timed),
+                    Box::new(writer),
+                    Arc::new(info),
+                    handler,
+                    &inner.http,
+                    ctl.clone(),
+                ),
                 Err(e) => Err(e),
             }
         }
@@ -670,7 +820,10 @@ fn serve_one(inner: &Inner, socket: TcpStream, peer: SocketAddr, kind: Kind, han
         }
     };
     if let Err(e) = result {
-        if e.kind() == io::ErrorKind::TimedOut || e.to_string().contains("took too long") || e.to_string().contains("did not read in time") {
+        if e.kind() == io::ErrorKind::TimedOut
+            || e.to_string().contains("took too long")
+            || e.to_string().contains("did not read in time")
+        {
             inner.stats.timed_out.fetch_add(1, Ordering::SeqCst);
         }
         if let Some(log) = &inner.errors {
@@ -707,26 +860,44 @@ impl Server {
 
     pub fn stats(&self) -> Stats {
         let s = &self.inner.stats;
-        Stats { open: self.inner.conns().open.len(), accepted: s.accepted.load(Ordering::SeqCst), refused: s.refused.load(Ordering::SeqCst), timed_out: s.timed_out.load(Ordering::SeqCst) }
+        Stats {
+            open: self.inner.conns().open.len(),
+            accepted: s.accepted.load(Ordering::SeqCst),
+            refused: s.refused.load(Ordering::SeqCst),
+            timed_out: s.timed_out.load(Ordering::SeqCst),
+        }
     }
 
     /// A handle that can shut the server down from another thread.
     pub fn handle(&self) -> ServerHandle {
-        ServerHandle { inner: Arc::downgrade(&self.inner), addrs: self.addrs.clone() }
+        ServerHandle {
+            inner: Arc::downgrade(&self.inner),
+            addrs: self.addrs.clone(),
+        }
     }
 
     /// Stops accepting, asks every connection to finish (idle ones close at once), waits up to `grace` for them, and
     /// then cuts the rest. Returns once the listeners have stopped.
     pub fn shutdown(&self, grace: Duration) {
         stop(&self.inner, &self.addrs, grace);
-        for t in self.threads.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
+        for t in self
+            .threads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+        {
             let _ = t.join();
         }
     }
 
     /// Blocks until the server is shut down through a [`ServerHandle`].
     pub fn wait(&self) {
-        for t in self.threads.lock().unwrap_or_else(|e| e.into_inner()).drain(..) {
+        for t in self
+            .threads
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain(..)
+        {
             let _ = t.join();
         }
     }
@@ -756,7 +927,11 @@ fn stop(inner: &Inner, addrs: &[SocketAddr], grace: Duration) {
     for addr in addrs {
         let mut a = *addr;
         if a.ip().is_unspecified() {
-            a.set_ip(if a.is_ipv4() { IpAddr::from([127, 0, 0, 1]) } else { IpAddr::from([0u16, 0, 0, 0, 0, 0, 0, 1]) });
+            a.set_ip(if a.is_ipv4() {
+                IpAddr::from([127, 0, 0, 1])
+            } else {
+                IpAddr::from([0u16, 0, 0, 0, 0, 0, 0, 1])
+            });
         }
         let _ = TcpStream::connect_timeout(&a, Duration::from_secs(1));
     }
@@ -771,7 +946,11 @@ fn stop(inner: &Inner, addrs: &[SocketAddr], grace: Duration) {
         if left.is_zero() {
             break;
         }
-        conns = inner.all_closed.wait_timeout(conns, left).unwrap_or_else(|e| e.into_inner()).0;
+        conns = inner
+            .all_closed
+            .wait_timeout(conns, left)
+            .unwrap_or_else(|e| e.into_inner())
+            .0;
     }
     for e in conns.open.values() {
         let _ = e.socket.shutdown(std::net::Shutdown::Both);
@@ -784,17 +963,25 @@ fn stop(inner: &Inner, addrs: &[SocketAddr], grace: Duration) {
 /// changed are read again, and if every pair reads and each key is its certificate's, the store's certificates are
 /// replaced (keeping the order: the first pair is the default). What went wrong is given to `report`, and the store is
 /// left as it was. Stops when the returned handle is dropped.
-pub fn reload_certificates(store: Arc<CertStore>, files: Vec<(PathBuf, PathBuf)>, every: Duration, report: impl Fn(&str) + Send + 'static) -> Reloader {
+pub fn reload_certificates(
+    store: Arc<CertStore>,
+    files: Vec<(PathBuf, PathBuf)>,
+    every: Duration,
+    report: impl Fn(&str) + Send + 'static,
+) -> Reloader {
     let stop = Arc::new((Mutex::new(false), Condvar::new()));
     let stop2 = stop.clone();
     let thread = thread::spawn(move || {
         let mtime = |p: &PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
-        let mut seen: Vec<(Option<SystemTime>, Option<SystemTime>)> = files.iter().map(|(c, k)| (mtime(c), mtime(k))).collect();
+        let mut seen: Vec<(Option<SystemTime>, Option<SystemTime>)> =
+            files.iter().map(|(c, k)| (mtime(c), mtime(k))).collect();
         loop {
             {
                 let (lock, cond) = &*stop2;
                 let stopped = lock.lock().unwrap_or_else(|e| e.into_inner());
-                let (stopped, _) = cond.wait_timeout_while(stopped, every, |s| !*s).unwrap_or_else(|e| e.into_inner());
+                let (stopped, _) = cond
+                    .wait_timeout_while(stopped, every, |s| !*s)
+                    .unwrap_or_else(|e| e.into_inner());
                 if *stopped {
                     return;
                 }
@@ -813,7 +1000,10 @@ pub fn reload_certificates(store: Arc<CertStore>, files: Vec<(PathBuf, PathBuf)>
             }
         }
     });
-    Reloader { stop, thread: Some(thread) }
+    Reloader {
+        stop,
+        thread: Some(thread),
+    }
 }
 
 fn load_pairs(files: &[(PathBuf, PathBuf)]) -> Result<Vec<CertifiedKey>, String> {
@@ -837,7 +1027,10 @@ pub struct Reloader {
 impl Reloader {
     /// The handle of `thread`, which waits on `stop` and ends when it becomes true.
     pub(super) fn new(stop: Arc<(Mutex<bool>, Condvar)>, thread: JoinHandle<()>) -> Reloader {
-        Reloader { stop, thread: Some(thread) }
+        Reloader {
+            stop,
+            thread: Some(thread),
+        }
     }
 }
 
@@ -860,7 +1053,10 @@ impl Drop for Reloader {
 /// halfway through its window (but at least an hour and at most a day after the last), and a staple whose window has
 /// passed is taken off rather than sent. A certificate with no responder (Let's Encrypt's, since 2025) is left alone.
 /// What went wrong is given to `report`. Stops when the returned handle is dropped.
-pub fn refresh_ocsp_staples(store: Arc<CertStore>, report: impl Fn(&str) + Send + 'static) -> Reloader {
+pub fn refresh_ocsp_staples(
+    store: Arc<CertStore>,
+    report: impl Fn(&str) + Send + 'static,
+) -> Reloader {
     use crate::revocation::OcspSource;
     let stop = Arc::new((Mutex::new(false), Condvar::new()));
     let stop2 = stop.clone();
@@ -873,9 +1069,23 @@ pub fn refresh_ocsp_staples(store: Arc<CertStore>, report: impl Fn(&str) + Send 
             let mut wait = 3600i64;
             for (index, ck) in store.certificates().iter().enumerate() {
                 let chain = ck.chain();
-                let (Some(leaf_der), Some(issuer_der)) = (chain.first(), chain.get(1)) else { continue };
-                let (Ok(leaf), Ok(issuer)) = (crate::x509::Certificate::parse(leaf_der), crate::x509::Certificate::parse(issuer_der)) else { continue };
-                let Some(url) = leaf.ocsp_uris().iter().find(|u| u.starts_with("http://")).cloned() else { continue };
+                let (Some(leaf_der), Some(issuer_der)) = (chain.first(), chain.get(1)) else {
+                    continue;
+                };
+                let (Ok(leaf), Ok(issuer)) = (
+                    crate::x509::Certificate::parse(leaf_der),
+                    crate::x509::Certificate::parse(issuer_der),
+                ) else {
+                    continue;
+                };
+                let Some(url) = leaf
+                    .ocsp_uris()
+                    .iter()
+                    .find(|u| u.starts_with("http://"))
+                    .cloned()
+                else {
+                    continue;
+                };
                 let (due, good_until) = next.get(leaf_der).copied().unwrap_or((0, None));
                 if good_until.is_some_and(|t| t <= now) {
                     store.set_ocsp_staple(index, None);
@@ -908,13 +1118,18 @@ pub fn refresh_ocsp_staples(store: Arc<CertStore>, report: impl Fn(&str) + Send 
             }
             let (lock, cond) = &*stop2;
             let stopped = lock.lock().unwrap_or_else(|e| e.into_inner());
-            let (stopped, _) = cond.wait_timeout_while(stopped, Duration::from_secs(wait.max(1) as u64), |s| !*s).unwrap_or_else(|e| e.into_inner());
+            let (stopped, _) = cond
+                .wait_timeout_while(stopped, Duration::from_secs(wait.max(1) as u64), |s| !*s)
+                .unwrap_or_else(|e| e.into_inner());
             if *stopped {
                 return;
             }
         }
     });
-    Reloader { stop, thread: Some(thread) }
+    Reloader {
+        stop,
+        thread: Some(thread),
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ lingering

@@ -10,7 +10,12 @@ use crate::x509::{Certificate, PublicKey};
 
 /// Verifies a TLS 1.3 CertificateVerify signature made with the key of `cert` (`scheme` is the
 /// SignatureScheme code point).
-pub fn verify_tls13_signature(cert: &Certificate, scheme: u16, signed_content: &[u8], signature: &[u8]) -> Result<()> {
+pub fn verify_tls13_signature(
+    cert: &Certificate,
+    scheme: u16,
+    signed_content: &[u8],
+    signature: &[u8],
+) -> Result<()> {
     let ok = match (scheme, &cert.public_key) {
         (0x0403, PublicKey::Ec { curve: Curve::P256, point }) => ecdsa::verify(Curve::P256, point, HashAlg::Sha256, signed_content, signature),
         (0x0503, PublicKey::Ec { curve: Curve::P384, point }) => ecdsa::verify(Curve::P384, point, HashAlg::Sha384, signed_content, signature),
@@ -25,7 +30,9 @@ pub fn verify_tls13_signature(cert: &Certificate, scheme: u16, signed_content: &
     if ok {
         Ok(())
     } else {
-        Err(Error::Tls("decrypt_error: the CertificateVerify signature is invalid".into()))
+        Err(Error::Tls(
+            "decrypt_error: the CertificateVerify signature is invalid".into(),
+        ))
     }
 }
 
@@ -67,7 +74,10 @@ mod tests {
         assert!(verify_tls13_signature(&rsa, 0x0807, &content, &sig).is_err());
         // and a key that is Ed25519 does not take the ECDSA or RSA-PSS schemes
         for scheme in [0x0403, 0x0503, 0x0804, 0x0805, 0x0806, 0x0401, 0x0807 + 1] {
-            assert!(verify_tls13_signature(&leaf, scheme, &content, &sig).is_err(), "{scheme:#06x}");
+            assert!(
+                verify_tls13_signature(&leaf, scheme, &content, &sig).is_err(),
+                "{scheme:#06x}"
+            );
         }
     }
 
@@ -81,12 +91,20 @@ mod tests {
     fn p521_certificate_verify() {
         let text = include_str!("../../tests/data/alg_p521_leaf_certverify.txt");
         let mut lines = text.lines().filter(|l| !l.starts_with('#')).map(unhex);
-        let (content, sig, p256_point, p256_sig) = (lines.next().unwrap(), lines.next().unwrap(), lines.next().unwrap(), lines.next().unwrap());
+        let (content, sig, p256_point, p256_sig) = (
+            lines.next().unwrap(),
+            lines.next().unwrap(),
+            lines.next().unwrap(),
+            lines.next().unwrap(),
+        );
         let leaf = cert(include_str!("../../tests/data/alg_p521_leaf.pem"));
         verify_tls13_signature(&leaf, 0x0603, &content, &sig).unwrap();
         // only with its own scheme (TLS 1.3 ties the curve to the scheme), and not when anything is changed
         for scheme in [0x0403, 0x0503, 0x0804, 0x0806, 0x0807, 0x0601, 0x0604] {
-            assert!(verify_tls13_signature(&leaf, scheme, &content, &sig).is_err(), "{scheme:#06x}");
+            assert!(
+                verify_tls13_signature(&leaf, scheme, &content, &sig).is_err(),
+                "{scheme:#06x}"
+            );
         }
         let mut bad = sig.clone();
         bad[20] ^= 1;
@@ -95,9 +113,18 @@ mod tests {
         other[70] ^= 1;
         assert!(verify_tls13_signature(&leaf, 0x0603, &other, &sig).is_err());
         // a P-256 key that signed with SHA-512 may not use the P-521 scheme in TLS 1.3 (its signature is real)
-        assert!(ecdsa::verify(Curve::P256, &p256_point, HashAlg::Sha512, &content, &p256_sig));
+        assert!(ecdsa::verify(
+            Curve::P256,
+            &p256_point,
+            HashAlg::Sha512,
+            &content,
+            &p256_sig
+        ));
         let mut p256_leaf = cert(include_str!("../../tests/data/ed_leaf_p256.pem"));
-        p256_leaf.public_key = PublicKey::Ec { curve: Curve::P256, point: p256_point };
+        p256_leaf.public_key = PublicKey::Ec {
+            curve: Curve::P256,
+            point: p256_point,
+        };
         assert!(verify_tls13_signature(&p256_leaf, 0x0603, &content, &p256_sig).is_err());
         assert!(super::super::messages::SIGNATURE_SCHEMES.contains(&0x0603));
     }

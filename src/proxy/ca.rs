@@ -66,14 +66,21 @@ fn serial() -> Result<Vec<u8>> {
 
 fn extension(oid: &str, critical: bool, value: &[u8]) -> Vec<u8> {
     if critical {
-        der::sequence(&[&der::oid_str(oid), &der::boolean(true), &der::octet_string(value)])
+        der::sequence(&[
+            &der::oid_str(oid),
+            &der::boolean(true),
+            &der::octet_string(value),
+        ])
     } else {
         der::sequence(&[&der::oid_str(oid), &der::octet_string(value)])
     }
 }
 
 fn attribute(oid: &str, value: &str) -> Vec<u8> {
-    der::set(&[&der::sequence(&[&der::oid_str(oid), &der::utf8_string(value)])])
+    der::set(&[&der::sequence(&[
+        &der::oid_str(oid),
+        &der::utf8_string(value),
+    ])])
 }
 
 /// Whether `name` is a DNS name this module writes into a certificate: ASCII letters, digits and hyphens in labels of 1
@@ -82,16 +89,28 @@ fn attribute(oid: &str, value: &str) -> Vec<u8> {
 pub(crate) fn is_dns_name(name: &str) -> bool {
     name.len() <= 253
         && name.split('.').count() >= 2
-        && !name.rsplit('.').next().unwrap_or("").bytes().all(|b| b.is_ascii_digit())
+        && !name
+            .rsplit('.')
+            .next()
+            .unwrap_or("")
+            .bytes()
+            .all(|b| b.is_ascii_digit())
         && name.split('.').all(|l| {
-            !l.is_empty() && l.len() <= 63 && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') && !l.starts_with('-') && !l.ends_with('-')
+            !l.is_empty()
+                && l.len() <= 63
+                && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && !l.starts_with('-')
+                && !l.ends_with('-')
         })
 }
 
 /// Whether the name constraint `base` covers `host` (RFC 5280: the name itself, or any name made by adding labels on
 /// its left).
 fn covered(base: &str, host: &str) -> bool {
-    host == base || host.strip_suffix(base).is_some_and(|rest| rest.ends_with('.'))
+    host == base
+        || host
+            .strip_suffix(base)
+            .is_some_and(|rest| rest.ends_with('.'))
 }
 
 impl ProxyCa {
@@ -104,7 +123,9 @@ impl ProxyCa {
             let p = p.trim().trim_end_matches('.').to_ascii_lowercase();
             let base = p.strip_prefix("*.").unwrap_or(&p).to_string();
             if !is_dns_name(&base) {
-                return Err(Error::Key(format!("{p:?} is not a DNS name the proxy's CA can be limited to")));
+                return Err(Error::Key(format!(
+                    "{p:?} is not a DNS name the proxy's CA can be limited to"
+                )));
             }
             if !bases.iter().any(|b| covered(b, &base)) {
                 bases.retain(|b| !covered(&base, b));
@@ -117,34 +138,64 @@ impl ProxyCa {
         let key = SigningKey::generate_ecdsa(Curve::P256)?;
         let leaf_key = SigningKey::generate_ecdsa(Curve::P256)?;
         let now = crate::sys::now_unix();
-        let (not_before, not_after) = (now - BACKDATE, now + lifetime.as_secs().clamp(60, 398 * 86_400) as i64);
-        let name = der::sequence(&[&attribute(OID_ORGANIZATION, "pratique scanning proxy"), &attribute(OID_COMMON_NAME, common_name)]);
+        let (not_before, not_after) = (
+            now - BACKDATE,
+            now + lifetime.as_secs().clamp(60, 398 * 86_400) as i64,
+        );
+        let name = der::sequence(&[
+            &attribute(OID_ORGANIZATION, "pratique scanning proxy"),
+            &attribute(OID_COMMON_NAME, common_name),
+        ]);
         let key_id = key_id(&key);
         // permitted: each DNS name; excluded: every IPv4 and IPv6 address (address and mask, all zero)
-        let permitted_subtrees: Vec<Vec<u8>> = bases.iter().map(|b| der::sequence(&[&der::context(2, false, b.as_bytes())])).collect();
-        let excluded_subtrees = [der::sequence(&[&der::context(7, false, &[0; 8])]), der::sequence(&[&der::context(7, false, &[0; 32])])];
+        let permitted_subtrees: Vec<Vec<u8>> = bases
+            .iter()
+            .map(|b| der::sequence(&[&der::context(2, false, b.as_bytes())]))
+            .collect();
+        let excluded_subtrees = [
+            der::sequence(&[&der::context(7, false, &[0; 8])]),
+            der::sequence(&[&der::context(7, false, &[0; 32])]),
+        ];
         let constraints = der::sequence(&[
             &der::context(0, true, &permitted_subtrees.concat()),
             &der::context(1, true, &excluded_subtrees.concat()),
         ]);
         let extensions = der::sequence(&[
-            &extension(OID_BASIC_CONSTRAINTS, true, &der::sequence(&[&der::boolean(true), &der::integer(&[0])])),
+            &extension(
+                OID_BASIC_CONSTRAINTS,
+                true,
+                &der::sequence(&[&der::boolean(true), &der::integer(&[0])]),
+            ),
             &extension(OID_KEY_USAGE, true, &der::bit_string(1, &[0x06])), // keyCertSign, cRLSign
             &extension(OID_NAME_CONSTRAINTS, true, &constraints),
             &extension(OID_SKI, false, &der::octet_string(&key_id)),
         ]);
-        let der = sign(&key, &der::sequence(&[
-            &der::context(0, true, &der::integer(&[2])),
-            &der::integer(&serial()?),
-            &key.x509_algorithm(),
-            &name,
-            &validity(not_before, not_after),
-            &name,
-            &key.public_key_spki(),
-            &der::context(3, true, &extensions),
-        ]))?;
+        let der = sign(
+            &key,
+            &der::sequence(&[
+                &der::context(0, true, &der::integer(&[2])),
+                &der::integer(&serial()?),
+                &key.x509_algorithm(),
+                &name,
+                &validity(not_before, not_after),
+                &name,
+                &key.public_key_spki(),
+                &der::context(3, true, &extensions),
+            ]),
+        )?;
         let leaf_key_id = self::key_id(&leaf_key);
-        Ok(ProxyCa { key, der, name, key_id, not_before, not_after, permitted: bases, leaf_key, leaf_key_id, leaves: Mutex::new(HashMap::new()) })
+        Ok(ProxyCa {
+            key,
+            der,
+            name,
+            key_id,
+            not_before,
+            not_after,
+            permitted: bases,
+            leaf_key,
+            leaf_key_id,
+            leaves: Mutex::new(HashMap::new()),
+        })
     }
 
     /// The authority's certificate, DER: what a client is told to trust.
@@ -177,13 +228,18 @@ impl ProxyCa {
     pub fn leaf(&self, host: &str) -> Result<Arc<CertifiedKey>> {
         let host = host.trim_end_matches('.').to_ascii_lowercase();
         if !self.permits(&host) {
-            return Err(Error::Key(format!("the proxy's CA does not vouch for {host:?}")));
+            return Err(Error::Key(format!(
+                "the proxy's CA does not vouch for {host:?}"
+            )));
         }
         let mut leaves = self.leaves.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(c) = leaves.get(&host) {
             return Ok(c.clone());
         }
-        let cert = Arc::new(CertifiedKey::new(vec![self.issue(&host)?], self.leaf_key.clone())?);
+        let cert = Arc::new(CertifiedKey::new(
+            vec![self.issue(&host)?],
+            self.leaf_key.clone(),
+        )?);
         leaves.insert(host, cert.clone());
         Ok(cert)
     }
@@ -197,36 +253,62 @@ impl ProxyCa {
     fn issue(&self, host: &str) -> Result<Vec<u8>> {
         // the name in the subject too, for the clients that still look there; a name too long for a common name goes
         // in the critical subjectAltName alone
-        let (subject, san_critical) = if host.len() <= 64 { (der::sequence(&[&attribute(OID_COMMON_NAME, host)]), false) } else { (der::sequence(&[]), true) };
+        let (subject, san_critical) = if host.len() <= 64 {
+            (der::sequence(&[&attribute(OID_COMMON_NAME, host)]), false)
+        } else {
+            (der::sequence(&[]), true)
+        };
         let extensions = der::sequence(&[
             &extension(OID_BASIC_CONSTRAINTS, true, &der::sequence(&[])),
             &extension(OID_KEY_USAGE, true, &der::bit_string(7, &[0x80])), // digitalSignature
-            &extension(OID_EXT_KEY_USAGE, false, &der::sequence(&[&der::oid_str(OID_SERVER_AUTH)])),
-            &extension(OID_SAN, san_critical, &der::sequence(&[&der::context(2, false, host.as_bytes())])),
+            &extension(
+                OID_EXT_KEY_USAGE,
+                false,
+                &der::sequence(&[&der::oid_str(OID_SERVER_AUTH)]),
+            ),
+            &extension(
+                OID_SAN,
+                san_critical,
+                &der::sequence(&[&der::context(2, false, host.as_bytes())]),
+            ),
             &extension(OID_SKI, false, &der::octet_string(&self.leaf_key_id)),
-            &extension(OID_AKI, false, &der::sequence(&[&der::context(0, false, &self.key_id)])),
+            &extension(
+                OID_AKI,
+                false,
+                &der::sequence(&[&der::context(0, false, &self.key_id)]),
+            ),
         ]);
-        sign(&self.key, &der::sequence(&[
-            &der::context(0, true, &der::integer(&[2])),
-            &der::integer(&serial()?),
-            &self.key.x509_algorithm(),
-            &self.name,
-            &validity(self.not_before, self.not_after),
-            &subject,
-            &self.leaf_key.public_key_spki(),
-            &der::context(3, true, &extensions),
-        ]))
+        sign(
+            &self.key,
+            &der::sequence(&[
+                &der::context(0, true, &der::integer(&[2])),
+                &der::integer(&serial()?),
+                &self.key.x509_algorithm(),
+                &self.name,
+                &validity(self.not_before, self.not_after),
+                &subject,
+                &self.leaf_key.public_key_spki(),
+                &der::context(3, true, &extensions),
+            ]),
+        )
     }
 }
 
 fn validity(not_before: i64, not_after: i64) -> Vec<u8> {
-    der::sequence(&[&crate::tls::pki::time(not_before), &crate::tls::pki::time(not_after)])
+    der::sequence(&[
+        &crate::tls::pki::time(not_before),
+        &crate::tls::pki::time(not_after),
+    ])
 }
 
 /// The certificate whose TBSCertificate is `tbs`, signed by `key`.
 fn sign(key: &SigningKey, tbs: &[u8]) -> Result<Vec<u8>> {
     let signature = key.sign_x509(tbs)?;
-    Ok(der::sequence(&[tbs, &key.x509_algorithm(), &der::bit_string(0, &signature)]))
+    Ok(der::sequence(&[
+        tbs,
+        &key.x509_algorithm(),
+        &der::bit_string(0, &signature),
+    ]))
 }
 
 pub(crate) fn pem(label: &str, der: &[u8]) -> String {

@@ -38,7 +38,9 @@ pub fn matches_step(s: &Step, name: &str) -> bool {
 
 /// `v` with the node at `path` replaced by `new`, or removed when `new` is `None`.
 pub fn edit(v: &Value, path: &[Step], new: Option<Value>) -> Value {
-    let Some((first, rest)) = path.split_first() else { return new.expect("the root cannot be removed") };
+    let Some((first, rest)) = path.split_first() else {
+        return new.expect("the root cannot be removed");
+    };
     match (v, first) {
         (Value::Object(o), s) if !matches!(s, Index(_)) => {
             let mut out = Object::new();
@@ -117,7 +119,17 @@ pub fn bumped(s: &str, pos: usize) -> Option<String> {
     let chars: Vec<char> = s.chars().collect();
     let at = (pos..chars.len()).find(|&i| chars[i].is_ascii_alphanumeric())?;
     let c = chars[at];
-    let new = if c == 'A' { 'B' } else if c.is_ascii_digit() { if c == '9' { '8' } else { (c as u8 + 1) as char } } else { 'A' };
+    let new = if c == 'A' {
+        'B'
+    } else if c.is_ascii_digit() {
+        if c == '9' {
+            '8'
+        } else {
+            (c as u8 + 1) as char
+        }
+    } else {
+        'A'
+    };
     let mut out = chars;
     out[at] = new;
     Some(out.into_iter().collect())
@@ -126,7 +138,10 @@ pub fn bumped(s: &str, pos: usize) -> Option<String> {
 /// The ways to damage one string.
 pub fn damaged(s: &str) -> Vec<String> {
     let n = s.chars().count();
-    let mut out: Vec<String> = [0, n / 3, 2 * n / 3, n.saturating_sub(2)].iter().filter_map(|&p| bumped(s, p)).collect();
+    let mut out: Vec<String> = [0, n / 3, 2 * n / 3, n.saturating_sub(2)]
+        .iter()
+        .filter_map(|&p| bumped(s, p))
+        .collect();
     if n > 0 {
         out.push(s.chars().take(n - 1).collect());
     }
@@ -135,7 +150,6 @@ pub fn damaged(s: &str) -> Vec<String> {
     out.retain(|d| d != s);
     out
 }
-
 
 /// Changes or removes every member and element of the document, one at a time, and every string in several
 /// ways; `verify_one(document, n)` verifies attestation `n` of what comes out (`None` if it is not
@@ -176,4 +190,3 @@ pub fn damage_every_part(
     }
     tried
 }
-

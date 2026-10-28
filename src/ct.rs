@@ -53,7 +53,11 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Malformed(m) => write!(f, "malformed signed certificate timestamps: {m}"),
-            Error::Signature { log_id, timestamp_ms, reason } => {
+            Error::Signature {
+                log_id,
+                timestamp_ms,
+                reason,
+            } => {
                 write!(f, "the signed certificate timestamp of log {} at {timestamp_ms} ms does not verify: {reason}", hex(log_id))
             }
         }
@@ -94,7 +98,10 @@ pub struct SctList {
 
 /// The next `n` bytes of `b` from `*at`, which moves past them.
 fn take<'a>(b: &'a [u8], at: &mut usize, n: usize, what: &str) -> Result<&'a [u8], Error> {
-    let end = at.checked_add(n).filter(|&e| e <= b.len()).ok_or_else(|| Error::Malformed(format!("{what} is cut short")))?;
+    let end = at
+        .checked_add(n)
+        .filter(|&e| e <= b.len())
+        .ok_or_else(|| Error::Malformed(format!("{what} is cut short")))?;
     let out = &b[*at..end];
     *at = end;
     Ok(out)
@@ -120,7 +127,9 @@ fn parse_sct(b: &[u8]) -> Result<Option<Sct>, Error> {
     if version != 0 {
         return Ok(None);
     }
-    let log_id: [u8; 32] = take(b, &mut at, 32, "an SCT's log id")?.try_into().expect("32 bytes");
+    let log_id: [u8; 32] = take(b, &mut at, 32, "an SCT's log id")?
+        .try_into()
+        .expect("32 bytes");
     let ts = take(b, &mut at, 8, "an SCT's timestamp")?;
     let timestamp_ms = u64::from_be_bytes(ts.try_into().expect("8 bytes"));
     let extensions = vector16(b, &mut at, 0, "an SCT's extensions")?.to_vec();
@@ -129,14 +138,23 @@ fn parse_sct(b: &[u8]) -> Result<Option<Sct>, Error> {
     if at != b.len() {
         return malformed("an SCT has bytes after its signature");
     }
-    Ok(Some(Sct { log_id, timestamp_ms, extensions, hash_algorithm: algs[0], signature_algorithm: algs[1], signature }))
+    Ok(Some(Sct {
+        log_id,
+        timestamp_ms,
+        extensions,
+        hash_algorithm: algs[0],
+        signature_algorithm: algs[1],
+        signature,
+    }))
 }
 
 /// Reads the value of the SCT list extension (the content of its `extnValue`): an OCTET STRING that holds the TLS
 /// encoding of a `SignedCertificateTimestampList`, which must not be empty, nor any SCT in it.
 pub fn parse_list(extension_value: &[u8]) -> Result<SctList, Error> {
     let mut d = Der::new(extension_value);
-    let octets = d.expect(asn1::TAG_OCTET_STRING).map_err(|e| Error::Malformed(format!("the extension is not an OCTET STRING: {e}")))?;
+    let octets = d
+        .expect(asn1::TAG_OCTET_STRING)
+        .map_err(|e| Error::Malformed(format!("the extension is not an OCTET STRING: {e}")))?;
     if d.finish().is_err() {
         return malformed("the extension has bytes after its OCTET STRING");
     }
@@ -211,7 +229,11 @@ pub fn precertificate_tbs(tbs: &[u8]) -> Result<Vec<u8>, Error> {
 /// What a log signs for an embedded SCT of version 1 (RFC 6962 section 3.2, a `precert_entry`): the version, the
 /// signature type (a certificate timestamp), the time, the entry type, the SHA-256 of the issuer's
 /// `SubjectPublicKeyInfo`, the precertificate's `TBSCertificate` ([`precertificate_tbs`]) and the SCT's extensions.
-pub fn signed_data(sct: &Sct, issuer_key_hash: &[u8; 32], precert_tbs: &[u8]) -> Result<Vec<u8>, Error> {
+pub fn signed_data(
+    sct: &Sct,
+    issuer_key_hash: &[u8; 32],
+    precert_tbs: &[u8],
+) -> Result<Vec<u8>, Error> {
     if precert_tbs.len() >= 1 << 24 || sct.extensions.len() > u16::MAX as usize {
         return malformed("too long to be signed");
     }
@@ -278,21 +300,35 @@ impl Report {
 ///
 /// `issuer` must be the certificate that issued `cert` (the caller has verified the chain): the SCTs sign the hash of
 /// its key, so an SCT is only as good as the path it was checked with.
-pub fn verify_embedded(cert: &Certificate, issuer: &Certificate, logs: &[TransparencyLog]) -> Result<Report, Error> {
+pub fn verify_embedded(
+    cert: &Certificate,
+    issuer: &Certificate,
+    logs: &[TransparencyLog],
+) -> Result<Report, Error> {
     let list = embedded(cert)?;
-    let mut report = Report { other_versions: list.other_versions, ..Report::default() };
+    let mut report = Report {
+        other_versions: list.other_versions,
+        ..Report::default()
+    };
     if list.scts.is_empty() {
         return Ok(report);
     }
     let tbs = precertificate_tbs(cert.tbs_der())?;
-    let issuer_key_hash: [u8; 32] = Sha256::digest(issuer.spki_der()).try_into().expect("a SHA-256 digest is 32 bytes");
+    let issuer_key_hash: [u8; 32] = Sha256::digest(issuer.spki_der())
+        .try_into()
+        .expect("a SHA-256 digest is 32 bytes");
     for sct in &list.scts {
-        let candidates: Vec<&TransparencyLog> = logs.iter().filter(|l| l.log_id == sct.log_id).collect();
+        let candidates: Vec<&TransparencyLog> =
+            logs.iter().filter(|l| l.log_id == sct.log_id).collect();
         if candidates.is_empty() {
             report.unknown_logs.push(sct.log_id);
             continue;
         }
-        let fail = |reason: String| Error::Signature { log_id: sct.log_id, timestamp_ms: sct.timestamp_ms, reason };
+        let fail = |reason: String| Error::Signature {
+            log_id: sct.log_id,
+            timestamp_ms: sct.timestamp_ms,
+            reason,
+        };
         let time = (sct.timestamp_ms / 1000) as i64;
         let message = signed_data(sct, &issuer_key_hash, &tbs)?;
         let mut why = format!("no key of the log was valid at {time}");
@@ -301,7 +337,10 @@ pub fn verify_embedded(cert: &Certificate, issuer: &Certificate, logs: &[Transpa
             match algorithms_for(log.key.kind()) {
                 Some(algs) if algs == (sct.hash_algorithm, sct.signature_algorithm) => {}
                 Some((h, s)) => {
-                    why = format!("signed with algorithms ({}, {}), and the log's key goes with ({h}, {s})", sct.hash_algorithm, sct.signature_algorithm);
+                    why = format!(
+                        "signed with algorithms ({}, {}), and the log's key goes with ({h}, {s})",
+                        sct.hash_algorithm, sct.signature_algorithm
+                    );
                     continue;
                 }
                 None => {
@@ -316,7 +355,11 @@ pub fn verify_embedded(cert: &Certificate, issuer: &Certificate, logs: &[Transpa
             why = "the signature is not the log's".into();
         }
         let log = good.ok_or_else(|| fail(why))?;
-        report.verified.push(VerifiedSct { log_id: log.log_id.clone(), log_url: log.base_url.clone(), timestamp_ms: sct.timestamp_ms });
+        report.verified.push(VerifiedSct {
+            log_id: log.log_id.clone(),
+            log_url: log.base_url.clone(),
+            timestamp_ms: sct.timestamp_ms,
+        });
     }
     Ok(report)
 }
@@ -325,7 +368,14 @@ pub fn verify_embedded(cert: &Certificate, issuer: &Certificate, logs: &[Transpa
 mod tests {
     use super::*;
 
-    fn sct_bytes(version: u8, log_id: [u8; 32], ts: u64, ext: &[u8], algs: (u8, u8), sig: &[u8]) -> Vec<u8> {
+    fn sct_bytes(
+        version: u8,
+        log_id: [u8; 32],
+        ts: u64,
+        ext: &[u8],
+        algs: (u8, u8),
+        sig: &[u8],
+    ) -> Vec<u8> {
         let mut b = vec![version];
         b.extend_from_slice(&log_id);
         b.extend_from_slice(&ts.to_be_bytes());
@@ -362,7 +412,17 @@ mod tests {
         let list = parse_list(&list_value(&[a, v2, b])).unwrap();
         assert_eq!(list.other_versions, 1);
         assert_eq!(list.scts.len(), 2);
-        assert_eq!(list.scts[0], Sct { log_id: [7; 32], timestamp_ms: 1_700_000_000_123, extensions: vec![], hash_algorithm: 4, signature_algorithm: 3, signature: vec![0x30, 0] });
+        assert_eq!(
+            list.scts[0],
+            Sct {
+                log_id: [7; 32],
+                timestamp_ms: 1_700_000_000_123,
+                extensions: vec![],
+                hash_algorithm: 4,
+                signature_algorithm: 3,
+                signature: vec![0x30, 0]
+            }
+        );
         assert_eq!(list.scts[1].extensions, b"xy");
         assert_eq!(list.scts[1].signature, [1, 2, 3]);
     }
@@ -373,22 +433,52 @@ mod tests {
         let cases: Vec<(Vec<u8>, &str)> = vec![
             (vec![], "OCTET STRING"),
             (x509::tlv(asn1::TAG_SEQUENCE, &[0, 0]), "OCTET STRING"),
-            ([list_value(std::slice::from_ref(&good)), vec![0]].concat(), "after its OCTET STRING"),
-            (x509::tlv(asn1::TAG_OCTET_STRING, &[0, 0]), "the SCT list is empty"),
-            (x509::tlv(asn1::TAG_OCTET_STRING, &[0, 5, 0, 1, 0]), "cut short"),
-            (x509::tlv(asn1::TAG_OCTET_STRING, &[0, 2, 0, 0, 9]), "the SCT list has bytes after it"),
+            (
+                [list_value(std::slice::from_ref(&good)), vec![0]].concat(),
+                "after its OCTET STRING",
+            ),
+            (
+                x509::tlv(asn1::TAG_OCTET_STRING, &[0, 0]),
+                "the SCT list is empty",
+            ),
+            (
+                x509::tlv(asn1::TAG_OCTET_STRING, &[0, 5, 0, 1, 0]),
+                "cut short",
+            ),
+            (
+                x509::tlv(asn1::TAG_OCTET_STRING, &[0, 2, 0, 0, 9]),
+                "the SCT list has bytes after it",
+            ),
             (list_value(&[vec![]]), "an SCT is empty"),
-            (list_value(&[good[..40].to_vec()]), "an SCT's timestamp is cut short"),
-            (list_value(&[[&good[..], &[0]].concat()]), "bytes after its signature"),
-            (list_value(&[sct_bytes(0, [7; 32], 5, b"", (4, 3), &[])]), "an SCT's signature is empty"),
+            (
+                list_value(&[good[..40].to_vec()]),
+                "an SCT's timestamp is cut short",
+            ),
+            (
+                list_value(&[[&good[..], &[0]].concat()]),
+                "bytes after its signature",
+            ),
+            (
+                list_value(&[sct_bytes(0, [7; 32], 5, b"", (4, 3), &[])]),
+                "an SCT's signature is empty",
+            ),
         ];
         for (value, want) in cases {
             let e = parse_list(&value).unwrap_err().to_string();
             assert!(e.contains(want), "{e} / {want}");
         }
         let many: Vec<Vec<u8>> = (0..=MAX_SCTS).map(|_| good.clone()).collect();
-        assert!(parse_list(&list_value(&many)).unwrap_err().to_string().contains("more than 32"));
-        assert_eq!(parse_list(&list_value(&many[..MAX_SCTS])).unwrap().scts.len(), MAX_SCTS);
+        assert!(parse_list(&list_value(&many))
+            .unwrap_err()
+            .to_string()
+            .contains("more than 32"));
+        assert_eq!(
+            parse_list(&list_value(&many[..MAX_SCTS]))
+                .unwrap()
+                .scts
+                .len(),
+            MAX_SCTS
+        );
     }
 
     /// A TBSCertificate with these extensions (each `(oid, value)`), for the precertificate tests.
@@ -413,22 +503,56 @@ mod tests {
         let other: &[u8] = &[0x55, 0x1d, 0x0f];
         let long = vec![0x41; 300];
         // in the middle, first, last, with lengths that change their own size
-        assert_eq!(precertificate_tbs(&tbs_with(&[(other, b"a"), (OID_SCT_LIST, &long), (other, b"b")])).unwrap(), tbs_with(&[(other, b"a"), (other, b"b")]));
-        assert_eq!(precertificate_tbs(&tbs_with(&[(OID_SCT_LIST, b"x"), (other, &long)])).unwrap(), tbs_with(&[(other, &long)]));
-        assert_eq!(precertificate_tbs(&tbs_with(&[(other, &long), (OID_SCT_LIST, b"x")])).unwrap(), tbs_with(&[(other, &long)]));
+        assert_eq!(
+            precertificate_tbs(&tbs_with(&[
+                (other, b"a"),
+                (OID_SCT_LIST, &long),
+                (other, b"b")
+            ]))
+            .unwrap(),
+            tbs_with(&[(other, b"a"), (other, b"b")])
+        );
+        assert_eq!(
+            precertificate_tbs(&tbs_with(&[(OID_SCT_LIST, b"x"), (other, &long)])).unwrap(),
+            tbs_with(&[(other, &long)])
+        );
+        assert_eq!(
+            precertificate_tbs(&tbs_with(&[(other, &long), (OID_SCT_LIST, b"x")])).unwrap(),
+            tbs_with(&[(other, &long)])
+        );
         // the only extension: the field goes
-        assert_eq!(precertificate_tbs(&tbs_with(&[(OID_SCT_LIST, b"x")])).unwrap(), tbs_with(&[]));
+        assert_eq!(
+            precertificate_tbs(&tbs_with(&[(OID_SCT_LIST, b"x")])).unwrap(),
+            tbs_with(&[])
+        );
         // without it, twice, or not a certificate
-        assert!(precertificate_tbs(&tbs_with(&[(other, b"a")])).unwrap_err().to_string().contains("no SCT list"));
-        assert!(precertificate_tbs(&tbs_with(&[(OID_SCT_LIST, b"x"), (OID_SCT_LIST, b"y")])).unwrap_err().to_string().contains("more than once"));
+        assert!(precertificate_tbs(&tbs_with(&[(other, b"a")]))
+            .unwrap_err()
+            .to_string()
+            .contains("no SCT list"));
+        assert!(
+            precertificate_tbs(&tbs_with(&[(OID_SCT_LIST, b"x"), (OID_SCT_LIST, b"y")]))
+                .unwrap_err()
+                .to_string()
+                .contains("more than once")
+        );
         assert!(precertificate_tbs(&tbs_with(&[])).is_err());
         assert!(precertificate_tbs(&[0x30, 0x03, 0xa3, 0x01, 0x30]).is_err());
-        assert!(precertificate_tbs(&[&tbs_with(&[(OID_SCT_LIST, b"x")])[..], &[0]].concat()).is_err());
+        assert!(
+            precertificate_tbs(&[&tbs_with(&[(OID_SCT_LIST, b"x")])[..], &[0]].concat()).is_err()
+        );
     }
 
     #[test]
     fn the_signed_data_is_rfc_6962s_precert_entry() {
-        let sct = Sct { log_id: [0; 32], timestamp_ms: 0x0102030405060708, extensions: vec![0xee], hash_algorithm: 4, signature_algorithm: 3, signature: vec![1] };
+        let sct = Sct {
+            log_id: [0; 32],
+            timestamp_ms: 0x0102030405060708,
+            extensions: vec![0xee],
+            hash_algorithm: 4,
+            signature_algorithm: 3,
+            signature: vec![1],
+        };
         let d = signed_data(&sct, &[9; 32], b"TBS").unwrap();
         let mut want = vec![0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1];
         want.extend_from_slice(&[9; 32]);
@@ -446,16 +570,30 @@ mod tests {
 
     #[test]
     fn a_report_counts_distinct_logs() {
-        let v = |id: u8| VerifiedSct { log_id: vec![id; 32], log_url: String::new(), timestamp_ms: 0 };
-        let r = Report { verified: vec![v(1), v(2), v(1)], ..Report::default() };
+        let v = |id: u8| VerifiedSct {
+            log_id: vec![id; 32],
+            log_url: String::new(),
+            timestamp_ms: 0,
+        };
+        let r = Report {
+            verified: vec![v(1), v(2), v(1)],
+            ..Report::default()
+        };
         assert_eq!(r.distinct_logs(), 2);
         assert_eq!(Report::default().distinct_logs(), 0);
     }
 
     #[test]
     fn errors_say_which_log_and_why() {
-        let e = Error::Signature { log_id: [0xab; 32], timestamp_ms: 7, reason: "because".into() };
+        let e = Error::Signature {
+            log_id: [0xab; 32],
+            timestamp_ms: 7,
+            reason: "because".into(),
+        };
         let s = e.to_string();
-        assert!(s.contains("abababab") && s.contains("at 7 ms") && s.contains("because"), "{s}");
+        assert!(
+            s.contains("abababab") && s.contains("at 7 ms") && s.contains("because"),
+            "{s}"
+        );
     }
 }

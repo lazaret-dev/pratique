@@ -40,7 +40,11 @@ impl Seen {
     }
 
     pub(crate) fn header(&self, name: &str) -> Option<&str> {
-        self.head.lines().skip(1).find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.trim()))
+        self.head.lines().skip(1).find_map(|l| {
+            l.split_once(':')
+                .filter(|(k, _)| k.eq_ignore_ascii_case(name))
+                .map(|(_, v)| v.trim())
+        })
     }
 }
 
@@ -145,17 +149,26 @@ impl TestServer {
     }
 
     /// TLS, with a certificate for `127.0.0.1` and `localhost` under a root that [`client`](TestServer::client) trusts.
-    pub(crate) fn start_tls(handler: impl Fn(&Seen) -> Reply + Send + Sync + 'static) -> TestServer {
+    pub(crate) fn start_tls(
+        handler: impl Fn(&Seen) -> Reply + Send + Sync + 'static,
+    ) -> TestServer {
         TestServer::start_tls_with(handler, |config| config)
     }
 
     /// TLS with the server configured further (suites, records, tickets, ...).
-    pub(crate) fn start_tls_with(handler: impl Fn(&Seen) -> Reply + Send + Sync + 'static, configure: impl FnOnce(ServerConfig) -> ServerConfig) -> TestServer {
+    pub(crate) fn start_tls_with(
+        handler: impl Fn(&Seen) -> Reply + Send + Sync + 'static,
+        configure: impl FnOnce(ServerConfig) -> ServerConfig,
+    ) -> TestServer {
         let pki = TestPki::new(&["127.0.0.1", "localhost"]).unwrap();
         TestServer::launch(Arc::new(handler), Some(pki), configure)
     }
 
-    fn launch(handler: Handler, pki: Option<TestPki>, configure: impl FnOnce(ServerConfig) -> ServerConfig) -> TestServer {
+    fn launch(
+        handler: Handler,
+        pki: Option<TestPki>,
+        configure: impl FnOnce(ServerConfig) -> ServerConfig,
+    ) -> TestServer {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         listener.set_nonblocking(true).unwrap();
@@ -163,9 +176,16 @@ impl TestServer {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let open = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let tls = pki.as_ref().map(|p| Arc::new(configure(ServerConfig::from_pki(p))));
+        let tls = pki
+            .as_ref()
+            .map(|p| Arc::new(configure(ServerConfig::from_pki(p))));
         {
-            let (connections, requests, open, stop) = (connections.clone(), requests.clone(), open.clone(), stop.clone());
+            let (connections, requests, open, stop) = (
+                connections.clone(),
+                requests.clone(),
+                open.clone(),
+                stop.clone(),
+            );
             thread::spawn(move || {
                 while !stop.load(Ordering::SeqCst) {
                     match listener.accept() {
@@ -174,12 +194,14 @@ impl TestServer {
                             let conn = connections.fetch_add(1, Ordering::SeqCst);
                             let raw = stream.try_clone().unwrap();
                             open.lock().unwrap().push(stream.try_clone().unwrap());
-                            let (handler, requests, tls) = (handler.clone(), requests.clone(), tls.clone());
+                            let (handler, requests, tls) =
+                                (handler.clone(), requests.clone(), tls.clone());
                             thread::spawn(move || {
                                 let wire: Box<dyn Wire> = match &tls {
                                     None => Box::new(stream),
                                     Some(config) => {
-                                        let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
+                                        let _ =
+                                            stream.set_read_timeout(Some(Duration::from_secs(20)));
                                         match ServerStream::accept(stream, config) {
                                             Ok(s) => Box::new(s),
                                             Err(_) => return, // the client did not like the certificate, or left
@@ -194,7 +216,14 @@ impl TestServer {
                 }
             });
         }
-        TestServer { port, connections, requests, open, stop, pki }
+        TestServer {
+            port,
+            connections,
+            requests,
+            open,
+            stop,
+            pki,
+        }
     }
 
     /// A client for this server: it trusts the server's root (TLS) or may use `http://` (plain), and times out
@@ -202,13 +231,19 @@ impl TestServer {
     pub(crate) fn client(&self) -> Client {
         match &self.pki {
             Some(pki) => Client::with_tls_config(ClientConfig::new(pki.trust_store())),
-            None => Client::with_tls_config(ClientConfig::new(crate::x509::TrustStore::empty())).allow_insecure_http(true),
+            None => Client::with_tls_config(ClientConfig::new(crate::x509::TrustStore::empty()))
+                .allow_insecure_http(true),
         }
         .timeout(Duration::from_secs(5))
     }
 
     pub(crate) fn url(&self, path: &str) -> String {
-        format!("{}://127.0.0.1:{}{}", if self.pki.is_some() { "https" } else { "http" }, self.port, path)
+        format!(
+            "{}://127.0.0.1:{}{}",
+            if self.pki.is_some() { "https" } else { "http" },
+            self.port,
+            path
+        )
     }
 
     pub(crate) fn connections(&self) -> usize {
@@ -236,7 +271,13 @@ impl Drop for TestServer {
 }
 
 /// Reads requests from one connection until it is closed and answers each as `handler` says.
-fn serve(conn: usize, mut stream: Box<dyn Wire>, raw: &TcpStream, handler: &(dyn Fn(&Seen) -> Reply + Send + Sync), requests: &Mutex<Vec<Seen>>) {
+fn serve(
+    conn: usize,
+    mut stream: Box<dyn Wire>,
+    raw: &TcpStream,
+    handler: &(dyn Fn(&Seen) -> Reply + Send + Sync),
+    requests: &Mutex<Vec<Seen>>,
+) {
     let mut buf: Vec<u8> = Vec::new();
     let mut nth = 0;
     loop {
@@ -253,13 +294,29 @@ fn serve(conn: usize, mut stream: Box<dyn Wire>, raw: &TcpStream, handler: &(dyn
         };
         let head = String::from_utf8_lossy(&buf[..end]).into_owned();
         buf.drain(..end);
-        let length: usize =
-            head.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0))).unwrap_or(0);
+        let length: usize = head
+            .lines()
+            .find_map(|l| {
+                l.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(|v| v.trim().parse().unwrap_or(0))
+            })
+            .unwrap_or(0);
         // a request that waits for the go-ahead gets it before its body is read, unless its path starts with /silent (a server
         // that does not do expectations, and waits for the body)
         let path = head.split(' ').nth(1).unwrap_or("");
-        if length > 0 && buf.len() < length && !path.starts_with("/silent") && head.lines().any(|l| l.eq_ignore_ascii_case("expect: 100-continue")) {
-            if stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").and_then(|_| stream.flush()).is_err() {
+        if length > 0
+            && buf.len() < length
+            && !path.starts_with("/silent")
+            && head
+                .lines()
+                .any(|l| l.eq_ignore_ascii_case("expect: 100-continue"))
+        {
+            if stream
+                .write_all(b"HTTP/1.1 100 Continue\r\n\r\n")
+                .and_then(|_| stream.flush())
+                .is_err()
+            {
                 return;
             }
         }
@@ -271,12 +328,21 @@ fn serve(conn: usize, mut stream: Box<dyn Wire>, raw: &TcpStream, handler: &(dyn
             }
         }
         let body: Vec<u8> = buf.drain(..length).collect();
-        let seen = Seen { conn, nth, head, body };
+        let seen = Seen {
+            conn,
+            nth,
+            head,
+            body,
+        };
         nth += 1;
         requests.lock().unwrap().push(seen.clone());
         match handler(&seen) {
             Reply::Send(bytes) => {
-                if stream.write_all(&bytes).and_then(|_| stream.flush()).is_err() {
+                if stream
+                    .write_all(&bytes)
+                    .and_then(|_| stream.flush())
+                    .is_err()
+                {
                     return;
                 }
             }

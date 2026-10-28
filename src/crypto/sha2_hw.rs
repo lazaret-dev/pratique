@@ -29,11 +29,17 @@ pub(super) fn detect() -> Accel {
 
 /// The hardware block functions the CPU reports instructions for, before the self-test.
 pub(crate) fn hardware() -> Accel {
-    #[cfg(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(pratique_portable)))]
+    #[cfg(all(
+        any(target_arch = "aarch64", target_arch = "x86_64"),
+        not(pratique_portable)
+    ))]
     {
         arch::detect()
     }
-    #[cfg(not(all(any(target_arch = "aarch64", target_arch = "x86_64"), not(pratique_portable))))]
+    #[cfg(not(all(
+        any(target_arch = "aarch64", target_arch = "x86_64"),
+        not(pratique_portable)
+    )))]
     {
         Accel::NONE
     }
@@ -55,7 +61,19 @@ fn pattern(n: usize) -> Vec<u8> {
 /// One block, then 255 more in one call, from two different states: the same as the portable function.
 fn agrees256(f: fn(&mut [u32; 8], &[u8])) -> bool {
     let data = pattern(64 * 256);
-    for start in [[0u32; 8], [0x6a09_e667, 0xbb67_ae85, 0x3c6e_f372, 0xa54f_f53a, 0x510e_527f, 0x9b05_688c, 0x1f83_d9ab, 0x5be0_cd19]] {
+    for start in [
+        [0u32; 8],
+        [
+            0x6a09_e667,
+            0xbb67_ae85,
+            0x3c6e_f372,
+            0xa54f_f53a,
+            0x510e_527f,
+            0x9b05_688c,
+            0x1f83_d9ab,
+            0x5be0_cd19,
+        ],
+    ] {
         let (mut hw, mut sw) = (start, start);
         f(&mut hw, &data[..64]);
         sha2::portable_blocks256(&mut sw, &data[..64]);
@@ -70,7 +88,19 @@ fn agrees256(f: fn(&mut [u32; 8], &[u8])) -> bool {
 
 fn agrees512(f: fn(&mut [u64; 8], &[u8])) -> bool {
     let data = pattern(128 * 128);
-    for start in [[0u64; 8], [0x6a09_e667_f3bc_c908, 0xbb67_ae85_84ca_a73b, 0x3c6e_f372_fe94_f82b, 0xa54f_f53a_5f1d_36f1, 0x510e_527f_ade6_82d1, 0x9b05_688c_2b3e_6c1f, 0x1f83_d9ab_fb41_bd6b, 0x5be0_cd19_137e_2179]] {
+    for start in [
+        [0u64; 8],
+        [
+            0x6a09_e667_f3bc_c908,
+            0xbb67_ae85_84ca_a73b,
+            0x3c6e_f372_fe94_f82b,
+            0xa54f_f53a_5f1d_36f1,
+            0x510e_527f_ade6_82d1,
+            0x9b05_688c_2b3e_6c1f,
+            0x1f83_d9ab_fb41_bd6b,
+            0x5be0_cd19_137e_2179,
+        ],
+    ] {
         let (mut hw, mut sw) = (start, start);
         f(&mut hw, &data[..128]);
         sha2::portable_blocks512(&mut sw, &data[..128]);
@@ -91,8 +121,10 @@ mod arch {
 
     pub(super) fn detect() -> Accel {
         Accel {
-            sha256: std::arch::is_aarch64_feature_detected!("sha2").then_some(sha256 as fn(&mut [u32; 8], &[u8])),
-            sha512: std::arch::is_aarch64_feature_detected!("sha3").then_some(sha512 as fn(&mut [u64; 8], &[u8])),
+            sha256: std::arch::is_aarch64_feature_detected!("sha2")
+                .then_some(sha256 as fn(&mut [u32; 8], &[u8])),
+            sha512: std::arch::is_aarch64_feature_detected!("sha3")
+                .then_some(sha512 as fn(&mut [u64; 8], &[u8])),
         }
     }
 
@@ -130,7 +162,11 @@ mod arch {
                     // m[j] holds W[4i..4i+4]; once used, it becomes W[4i+16..4i+20]
                     let wk = vaddq_u32(m[j], vld1q_u32(K256.as_ptr().add(4 * (4 * g + j))));
                     if g < 3 {
-                        m[j] = vsha256su1q_u32(vsha256su0q_u32(m[j], m[(j + 1) % 4]), m[(j + 2) % 4], m[(j + 3) % 4]);
+                        m[j] = vsha256su1q_u32(
+                            vsha256su0q_u32(m[j], m[(j + 1) % 4]),
+                            m[(j + 2) % 4],
+                            m[(j + 3) % 4],
+                        );
                     }
                     let abcd_before = abcd;
                     abcd = vsha256hq_u32(abcd, efgh, wk);
@@ -149,7 +185,12 @@ mod arch {
     /// sha512-ce).
     #[target_feature(enable = "neon,sha3")]
     unsafe fn sha512_blocks(state: &mut [u64; 8], blocks: &[u8]) {
-        let mut st = [vld1q_u64(state.as_ptr()), vld1q_u64(state.as_ptr().add(2)), vld1q_u64(state.as_ptr().add(4)), vld1q_u64(state.as_ptr().add(6))];
+        let mut st = [
+            vld1q_u64(state.as_ptr()),
+            vld1q_u64(state.as_ptr().add(2)),
+            vld1q_u64(state.as_ptr().add(4)),
+            vld1q_u64(state.as_ptr().add(6)),
+        ];
         for block in blocks.chunks_exact(128) {
             let saved = st;
             let p = block.as_ptr();
@@ -162,7 +203,11 @@ mod arch {
                 for j in 0..8 {
                     if g > 0 {
                         // W pair r from pairs r - 8, r - 7, r - 4 and r - 3 (the middle two straddled), and r - 1
-                        s[j] = vsha512su1q_u64(vsha512su0q_u64(s[j], s[(j + 1) % 8]), s[(j + 7) % 8], vextq_u64::<1>(s[(j + 4) % 8], s[(j + 5) % 8]));
+                        s[j] = vsha512su1q_u64(
+                            vsha512su0q_u64(s[j], s[(j + 1) % 8]),
+                            s[(j + 7) % 8],
+                            vextq_u64::<1>(s[(j + 4) % 8], s[(j + 5) % 8]),
+                        );
                     }
                     let wk = vaddq_u64(s[j], vld1q_u64(K512.as_ptr().add(2 * (8 * g + j))));
                     // the roles turn by one register every two rounds: (a, b, c, d) = (ab, cd, ef, gh), then (gh, ab, cd, ef), ...
@@ -196,7 +241,10 @@ mod arch {
             && std::is_x86_feature_detected!("sse2")
             && std::is_x86_feature_detected!("ssse3")
             && std::is_x86_feature_detected!("sse4.1");
-        Accel { sha256: sha.then_some(sha256 as fn(&mut [u32; 8], &[u8])), sha512: None }
+        Accel {
+            sha256: sha.then_some(sha256 as fn(&mut [u32; 8], &[u8])),
+            sha512: None,
+        }
     }
 
     /// Only ever handed out by `detect`, after the CPU reported the SHA extensions.
@@ -211,7 +259,8 @@ mod arch {
     unsafe fn sha256_blocks(state: &mut [u32; 8], blocks: &[u8]) {
         let mask = _mm_set_epi64x(0x0c0d_0e0f_0809_0a0b, 0x0405_0607_0001_0203);
         let tmp = _mm_shuffle_epi32::<0xb1>(_mm_loadu_si128(state.as_ptr() as *const __m128i)); // CDAB
-        let s1 = _mm_shuffle_epi32::<0x1b>(_mm_loadu_si128(state.as_ptr().add(4) as *const __m128i)); // EFGH
+        let s1 =
+            _mm_shuffle_epi32::<0x1b>(_mm_loadu_si128(state.as_ptr().add(4) as *const __m128i)); // EFGH
         let mut abef = _mm_alignr_epi8::<8>(tmp, s1);
         let mut cdgh = _mm_blend_epi16::<0xf0>(s1, tmp);
         for block in blocks.chunks_exact(64) {
@@ -227,12 +276,16 @@ mod arch {
             for g in 0..4 {
                 for j in 0..4 {
                     let i = 4 * g + j;
-                    let wk = _mm_add_epi32(m[j], _mm_loadu_si128(K256.as_ptr().add(4 * i) as *const __m128i));
+                    let wk = _mm_add_epi32(
+                        m[j],
+                        _mm_loadu_si128(K256.as_ptr().add(4 * i) as *const __m128i),
+                    );
                     cdgh = _mm_sha256rnds2_epu32(cdgh, abef, wk);
                     if (3..15).contains(&i) {
                         // W for the next group of four: m[(j + 1) % 4], which SHA256MSG1 started three groups ago
                         let t = _mm_alignr_epi8::<4>(m[j], m[(j + 3) % 4]);
-                        m[(j + 1) % 4] = _mm_sha256msg2_epu32(_mm_add_epi32(m[(j + 1) % 4], t), m[j]);
+                        m[(j + 1) % 4] =
+                            _mm_sha256msg2_epu32(_mm_add_epi32(m[(j + 1) % 4], t), m[j]);
                     }
                     abef = _mm_sha256rnds2_epu32(abef, cdgh, _mm_shuffle_epi32::<0x0e>(wk));
                     if (1..13).contains(&i) {
@@ -245,8 +298,14 @@ mod arch {
         }
         let tmp = _mm_shuffle_epi32::<0x1b>(abef); // FEBA
         let s1 = _mm_shuffle_epi32::<0xb1>(cdgh); // DCHG
-        _mm_storeu_si128(state.as_mut_ptr() as *mut __m128i, _mm_blend_epi16::<0xf0>(tmp, s1)); // DCBA
-        _mm_storeu_si128(state.as_mut_ptr().add(4) as *mut __m128i, _mm_alignr_epi8::<8>(s1, tmp)); // ABEF
+        _mm_storeu_si128(
+            state.as_mut_ptr() as *mut __m128i,
+            _mm_blend_epi16::<0xf0>(tmp, s1),
+        ); // DCBA
+        _mm_storeu_si128(
+            state.as_mut_ptr().add(4) as *mut __m128i,
+            _mm_alignr_epi8::<8>(s1, tmp),
+        ); // ABEF
     }
 }
 
@@ -260,7 +319,11 @@ mod tests {
     #[test]
     fn the_hardware_block_functions_agree_with_the_portable_ones() {
         let hw = hardware();
-        println!("hardware SHA-256: {}, SHA-512: {}", hw.sha256.is_some(), hw.sha512.is_some());
+        println!(
+            "hardware SHA-256: {}, SHA-512: {}",
+            hw.sha256.is_some(),
+            hw.sha512.is_some()
+        );
         let data = pattern(128 * 40);
         let mut rng = crate::fuzz::Rng::new(0x5a2);
         if let Some(f) = hw.sha256 {
@@ -271,7 +334,10 @@ mod tests {
                 sha2::portable_blocks256(&mut b, &data[..64 * n]);
                 assert_eq!(a, b, "SHA-256, {n} blocks");
             }
-            assert!(detect().sha256.is_some(), "the self-test keeps working SHA-256 code");
+            assert!(
+                detect().sha256.is_some(),
+                "the self-test keeps working SHA-256 code"
+            );
         }
         if let Some(f) = hw.sha512 {
             for n in 0..=40 {
@@ -281,7 +347,10 @@ mod tests {
                 sha2::portable_blocks512(&mut b, &data[..128 * n]);
                 assert_eq!(a, b, "SHA-512, {n} blocks");
             }
-            assert!(detect().sha512.is_some(), "the self-test keeps working SHA-512 code");
+            assert!(
+                detect().sha512.is_some(),
+                "the self-test keeps working SHA-512 code"
+            );
         }
     }
 
@@ -310,7 +379,10 @@ mod tests {
         assert_eq!(hw.sha256.is_some(), used.sha256.is_some());
         assert_eq!(hw.sha512.is_some(), used.sha512.is_some());
         // and the public hashes still give the FIPS 180-4 answers through them
-        assert_eq!(crate::util::hex(&Sha256::digest(b"abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            crate::util::hex(&Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
         assert_eq!(crate::util::hex(&Sha384::digest(b"abc")), "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7");
         assert_eq!(
             crate::util::hex(&Sha512::digest(b"abc")),

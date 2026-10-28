@@ -34,7 +34,10 @@
 use pratique::crypto::sha2::{Hash, Sha256};
 use pratique::http::Client;
 use pratique::proxy::registry::{pypi_normalize, Ecosystem};
-use pratique::proxy::{shell_exports, Action, BodyAction, Decision, Exchange, Inspected, Others, Proxy, Scanner, Upstream};
+use pratique::proxy::{
+    shell_exports, Action, BodyAction, Decision, Exchange, Inspected, Others, Proxy, Scanner,
+    Upstream,
+};
 use pratique::tls::ClientConfig;
 use pratique::x509::TrustStore;
 use std::collections::HashMap;
@@ -51,13 +54,24 @@ struct BlockList {
 
 impl Scanner for BlockList {
     fn request(&self, ex: &Exchange) -> Decision {
-        let Some(p) = ex.package() else { return Decision::Allow };
-        let name = if p.ecosystem == Ecosystem::PyPI { pypi_normalize(&p.name) } else { p.name.clone() };
+        let Some(p) = ex.package() else {
+            return Decision::Allow;
+        };
+        let name = if p.ecosystem == Ecosystem::PyPI {
+            pypi_normalize(&p.name)
+        } else {
+            p.name.clone()
+        };
         for (n, v) in &self.blocked {
-            let same_name = *n == name || (p.ecosystem == Ecosystem::PyPI && pypi_normalize(n) == name);
+            let same_name =
+                *n == name || (p.ecosystem == Ecosystem::PyPI && pypi_normalize(n) == name);
             let same_version = v.is_none() || v.as_deref() == p.version.as_deref();
             if same_name && same_version {
-                return Decision::Block(format!("{}{} is on the block list", p.name, v.as_ref().map(|v| format!("@{v}")).unwrap_or_default()));
+                return Decision::Block(format!(
+                    "{}{} is on the block list",
+                    p.name,
+                    v.as_ref().map(|v| format!("@{v}")).unwrap_or_default()
+                ));
             }
         }
         Decision::Allow
@@ -74,7 +88,9 @@ impl Scanner for BlockList {
     fn inspect(&self, ex: &Exchange, _up: &Upstream, body: &Inspected) -> Decision {
         let mut hash = Sha256::new();
         let mut buf = vec![0u8; 1 << 16];
-        let Ok(mut r) = body.open() else { return Decision::Block("the body could not be read back".into()) };
+        let Ok(mut r) = body.open() else {
+            return Decision::Block("the body could not be read back".into());
+        };
         loop {
             match r.read(&mut buf) {
                 Ok(0) => break,
@@ -83,7 +99,12 @@ impl Scanner for BlockList {
             }
         }
         let digest = hash.finalize();
-        eprintln!("scan_proxy: inspected {} ({} bytes, sha256 {})", ex.url(), body.len(), pratique::util::hex(&digest));
+        eprintln!(
+            "scan_proxy: inspected {} ({} bytes, sha256 {})",
+            ex.url(),
+            body.len(),
+            pratique::util::hex(&digest)
+        );
         if body.is_empty() {
             return Decision::Block("an empty package file".into());
         }
@@ -105,12 +126,30 @@ fn main() {
                 opts.insert(k.to_string(), v.to_string());
             }
             None => {
-                eprintln!("{}", include_str!("scan_proxy.rs").lines().take_while(|l| l.starts_with("//")).map(|l| l.trim_start_matches("//").trim_start_matches(' ')).collect::<Vec<_>>().join("\n"));
+                eprintln!(
+                    "{}",
+                    include_str!("scan_proxy.rs")
+                        .lines()
+                        .take_while(|l| l.starts_with("//"))
+                        .map(|l| l.trim_start_matches("//").trim_start_matches(' '))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
                 std::process::exit(2);
             }
         }
     }
-    let list = |k: &str| opts.get(k).map(|v| v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect::<Vec<_>>()).unwrap_or_default();
+    let list = |k: &str| {
+        opts.get(k)
+            .map(|v| {
+                v.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
 
     let blocked = list("block")
         .into_iter()
@@ -122,10 +161,15 @@ fn main() {
             }
         })
         .collect();
-    let scanner = BlockList { blocked, inspect: opts.get("inspect").is_some_and(|v| v == "1") };
+    let scanner = BlockList {
+        blocked,
+        inspect: opts.get("inspect").is_some_and(|v| v == "1"),
+    };
 
     // the proxy's own client: the default (the machine's roots, and the proxy HTTPS_PROXY names) unless told otherwise
-    let custom = ["upstream_ca", "upstream_proxy", "resolve"].iter().any(|k| opts.contains_key(*k));
+    let custom = ["upstream_ca", "upstream_proxy", "resolve"]
+        .iter()
+        .any(|k| opts.contains_key(*k));
     let client = custom.then(|| {
         let roots = match opts.get("upstream_ca") {
             Some(path) => {
@@ -154,8 +198,15 @@ fn main() {
             return;
         }
         let bytes = e.bytes.map(|b| format!(" {b} bytes")).unwrap_or_default();
-        let detail = if e.detail.is_empty() { String::new() } else { format!(": {}", e.detail) };
-        eprintln!("scan_proxy: {:?} {} {} {}{bytes}{detail}", e.action, e.method, e.url, e.status);
+        let detail = if e.detail.is_empty() {
+            String::new()
+        } else {
+            format!(": {}", e.detail)
+        };
+        eprintln!(
+            "scan_proxy: {:?} {} {} {}{bytes}{detail}",
+            e.action, e.method, e.url, e.status
+        );
     });
     if let Some(c) = client {
         builder = builder.client(c);
@@ -167,7 +218,10 @@ fn main() {
     if opts.get("others").is_some_and(|v| v == "refuse") {
         builder = builder.others(Others::Refuse);
     }
-    let ports: Vec<u16> = list("ports").iter().map(|p| p.parse().expect("a port")).collect();
+    let ports: Vec<u16> = list("ports")
+        .iter()
+        .map(|p| p.parse().expect("a port"))
+        .collect();
     if !ports.is_empty() {
         builder = builder.ports(&ports);
     }
@@ -178,12 +232,28 @@ fn main() {
         builder = builder.ca_name(name);
     }
     let proxy = builder.build().unwrap_or_else(|e| panic!("{e}"));
-    let server = proxy.start(&opts.get("listen").cloned().unwrap_or_else(|| "127.0.0.1:0".into())).unwrap_or_else(|e| panic!("listening: {e}"));
+    let server = proxy
+        .start(
+            &opts
+                .get("listen")
+                .cloned()
+                .unwrap_or_else(|| "127.0.0.1:0".into()),
+        )
+        .unwrap_or_else(|e| panic!("listening: {e}"));
     let addr = server.local_addrs()[0];
-    let dir = opts.get("dir").map(Into::into).unwrap_or_else(|| std::env::temp_dir().join(format!("scan-proxy-{}", std::process::id())));
-    let files = proxy.write_trust_files(&dir).unwrap_or_else(|e| panic!("the trust files: {e}"));
+    let dir = opts
+        .get("dir")
+        .map(Into::into)
+        .unwrap_or_else(|| std::env::temp_dir().join(format!("scan-proxy-{}", std::process::id())));
+    let files = proxy
+        .write_trust_files(&dir)
+        .unwrap_or_else(|e| panic!("the trust files: {e}"));
     let env = proxy.client_env(addr, &files);
-    eprintln!("scan_proxy: listening {addr}; CA in {}, valid until {}", files.ca.display(), proxy.ca().not_after());
+    eprintln!(
+        "scan_proxy: listening {addr}; CA in {}, valid until {}",
+        files.ca.display(),
+        proxy.ca().not_after()
+    );
     for note in proxy.upstream_notes() {
         eprintln!("scan_proxy: {note}");
     }
@@ -193,7 +263,10 @@ fn main() {
         server.wait();
         return;
     }
-    let status = Command::new(&command[0]).args(&command[1..]).envs(env).status();
+    let status = Command::new(&command[0])
+        .args(&command[1..])
+        .envs(env)
+        .status();
     server.shutdown(Duration::from_secs(1));
     let _ = std::fs::remove_dir_all(&dir);
     match status {

@@ -192,14 +192,40 @@ impl TestQuicServer {
         self.datagrams_received += 1;
         let mut off = 0;
         while off < datagram.len() {
-            let Ok(p) = packet::parse(&datagram[off..], self.scid.len()) else { return };
-            let (ty, pn_offset, len, dcid, scid, token) = (p.ty, p.pn_offset, p.len, p.dcid.to_vec(), p.scid.to_vec(), p.token.to_vec());
-            self.recv_packet(now, &mut datagram[off..off + len], ty, pn_offset, &dcid, &scid, &token);
+            let Ok(p) = packet::parse(&datagram[off..], self.scid.len()) else {
+                return;
+            };
+            let (ty, pn_offset, len, dcid, scid, token) = (
+                p.ty,
+                p.pn_offset,
+                p.len,
+                p.dcid.to_vec(),
+                p.scid.to_vec(),
+                p.token.to_vec(),
+            );
+            self.recv_packet(
+                now,
+                &mut datagram[off..off + len],
+                ty,
+                pn_offset,
+                &dcid,
+                &scid,
+                &token,
+            );
             off += len;
         }
     }
 
-    fn recv_packet(&mut self, now: Instant, buf: &mut [u8], ty: PacketType, pn_offset: usize, dcid: &[u8], scid: &[u8], token: &[u8]) {
+    fn recv_packet(
+        &mut self,
+        now: Instant,
+        buf: &mut [u8],
+        ty: PacketType,
+        pn_offset: usize,
+        dcid: &[u8],
+        scid: &[u8],
+        token: &[u8],
+    ) {
         let level = match ty {
             PacketType::Initial => 0,
             PacketType::Handshake => 1,
@@ -241,10 +267,14 @@ impl TestQuicServer {
                 self.keys[0] = Some((client, server));
             }
         }
-        let Some((rx, tx)) = self.keys[level].as_mut() else { return };
+        let Some((rx, tx)) = self.keys[level].as_mut() else {
+            return;
+        };
         let opened = if level == 2 {
             // 1-RTT: the key phase says which keys
-            let Some(hdr) = rx.header.unprotect(buf, pn_offset) else { return };
+            let Some(hdr) = rx.header.unprotect(buf, pn_offset) else {
+                return;
+            };
             let pn = decode_packet_number(self.largest_rx[level], hdr.truncated_pn, hdr.pn_len);
             let phase = hdr.first & 0x04 != 0;
             let range = if phase == self.rx_phase {
@@ -266,7 +296,11 @@ impl TestQuicServer {
                 }
                 r
             };
-            range.map(|payload| keys::Opened { pn, first: hdr.first, payload })
+            range.map(|payload| keys::Opened {
+                pn,
+                first: hdr.first,
+                payload,
+            })
         } else {
             rx.open(buf, pn_offset, self.largest_rx[level])
         };
@@ -326,7 +360,9 @@ impl TestQuicServer {
                         }
                     }
                 }
-                Frame::ConnectionClose { code, reason, .. } => self.close_received = Some((code, reason.to_vec())),
+                Frame::ConnectionClose { code, reason, .. } => {
+                    self.close_received = Some((code, reason.to_vec()))
+                }
                 Frame::Stream { .. }
                 | Frame::ResetStream { .. }
                 | Frame::StopSending { .. }
@@ -399,14 +435,22 @@ impl TestQuicServer {
             for m in &flight.handshake {
                 self.crypto_tx[1].write(m);
             }
-            self.keys[1] = Some((Keys::new(flight.suite, &flight.client_handshake_secret), Keys::new(flight.suite, &flight.server_handshake_secret)));
-            self.keys[2] = Some((Keys::new(flight.suite, &flight.client_application_secret), Keys::new(flight.suite, &flight.server_application_secret)));
+            self.keys[1] = Some((
+                Keys::new(flight.suite, &flight.client_handshake_secret),
+                Keys::new(flight.suite, &flight.server_handshake_secret),
+            ));
+            self.keys[2] = Some((
+                Keys::new(flight.suite, &flight.client_application_secret),
+                Keys::new(flight.suite, &flight.server_application_secret),
+            ));
             self.flight = Some(flight);
             self.retransmit_at = Some(now + self.opts.retransmit_after);
         } else if level == 1 {
             if let Some(f) = &self.flight {
                 // the client's Finished
-                if bytes.len() >= f.client_finished.len() && bytes[..f.client_finished.len()] == f.client_finished[..] {
+                if bytes.len() >= f.client_finished.len()
+                    && bytes[..f.client_finished.len()] == f.client_finished[..]
+                {
                     self.handshake_done = true;
                 }
             }
@@ -426,7 +470,11 @@ impl TestQuicServer {
             if self.keys[level].is_none() {
                 continue;
             }
-            let ty = [PacketType::Initial, PacketType::Handshake, PacketType::OneRtt][level];
+            let ty = [
+                PacketType::Initial,
+                PacketType::Handshake,
+                PacketType::OneRtt,
+            ][level];
             let used: usize = packets.iter().map(|p| p.len()).sum();
             if used + 100 > 1200 {
                 break;
@@ -437,9 +485,17 @@ impl TestQuicServer {
             // (an acknowledgment goes when one is due, and also with every 1-RTT packet that is sent anyway, as most servers do: one
             // that went once and was lost leaves a client that hears the server but not of its own packets, backing its probes
             // off until the idle timeout ends a connection on which nothing was wrong; found by the field run's fuzzing)
-            let piggyback = level == 2 && (!self.queued.is_empty() || self.streams.has_pending() || (self.handshake_done && !self.handshake_done_sent));
+            let piggyback = level == 2
+                && (!self.queued.is_empty()
+                    || self.streams.has_pending()
+                    || (self.handshake_done && !self.handshake_done_sent));
             if (self.ack_due[level] || piggyback) && !self.received[level].is_empty() {
-                let ranges: Vec<_> = self.received[level].iter().rev().take(10).map(|r| r.start..=r.end - 1).collect();
+                let ranges: Vec<_> = self.received[level]
+                    .iter()
+                    .rev()
+                    .take(10)
+                    .map(|r| r.start..=r.end - 1)
+                    .collect();
                 frame::write_ack(&mut payload, 0, &ranges, None);
                 self.ack_due[level] = false;
             }
@@ -451,10 +507,16 @@ impl TestQuicServer {
                     break;
                 }
                 let max = (room - payload.len() - header).min(self.opts.crypto_chunk);
-                let Some(c) = self.crypto_tx[level].next_chunk(max, u64::MAX) else { break };
+                let Some(c) = self.crypto_tx[level].next_chunk(max, u64::MAX) else {
+                    break;
+                };
                 let mut data = Vec::new();
                 self.crypto_tx[level].copy(c.offset, c.len, &mut data);
-                Frame::Crypto { offset: c.offset, data: &data }.write(&mut payload);
+                Frame::Crypto {
+                    offset: c.offset,
+                    data: &data,
+                }
+                .write(&mut payload);
                 crypto.push((c.offset, c.len));
                 eliciting = true;
                 if level == 0 {
@@ -475,7 +537,8 @@ impl TestQuicServer {
                 }
                 let mut written = Vec::new();
                 let budget = room.saturating_sub(payload.len());
-                self.streams.write_frames(&mut payload, budget, &mut written);
+                self.streams
+                    .write_frames(&mut payload, budget, &mut written);
                 for f in written {
                     if let SentFrame::Stream(f) = f {
                         stream_frames.push(f);
@@ -485,7 +548,12 @@ impl TestQuicServer {
                     eliciting = true;
                 }
                 if let Some((code, reason)) = self.close_with.take() {
-                    Frame::ConnectionClose { code, frame_type: None, reason: &reason }.write(&mut payload);
+                    Frame::ConnectionClose {
+                        code,
+                        frame_type: None,
+                        reason: &reason,
+                    }
+                    .write(&mut payload);
                 }
             }
             if payload.is_empty() {
@@ -495,9 +563,27 @@ impl TestQuicServer {
             self.next_pn[level] += 1;
             let mut buf = Vec::new();
             let (long, pn_offset) = if ty == PacketType::OneRtt {
-                (None, packet::write_short_header(&mut buf, &self.client_scid, false, self.tx_phase, pn, 4))
+                (
+                    None,
+                    packet::write_short_header(
+                        &mut buf,
+                        &self.client_scid,
+                        false,
+                        self.tx_phase,
+                        pn,
+                        4,
+                    ),
+                )
             } else {
-                let h = packet::write_long_header(&mut buf, ty, &self.client_scid, &self.scid, &[], pn, 4);
+                let h = packet::write_long_header(
+                    &mut buf,
+                    ty,
+                    &self.client_scid,
+                    &self.scid,
+                    &[],
+                    pn,
+                    4,
+                );
                 (Some(h), h.pn_offset)
             };
             if payload.len() < 4 {
@@ -510,7 +596,13 @@ impl TestQuicServer {
             let (_, tx) = self.keys[level].as_mut().expect("keys");
             tx.seal(&mut buf, pn_offset, 4, pn).unwrap();
             if eliciting {
-                self.sent.push(Sent { level, pn, crypto, handshake_done: carries_done, streams: stream_frames });
+                self.sent.push(Sent {
+                    level,
+                    pn,
+                    crypto,
+                    handshake_done: carries_done,
+                    streams: stream_frames,
+                });
             }
             packets.push(buf);
         }
@@ -521,8 +613,12 @@ impl TestQuicServer {
         for p in packets {
             out.extend_from_slice(&p);
         }
-        if self.crypto_tx.iter().any(|c| c.has_pending()) || !self.sent.is_empty() || (self.handshake_done_sent && !self.handshake_done_acked) {
-            self.retransmit_at.get_or_insert(now + self.opts.retransmit_after);
+        if self.crypto_tx.iter().any(|c| c.has_pending())
+            || !self.sent.is_empty()
+            || (self.handshake_done_sent && !self.handshake_done_acked)
+        {
+            self.retransmit_at
+                .get_or_insert(now + self.opts.retransmit_after);
         }
         true
     }
@@ -603,14 +699,16 @@ impl Link {
             self.sent_by_client += 1;
             self.client_datagram_sizes.push(buf.len());
             if !(self.drop_rule)(true, n, &buf) {
-                self.transit.push((self.now + self.delay, true, buf.clone()));
+                self.transit
+                    .push((self.now + self.delay, true, buf.clone()));
             }
         }
         while self.server.poll_transmit(self.now, &mut buf) {
             let n = self.sent_by_server;
             self.sent_by_server += 1;
             if !(self.drop_rule)(false, n, &buf) {
-                self.transit.push((self.now + self.delay, false, buf.clone()));
+                self.transit
+                    .push((self.now + self.delay, false, buf.clone()));
             }
         }
         while let Some(e) = self.client.poll_event() {
@@ -669,7 +767,9 @@ impl Link {
     /// Advances to the next thing that happens, and does it. False if nothing ever will.
     pub fn step(&mut self) -> bool {
         self.flush();
-        let Some(t) = self.next_event() else { return false };
+        let Some(t) = self.next_event() else {
+            return false;
+        };
         self.process_at(t);
         true
     }

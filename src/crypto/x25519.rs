@@ -22,7 +22,13 @@ fn mul_small(a: Fe, k: u64) -> Fe {
     }
     let carry = (c[4] >> 51) as u64;
     c[4] &= m;
-    let mut r = [c[0] as u64, c[1] as u64, c[2] as u64, c[3] as u64, c[4] as u64];
+    let mut r = [
+        c[0] as u64,
+        c[1] as u64,
+        c[2] as u64,
+        c[3] as u64,
+        c[4] as u64,
+    ];
     r[0] += carry * 19;
     Fe(r).carry()
 }
@@ -242,7 +248,11 @@ mod tests {
         specials.push([0xffu8; 32]);
         for i in 0..300 {
             let k: [u8; 32] = rng.bytes(32).try_into().unwrap();
-            let u: [u8; 32] = if i < specials.len() { specials[i] } else { rng.bytes(32).try_into().unwrap() };
+            let u: [u8; 32] = if i < specials.len() {
+                specials[i]
+            } else {
+                rng.bytes(32).try_into().unwrap()
+            };
             let want = reference(&k, &u);
             // the ladder this CPU uses (with BMI2 on an x86-64 that has it), and the plain one
             assert_eq!(x25519(&k, &u), want, "scalar {}, u {}", hex(&k), hex(&u));
@@ -274,8 +284,14 @@ mod tests {
         let b = arr("5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb");
         let a_pub = public_key(&a);
         let b_pub = public_key(&b);
-        assert_eq!(hex(&a_pub), "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a");
-        assert_eq!(hex(&b_pub), "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f");
+        assert_eq!(
+            hex(&a_pub),
+            "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a"
+        );
+        assert_eq!(
+            hex(&b_pub),
+            "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f"
+        );
         let shared = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
         assert_eq!(hex(&x25519(&a, &b_pub)), shared);
         assert_eq!(hex(&x25519(&b, &a_pub)), shared);
@@ -289,12 +305,18 @@ mod tests {
         let r = x25519(&k, &u);
         u = k;
         k = r;
-        assert_eq!(hex(&k), "422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079");
+        assert_eq!(
+            hex(&k),
+            "422c8e7a6227d7bca1350b3e2bb7279f7897b87bb6854b783c60e80311ae3079"
+        );
         for _ in 1..1000 {
             let r = x25519(&k, &u);
             u = k;
             k = r;
         }
-        assert_eq!(hex(&k), "684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51");
+        assert_eq!(
+            hex(&k),
+            "684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51"
+        );
     }
 }

@@ -1,0 +1,92 @@
+# Made by tools/gen_chain_cases.py: certificate chains that differ from a good one in one thing each.
+# name	host	time	expect	anchor	what
+ok_ec	host.test	1780272000	ok	anchors/ok_ec.pem	a good chain, every key ec
+ok_rsa	host.test	1780272000	ok	anchors/ok_rsa.pem	a good chain, every key rsa
+ok_p384	host.test	1780272000	ok	anchors/ok_p384.pem	a good chain, every key p384
+ok_ed25519	host.test	1780272000	either	anchors/ok_ed25519.pem	a good chain, every key ed25519 (Ed25519 is not in the CA/B Forum's rules)
+ok_no_intermediate	host.test	1780272000	ok	anchors/ok_no_intermediate.pem	the leaf issued by the anchor itself
+ok_two_intermediates	host.test	1780272000	ok	anchors/ok_two_intermediates.pem	two intermediates
+ok_intermediates_reversed	host.test	1780272000	ok	anchors/ok_intermediates_reversed.pem	two intermediates, sent in the wrong order
+ok_extra_unrelated_cert	host.test	1780272000	ok	anchors/ok_extra_unrelated_cert.pem	an unrelated certificate sent among the intermediates
+ok_root_sent_too	host.test	1780272000	ok	anchors/ok_root_sent_too.pem	the anchor sent at the end of the chain as well
+refuse_missing_intermediate	host.test	1780272000	refuse	anchors/refuse_missing_intermediate.pem	an intermediate left out
+refuse_wrong_anchor	host.test	1780272000	refuse	anchors/refuse_wrong_anchor.pem	a good chain, judged against another root
+refuse_leaf_expired	host.test	1780272000	refuse	anchors/refuse_leaf_expired.pem	the leaf expired a day before
+refuse_leaf_not_yet_valid	host.test	1780272000	refuse	anchors/refuse_leaf_not_yet_valid.pem	the leaf is valid from a day after
+ok_leaf_not_after_is_now	host.test	1780272000	ok	anchors/ok_leaf_not_after_is_now.pem	the leaf's notAfter is the moment of the check (inclusive, RFC 5280 4.1.2.5)
+ok_leaf_not_before_is_now	host.test	1780272000	ok	anchors/ok_leaf_not_before_is_now.pem	the leaf's notBefore is the moment of the check (inclusive)
+refuse_leaf_expired_a_second_ago	host.test	1780272000	refuse	anchors/refuse_leaf_expired_a_second_ago.pem	the leaf's notAfter a second before the check
+refuse_intermediate_expired	host.test	1780272000	refuse	anchors/refuse_intermediate_expired.pem	the intermediate expired
+either_anchor_expired	host.test	1780272000	either	anchors/either_anchor_expired.pem	the trust anchor's own certificate expired (RFC 5280 does not check an anchor; most verifiers do)
+either_generalized_time_before_2050	host.test	1780272000	either	anchors/either_generalized_time_before_2050.pem	the leaf's notAfter written as GeneralizedTime before 2050 (DER says UTCTime)
+refuse_host_mismatch	host.test	1780272000	refuse	anchors/refuse_host_mismatch.pem	the leaf names other.test
+ok_wildcard	a.example.test	1780272000	ok	anchors/ok_wildcard.pem	*.example.test for a.example.test
+refuse_wildcard_apex	example.test	1780272000	refuse	anchors/refuse_wildcard_apex.pem	*.example.test for example.test
+refuse_wildcard_two_labels	a.b.example.test	1780272000	refuse	anchors/refuse_wildcard_two_labels.pem	*.example.test for a.b.example.test
+either_wildcard_partial_label	foo.example.test	1780272000	either	anchors/either_wildcard_partial_label.pem	f*.example.test for foo.example.test (RFC 6125 allows, the CA/B Forum does not)
+refuse_wildcard_not_leftmost	a.b.example.test	1780272000	refuse	anchors/refuse_wildcard_not_leftmost.pem	a.*.example.test for a.b.example.test
+either_wildcard_public_suffix	x.test	1780272000	either	anchors/either_wildcard_public_suffix.pem	*.test for x.test (a wildcard of a whole top-level domain)
+either_common_name_only	host.test	1780272000	either	anchors/either_common_name_only.pem	no subjectAltName, the host in the common name only (the CA/B Forum and browsers refuse)
+refuse_cn_matches_san_does_not	host.test	1780272000	refuse	anchors/refuse_cn_matches_san_does_not.pem	the common name is the host, the subjectAltName another name
+ok_san_upper_case	host.test	1780272000	ok	anchors/ok_san_upper_case.pem	HOST.TEST in the subjectAltName for host.test
+either_host_trailing_dot	host.test.	1780272000	either	anchors/either_host_trailing_dot.pem	the host asked for is host.test. (with the root's dot)
+ok_ip_san	192.0.2.10	1780272000	ok	anchors/ok_ip_san.pem	an iPAddress entry for the address asked for
+refuse_ip_in_dns_san	192.0.2.10	1780272000	refuse	anchors/refuse_ip_in_dns_san.pem	the address written as a dNSName, asked for as an address
+ok_idn_a_label	xn--bcher-kva.test	1780272000	ok	anchors/ok_idn_a_label.pem	an internationalized name in its xn-- form
+ok_empty_subject_critical_san	host.test	1780272000	ok	anchors/ok_empty_subject_critical_san.pem	an empty subject and a critical subjectAltName (RFC 5280 4.2.1.6)
+refuse_intermediate_without_basic_constraints	host.test	1780272000	refuse	anchors/refuse_intermediate_without_basic_constraints.pem	the intermediate has no basicConstraints
+refuse_intermediate_ca_false	host.test	1780272000	refuse	anchors/refuse_intermediate_ca_false.pem	the intermediate says cA FALSE
+either_intermediate_basic_constraints_not_critical	host.test	1780272000	either	anchors/either_intermediate_basic_constraints_not_critical.pem	the intermediate's basicConstraints is not critical (CAs MUST mark it; RFC 5280's validation does not check)
+refuse_path_length_exceeded	host.test	1780272000	refuse	anchors/refuse_path_length_exceeded.pem	pathLenConstraint 0 with another intermediate below it
+ok_path_length_zero	host.test	1780272000	ok	anchors/ok_path_length_zero.pem	pathLenConstraint 0 and the leaf straight below
+either_anchor_path_length_zero	host.test	1780272000	either	anchors/either_anchor_path_length_zero.pem	the anchor says pathLenConstraint 0 and has an intermediate below it (an anchor's constraints are the verifier's choice)
+either_leaf_is_ca	host.test	1780272000	either	anchors/either_leaf_is_ca.pem	the leaf says cA TRUE (RFC 5280 allows; the CA/B Forum does not)
+refuse_intermediate_without_key_cert_sign	host.test	1780272000	refuse	anchors/refuse_intermediate_without_key_cert_sign.pem	the intermediate's keyUsage lacks keyCertSign
+either_intermediate_without_key_usage	host.test	1780272000	either	anchors/either_intermediate_without_key_usage.pem	the intermediate has no keyUsage (RFC 5280 allows it; the CA/B Forum wants one)
+either_leaf_key_usage_cert_sign_only	host.test	1780272000	either	anchors/either_leaf_key_usage_cert_sign_only.pem	the leaf's keyUsage is keyCertSign alone (no digitalSignature for an ECDSA key)
+ok_leaf_without_key_usage	host.test	1780272000	ok	anchors/ok_leaf_without_key_usage.pem	the leaf has no keyUsage
+refuse_leaf_eku_client_only	host.test	1780272000	refuse	anchors/refuse_leaf_eku_client_only.pem	the leaf's extendedKeyUsage is clientAuth alone
+either_leaf_without_eku	host.test	1780272000	either	anchors/either_leaf_without_eku.pem	the leaf has no extendedKeyUsage (RFC 5280: any use; the CA/B Forum requires serverAuth)
+either_leaf_eku_any	host.test	1780272000	either	anchors/either_leaf_eku_any.pem	the leaf's extendedKeyUsage is anyExtendedKeyUsage alone
+either_leaf_eku_server_and_any	host.test	1780272000	either	anchors/either_leaf_eku_server_and_any.pem	the leaf's extendedKeyUsage is serverAuth and anyExtendedKeyUsage (RFC 5280: any use; the CA/B Forum forbids anyExtendedKeyUsage)
+either_intermediate_eku_client_only	host.test	1780272000	either	anchors/either_intermediate_eku_client_only.pem	the intermediate's extendedKeyUsage is clientAuth alone, the leaf's serverAuth (EKU nesting is not in RFC 5280; browsers apply it)
+refuse_leaf_unknown_critical_extension	host.test	1780272000	refuse	anchors/refuse_leaf_unknown_critical_extension.pem	an extension nobody knows, marked critical, in the leaf
+refuse_intermediate_unknown_critical_extension	host.test	1780272000	refuse	anchors/refuse_intermediate_unknown_critical_extension.pem	an extension nobody knows, marked critical, in the intermediate
+ok_leaf_unknown_extension_not_critical	host.test	1780272000	ok	anchors/ok_leaf_unknown_extension_not_critical.pem	an extension nobody knows, not critical, in the leaf
+ok_nc_permitted	a.example.test	1780272000	ok	anchors/ok_nc_permitted.pem	the intermediate permits example.test; the leaf is a.example.test
+refuse_nc_not_permitted	a.other.test	1780272000	refuse	anchors/refuse_nc_not_permitted.pem	the intermediate permits example.test; the leaf is a.other.test
+refuse_nc_one_name_not_permitted	a.example.test	1780272000	refuse	anchors/refuse_nc_one_name_not_permitted.pem	the intermediate permits example.test; the leaf names a.example.test and evil.test
+refuse_nc_suffix_without_dot	badexample.test	1780272000	refuse	anchors/refuse_nc_suffix_without_dot.pem	the intermediate permits example.test; the leaf is badexample.test
+either_nc_common_name_only	evil.test	1780272000	either	anchors/either_nc_common_name_only.pem	the intermediate permits example.test; the leaf has no subjectAltName and evil.test in its common name
+refuse_nc_excluded	x.bad.example.test	1780272000	refuse	anchors/refuse_nc_excluded.pem	the intermediate excludes bad.example.test; the leaf is x.bad.example.test
+ok_nc_excluded_other	good.example.test	1780272000	ok	anchors/ok_nc_excluded_other.pem	the intermediate excludes bad.example.test; the leaf is good.example.test
+ok_nc_ip_only_dns_leaf	host.test	1780272000	ok	anchors/ok_nc_ip_only_dns_leaf.pem	the intermediate constrains addresses only; the leaf is a DNS name (no constraint of that type)
+refuse_nc_ip_outside	198.51.100.1	1780272000	refuse	anchors/refuse_nc_ip_outside.pem	the intermediate permits 192.0.2.0/24; the leaf is 198.51.100.1
+either_nc_on_anchor	host.test	1780272000	either	anchors/either_nc_on_anchor.pem	the anchor permits example.test; the leaf is host.test (an anchor's constraints are the verifier's choice)
+either_nc_not_critical	a.other.test	1780272000	either	anchors/either_nc_not_critical.pem	the intermediate's nameConstraints is not critical (CAs MUST mark it) and does not permit the leaf
+refuse_nc_from_a_higher_intermediate	a.other.test	1780272000	refuse	anchors/refuse_nc_from_a_higher_intermediate.pem	the upper of two intermediates permits example.test; the leaf is a.other.test
+refuse_leaf_signature_flipped	host.test	1780272000	refuse	anchors/refuse_leaf_signature_flipped.pem	the last bit of the leaf's signature flipped
+refuse_intermediate_signature_flipped	host.test	1780272000	refuse	anchors/refuse_intermediate_signature_flipped.pem	the last bit of the intermediate's signature flipped
+refuse_leaf_signed_by_another_key	host.test	1780272000	refuse	anchors/refuse_leaf_signed_by_another_key.pem	the leaf names the intermediate as issuer and is signed by another key
+refuse_outer_algorithm_differs	host.test	1780272000	refuse	anchors/refuse_outer_algorithm_differs.pem	the signature algorithm outside the TBS (SHA-384) differs from the one inside (SHA-256)
+either_leaf_signed_sha1	host.test	1780272000	either	anchors/either_leaf_signed_sha1.pem	the leaf signed with RSA and SHA-1 (refused by the CA/B Forum and browsers)
+either_leaf_rsa_1024	host.test	1780272000	either	anchors/either_leaf_rsa_1024.pem	the leaf's key is RSA-1024 (refused by the CA/B Forum and browsers)
+either_intermediate_rsa_1024	host.test	1780272000	either	anchors/either_intermediate_rsa_1024.pem	the intermediate's key is RSA-1024
+either_issuer_name_case	host.test	1780272000	either	anchors/either_issuer_name_case.pem	the leaf names its issuer "case intermediate" (RFC 5280 7.1 compares without case; Go compares bytes)
+either_issuer_name_printable_string	host.test	1780272000	either	anchors/either_issuer_name_printable_string.pem	the leaf names its issuer as a PrintableString, the intermediate's own name is a UTF8String
+either_issuer_name_spaces	host.test	1780272000	either	anchors/either_issuer_name_spaces.pem	the leaf names its issuer "Case  Intermediate" (two spaces, which RFC 4518 folds)
+refuse_issuer_name_other	host.test	1780272000	refuse	anchors/refuse_issuer_name_other.pem	the leaf names another issuer (signed by the intermediate's key)
+either_authority_key_id_mismatch	host.test	1780272000	either	anchors/either_authority_key_id_mismatch.pem	the leaf's authorityKeyIdentifier is not the intermediate's key identifier (names and signature match)
+either_no_authority_key_id	host.test	1780272000	either	anchors/either_no_authority_key_id.pem	the leaf has no authorityKeyIdentifier (RFC 5280 allows it; the CA/B Forum wants one)
+ok_two_issuers_one_expired	host.test	1780272000	ok	anchors/ok_two_issuers_one_expired.pem	the intermediate sent twice, an expired copy first (path building has to try the other)
+ok_cross_signed_to_the_anchor	host.test	1780272000	ok	anchors/ok_cross_signed_to_the_anchor.pem	the intermediate's cross certificate to another root sent first; the anchor issued it too
+refuse_only_the_cross_path	host.test	1780272000	refuse	anchors/refuse_only_the_cross_path.pem	only the cross certificate to a root that is not an anchor is sent
+refuse_self_signed_leaf	host.test	1780272000	refuse	anchors/refuse_self_signed_leaf.pem	a self-signed leaf, judged against another root
+either_self_signed_leaf_is_the_anchor	host.test	1780272000	either	anchors/either_self_signed_leaf_is_the_anchor.pem	a self-signed leaf that is itself the trust anchor
+either_serial_zero	host.test	1780272000	either	anchors/either_serial_zero.pem	the leaf's serial number is 0 (RFC 5280: positive; most verifiers accept)
+either_serial_negative	host.test	1780272000	either	anchors/either_serial_negative.pem	the leaf's serial number is -1
+either_serial_21_bytes	host.test	1780272000	either	anchors/either_serial_21_bytes.pem	the leaf's serial number is 21 bytes long (RFC 5280: at most 20)
+refuse_duplicate_extension	host.test	1780272000	refuse	anchors/refuse_duplicate_extension.pem	the leaf has its subjectAltName twice (RFC 5280 4.2: at most once)
+either_basic_constraints_false_written	host.test	1780272000	either	anchors/either_basic_constraints_false_written.pem	the leaf's basicConstraints writes cA FALSE, which DER leaves out (a default value)
+refuse_inner_algorithm_differs	host.test	1780272000	refuse	anchors/refuse_inner_algorithm_differs.pem	the signature algorithm inside the TBS (SHA-384) differs from the one outside (SHA-256), signed with SHA-256
+refuse_version_2_with_extensions	host.test	1780272000	refuse	anchors/refuse_version_2_with_extensions.pem	the leaf says version 2 and has extensions (RFC 5280 4.1.2.1: extensions need version 3)

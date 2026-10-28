@@ -138,7 +138,11 @@ impl GhashKey {
     /// the key that produced it; the hardware multiplier is used with the hardware AES.
     pub(super) fn new(h: &[u8; 16], backend: Backend) -> GhashKey {
         let hw = backend == Backend::Hardware;
-        GhashKey { h: u128::from_be_bytes(*h).reverse_bits(), hw, powers: if hw { aes_hw::ghash_powers(h) } else { None } }
+        GhashKey {
+            h: u128::from_be_bytes(*h).reverse_bits(),
+            hw,
+            powers: if hw { aes_hw::ghash_powers(h) } else { None },
+        }
     }
 
     /// H^1 ... H^8 for the one-pass hardware GCM, if there is one.
@@ -160,7 +164,11 @@ impl GhashKey {
 
     /// GHASH of `aad` and `ct` as a 16-byte block.
     pub(super) fn hash(&self, aad: &[u8], ct: &[u8]) -> [u8; 16] {
-        let s = if self.hw { aes_hw::ghash_hw(self.h, aad, ct) } else { hash_with::<false>(self.h, aad, ct) };
+        let s = if self.hw {
+            aes_hw::ghash_hw(self.h, aad, ct)
+        } else {
+            hash_with::<false>(self.h, aad, ct)
+        };
         s.to_be_bytes()
     }
 }
@@ -194,7 +202,10 @@ mod tests {
                 acc = gf_mul(acc ^ u128::from_be_bytes(b), h);
             }
         }
-        gf_mul(acc ^ (((aad.len() as u128 * 8) << 64) | (ct.len() as u128 * 8)), h)
+        gf_mul(
+            acc ^ (((aad.len() as u128 * 8) << 64) | (ct.len() as u128 * 8)),
+            h,
+        )
     }
 
     /// Carry-less multiplication bit by bit.
@@ -211,11 +222,16 @@ mod tests {
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0
         }
         fn u128(&mut self) -> u128 {
-            ((self.next() as u128) << 64) ^ (self.next() >> 7) as u128 ^ ((self.next() as u128) << 31)
+            ((self.next() as u128) << 64)
+                ^ (self.next() >> 7) as u128
+                ^ ((self.next() as u128) << 31)
         }
         fn bytes(&mut self, n: usize) -> Vec<u8> {
             (0..n).map(|_| (self.next() >> 33) as u8).collect()
@@ -223,7 +239,18 @@ mod tests {
     }
 
     fn edge_u64s() -> Vec<u64> {
-        let mut v = vec![0, 1, 2, 3, u64::MAX, 1 << 63, (1 << 63) | 1, 0x8000_0000_0000_0001, 0x5555_5555_5555_5555, 0xaaaa_aaaa_aaaa_aaaa];
+        let mut v = vec![
+            0,
+            1,
+            2,
+            3,
+            u64::MAX,
+            1 << 63,
+            (1 << 63) | 1,
+            0x8000_0000_0000_0001,
+            0x5555_5555_5555_5555,
+            0xaaaa_aaaa_aaaa_aaaa,
+        ];
         v.extend((0..64).map(|i| 1u64 << i));
         v
     }
@@ -265,7 +292,14 @@ mod tests {
     #[test]
     fn field_multiplication_matches_the_reference_on_both_multipliers() {
         let mut rng = Lcg(13);
-        let mut cases = vec![(0u128, 0u128), (1, 1), (u128::MAX, u128::MAX), (1 << 127, 1 << 127), (1 << 127, 3), (u128::MAX, 1)];
+        let mut cases = vec![
+            (0u128, 0u128),
+            (1, 1),
+            (u128::MAX, u128::MAX),
+            (1 << 127, 1 << 127),
+            (1 << 127, 3),
+            (u128::MAX, 1),
+        ];
         for i in 0..128 {
             cases.push((1u128 << i, rng.u128()));
             cases.push((rng.u128(), 1u128 << i));
@@ -294,10 +328,18 @@ mod tests {
                 let want = reference_ghash(h, &aad, &ct);
                 let key = h.to_be_bytes();
                 let portable = GhashKey::new(&key, Backend::Portable);
-                assert_eq!(u128::from_be_bytes(portable.hash(&aad, &ct)), want, "portable aad {aad_len} ct {ct_len}");
+                assert_eq!(
+                    u128::from_be_bytes(portable.hash(&aad, &ct)),
+                    want,
+                    "portable aad {aad_len} ct {ct_len}"
+                );
                 if aes_hw::available() {
                     let hw = GhashKey::new(&key, Backend::Hardware);
-                    assert_eq!(u128::from_be_bytes(hw.hash(&aad, &ct)), want, "hardware aad {aad_len} ct {ct_len}");
+                    assert_eq!(
+                        u128::from_be_bytes(hw.hash(&aad, &ct)),
+                        want,
+                        "hardware aad {aad_len} ct {ct_len}"
+                    );
                 }
             }
         }
@@ -307,14 +349,20 @@ mod tests {
     /// ciphertext block; the reference tag is 0xab6e47d42cec13bdf53a67b21257bddf.
     #[test]
     fn nist_gcm_test_case_2_hash() {
-        let h: [u8; 16] = unhex("66e94bd4ef8a2c3b884cfa59ca342b2e").try_into().unwrap();
+        let h: [u8; 16] = unhex("66e94bd4ef8a2c3b884cfa59ca342b2e")
+            .try_into()
+            .unwrap();
         let c = unhex("0388dace60b6a392f328c2b971b2fe78");
         let want = "f38cbb1ad69223dcc3457ae5b6b0f885";
         for backend in [Backend::Portable, Backend::Hardware] {
             if backend == Backend::Hardware && !aes_hw::available() {
                 continue;
             }
-            assert_eq!(hex(&GhashKey::new(&h, backend).hash(&[], &c)), want, "{backend:?}");
+            assert_eq!(
+                hex(&GhashKey::new(&h, backend).hash(&[], &c)),
+                want,
+                "{backend:?}"
+            );
         }
     }
 

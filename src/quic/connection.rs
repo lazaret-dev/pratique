@@ -65,7 +65,11 @@ pub struct TransportError {
 
 impl TransportError {
     pub fn new(code: u64, reason: impl Into<String>) -> TransportError {
-        TransportError { code, frame_type: 0, reason: reason.into() }
+        TransportError {
+            code,
+            frame_type: 0,
+            reason: reason.into(),
+        }
     }
 
     pub fn in_frame(mut self, frame_type: u64) -> TransportError {
@@ -148,7 +152,11 @@ pub enum CloseReason {
     /// The application closed it, with this error code and reason.
     Application { code: u64, reason: Vec<u8> },
     /// The peer closed it with a transport error.
-    PeerTransport { code: u64, frame_type: u64, reason: Vec<u8> },
+    PeerTransport {
+        code: u64,
+        frame_type: u64,
+        reason: Vec<u8>,
+    },
     /// The peer closed it (the application's error code).
     PeerApplication { code: u64, reason: Vec<u8> },
     /// Nothing was heard for the idle timeout.
@@ -188,10 +196,15 @@ pub enum State {
 /// What a packet that was sent held that has to be dealt with when it is acknowledged or lost.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SentFrame {
-    Crypto { offset: u64, len: usize },
+    Crypto {
+        offset: u64,
+        len: usize,
+    },
     /// An ACK frame, with the largest packet number it acknowledged: once it is acknowledged, those acknowledgments need not be
     /// repeated (RFC 9000 section 13.2.4).
-    Ack { largest: u64 },
+    Ack {
+        largest: u64,
+    },
     Ping,
     RetireConnectionId(u64),
     Stream(StreamFrame),
@@ -219,11 +232,20 @@ struct AckState {
 const MAX_ACK_RANGES: usize = 32;
 
 impl AckState {
-    fn on_received(&mut self, now: Instant, pn: u64, eliciting: bool, delay_allowed: bool, max_ack_delay: Duration) {
+    fn on_received(
+        &mut self,
+        now: Instant,
+        pn: u64,
+        eliciting: bool,
+        delay_allowed: bool,
+        max_ack_delay: Duration,
+    ) {
         // an ack-eliciting packet that is out of order is acknowledged at once: it is below an earlier one, or it is above the
         // highest with a gap (a packet missing) between (RFC 9000 section 13.2.1)
         let out_of_order = eliciting
-            && self.largest_eliciting.is_some_and(|le| pn < le || (pn > le + 1 && !self.received.covers(le + 1..pn)));
+            && self
+                .largest_eliciting
+                .is_some_and(|le| pn < le || (pn > le + 1 && !self.received.covers(le + 1..pn)));
         self.received.insert_one(pn);
         if self.largest.is_none_or(|l| pn > l) {
             self.largest = Some(pn);
@@ -259,9 +281,17 @@ impl AckState {
         if !self.pending() {
             return None;
         }
-        let mut ranges: Vec<RangeInclusive<u64>> = self.received.iter().rev().take(MAX_ACK_RANGES).map(|r| r.start..=r.end - 1).collect();
+        let mut ranges: Vec<RangeInclusive<u64>> = self
+            .received
+            .iter()
+            .rev()
+            .take(MAX_ACK_RANGES)
+            .map(|r| r.start..=r.end - 1)
+            .collect();
         let largest = *ranges.first()?.end();
-        let delay = self.largest_time.map_or(0, |t| now.saturating_duration_since(t).as_micros() as u64 >> exponent);
+        let delay = self.largest_time.map_or(0, |t| {
+            now.saturating_duration_since(t).as_micros() as u64 >> exponent
+        });
         let mut tmp = Vec::new();
         loop {
             tmp.clear();
@@ -297,7 +327,15 @@ struct PacketSpace {
 
 impl PacketSpace {
     fn new() -> PacketSpace {
-        PacketSpace { tx: None, rx: None, next_pn: 0, ack: AckState::default(), crypto_tx: SendBuf::new(), crypto_rx: Reassembler::new(), probes: 0 }
+        PacketSpace {
+            tx: None,
+            rx: None,
+            next_pn: 0,
+            ack: AckState::default(),
+            crypto_tx: SendBuf::new(),
+            crypto_rx: Reassembler::new(),
+            probes: 0,
+        }
     }
 }
 
@@ -434,7 +472,12 @@ enum KeyAction {
 
 /// Keys that have sealed `sealed` packets of the `limit` they may are updated past `update_after` (or three quarters of the limit),
 /// by `update`, which says whether it could; ones that are within a sixteenth of the limit and could not be are done with.
-fn key_action(sealed: u64, update_after: u64, limit: u64, update: impl FnOnce() -> bool) -> KeyAction {
+fn key_action(
+    sealed: u64,
+    update_after: u64,
+    limit: u64,
+    update: impl FnOnce() -> bool,
+) -> KeyAction {
     if sealed < update_after.min(limit / 4 * 3) {
         return KeyAction::Keep;
     }
@@ -463,7 +506,12 @@ fn io_error(e: std::io::Error) -> Error {
 impl Connection {
     /// Starts a connection to `server_name`, which is the name the server's certificate is checked against, with a ClientHello that
     /// offers the ALPN protocols of `tls`. The first datagram is ready to be taken with [`poll_transmit`](Connection::poll_transmit).
-    pub fn connect(config: &Config, tls: &ClientConfig, server_name: &str, now: Instant) -> Result<Connection> {
+    pub fn connect(
+        config: &Config,
+        tls: &ClientConfig,
+        server_name: &str,
+        now: Instant,
+    ) -> Result<Connection> {
         let dcid_len = 8usize.max(config.cid_len);
         let mut dcid = vec![0u8; dcid_len];
         crate::crypto::rand::fill(&mut dcid).map_err(io_error)?;
@@ -473,18 +521,38 @@ impl Connection {
     }
 
     /// `connect` with the connection ids given (the destination id is at least 8 bytes, RFC 9000 section 7.2).
-    pub fn connect_with_ids(config: &Config, tls: &ClientConfig, server_name: &str, now: Instant, scid: Vec<u8>, dcid: Vec<u8>) -> Result<Connection> {
-        if scid.len() > MAX_CID_LEN || dcid.len() > MAX_CID_LEN || dcid.len() < 8 || config.max_datagram_size < MIN_UDP_PAYLOAD_SIZE as usize {
-            return Err(Error::Tls("QUIC: invalid connection ids or datagram size".into()));
+    pub fn connect_with_ids(
+        config: &Config,
+        tls: &ClientConfig,
+        server_name: &str,
+        now: Instant,
+        scid: Vec<u8>,
+        dcid: Vec<u8>,
+    ) -> Result<Connection> {
+        if scid.len() > MAX_CID_LEN
+            || dcid.len() > MAX_CID_LEN
+            || dcid.len() < 8
+            || config.max_datagram_size < MIN_UDP_PAYLOAD_SIZE as usize
+        {
+            return Err(Error::Tls(
+                "QUIC: invalid connection ids or datagram size".into(),
+            ));
         }
         let params = local_params(config, &scid);
         let (tls, events) = TlsClient::new(server_name, tls, &params.encode(Sender::Client))?;
         let mut c = Connection::new(config, tls, scid, dcid, now);
-        c.apply_tls_events(now, events).map_err(|e| Error::Tls(e.reason))?;
+        c.apply_tls_events(now, events)
+            .map_err(|e| Error::Tls(e.reason))?;
         Ok(c)
     }
 
-    fn new(config: &Config, tls: TlsClient, scid: Vec<u8>, dcid: Vec<u8>, now: Instant) -> Connection {
+    fn new(
+        config: &Config,
+        tls: TlsClient,
+        scid: Vec<u8>,
+        dcid: Vec<u8>,
+        now: Instant,
+    ) -> Connection {
         let mds = config.max_datagram_size;
         let mut c = Connection {
             config: config.clone(),
@@ -630,7 +698,9 @@ impl Connection {
             return None;
         }
         let every = self.idle_timeout()? / 3;
-        let since = self.last_keep_alive.map_or(self.last_activity, |t| t.max(self.last_activity));
+        let since = self
+            .last_keep_alive
+            .map_or(self.last_activity, |t| t.max(self.last_activity));
         Some(since + every)
     }
 
@@ -642,7 +712,9 @@ impl Connection {
             return false;
         }
         let si = Space::Application.index();
-        let (Some(p), Some(tx)) = (self.phases.as_mut(), self.spaces[si].tx.as_mut()) else { return false };
+        let (Some(p), Some(tx)) = (self.phases.as_mut(), self.spaces[si].tx.as_mut()) else {
+            return false;
+        };
         if !p.tx_acked || p.rx_phase != p.tx_phase {
             return false;
         }
@@ -658,15 +730,25 @@ impl Connection {
     /// limit), and a connection whose keys are near their limit and cannot be updated is closed while it can still say so.
     fn keys_due(&mut self, now: Instant) {
         let si = Space::Application.index();
-        let Some(tx) = self.spaces[si].tx.as_ref() else { return };
+        let Some(tx) = self.spaces[si].tx.as_ref() else {
+            return;
+        };
         if self.phases.is_none() {
             return;
         }
         let (sealed, limit) = (tx.packet.sealed(), tx.packet.confidentiality_limit());
-        match key_action(sealed, self.config.key_update_after, limit, || self.update_keys()) {
+        match key_action(sealed, self.config.key_update_after, limit, || {
+            self.update_keys()
+        }) {
             KeyAction::Keep | KeyAction::Updated => {}
             KeyAction::Close => {
-                self.close_with_error(now, TransportError::new(code::AEAD_LIMIT_REACHED, "the packet keys are near their limit and could not be updated"));
+                self.close_with_error(
+                    now,
+                    TransportError::new(
+                        code::AEAD_LIMIT_REACHED,
+                        "the packet keys are near their limit and could not be updated",
+                    ),
+                );
             }
         }
     }
@@ -688,13 +770,22 @@ impl Connection {
 
     /// Writes data on a stream, and ends it after the data if `fin`. Returns how many bytes were taken (see
     /// [`Streams::write`](super::streams::Streams::write)).
-    pub fn stream_write(&mut self, id: u64, data: &[u8], fin: bool) -> std::result::Result<usize, StreamError> {
+    pub fn stream_write(
+        &mut self,
+        id: u64,
+        data: &[u8],
+        fin: bool,
+    ) -> std::result::Result<usize, StreamError> {
         self.check_streams_usable()?;
         self.streams.write(id, data, fin)
     }
 
     /// Reads from a stream: how many bytes, and whether the stream ends with them.
-    pub fn stream_read(&mut self, id: u64, buf: &mut [u8]) -> std::result::Result<(usize, bool), StreamError> {
+    pub fn stream_read(
+        &mut self,
+        id: u64,
+        buf: &mut [u8],
+    ) -> std::result::Result<(usize, bool), StreamError> {
         if self.is_closing() || self.is_closed() {
             return Err(StreamError::Closed);
         }
@@ -708,7 +799,11 @@ impl Connection {
     }
 
     /// Asks the peer to stop sending on a stream (STOP_SENDING with this application error code).
-    pub fn stream_stop_sending(&mut self, id: u64, error: u64) -> std::result::Result<(), StreamError> {
+    pub fn stream_stop_sending(
+        &mut self,
+        id: u64,
+        error: u64,
+    ) -> std::result::Result<(), StreamError> {
         self.check_streams_usable()?;
         self.streams.stop_sending(id, error)
     }
@@ -753,7 +848,10 @@ impl Connection {
         if self.is_closing() {
             return;
         }
-        let r = CloseReason::Application { code, reason: reason.to_vec() };
+        let r = CloseReason::Application {
+            code,
+            reason: reason.to_vec(),
+        };
         self.start_closing(now, code, None, reason.to_vec(), r);
     }
 
@@ -774,9 +872,23 @@ impl Connection {
         self.start_closing(now, e.code, ft, reason, CloseReason::Local(e));
     }
 
-    fn start_closing(&mut self, now: Instant, code: u64, frame_type: Option<u64>, reason: Vec<u8>, why: CloseReason) {
+    fn start_closing(
+        &mut self,
+        now: Instant,
+        code: u64,
+        frame_type: Option<u64>,
+        reason: Vec<u8>,
+        why: CloseReason,
+    ) {
         self.state = State::Closing;
-        self.closing = Some(Closing { code, frame_type, reason, deadline: now + self.closing_period(), pending: true, received: 0 });
+        self.closing = Some(Closing {
+            code,
+            frame_type,
+            reason,
+            deadline: now + self.closing_period(),
+            pending: true,
+            received: 0,
+        });
         self.events.push_back(Event::Closed(why));
     }
 
@@ -788,7 +900,14 @@ impl Connection {
         let was_closing = self.state == State::Closing;
         self.state = State::Draining;
         let deadline = now + self.closing_period();
-        self.closing = Some(Closing { code: 0, frame_type: None, reason: Vec::new(), deadline, pending: false, received: 0 });
+        self.closing = Some(Closing {
+            code: 0,
+            frame_type: None,
+            reason: Vec::new(),
+            deadline,
+            pending: false,
+            received: 0,
+        });
         if !was_closing {
             self.events.push_back(Event::Closed(why));
         }
@@ -884,7 +1003,11 @@ impl Connection {
             for p in out.lost {
                 self.requeue(out.lost_space, &p.payload);
             }
-            if let Some(Probe { space, anti_deadlock }) = out.probe {
+            if let Some(Probe {
+                space,
+                anti_deadlock,
+            }) = out.probe
+            {
                 self.stats.probes += 1;
                 self.queue_probe(space, anti_deadlock);
             }
@@ -898,7 +1021,11 @@ impl Connection {
         if self.spaces[si].tx.is_none() {
             return;
         }
-        let oldest = self.recovery.outstanding(space).find(|p| p.ack_eliciting).map(|p| p.payload.clone());
+        let oldest = self
+            .recovery
+            .outstanding(space)
+            .find(|p| p.ack_eliciting)
+            .map(|p| p.payload.clone());
         if let Some(frames) = oldest {
             self.requeue(space, &frames);
         }
@@ -910,7 +1037,9 @@ impl Connection {
         let si = space.index();
         for f in frames {
             match f {
-                SentFrame::Crypto { offset, len } => self.spaces[si].crypto_tx.on_lost(*offset, *len, false),
+                SentFrame::Crypto { offset, len } => {
+                    self.spaces[si].crypto_tx.on_lost(*offset, *len, false)
+                }
                 SentFrame::Stream(sf) => self.streams.on_lost(sf),
                 SentFrame::RetireConnectionId(seq) => {
                     if !self.retire_cids.contains(seq) {
@@ -983,7 +1112,13 @@ impl Connection {
                     return None;
                 }
                 PacketType::ZeroRtt => return Some(pkt.len),
-                ty => (ty, pkt.pn_offset, pkt.len, pkt.scid.to_vec(), pkt.token.is_empty()),
+                ty => (
+                    ty,
+                    pkt.pn_offset,
+                    pkt.len,
+                    pkt.scid.to_vec(),
+                    pkt.token.is_empty(),
+                ),
             }
         };
         if ty == PacketType::Initial && !token_empty {
@@ -992,7 +1127,13 @@ impl Connection {
             // that did nothing wrong (found by the fuzz target `quic_connection`, whose network flips bits); so the connection is
             // closed for a packet that is genuine (its header is authenticated with its payload), and one that is not is dropped.
             if self.initial_is_genuine(&data[..len], pn_offset) {
-                self.close_with_error(now, TransportError::new(code::PROTOCOL_VIOLATION, "a server's Initial packet has a token"));
+                self.close_with_error(
+                    now,
+                    TransportError::new(
+                        code::PROTOCOL_VIOLATION,
+                        "a server's Initial packet has a token",
+                    ),
+                );
             } else {
                 self.stats.packets_dropped += 1;
             }
@@ -1005,9 +1146,14 @@ impl Connection {
     /// Whether an Initial packet opens with the Initial keys (on a copy: nothing in it is acted on).
     fn initial_is_genuine(&mut self, packet: &[u8], pn_offset: usize) -> bool {
         let largest = self.spaces[0].ack.largest;
-        let Some(rx) = self.spaces[0].rx.as_mut() else { return false };
+        let Some(rx) = self.spaces[0].rx.as_mut() else {
+            return false;
+        };
         let mut copy = packet.to_vec();
-        matches!(rx.open(&mut copy, pn_offset, largest), Ok(_) | Err(OpenError::ReservedBits))
+        matches!(
+            rx.open(&mut copy, pn_offset, largest),
+            Ok(_) | Err(OpenError::ReservedBits)
+        )
     }
 
     fn on_version_negotiation(&mut self, now: Instant, scid: &[u8], versions: Vec<u32>) {
@@ -1022,11 +1168,18 @@ impl Connection {
 
     fn on_retry(&mut self, now: Instant, genuine: bool, scid: Vec<u8>, token: Vec<u8>) {
         // at most one, before anything else from the server, with a token and an integrity tag that checks
-        if self.received_any || self.retry_scid.is_some() || token.is_empty() || !genuine || scid.len() > MAX_CID_LEN {
+        if self.received_any
+            || self.retry_scid.is_some()
+            || token.is_empty()
+            || !genuine
+            || scid.len() > MAX_CID_LEN
+        {
             self.stats.packets_dropped += 1;
             return;
         }
-        let rtt = self.first_initial_sent.map(|t| now.saturating_duration_since(t));
+        let rtt = self
+            .first_initial_sent
+            .map(|t| now.saturating_duration_since(t));
         self.retry_scid = Some(scid.clone());
         self.dcid = scid.clone();
         self.initial_dcid = scid.clone();
@@ -1052,13 +1205,18 @@ impl Connection {
     fn replay_buffered(&mut self, now: Instant) {
         for space in Space::ALL {
             let si = space.index();
-            while self.spaces[si].rx.is_some() && !self.undecryptable[si].is_empty() && !self.is_closing() {
+            while self.spaces[si].rx.is_some()
+                && !self.undecryptable[si].is_empty()
+                && !self.is_closing()
+            {
                 let mut packets = std::mem::take(&mut self.undecryptable[si]);
                 for p in packets.iter_mut() {
                     if self.is_closing() {
                         break;
                     }
-                    let parsed = packet::parse(p, self.scid.len()).ok().map(|k| (k.ty, k.pn_offset, k.len, k.scid.to_vec()));
+                    let parsed = packet::parse(p, self.scid.len())
+                        .ok()
+                        .map(|k| (k.ty, k.pn_offset, k.len, k.scid.to_vec()));
                     if let Some((ty, pn_offset, len, scid)) = parsed {
                         if len <= p.len() {
                             self.process_packet(now, &mut p[..len], ty, pn_offset, &scid);
@@ -1069,7 +1227,14 @@ impl Connection {
         }
     }
 
-    fn process_packet(&mut self, now: Instant, buf: &mut [u8], ty: PacketType, pn_offset: usize, scid: &[u8]) {
+    fn process_packet(
+        &mut self,
+        now: Instant,
+        buf: &mut [u8],
+        ty: PacketType,
+        pn_offset: usize,
+        scid: &[u8],
+    ) {
         let space = match ty {
             PacketType::Initial => Space::Initial,
             PacketType::Handshake => Space::Handshake,
@@ -1103,7 +1268,10 @@ impl Connection {
         let (pn, payload) = match opened {
             Ok(x) => x,
             Err(OpenError::ReservedBits) => {
-                self.close_with_error(now, TransportError::new(code::PROTOCOL_VIOLATION, "reserved bits are not zero"));
+                self.close_with_error(
+                    now,
+                    TransportError::new(code::PROTOCOL_VIOLATION, "reserved bits are not zero"),
+                );
                 return;
             }
             Err(e) => {
@@ -1140,16 +1308,29 @@ impl Connection {
         self.eliciting_sent_since_rx = false;
         let delay_allowed = space == Space::Application && self.handshake_complete;
         let max_ack_delay = self.config.max_ack_delay;
-        self.spaces[si].ack.on_received(now, pn, eliciting, delay_allowed, max_ack_delay);
+        self.spaces[si]
+            .ack
+            .on_received(now, pn, eliciting, delay_allowed, max_ack_delay);
     }
 
     /// Opens a 1-RTT packet: which keys it takes depends on the key phase bit it has (RFC 9001 section 6.3). Returns the packet number
     /// and where the frames are.
-    fn open_one_rtt(&mut self, now: Instant, buf: &mut [u8], pn_offset: usize, largest: Option<u64>) -> std::result::Result<(u64, std::ops::Range<usize>), OpenError> {
+    fn open_one_rtt(
+        &mut self,
+        now: Instant,
+        buf: &mut [u8],
+        pn_offset: usize,
+        largest: Option<u64>,
+    ) -> std::result::Result<(u64, std::ops::Range<usize>), OpenError> {
         let si = Space::Application.index();
-        let Some(phases) = &mut self.phases else { return Err(OpenError::TooShort) };
+        let Some(phases) = &mut self.phases else {
+            return Err(OpenError::TooShort);
+        };
         let rx = self.spaces[si].rx.as_mut().expect("1-RTT keys");
-        let hdr = rx.header.unprotect(buf, pn_offset).ok_or(OpenError::TooShort)?;
+        let hdr = rx
+            .header
+            .unprotect(buf, pn_offset)
+            .ok_or(OpenError::TooShort)?;
         let pn = decode_packet_number(largest, hdr.truncated_pn, hdr.pn_len);
         let phase = hdr.first & 0x04 != 0;
         if phase == phases.rx_phase {
@@ -1187,15 +1368,29 @@ impl Connection {
     fn after_failed_one_rtt(&mut self, now: Instant, buf: &[u8], e: OpenError) {
         if e == OpenError::Authentication {
             let si = Space::Application.index();
-            if self.spaces[si].rx.as_ref().is_some_and(|k| k.packet.integrity_limit_reached()) {
-                self.close_with_error(now, TransportError::new(code::AEAD_LIMIT_REACHED, "too many packets failed to open"));
+            if self.spaces[si]
+                .rx
+                .as_ref()
+                .is_some_and(|k| k.packet.integrity_limit_reached())
+            {
+                self.close_with_error(
+                    now,
+                    TransportError::new(
+                        code::AEAD_LIMIT_REACHED,
+                        "too many packets failed to open",
+                    ),
+                );
                 return;
             }
         }
         // a stateless reset is at least 21 bytes and ends in a token that the server gave us
         if buf.len() >= 21 {
             let tail = &buf[buf.len() - 16..];
-            if self.reset_tokens.iter().any(|t| crate::util::ct_eq(t, tail)) {
+            if self
+                .reset_tokens
+                .iter()
+                .any(|t| crate::util::ct_eq(t, tail))
+            {
                 self.start_draining(now, CloseReason::StatelessReset);
             }
         }
@@ -1205,13 +1400,27 @@ impl Connection {
     // frames
 
     /// Reads the frames of a packet and acts on each. Returns whether the packet has an ack-eliciting frame.
-    fn process_frames(&mut self, now: Instant, space: Space, ty: PacketType, payload: &[u8]) -> std::result::Result<bool, TransportError> {
+    fn process_frames(
+        &mut self,
+        now: Instant,
+        space: Space,
+        ty: PacketType,
+        payload: &[u8],
+    ) -> std::result::Result<bool, TransportError> {
         let mut eliciting = false;
         for f in frame::frames(payload, ty) {
-            let f = f.map_err(|e| TransportError::new(e.transport_error(), e.to_string()).in_frame(e.frame_type))?;
+            let f = f.map_err(|e| {
+                TransportError::new(e.transport_error(), e.to_string()).in_frame(e.frame_type)
+            })?;
             eliciting |= f.ack_eliciting();
             let ft = f.frame_type();
-            self.process_frame(now, space, f).map_err(|e| if e.frame_type == 0 { e.in_frame(ft) } else { e })?;
+            self.process_frame(now, space, f).map_err(|e| {
+                if e.frame_type == 0 {
+                    e.in_frame(ft)
+                } else {
+                    e
+                }
+            })?;
             if self.is_closing() {
                 break;
             }
@@ -1219,14 +1428,22 @@ impl Connection {
         Ok(eliciting)
     }
 
-    fn process_frame(&mut self, now: Instant, space: Space, f: Frame<'_>) -> std::result::Result<(), TransportError> {
+    fn process_frame(
+        &mut self,
+        now: Instant,
+        space: Space,
+        f: Frame<'_>,
+    ) -> std::result::Result<(), TransportError> {
         match f {
             Frame::Padding(_) | Frame::Ping => Ok(()),
             Frame::Ack(a) => self.on_ack_frame(now, space, &a),
             Frame::Crypto { offset, data } => self.on_crypto(now, space, offset, data),
             Frame::NewToken { token } => {
                 if token.is_empty() {
-                    return Err(TransportError::new(code::PROTOCOL_VIOLATION, "an empty NEW_TOKEN"));
+                    return Err(TransportError::new(
+                        code::PROTOCOL_VIOLATION,
+                        "an empty NEW_TOKEN",
+                    ));
                 }
                 self.new_tokens.push(token.to_vec());
                 Ok(())
@@ -1240,11 +1457,19 @@ impl Connection {
             | Frame::DataBlocked(_)
             | Frame::StreamDataBlocked { .. }
             | Frame::StreamsBlocked { .. } => self.streams.on_frame(&f),
-            Frame::NewConnectionId { sequence, retire_prior_to, cid, reset_token } => self.on_new_connection_id(sequence, retire_prior_to, cid, *reset_token),
+            Frame::NewConnectionId {
+                sequence,
+                retire_prior_to,
+                cid,
+                reset_token,
+            } => self.on_new_connection_id(sequence, retire_prior_to, cid, *reset_token),
             Frame::RetireConnectionId(sequence) => {
                 // we gave out one connection id, with sequence number 0
                 if sequence >= 1 {
-                    return Err(TransportError::new(code::PROTOCOL_VIOLATION, "RETIRE_CONNECTION_ID for a connection id that was not issued"));
+                    return Err(TransportError::new(
+                        code::PROTOCOL_VIOLATION,
+                        "RETIRE_CONNECTION_ID for a connection id that was not issued",
+                    ));
                 }
                 Ok(())
             }
@@ -1255,10 +1480,21 @@ impl Connection {
                 Ok(())
             }
             Frame::PathResponse(_) => Ok(()), // (we send no challenge)
-            Frame::ConnectionClose { code, frame_type, reason } => {
+            Frame::ConnectionClose {
+                code,
+                frame_type,
+                reason,
+            } => {
                 let why = match frame_type {
-                    Some(ft) => CloseReason::PeerTransport { code, frame_type: ft, reason: reason.to_vec() },
-                    None => CloseReason::PeerApplication { code, reason: reason.to_vec() },
+                    Some(ft) => CloseReason::PeerTransport {
+                        code,
+                        frame_type: ft,
+                        reason: reason.to_vec(),
+                    },
+                    None => CloseReason::PeerApplication {
+                        code,
+                        reason: reason.to_vec(),
+                    },
                 };
                 self.start_draining(now, why);
                 Ok(())
@@ -1275,14 +1511,28 @@ impl Connection {
         }
     }
 
-    fn on_ack_frame(&mut self, now: Instant, space: Space, a: &frame::Ack<'_>) -> std::result::Result<(), TransportError> {
+    fn on_ack_frame(
+        &mut self,
+        now: Instant,
+        space: Space,
+        a: &frame::Ack<'_>,
+    ) -> std::result::Result<(), TransportError> {
         let si = space.index();
         if a.largest >= self.spaces[si].next_pn {
-            return Err(TransportError::new(code::PROTOCOL_VIOLATION, "an acknowledgment of a packet that was not sent"));
+            return Err(TransportError::new(
+                code::PROTOCOL_VIOLATION,
+                "an acknowledgment of a packet that was not sent",
+            ));
         }
-        let exponent = if space == Space::Application || self.handshake_complete { self.peer_ack_delay_exponent } else { 3 };
+        let exponent = if space == Space::Application || self.handshake_complete {
+            self.peer_ack_delay_exponent
+        } else {
+            3
+        };
         let delay = Duration::from_micros(a.delay_micros(exponent as u32));
-        let out = self.recovery.on_ack_received(now, space, a.largest, delay, a.ranges());
+        let out = self
+            .recovery
+            .on_ack_received(now, space, a.largest, delay, a.ranges());
         if space == Space::Application {
             if let Some(p) = self.phases.as_mut().filter(|p| a.largest >= p.tx_first_pn) {
                 p.tx_acked = true;
@@ -1291,10 +1541,14 @@ impl Connection {
         for p in &out.acked {
             for f in &p.payload {
                 match f {
-                    SentFrame::Crypto { offset, len } => self.spaces[si].crypto_tx.on_acked(*offset, *len, false),
+                    SentFrame::Crypto { offset, len } => {
+                        self.spaces[si].crypto_tx.on_acked(*offset, *len, false)
+                    }
                     SentFrame::Stream(sf) => self.streams.on_acked(sf),
                     // the peer has our acknowledgment of these: they need not be acknowledged again
-                    SentFrame::Ack { largest } => self.spaces[si].ack.received.remove_below(largest + 1),
+                    SentFrame::Ack { largest } => {
+                        self.spaces[si].ack.received.remove_below(largest + 1)
+                    }
                     SentFrame::Ping | SentFrame::RetireConnectionId(_) => {}
                 }
             }
@@ -1306,26 +1560,59 @@ impl Connection {
         Ok(())
     }
 
-    fn on_crypto(&mut self, now: Instant, space: Space, offset: u64, data: &[u8]) -> std::result::Result<(), TransportError> {
+    fn on_crypto(
+        &mut self,
+        now: Instant,
+        space: Space,
+        offset: u64,
+        data: &[u8],
+    ) -> std::result::Result<(), TransportError> {
         let si = space.index();
-        match self.spaces[si].crypto_rx.insert(offset, data, CRYPTO_WINDOW) {
+        match self.spaces[si]
+            .crypto_rx
+            .insert(offset, data, CRYPTO_WINDOW)
+        {
             Ok(()) => {}
-            Err(reassembly::Error::Exceeded) => return Err(TransportError::new(code::CRYPTO_BUFFER_EXCEEDED, "too much handshake data out of order")),
-            Err(reassembly::Error::Inconsistent) => return Err(TransportError::new(code::PROTOCOL_VIOLATION, "handshake data that differs from what was sent before")),
+            Err(reassembly::Error::Exceeded) => {
+                return Err(TransportError::new(
+                    code::CRYPTO_BUFFER_EXCEEDED,
+                    "too much handshake data out of order",
+                ))
+            }
+            Err(reassembly::Error::Inconsistent) => {
+                return Err(TransportError::new(
+                    code::PROTOCOL_VIOLATION,
+                    "handshake data that differs from what was sent before",
+                ))
+            }
         }
         let bytes = self.spaces[si].crypto_rx.take();
         if bytes.is_empty() {
             return Ok(());
         }
-        let events = self.tls.read_crypto(level_of(space), &bytes).map_err(|e| TransportError::new(tls::close_code(&e), e.to_string()))?;
+        let events = self
+            .tls
+            .read_crypto(level_of(space), &bytes)
+            .map_err(|e| TransportError::new(tls::close_code(&e), e.to_string()))?;
         self.apply_tls_events(now, events)
     }
 
-    fn apply_tls_events(&mut self, now: Instant, events: Vec<tls::Event>) -> std::result::Result<(), TransportError> {
+    fn apply_tls_events(
+        &mut self,
+        now: Instant,
+        events: Vec<tls::Event>,
+    ) -> std::result::Result<(), TransportError> {
         for event in events {
             match event {
-                tls::Event::Crypto(level, data) => self.spaces[level.index()].crypto_tx.write(&data),
-                tls::Event::Keys { level, suite, write, read } => self.install_keys(level, suite, &write, &read),
+                tls::Event::Crypto(level, data) => {
+                    self.spaces[level.index()].crypto_tx.write(&data)
+                }
+                tls::Event::Keys {
+                    level,
+                    suite,
+                    write,
+                    read,
+                } => self.install_keys(level, suite, &write, &read),
                 tls::Event::PeerTransportParameters(bytes) => self.on_peer_parameters(&bytes)?,
                 tls::Event::ServerAuthenticated => {}
                 tls::Event::Complete => {
@@ -1341,14 +1628,28 @@ impl Connection {
         Ok(())
     }
 
-    fn install_keys(&mut self, level: Level, suite: Suite, write: &Zeroizing<Vec<u8>>, read: &Zeroizing<Vec<u8>>) {
+    fn install_keys(
+        &mut self,
+        level: Level,
+        suite: Suite,
+        write: &Zeroizing<Vec<u8>>,
+        read: &Zeroizing<Vec<u8>>,
+    ) {
         let si = level.index();
         self.spaces[si].tx = Some(Keys::new(suite, write));
         self.spaces[si].rx = Some(Keys::new(suite, read));
         match level {
             Level::Handshake => self.recovery.set_handshake_keys(true),
             Level::Application => {
-                self.phases = Some(KeyPhases { tx_phase: false, rx_phase: false, rx_prev: None, rx_prev_until: None, rx_first_pn: 0, tx_first_pn: 0, tx_acked: false });
+                self.phases = Some(KeyPhases {
+                    tx_phase: false,
+                    rx_phase: false,
+                    rx_prev: None,
+                    rx_prev_until: None,
+                    rx_first_pn: 0,
+                    tx_first_pn: 0,
+                    tx_acked: false,
+                });
             }
             Level::Initial => {}
         }
@@ -1357,19 +1658,31 @@ impl Connection {
     /// The server's transport parameters: what they say of connection ids is checked against what we know (RFC 9000 section 7.3).
     fn on_peer_parameters(&mut self, bytes: &[u8]) -> std::result::Result<(), TransportError> {
         let err = |m: &str| TransportError::new(code::TRANSPORT_PARAMETER_ERROR, m);
-        let p = TransportParameters::decode(bytes, Sender::Server).map_err(|e| err(&e.to_string()))?;
+        let p =
+            TransportParameters::decode(bytes, Sender::Server).map_err(|e| err(&e.to_string()))?;
         if p.original_destination_connection_id.as_deref() != Some(&self.original_dcid[..]) {
-            return Err(err("original_destination_connection_id is not the one we first sent to"));
+            return Err(err(
+                "original_destination_connection_id is not the one we first sent to",
+            ));
         }
-        if p.initial_source_connection_id.is_none() || p.initial_source_connection_id != self.server_scid {
+        if p.initial_source_connection_id.is_none()
+            || p.initial_source_connection_id != self.server_scid
+        {
             return Err(err("initial_source_connection_id is not the source connection id of the server's first packet"));
         }
         if p.retry_source_connection_id != self.retry_scid {
-            return Err(err("retry_source_connection_id does not match the Retry (or lack of one)"));
+            return Err(err(
+                "retry_source_connection_id does not match the Retry (or lack of one)",
+            ));
         }
-        self.max_datagram_size = self.config.max_datagram_size.min(p.max_udp_payload_size as usize).max(MIN_UDP_PAYLOAD_SIZE as usize);
+        self.max_datagram_size = self
+            .config
+            .max_datagram_size
+            .min(p.max_udp_payload_size as usize)
+            .max(MIN_UDP_PAYLOAD_SIZE as usize);
         self.recovery.set_max_datagram_size(self.max_datagram_size);
-        self.recovery.set_max_ack_delay(Duration::from_millis(p.max_ack_delay));
+        self.recovery
+            .set_max_ack_delay(Duration::from_millis(p.max_ack_delay));
         self.peer_ack_delay_exponent = p.ack_delay_exponent;
         if let Some(t) = p.stateless_reset_token {
             self.reset_tokens.push(t);
@@ -1379,20 +1692,32 @@ impl Connection {
         Ok(())
     }
 
-    fn on_new_connection_id(&mut self, sequence: u64, retire_prior_to: u64, cid: &[u8], reset_token: [u8; 16]) -> std::result::Result<(), TransportError> {
+    fn on_new_connection_id(
+        &mut self,
+        sequence: u64,
+        retire_prior_to: u64,
+        cid: &[u8],
+        reset_token: [u8; 16],
+    ) -> std::result::Result<(), TransportError> {
         if let Some(known) = self.peer_cids.iter().find(|c| c.sequence == sequence) {
             if known.cid != cid || known.reset_token != reset_token {
                 return Err(TransportError::new(code::PROTOCOL_VIOLATION, "a connection id with a sequence number that was used before, and is not the same"));
             }
         } else if sequence >= retire_prior_to {
-            self.peer_cids.push(PeerCid { sequence, cid: cid.to_vec(), reset_token });
+            self.peer_cids.push(PeerCid {
+                sequence,
+                cid: cid.to_vec(),
+                reset_token,
+            });
             self.reset_tokens.push(reset_token);
         } else {
             // it is retired at once: the peer told us so with the same frame
             self.retire_cids.push(sequence);
         }
         // the ones below `retire_prior_to` are to be retired
-        let (retired, kept): (Vec<PeerCid>, Vec<PeerCid>) = std::mem::take(&mut self.peer_cids).into_iter().partition(|c| c.sequence < retire_prior_to);
+        let (retired, kept): (Vec<PeerCid>, Vec<PeerCid>) = std::mem::take(&mut self.peer_cids)
+            .into_iter()
+            .partition(|c| c.sequence < retire_prior_to);
         self.peer_cids = kept;
         for c in retired {
             if !self.retire_cids.contains(&c.sequence) {
@@ -1405,13 +1730,18 @@ impl Connection {
                 self.dcid = next.cid.clone();
                 self.dcid_sequence = next.sequence;
             }
-            if !self.retire_cids.contains(&self.dcid_sequence) && self.dcid_sequence < retire_prior_to {
+            if !self.retire_cids.contains(&self.dcid_sequence)
+                && self.dcid_sequence < retire_prior_to
+            {
                 self.retire_cids.push(self.dcid_sequence);
             }
         }
         // we are to hold no more than the limit we gave (the one in use is not counted among those that were kept)
         if self.peer_cids.len() as u64 + 1 > self.config.active_connection_id_limit {
-            return Err(TransportError::new(code::CONNECTION_ID_LIMIT_ERROR, "more connection ids than the limit"));
+            return Err(TransportError::new(
+                code::CONNECTION_ID_LIMIT_ERROR,
+                "more connection ids than the limit",
+            ));
         }
         Ok(())
     }
@@ -1438,7 +1768,17 @@ impl Connection {
     fn header_len(&self, space: Space, pn_len: usize) -> usize {
         match space {
             Space::Application => 1 + self.dcid.len() + pn_len,
-            Space::Initial => 1 + 4 + 1 + self.dcid.len() + 1 + self.scid.len() + varint_len(self.token.len() as u64) + self.token.len() + 2 + pn_len,
+            Space::Initial => {
+                1 + 4
+                    + 1
+                    + self.dcid.len()
+                    + 1
+                    + self.scid.len()
+                    + varint_len(self.token.len() as u64)
+                    + self.token.len()
+                    + 2
+                    + pn_len
+            }
             Space::Handshake => 1 + 4 + 1 + self.dcid.len() + 1 + self.scid.len() + 2 + pn_len,
         }
     }
@@ -1451,7 +1791,10 @@ impl Connection {
             return true;
         }
         space == Space::Application
-            && (self.ping_pending || !self.path_responses.is_empty() || !self.retire_cids.is_empty() || self.streams.has_pending())
+            && (self.ping_pending
+                || !self.path_responses.is_empty()
+                || !self.retire_cids.is_empty()
+                || self.streams.has_pending())
     }
 
     /// Makes the next datagram to send, if there is one: `out` is cleared and holds it. A datagram holds one packet or several, of
@@ -1471,7 +1814,11 @@ impl Connection {
         self.pacing_wake = None;
         let max = self.max_datagram_size;
         let blocked = self.recovery.congestion().blocked();
-        let paced = if blocked { None } else { self.recovery.next_send_time(now) };
+        let paced = if blocked {
+            None
+        } else {
+            self.recovery.next_send_time(now)
+        };
         let allow_eliciting = !blocked && paced.is_none();
         let mut packets: Vec<Building> = Vec::new();
         let mut total = 0;
@@ -1497,7 +1844,10 @@ impl Connection {
             }
         }
         if packets.is_empty() {
-            if !blocked && paced.is_some() && (0..3).any(|i| self.spaces[i].tx.is_some() && self.has_data(Space::ALL[i])) {
+            if !blocked
+                && paced.is_some()
+                && (0..3).any(|i| self.spaces[i].tx.is_some() && self.has_data(Space::ALL[i]))
+            {
                 self.pacing_wake = paced;
             }
             return false;
@@ -1516,7 +1866,13 @@ impl Connection {
 
     /// Builds the packet of `space` for the datagram, with at most `room` bytes: an acknowledgment if there is one to send, what is
     /// due, and a probe's content if one is asked for.
-    fn build_packet(&mut self, now: Instant, space: Space, room: usize, allow_eliciting: bool) -> Option<Building> {
+    fn build_packet(
+        &mut self,
+        now: Instant,
+        space: Space,
+        room: usize,
+        allow_eliciting: bool,
+    ) -> Option<Building> {
         let si = space.index();
         let pn = self.spaces[si].next_pn;
         let pn_len = packet_number_len(pn, self.recovery.largest_acked(space)).unwrap_or(4);
@@ -1531,23 +1887,42 @@ impl Connection {
         let probe = self.spaces[si].probes > 0;
 
         let exponent = self.config.ack_delay_exponent;
-        if let Some(largest) = self.spaces[si].ack.write(&mut payload, now, exponent, budget) {
+        if let Some(largest) = self.spaces[si]
+            .ack
+            .write(&mut payload, now, exponent, budget)
+        {
             frames.push(SentFrame::Ack { largest });
         }
         if allow_eliciting || probe {
             // handshake data
             loop {
                 let used = payload.len();
-                let Some(offset) = self.spaces[si].crypto_tx.next_offset() else { break };
+                let Some(offset) = self.spaces[si].crypto_tx.next_offset() else {
+                    break;
+                };
                 let header = 1 + varint_len(offset) + 2;
                 if budget < used + header + 1 {
                     break;
                 }
-                let Some(chunk) = self.spaces[si].crypto_tx.next_chunk(budget - used - header, u64::MAX) else { break };
+                let Some(chunk) = self.spaces[si]
+                    .crypto_tx
+                    .next_chunk(budget - used - header, u64::MAX)
+                else {
+                    break;
+                };
                 let mut data = Vec::with_capacity(chunk.len);
-                self.spaces[si].crypto_tx.copy(chunk.offset, chunk.len, &mut data);
-                Frame::Crypto { offset: chunk.offset, data: &data }.write(&mut payload);
-                frames.push(SentFrame::Crypto { offset: chunk.offset, len: chunk.len });
+                self.spaces[si]
+                    .crypto_tx
+                    .copy(chunk.offset, chunk.len, &mut data);
+                Frame::Crypto {
+                    offset: chunk.offset,
+                    data: &data,
+                }
+                .write(&mut payload);
+                frames.push(SentFrame::Crypto {
+                    offset: chunk.offset,
+                    len: chunk.len,
+                });
                 eliciting = true;
             }
             if space == Space::Application {
@@ -1571,7 +1946,8 @@ impl Connection {
                 }
                 let before = payload.len();
                 let mut sent = Vec::new();
-                self.streams.write_frames(&mut payload, budget.saturating_sub(before), &mut sent);
+                self.streams
+                    .write_frames(&mut payload, budget.saturating_sub(before), &mut sent);
                 if !sent.is_empty() {
                     eliciting = true;
                     frames.extend(sent);
@@ -1605,23 +1981,51 @@ impl Connection {
         let (long, pn_offset) = match space {
             Space::Application => {
                 let key_phase = self.phases.as_ref().is_some_and(|p| p.tx_phase);
-                let o = packet::write_short_header(&mut buf, &self.dcid, false, key_phase, pn, pn_len);
+                let o =
+                    packet::write_short_header(&mut buf, &self.dcid, false, key_phase, pn, pn_len);
                 (None, o)
             }
             _ => {
-                let ty = if space == Space::Initial { PacketType::Initial } else { PacketType::Handshake };
-                let token: &[u8] = if space == Space::Initial { &self.token } else { &[] };
-                let h = packet::write_long_header(&mut buf, ty, &self.dcid, &self.scid, token, pn, pn_len);
+                let ty = if space == Space::Initial {
+                    PacketType::Initial
+                } else {
+                    PacketType::Handshake
+                };
+                let token: &[u8] = if space == Space::Initial {
+                    &self.token
+                } else {
+                    &[]
+                };
+                let h = packet::write_long_header(
+                    &mut buf, ty, &self.dcid, &self.scid, token, pn, pn_len,
+                );
                 (Some(h), h.pn_offset)
             }
         };
         buf.extend_from_slice(&payload);
         self.spaces[si].next_pn += 1;
-        Some(Building { space, buf, pn, pn_len, pn_offset, long, frames, ack_eliciting: eliciting, in_flight: eliciting, is_initial: space == Space::Initial })
+        Some(Building {
+            space,
+            buf,
+            pn,
+            pn_len,
+            pn_offset,
+            long,
+            frames,
+            ack_eliciting: eliciting,
+            in_flight: eliciting,
+            is_initial: space == Space::Initial,
+        })
     }
 
     /// Seals the packets and puts them in `out`, after padding the last to make the datagram `pad_to` bytes if it is shorter.
-    fn finish_datagram(&mut self, now: Instant, mut packets: Vec<Building>, pad_to: usize, out: &mut Vec<u8>) {
+    fn finish_datagram(
+        &mut self,
+        now: Instant,
+        mut packets: Vec<Building>,
+        pad_to: usize,
+        out: &mut Vec<u8>,
+    ) {
         let total: usize = packets.iter().map(|b| b.buf.len() + TAG_LEN).sum();
         if total < pad_to {
             let last = packets.last_mut().expect("a packet");
@@ -1634,8 +2038,12 @@ impl Connection {
             if let Some(h) = b.long {
                 packet::finish_long(&mut b.buf, h, TAG_LEN);
             }
-            let keys = self.spaces[si].tx.as_mut().expect("keys of a space that a packet was built for");
-            keys.seal(&mut b.buf, b.pn_offset, b.pn_len, b.pn).expect("the payload is long enough for a sample");
+            let keys = self.spaces[si]
+                .tx
+                .as_mut()
+                .expect("keys of a space that a packet was built for");
+            keys.seal(&mut b.buf, b.pn_offset, b.pn_len, b.pn)
+                .expect("the payload is long enough for a sample");
             out.extend_from_slice(&b.buf);
             self.stats.packets_sent += 1;
             if b.space == Space::Handshake {
@@ -1649,7 +2057,14 @@ impl Connection {
                 self.eliciting_sent_since_rx = true;
                 self.last_activity = now;
             }
-            let sent = Sent { pn: b.pn, time: now, size: b.buf.len(), ack_eliciting: b.ack_eliciting, in_flight: b.in_flight, payload: b.frames };
+            let sent = Sent {
+                pn: b.pn,
+                time: now,
+                size: b.buf.len(),
+                ack_eliciting: b.ack_eliciting,
+                in_flight: b.in_flight,
+                payload: b.frames,
+            };
             self.recovery.on_packet_sent(now, b.space, sent);
         }
         if sent_handshake {
@@ -1661,7 +2076,9 @@ impl Connection {
     /// The datagram for a connection that is closing: a CONNECTION_CLOSE at the highest level that has keys (or, before the handshake
     /// is done, at both of the handshake's levels, where the frame has to be a transport error).
     fn transmit_close(&mut self, now: Instant, out: &mut Vec<u8>) -> bool {
-        let Some(c) = &mut self.closing else { return false };
+        let Some(c) = &mut self.closing else {
+            return false;
+        };
         if !c.pending {
             return false;
         }
@@ -1669,7 +2086,11 @@ impl Connection {
         let (code, frame_type, reason) = (c.code, c.frame_type, c.reason.clone());
         let mut packets = Vec::new();
         let have_app = self.spaces[2].tx.is_some();
-        let spaces: &[Space] = if have_app { &[Space::Application] } else { &[Space::Initial, Space::Handshake] };
+        let spaces: &[Space] = if have_app {
+            &[Space::Application]
+        } else {
+            &[Space::Initial, Space::Handshake]
+        };
         for &space in spaces {
             let si = space.index();
             if self.spaces[si].tx.is_none() {
@@ -1684,7 +2105,12 @@ impl Connection {
             let pn = self.spaces[si].next_pn;
             let pn_len = packet_number_len(pn, self.recovery.largest_acked(space)).unwrap_or(4);
             let overhead = self.header_len(space, pn_len) + TAG_LEN;
-            let room = self.max_datagram_size - overhead - packets.iter().map(|b: &Building| b.buf.len() + TAG_LEN).sum::<usize>();
+            let room = self.max_datagram_size
+                - overhead
+                - packets
+                    .iter()
+                    .map(|b: &Building| b.buf.len() + TAG_LEN)
+                    .sum::<usize>();
             let mut payload = Vec::new();
             let mut r = reason.as_slice();
             // the reason is cut to what fits
@@ -1692,28 +2118,61 @@ impl Connection {
             if r.len() + fixed > room {
                 r = &r[..room.saturating_sub(fixed)];
             }
-            Frame::ConnectionClose { code, frame_type, reason: r }.write(&mut payload);
+            Frame::ConnectionClose {
+                code,
+                frame_type,
+                reason: r,
+            }
+            .write(&mut payload);
             if payload.len() < 4 {
                 payload.resize(4, 0);
             }
             let mut buf = Vec::new();
             let (long, pn_offset) = if space == Space::Application {
                 let key_phase = self.phases.as_ref().is_some_and(|p| p.tx_phase);
-                (None, packet::write_short_header(&mut buf, &self.dcid, false, key_phase, pn, pn_len))
+                (
+                    None,
+                    packet::write_short_header(&mut buf, &self.dcid, false, key_phase, pn, pn_len),
+                )
             } else {
-                let ty = if space == Space::Initial { PacketType::Initial } else { PacketType::Handshake };
-                let token: &[u8] = if space == Space::Initial { &self.token } else { &[] };
-                let h = packet::write_long_header(&mut buf, ty, &self.dcid, &self.scid, token, pn, pn_len);
+                let ty = if space == Space::Initial {
+                    PacketType::Initial
+                } else {
+                    PacketType::Handshake
+                };
+                let token: &[u8] = if space == Space::Initial {
+                    &self.token
+                } else {
+                    &[]
+                };
+                let h = packet::write_long_header(
+                    &mut buf, ty, &self.dcid, &self.scid, token, pn, pn_len,
+                );
                 (Some(h), h.pn_offset)
             };
             buf.extend_from_slice(&payload);
             self.spaces[si].next_pn += 1;
-            packets.push(Building { space, buf, pn, pn_len, pn_offset, long, frames: Vec::new(), ack_eliciting: false, in_flight: false, is_initial: space == Space::Initial });
+            packets.push(Building {
+                space,
+                buf,
+                pn,
+                pn_len,
+                pn_offset,
+                long,
+                frames: Vec::new(),
+                ack_eliciting: false,
+                in_flight: false,
+                is_initial: space == Space::Initial,
+            });
         }
         if packets.is_empty() {
             return false;
         }
-        let pad = if packets.iter().any(|p| p.is_initial) { 1200 } else { 0 };
+        let pad = if packets.iter().any(|p| p.is_initial) {
+            1200
+        } else {
+            0
+        };
         self.finish_datagram(now, packets, pad, out);
         self.stats.datagrams_sent += 1;
         true
@@ -1749,15 +2208,26 @@ mod tests {
     }
 
     fn link(opts: ServerOptions) -> Link {
-        Link::new(TestQuicServer::new("example.test", opts), &Config::default())
+        Link::new(
+            TestQuicServer::new("example.test", opts),
+            &Config::default(),
+        )
     }
 
     fn established(l: &mut Link) {
-        assert!(l.run_until(Duration::from_secs(20), |l| l.client.is_established()), "the handshake did not complete: {:?}", l.client_events);
+        assert!(
+            l.run_until(Duration::from_secs(20), |l| l.client.is_established()),
+            "the handshake did not complete: {:?}",
+            l.client_events
+        );
     }
 
     fn confirmed(l: &mut Link) {
-        assert!(l.run_until(Duration::from_secs(20), |l| l.client.is_confirmed()), "the handshake was not confirmed: {:?}", l.client_events);
+        assert!(
+            l.run_until(Duration::from_secs(20), |l| l.client.is_confirmed()),
+            "the handshake was not confirmed: {:?}",
+            l.client_events
+        );
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
@@ -1770,10 +2240,20 @@ mod tests {
         confirmed(&mut l);
         assert_eq!(l.client_events, vec![Event::Established, Event::Confirmed]);
         assert_eq!(l.client.alpn(), Some(&b"h3"[..]));
-        assert!(l.server.handshake_done, "the server got the client's Finished");
-        assert_eq!(l.client.peer_certificates().len(), l.server.tls.pki.chain.len());
+        assert!(
+            l.server.handshake_done,
+            "the server got the client's Finished"
+        );
+        assert_eq!(
+            l.client.peer_certificates().len(),
+            l.server.tls.pki.chain.len()
+        );
         // the client's first datagram is 1200 bytes (RFC 9000 section 14.1)
-        assert!(l.client_datagram_sizes[0] >= 1200, "{:?}", l.client_datagram_sizes);
+        assert!(
+            l.client_datagram_sizes[0] >= 1200,
+            "{:?}",
+            l.client_datagram_sizes
+        );
         // the Initial keys are gone, and the Handshake keys too, once the handshake is confirmed
         assert!(l.client.spaces[0].tx.is_none() && l.client.spaces[0].rx.is_none());
         assert!(l.client.spaces[1].tx.is_none() && l.client.spaces[1].rx.is_none());
@@ -1781,19 +2261,33 @@ mod tests {
         let p = l.client.peer_parameters().expect("peer parameters");
         assert_eq!(p.initial_max_streams_bidi, 100);
         // an RTT sample was taken: 40 ms (20 each way) of virtual time
-        assert!(l.client.smoothed_rtt() >= ms(35) && l.client.smoothed_rtt() <= ms(60), "{:?}", l.client.smoothed_rtt());
+        assert!(
+            l.client.smoothed_rtt() >= ms(35) && l.client.smoothed_rtt() <= ms(60),
+            "{:?}",
+            l.client.smoothed_rtt()
+        );
     }
 
     #[test]
     fn a_handshake_after_a_retry() {
-        let mut l = link(ServerOptions { retry: true, ..ServerOptions::default() });
+        let mut l = link(ServerOptions {
+            retry: true,
+            ..ServerOptions::default()
+        });
         established(&mut l);
         confirmed(&mut l);
         // the Initial packet that carries the token: more than one datagram of Initial packets was sent
         assert!(l.client_datagram_sizes.len() >= 2 && l.client_datagram_sizes[1] >= 1200);
-        assert_eq!(l.client.retry_scid.as_deref(), Some(&[0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7][..]));
+        assert_eq!(
+            l.client.retry_scid.as_deref(),
+            Some(&[0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7][..])
+        );
         // a Retry is not an acknowledgment, and the packet numbers go on (RFC 9000 section 17.2.5.3)
-        assert!(l.server.log.iter().any(|s| s.contains("Initial pn=1 ")), "{:?}", l.server.log);
+        assert!(
+            l.server.log.iter().any(|s| s.contains("Initial pn=1 ")),
+            "{:?}",
+            l.server.log
+        );
     }
 
     #[test]
@@ -1802,7 +2296,11 @@ mod tests {
         l.drop_rule = Box::new(|from_client, n, _| from_client && n == 0);
         established(&mut l);
         // the probe timeout from the initial round trip estimate: 333 + 4 * 166.5 = 999 ms
-        assert!(l.elapsed() >= ms(999) && l.elapsed() < ms(1400), "{:?}", l.elapsed());
+        assert!(
+            l.elapsed() >= ms(999) && l.elapsed() < ms(1400),
+            "{:?}",
+            l.elapsed()
+        );
         assert!(l.client.stats().probes >= 1);
         // the Initial that was sent again is 1200 bytes too
         assert!(l.client_datagram_sizes[1] >= 1200);
@@ -1811,16 +2309,26 @@ mod tests {
     #[test]
     fn a_lost_server_flight_is_sent_again() {
         for lost in [vec![0u64], vec![1], vec![0, 1], vec![1, 2], vec![0, 1, 2]] {
-            let mut l = link(ServerOptions { crypto_chunk: 400, ..ServerOptions::default() });
+            let mut l = link(ServerOptions {
+                crypto_chunk: 400,
+                ..ServerOptions::default()
+            });
             let lost2 = lost.clone();
             l.drop_rule = Box::new(move |from_client, n, _| !from_client && lost2.contains(&n));
-            assert!(l.run_until(Duration::from_secs(30), |l| l.client.is_confirmed()), "lost {lost:?}: {:?}", l.client_events);
+            assert!(
+                l.run_until(Duration::from_secs(30), |l| l.client.is_confirmed()),
+                "lost {lost:?}: {:?}",
+                l.client_events
+            );
         }
     }
 
     #[test]
     fn handshake_data_in_small_frames_and_many_packets() {
-        let mut l = link(ServerOptions { crypto_chunk: 50, ..ServerOptions::default() });
+        let mut l = link(ServerOptions {
+            crypto_chunk: 50,
+            ..ServerOptions::default()
+        });
         established(&mut l);
         confirmed(&mut l);
     }
@@ -1829,9 +2337,16 @@ mod tests {
     fn lossy_handshakes_in_both_directions_complete() {
         // every third datagram is lost, in a rotation that differs from run to run
         for offset in 0..3u64 {
-            let mut l = link(ServerOptions { crypto_chunk: 600, ..ServerOptions::default() });
+            let mut l = link(ServerOptions {
+                crypto_chunk: 600,
+                ..ServerOptions::default()
+            });
             l.drop_rule = Box::new(move |_, n, _| (n + offset) % 3 == 0 && n < 12);
-            assert!(l.run_until(Duration::from_secs(60), |l| l.client.is_confirmed()), "offset {offset}: {:?}", l.client_events);
+            assert!(
+                l.run_until(Duration::from_secs(60), |l| l.client.is_confirmed()),
+                "offset {offset}: {:?}",
+                l.client_events
+            );
         }
     }
 
@@ -1839,21 +2354,54 @@ mod tests {
     fn the_server_is_checked_for_the_connection_ids_in_its_parameters() {
         type Mutate = Box<dyn Fn(&mut TransportParameters)>;
         let cases: Vec<(&str, Mutate)> = vec![
-            ("no original_destination_connection_id", Box::new(|p| p.original_destination_connection_id = None)),
-            ("a wrong original_destination_connection_id", Box::new(|p| p.original_destination_connection_id = Some(vec![1; 8]))),
-            ("no initial_source_connection_id", Box::new(|p| p.initial_source_connection_id = None)),
-            ("a wrong initial_source_connection_id", Box::new(|p| p.initial_source_connection_id = Some(vec![2; 8]))),
-            ("a retry_source_connection_id without a Retry", Box::new(|p| p.retry_source_connection_id = Some(vec![0xb0; 8]))),
+            (
+                "no original_destination_connection_id",
+                Box::new(|p| p.original_destination_connection_id = None),
+            ),
+            (
+                "a wrong original_destination_connection_id",
+                Box::new(|p| p.original_destination_connection_id = Some(vec![1; 8])),
+            ),
+            (
+                "no initial_source_connection_id",
+                Box::new(|p| p.initial_source_connection_id = None),
+            ),
+            (
+                "a wrong initial_source_connection_id",
+                Box::new(|p| p.initial_source_connection_id = Some(vec![2; 8])),
+            ),
+            (
+                "a retry_source_connection_id without a Retry",
+                Box::new(|p| p.retry_source_connection_id = Some(vec![0xb0; 8])),
+            ),
         ];
         for (what, mutate) in cases {
-            let mut l = link(ServerOptions { params: mutate, ..ServerOptions::default() });
+            let mut l = link(ServerOptions {
+                params: mutate,
+                ..ServerOptions::default()
+            });
             l.run_until(Duration::from_secs(5), |l| l.client.is_closing());
-            let reason = l.client_events.iter().find_map(|e| if let Event::Closed(r) = e { Some(r.clone()) } else { None });
-            let Some(CloseReason::Local(e)) = reason else { panic!("{what}: {:?}", l.client_events) };
+            let reason = l.client_events.iter().find_map(|e| {
+                if let Event::Closed(r) = e {
+                    Some(r.clone())
+                } else {
+                    None
+                }
+            });
+            let Some(CloseReason::Local(e)) = reason else {
+                panic!("{what}: {:?}", l.client_events)
+            };
             assert_eq!(e.code, code::TRANSPORT_PARAMETER_ERROR, "{what}");
             // the server is told, in the Initial or the Handshake packet
-            l.run_until(Duration::from_secs(1), |l| l.server.close_received.is_some());
-            assert_eq!(l.server.close_received.as_ref().map(|c| c.0), Some(code::TRANSPORT_PARAMETER_ERROR), "{what}: {:?}", l.server.log);
+            l.run_until(Duration::from_secs(1), |l| {
+                l.server.close_received.is_some()
+            });
+            assert_eq!(
+                l.server.close_received.as_ref().map(|c| c.0),
+                Some(code::TRANSPORT_PARAMETER_ERROR),
+                "{what}: {:?}",
+                l.server.log
+            );
         }
     }
 
@@ -1862,13 +2410,22 @@ mod tests {
         let ids = ([0xa0u8; 8], [0xd0u8; 8], [0xe0u8; 8]);
         let start = |now| {
             let server = TestQuicServer::new("example.test", ServerOptions::default());
-            Connection::connect_with_ids(&Config::default(), &server.client_config(), "example.test", now, ids.0.to_vec(), ids.1.to_vec()).unwrap()
+            Connection::connect_with_ids(
+                &Config::default(),
+                &server.client_config(),
+                "example.test",
+                now,
+                ids.0.to_vec(),
+                ids.1.to_vec(),
+            )
+            .unwrap()
         };
         // a server's Initial: a PING and some padding, sealed with the server's Initial keys
         let initial = |token: &[u8]| {
             let (_, mut server_keys) = keys::initial_keys(&ids.1);
             let mut p = Vec::new();
-            let h = packet::write_long_header(&mut p, PacketType::Initial, &ids.0, &ids.2, token, 0, 2);
+            let h =
+                packet::write_long_header(&mut p, PacketType::Initial, &ids.0, &ids.2, token, 0, 2);
             p.push(0x01);
             p.extend([0u8; 30]);
             packet::finish_long(&mut p, h, TAG_LEN);
@@ -1879,7 +2436,9 @@ mod tests {
         let mut c = start(now);
         c.recv(now, &mut initial(b"t"));
         assert!(c.is_closing(), "a genuine Initial with a token");
-        assert!(matches!(c.poll_event(), Some(Event::Closed(CloseReason::Local(e))) if e.code == code::PROTOCOL_VIOLATION));
+        assert!(
+            matches!(c.poll_event(), Some(Event::Closed(CloseReason::Local(e))) if e.code == code::PROTOCOL_VIOLATION)
+        );
         // one without, whose token length was damaged on the way (1 + 4 + 1 + 8 + 1 + 8 bytes in): dropped
         for bit in 0..8 {
             let mut c = start(now);
@@ -1887,31 +2446,56 @@ mod tests {
             damaged[23] ^= 1 << bit;
             let dropped = c.stats().packets_dropped;
             c.recv(now, &mut damaged);
-            assert!(!c.is_closing(), "bit {bit}: a damaged Initial closed the connection");
+            assert!(
+                !c.is_closing(),
+                "bit {bit}: a damaged Initial closed the connection"
+            );
             assert!(c.stats().packets_dropped > dropped, "bit {bit}");
         }
     }
 
     #[test]
     fn a_retry_that_the_server_does_not_repeat_in_its_parameters_fails() {
-        let mut l = link(ServerOptions { retry: true, params: Box::new(|p| p.retry_source_connection_id = None), ..ServerOptions::default() });
+        let mut l = link(ServerOptions {
+            retry: true,
+            params: Box::new(|p| p.retry_source_connection_id = None),
+            ..ServerOptions::default()
+        });
         l.run_until(Duration::from_secs(5), |l| l.client.is_closing());
-        assert!(matches!(l.client_events.last(), Some(Event::Closed(CloseReason::Local(e))) if e.code == code::TRANSPORT_PARAMETER_ERROR), "{:?}", l.client_events);
+        assert!(
+            matches!(l.client_events.last(), Some(Event::Closed(CloseReason::Local(e))) if e.code == code::TRANSPORT_PARAMETER_ERROR),
+            "{:?}",
+            l.client_events
+        );
     }
 
     #[test]
     fn a_server_without_transport_parameters_is_refused_by_tls() {
-        let mut l = link(ServerOptions { raw_params: Some(None), ..ServerOptions::default() });
+        let mut l = link(ServerOptions {
+            raw_params: Some(None),
+            ..ServerOptions::default()
+        });
         l.run_until(Duration::from_secs(5), |l| l.client.is_closing());
         // missing_extension (109): CRYPTO_ERROR 0x100 + 109
-        assert!(matches!(l.client_events.last(), Some(Event::Closed(CloseReason::Local(e))) if e.code == 0x100 + 109), "{:?}", l.client_events);
+        assert!(
+            matches!(l.client_events.last(), Some(Event::Closed(CloseReason::Local(e))) if e.code == 0x100 + 109),
+            "{:?}",
+            l.client_events
+        );
     }
 
     #[test]
     fn transport_parameters_that_are_malformed_close_the_connection() {
-        let mut l = link(ServerOptions { raw_params: Some(Some(vec![0x03, 0x01, 0x20])), ..ServerOptions::default() }); // max_udp_payload_size 32
+        let mut l = link(ServerOptions {
+            raw_params: Some(Some(vec![0x03, 0x01, 0x20])),
+            ..ServerOptions::default()
+        }); // max_udp_payload_size 32
         l.run_until(Duration::from_secs(5), |l| l.client.is_closing());
-        assert!(matches!(l.client_events.last(), Some(Event::Closed(CloseReason::Local(e))) if e.code == code::TRANSPORT_PARAMETER_ERROR), "{:?}", l.client_events);
+        assert!(
+            matches!(l.client_events.last(), Some(Event::Closed(CloseReason::Local(e))) if e.code == code::TRANSPORT_PARAMETER_ERROR),
+            "{:?}",
+            l.client_events
+        );
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
@@ -1931,9 +2515,17 @@ mod tests {
         vn.extend_from_slice(&0xff00001du32.to_be_bytes());
         l.client.recv(l.now, &mut vn);
         assert!(l.client.is_closed());
-        assert_eq!(l.client.poll_event(), Some(Event::Closed(CloseReason::VersionNegotiation(vec![0x6b3343cf, 0xff00001d]))));
+        assert_eq!(
+            l.client.poll_event(),
+            Some(Event::Closed(CloseReason::VersionNegotiation(vec![
+                0x6b3343cf, 0xff00001d
+            ])))
+        );
         let mut out = Vec::new();
-        assert!(!l.client.poll_transmit(l.now, &mut out), "nothing is sent for it");
+        assert!(
+            !l.client.poll_transmit(l.now, &mut out),
+            "nothing is sent for it"
+        );
     }
 
     #[test]
@@ -1952,7 +2544,11 @@ mod tests {
         };
         let mine = [0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7];
         let sent_to = [0xd0, 0xd1, 0xd2, 0xd3, 0xd4, 0xd5, 0xd6, 0xd7];
-        for mut vn in [make(mine, sent_to, &[1, 2]), make([9; 8], sent_to, &[2]), make(mine, [9; 8], &[2])] {
+        for mut vn in [
+            make(mine, sent_to, &[1, 2]),
+            make([9; 8], sent_to, &[2]),
+            make(mine, [9; 8], &[2]),
+        ] {
             l.client.recv(l.now, &mut vn);
             assert!(!l.client.is_closing());
         }
@@ -1963,7 +2559,10 @@ mod tests {
     fn a_version_negotiation_packet_after_the_server_has_answered_is_ignored() {
         let mut l = link(ServerOptions::default());
         established(&mut l);
-        let mut vn = vec![0x80u8, 0, 0, 0, 0, 8, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 8, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0, 0, 0, 2];
+        let mut vn = vec![
+            0x80u8, 0, 0, 0, 0, 8, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 8, 0xb0, 0xb1,
+            0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0, 0, 0, 2,
+        ];
         l.client.recv(l.now, &mut vn);
         assert!(!l.client.is_closing());
     }
@@ -1978,9 +2577,21 @@ mod tests {
         l.client.close(l.now, 0x101, b"going away");
         assert_eq!(l.client.state(), State::Closing);
         l.flush();
-        assert!(l.run_until(Duration::from_secs(1), |l| l.server.close_received.is_some()));
-        assert_eq!(l.server.close_received, Some((0x101, b"going away".to_vec())));
-        assert_eq!(l.client_events.last(), Some(&Event::Closed(CloseReason::Application { code: 0x101, reason: b"going away".to_vec() })));
+        assert!(l.run_until(Duration::from_secs(1), |l| l
+            .server
+            .close_received
+            .is_some()));
+        assert_eq!(
+            l.server.close_received,
+            Some((0x101, b"going away".to_vec()))
+        );
+        assert_eq!(
+            l.client_events.last(),
+            Some(&Event::Closed(CloseReason::Application {
+                code: 0x101,
+                reason: b"going away".to_vec()
+            }))
+        );
         // after the closing period it is closed (three probe timeouts)
         let t = l.client.timeout().expect("the end of the closing period");
         assert!(t > l.now);
@@ -1995,8 +2606,15 @@ mod tests {
         l.flush();
         l.client.close(l.now, 0x101, b"nope");
         l.flush();
-        l.run_until(Duration::from_secs(1), |l| l.server.close_received.is_some());
-        assert_eq!(l.server.close_received, Some((code::APPLICATION_ERROR, Vec::new())), "{:?}", l.server.log);
+        l.run_until(Duration::from_secs(1), |l| {
+            l.server.close_received.is_some()
+        });
+        assert_eq!(
+            l.server.close_received,
+            Some((code::APPLICATION_ERROR, Vec::new())),
+            "{:?}",
+            l.server.log
+        );
     }
 
     #[test]
@@ -2005,7 +2623,10 @@ mod tests {
         confirmed(&mut l);
         l.client.close(l.now, 0, b"");
         let mut out = Vec::new();
-        assert!(l.client.poll_transmit(l.now, &mut out), "the first CONNECTION_CLOSE");
+        assert!(
+            l.client.poll_transmit(l.now, &mut out),
+            "the first CONNECTION_CLOSE"
+        );
         assert!(!l.client.poll_transmit(l.now, &mut out));
         let mut sent = 0;
         for _ in 0..16 {
@@ -2027,10 +2648,19 @@ mod tests {
         l.server.close_with = Some((0x33, b"bye".to_vec()));
         assert!(l.run_until(Duration::from_secs(1), |l| l.client.is_closing()));
         assert_eq!(l.client.state(), State::Draining);
-        assert_eq!(l.client_events.last(), Some(&Event::Closed(CloseReason::PeerApplication { code: 0x33, reason: b"bye".to_vec() })));
+        assert_eq!(
+            l.client_events.last(),
+            Some(&Event::Closed(CloseReason::PeerApplication {
+                code: 0x33,
+                reason: b"bye".to_vec()
+            }))
+        );
         let mut out = Vec::new();
         l.flush();
-        assert!(!l.client.poll_transmit(l.now, &mut out), "a draining connection sends nothing");
+        assert!(
+            !l.client.poll_transmit(l.now, &mut out),
+            "a draining connection sends nothing"
+        );
         let t = l.client.timeout().unwrap();
         l.client.on_timeout(t);
         assert!(l.client.is_closed());
@@ -2038,7 +2668,10 @@ mod tests {
 
     #[test]
     fn an_idle_connection_closes_at_the_smaller_idle_timeout() {
-        let mut l = link(ServerOptions { params: Box::new(|p| p.max_idle_timeout = 5_000), ..ServerOptions::default() });
+        let mut l = link(ServerOptions {
+            params: Box::new(|p| p.max_idle_timeout = 5_000),
+            ..ServerOptions::default()
+        });
         confirmed(&mut l);
         let idle_from = l.client.last_activity;
         assert_eq!(l.client.idle_timeout(), Some(ms(5000)));
@@ -2054,7 +2687,10 @@ mod tests {
             }
         }
         assert!(ended, "{:?}", l.client_events);
-        assert_eq!(l.client_events.last(), Some(&Event::Closed(CloseReason::IdleTimeout)));
+        assert_eq!(
+            l.client_events.last(),
+            Some(&Event::Closed(CloseReason::IdleTimeout))
+        );
         assert!(l.now >= idle_from + ms(5000));
     }
 
@@ -2074,7 +2710,10 @@ mod tests {
         // delivered 20 ms later: the client holds the acknowledgment, 25 ms at most
         l.step();
         let mut out = Vec::new();
-        assert!(!l.client.poll_transmit(l.now, &mut out), "an acknowledgment of one ping is held back");
+        assert!(
+            !l.client.poll_transmit(l.now, &mut out),
+            "an acknowledgment of one ping is held back"
+        );
         let due = l.client.timeout().expect("the acknowledgment's time");
         assert_eq!(due, l.now + ms(25));
         l.now = due;
@@ -2092,7 +2731,11 @@ mod tests {
         let now = l.now;
         l.step();
         assert_eq!(l.now, now + ms(20));
-        assert_eq!(l.client_datagram_sizes.len(), sent + 1, "two pings are acknowledged at once, in one datagram");
+        assert_eq!(
+            l.client_datagram_sizes.len(),
+            sent + 1,
+            "two pings are acknowledged at once, in one datagram"
+        );
         assert_eq!(l.client.timeout().map(|t| t > l.now), Some(true));
     }
 
@@ -2109,8 +2752,24 @@ mod tests {
         // 9; delay 8000 us >> 3 = 1000; 2 more ranges; first range 0; gap 1 (7, 8), length 1 (5, 6); gap 1 (3, 4), length 2 (0..2)
         let mut r = crate::quic::wire::Reader::new(&out);
         assert_eq!(r.u8().unwrap(), 0x02);
-        assert_eq!([r.varint().unwrap(), r.varint().unwrap(), r.varint().unwrap(), r.varint().unwrap()], [9, 1000, 2, 0]);
-        assert_eq!([r.varint().unwrap(), r.varint().unwrap(), r.varint().unwrap(), r.varint().unwrap()], [1, 1, 1, 2]);
+        assert_eq!(
+            [
+                r.varint().unwrap(),
+                r.varint().unwrap(),
+                r.varint().unwrap(),
+                r.varint().unwrap()
+            ],
+            [9, 1000, 2, 0]
+        );
+        assert_eq!(
+            [
+                r.varint().unwrap(),
+                r.varint().unwrap(),
+                r.varint().unwrap(),
+                r.varint().unwrap()
+            ],
+            [1, 1, 1, 2]
+        );
         assert!(r.is_empty());
         // the acknowledgment was sent: nothing is pending
         assert!(!a.pending() && a.write(&mut Vec::new(), t, 3, 100).is_none());
@@ -2180,25 +2839,51 @@ mod tests {
         l.server.key_update();
         l.server.queued = ping.clone();
         l.flush();
-        assert!(l.run_until(ms(500), |l| l.client.phases.as_ref().is_some_and(|p| p.rx_phase)));
+        assert!(l.run_until(ms(500), |l| l
+            .client
+            .phases
+            .as_ref()
+            .is_some_and(|p| p.rx_phase)));
         // the client has opened the packet with the next keys, and has updated its own
-        assert_eq!(l.client.phases.as_ref().map(|p| (p.rx_phase, p.tx_phase)), Some((true, true)));
+        assert_eq!(
+            l.client.phases.as_ref().map(|p| (p.rx_phase, p.tx_phase)),
+            Some((true, true))
+        );
         // what it sends now is in the new phase: the server can open it, with its keys updated
         l.client.ping();
         l.advance(ms(200));
         assert_eq!(l.server.rx_updates, 1, "{:?}", l.server.log);
-        assert!(l.client.stats().packets_dropped == 0, "{:?}", l.client.stats());
+        assert!(
+            l.client.stats().packets_dropped == 0,
+            "{:?}",
+            l.client.stats()
+        );
         // and everything goes on
         l.client.ping();
         l.advance(ms(200));
         assert_eq!(l.server.rx_updates, 1);
-        assert!(l.server.log.iter().filter(|s| s.starts_with("OneRtt") && s.contains("Ping")).count() >= 2, "{:?}", l.server.log);
+        assert!(
+            l.server
+                .log
+                .iter()
+                .filter(|s| s.starts_with("OneRtt") && s.contains("Ping"))
+                .count()
+                >= 2,
+            "{:?}",
+            l.server.log
+        );
     }
 
     #[test]
     fn the_client_updates_its_keys_before_they_wear_out_and_the_server_follows() {
-        let config = Config { key_update_after: 40, ..Config::default() };
-        let mut l = Link::new(TestQuicServer::new("example.test", ServerOptions::default()), &config);
+        let config = Config {
+            key_update_after: 40,
+            ..Config::default()
+        };
+        let mut l = Link::new(
+            TestQuicServer::new("example.test", ServerOptions::default()),
+            &config,
+        );
         confirmed(&mut l);
         transfer(&mut l, &pattern(300_000, 2), &pattern(100_000, 3));
         l.advance(ms(300));
@@ -2207,18 +2892,34 @@ mod tests {
         // the server saw each, and followed (its packets are in the client's phase, and open)
         assert_eq!(l.server.rx_updates, stats.key_updates);
         // (the server's keys followed the client's last update; the client hears them when the server next has something to say)
-        assert_eq!(l.client.phases.as_ref().unwrap().tx_phase, l.server.tx_phase);
+        assert_eq!(
+            l.client.phases.as_ref().unwrap().tx_phase,
+            l.server.tx_phase
+        );
         assert_eq!(stats.packets_dropped, 0, "{stats:?}");
         // no key sealed many more than it was to: an update waits only for an acknowledgment
-        assert!(l.client.spaces[2].tx.as_ref().unwrap().packet.sealed() < 40 + 40, "{}", l.client.spaces[2].tx.as_ref().unwrap().packet.sealed());
+        assert!(
+            l.client.spaces[2].tx.as_ref().unwrap().packet.sealed() < 40 + 40,
+            "{}",
+            l.client.spaces[2].tx.as_ref().unwrap().packet.sealed()
+        );
         assert!(!l.client.is_closing());
     }
 
     #[test]
     fn keys_are_not_updated_again_before_a_packet_sent_with_them_is_acknowledged() {
-        let config = Config { key_update_after: 10, ..Config::default() };
-        let mut l = Link::new(TestQuicServer::new("example.test", ServerOptions::default()), &config);
-        assert!(!l.client.update_keys(), "an update before the handshake is confirmed");
+        let config = Config {
+            key_update_after: 10,
+            ..Config::default()
+        };
+        let mut l = Link::new(
+            TestQuicServer::new("example.test", ServerOptions::default()),
+            &config,
+        );
+        assert!(
+            !l.client.update_keys(),
+            "an update before the handshake is confirmed"
+        );
         confirmed(&mut l);
         l.client.ping();
         l.advance(ms(200));
@@ -2234,14 +2935,26 @@ mod tests {
         assert!(!l.client.update_keys());
         // the server is heard again: its acknowledgments let the next update happen
         l.drop_rule = Box::new(|_, _, _| false);
-        assert!(l.run_until(Duration::from_secs(5), |l| l.client.stats().key_updates >= 2), "{:?}", l.client.stats());
+        assert!(
+            l.run_until(Duration::from_secs(5), |l| l.client.stats().key_updates
+                >= 2),
+            "{:?}",
+            l.client.stats()
+        );
         assert!(!l.client.is_closing());
     }
 
     #[test]
-    fn after_following_the_servers_update_the_client_waits_for_an_acknowledgment_of_its_own_new_keys() {
-        let config = Config { key_update_after: u64::MAX, ..Config::default() };
-        let mut l = Link::new(TestQuicServer::new("example.test", ServerOptions::default()), &config);
+    fn after_following_the_servers_update_the_client_waits_for_an_acknowledgment_of_its_own_new_keys(
+    ) {
+        let config = Config {
+            key_update_after: u64::MAX,
+            ..Config::default()
+        };
+        let mut l = Link::new(
+            TestQuicServer::new("example.test", ServerOptions::default()),
+            &config,
+        );
         confirmed(&mut l);
         l.client.ping();
         l.advance(ms(200));
@@ -2251,16 +2964,30 @@ mod tests {
         l.server.key_update();
         l.server.queued = ping;
         l.flush();
-        assert!(l.run_until(ms(500), |l| l.client.phases.as_ref().is_some_and(|p| p.rx_phase)));
+        assert!(l.run_until(ms(500), |l| l
+            .client
+            .phases
+            .as_ref()
+            .is_some_and(|p| p.rx_phase)));
         l.advance(ms(100));
         let first = l.client.phases.as_ref().map(|p| p.tx_first_pn).unwrap();
-        assert!(l.client.phases.as_ref().is_some_and(|p| p.tx_phase && !p.tx_acked));
-        assert!(l.client.spaces[2].next_pn > first, "nothing was sent with the new keys");
+        assert!(l
+            .client
+            .phases
+            .as_ref()
+            .is_some_and(|p| p.tx_phase && !p.tx_acked));
+        assert!(
+            l.client.spaces[2].next_pn > first,
+            "nothing was sent with the new keys"
+        );
         let ack = |l: &mut Link, largest: u64| {
             let mut b = vec![0x02];
             crate::quic::wire::put_varint(&mut b, largest);
             b.extend([0, 0, 0]);
-            let f = frame::frames(&b, PacketType::OneRtt).next().unwrap().unwrap();
+            let f = frame::frames(&b, PacketType::OneRtt)
+                .next()
+                .unwrap()
+                .unwrap();
             let Frame::Ack(a) = f else { panic!("{f:?}") };
             let now = l.now;
             l.client.on_ack_frame(now, Space::Application, &a).unwrap();
@@ -2279,13 +3006,31 @@ mod tests {
         let never = || -> bool { panic!("not asked to update") };
         assert_eq!(key_action(1000, 1 << 22, limit, never), KeyAction::Keep);
         // past what was asked for, or three quarters of the limit, whichever is first
-        assert_eq!(key_action(1 << 22, 1 << 22, limit, || true), KeyAction::Updated);
-        assert_eq!(key_action(limit / 4 * 3, u64::MAX, limit, || true), KeyAction::Updated);
-        assert_eq!(key_action(limit / 4 * 3 - 1, u64::MAX, limit, never), KeyAction::Keep);
+        assert_eq!(
+            key_action(1 << 22, 1 << 22, limit, || true),
+            KeyAction::Updated
+        );
+        assert_eq!(
+            key_action(limit / 4 * 3, u64::MAX, limit, || true),
+            KeyAction::Updated
+        );
+        assert_eq!(
+            key_action(limit / 4 * 3 - 1, u64::MAX, limit, never),
+            KeyAction::Keep
+        );
         // one that cannot be updated goes on until it is a sixteenth from its limit, and then the connection closes
-        assert_eq!(key_action(limit / 4 * 3, 0, limit, || false), KeyAction::Keep);
-        assert_eq!(key_action(limit - limit / 16 - 1, 0, limit, || false), KeyAction::Keep);
-        assert_eq!(key_action(limit - limit / 16, 0, limit, || false), KeyAction::Close);
+        assert_eq!(
+            key_action(limit / 4 * 3, 0, limit, || false),
+            KeyAction::Keep
+        );
+        assert_eq!(
+            key_action(limit - limit / 16 - 1, 0, limit, || false),
+            KeyAction::Keep
+        );
+        assert_eq!(
+            key_action(limit - limit / 16, 0, limit, || false),
+            KeyAction::Close
+        );
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
@@ -2293,28 +3038,59 @@ mod tests {
 
     #[test]
     fn a_connection_that_waits_for_its_peer_is_kept_alive_and_one_that_does_not_goes_idle() {
-        let config = Config { max_idle_timeout: Duration::from_secs(3), ..Config::default() };
-        let mut l = Link::new(TestQuicServer::new("example.test", ServerOptions::default()), &config);
+        let config = Config {
+            max_idle_timeout: Duration::from_secs(3),
+            ..Config::default()
+        };
+        let mut l = Link::new(
+            TestQuicServer::new("example.test", ServerOptions::default()),
+            &config,
+        );
         confirmed(&mut l);
         l.client.set_keep_alive(true);
         // a minute in which neither side has anything to say: the client pings every second (a third of the idle timeout)
-        assert!(!l.run_until(Duration::from_secs(60), |l| l.client.is_closing() || l.client.is_closed()), "{:?}", l.client_events);
+        assert!(
+            !l.run_until(Duration::from_secs(60), |l| l.client.is_closing()
+                || l.client.is_closed()),
+            "{:?}",
+            l.client_events
+        );
         let pings = l.client.stats().keep_alives;
-        assert!((55..=62).contains(&pings), "{pings} keep-alive PINGs in a minute");
+        assert!(
+            (55..=62).contains(&pings),
+            "{pings} keep-alive PINGs in a minute"
+        );
         // the server hears them (all but the last, which may be on its way): it does not go idle either, as they ask for an answer
-        let heard = l.server.log.iter().filter(|s| s.starts_with("OneRtt") && s.contains("Ping")).count() as u64;
+        let heard = l
+            .server
+            .log
+            .iter()
+            .filter(|s| s.starts_with("OneRtt") && s.contains("Ping"))
+            .count() as u64;
         assert!(heard + 1 >= pings, "the server heard {heard} of {pings}");
         // nothing waits any more: the connection goes idle as it should
         l.client.set_keep_alive(false);
         assert!(l.run_until(Duration::from_secs(10), |l| l.client.is_closed()));
-        assert!(l.client_events.iter().any(|e| matches!(e, Event::Closed(CloseReason::IdleTimeout))), "{:?}", l.client_events);
+        assert!(
+            l.client_events
+                .iter()
+                .any(|e| matches!(e, Event::Closed(CloseReason::IdleTimeout))),
+            "{:?}",
+            l.client_events
+        );
         assert_eq!(l.client.stats().keep_alives, pings);
     }
 
     #[test]
     fn a_peer_that_does_not_answer_keep_alives_still_times_out() {
-        let config = Config { max_idle_timeout: Duration::from_secs(3), ..Config::default() };
-        let mut l = Link::new(TestQuicServer::new("example.test", ServerOptions::default()), &config);
+        let config = Config {
+            max_idle_timeout: Duration::from_secs(3),
+            ..Config::default()
+        };
+        let mut l = Link::new(
+            TestQuicServer::new("example.test", ServerOptions::default()),
+            &config,
+        );
         confirmed(&mut l);
         l.client.set_keep_alive(true);
         let from = l.sent_by_server;
@@ -2322,8 +3098,18 @@ mod tests {
         let started = l.now;
         assert!(l.run_until(Duration::from_secs(20), |l| l.client.is_closed()));
         // (the idle timer starts again with the first ack-eliciting packet sent after the last one received, not with each)
-        assert!(l.now - started <= Duration::from_secs(5), "{:?}", l.now - started);
-        assert!(l.client_events.iter().any(|e| matches!(e, Event::Closed(CloseReason::IdleTimeout))), "{:?}", l.client_events);
+        assert!(
+            l.now - started <= Duration::from_secs(5),
+            "{:?}",
+            l.now - started
+        );
+        assert!(
+            l.client_events
+                .iter()
+                .any(|e| matches!(e, Event::Closed(CloseReason::IdleTimeout))),
+            "{:?}",
+            l.client_events
+        );
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
@@ -2337,7 +3123,10 @@ mod tests {
         let mut a = vec![0x40u8; 60];
         a[1..9].copy_from_slice(&[0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7]);
         l.client.recv(l.now, &mut a);
-        let mut b = vec![0xc0u8, 0, 0, 0, 1, 8, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 4, 1, 2, 3, 4, 0, 0x40, 0x30];
+        let mut b = vec![
+            0xc0u8, 0, 0, 0, 1, 8, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 4, 1, 2, 3, 4,
+            0, 0x40, 0x30,
+        ];
         b.extend_from_slice(&[0x77; 0x30]);
         l.client.recv(l.now, &mut b);
         // a packet for another connection
@@ -2355,7 +3144,10 @@ mod tests {
     fn handshake_packets_that_come_before_the_initial_are_kept_and_used() {
         // the server's datagram has the Initial and the Handshake packets one after the other: take them apart and give the client the
         // Handshake packets first
-        let mut l = link(ServerOptions { crypto_chunk: 300, ..ServerOptions::default() });
+        let mut l = link(ServerOptions {
+            crypto_chunk: 300,
+            ..ServerOptions::default()
+        });
         // run the server on the client's first datagram
         let mut first = Vec::new();
         assert!(l.client.poll_transmit(l.now, &mut first));
@@ -2376,7 +3168,11 @@ mod tests {
         for mut p in packets {
             l.client.recv(l.now, &mut p);
         }
-        assert_eq!(l.client.undecryptable[1].len().min(1), 1, "handshake packets are kept until the keys come");
+        assert_eq!(
+            l.client.undecryptable[1].len().min(1),
+            1,
+            "handshake packets are kept until the keys come"
+        );
         let mut f = initial;
         l.client.recv(l.now, &mut f);
         // the kept ones were used: the handshake is complete
@@ -2392,19 +3188,31 @@ mod tests {
     }
 
     fn pattern(len: usize, seed: u32) -> Vec<u8> {
-        (0..len as u32).map(|i| (i.wrapping_add(seed).wrapping_mul(2654435761) >> 13) as u8).collect()
+        (0..len as u32)
+            .map(|i| (i.wrapping_add(seed).wrapping_mul(2654435761) >> 13) as u8)
+            .collect()
     }
 
     #[test]
     fn streams_wait_for_the_handshake_and_are_closed_with_the_connection() {
         let mut l = link(ServerOptions::default());
-        assert_eq!(l.client.open_stream(true), Err(StreamError::Blocked), "the server's limits are not known yet");
+        assert_eq!(
+            l.client.open_stream(true),
+            Err(StreamError::Blocked),
+            "the server's limits are not known yet"
+        );
         confirmed(&mut l);
         let id = l.client.open_stream(true).unwrap();
         l.client.close(l.now, 0, b"");
         assert_eq!(l.client.open_stream(true), Err(StreamError::Closed));
-        assert_eq!(l.client.stream_write(id, b"x", false), Err(StreamError::Closed));
-        assert_eq!(l.client.stream_read(id, &mut [0u8; 1]), Err(StreamError::Closed));
+        assert_eq!(
+            l.client.stream_write(id, b"x", false),
+            Err(StreamError::Closed)
+        );
+        assert_eq!(
+            l.client.stream_read(id, &mut [0u8; 1]),
+            Err(StreamError::Closed)
+        );
         assert_eq!(l.client.stream_reset(id, 1), Err(StreamError::Closed));
     }
 
@@ -2422,7 +3230,10 @@ mod tests {
         let body = pattern(3000, 1);
         assert_eq!(l.server.streams.write(id, &body, true), Ok(3000));
         l.advance(ms(200));
-        assert_eq!(client_stream_events(&mut l), vec![StreamEvent::Readable(id)]);
+        assert_eq!(
+            client_stream_events(&mut l),
+            vec![StreamEvent::Readable(id)]
+        );
         let mut got = Vec::new();
         loop {
             match l.client.stream_read(id, &mut buf) {
@@ -2498,13 +3309,30 @@ mod tests {
             if up_end && down_end {
                 break;
             }
-            assert!(!l.client.is_closing(), "{:?} {:?}", l.client_events, l.server.stream_error);
+            assert!(
+                !l.client.is_closing(),
+                "{:?} {:?}",
+                l.client_events,
+                l.server.stream_error
+            );
             l.advance(ms(5));
         }
-        assert!(up_end && down_end, "up {}/{} down {}/{} after {:?}", got_up.len(), up.len(), got_down.len(), down.len(), l.elapsed());
+        assert!(
+            up_end && down_end,
+            "up {}/{} down {}/{} after {:?}",
+            got_up.len(),
+            up.len(),
+            got_down.len(),
+            down.len(),
+            l.elapsed()
+        );
         assert!(got_up == up, "what the server got differs");
         assert!(got_down == down, "what the client got differs");
-        assert!(l.server.stream_error.is_none(), "{:?}", l.server.stream_error);
+        assert!(
+            l.server.stream_error.is_none(),
+            "{:?}",
+            l.server.stream_error
+        );
     }
 
     #[test]
@@ -2527,7 +3355,11 @@ mod tests {
                 state ^= state << 17;
                 state % 100 < loss
             });
-            transfer(&mut l, &pattern(250_000, seed as u32), &pattern(200_000, seed as u32 + 9));
+            transfer(
+                &mut l,
+                &pattern(250_000, seed as u32),
+                &pattern(200_000, seed as u32 + 9),
+            );
             assert!(l.client.stats().packets_lost > 0, "loss {loss}%");
         }
     }
@@ -2545,18 +3377,31 @@ mod tests {
         confirmed(&mut l);
         transfer(&mut l, &pattern(150_000, 5), &pattern(1000, 6));
         // the client was held to the limit at the start: it said so
-        assert!(l.server.log.iter().any(|s| s.contains("StreamDataBlocked") || s.contains("DataBlocked")), "no blocked frame came");
+        assert!(
+            l.server
+                .log
+                .iter()
+                .any(|s| s.contains("StreamDataBlocked") || s.contains("DataBlocked")),
+            "no blocked frame came"
+        );
     }
 
     #[test]
     fn the_client_stays_within_the_servers_stream_limit_and_opens_more_when_it_is_raised() {
-        let mut l = link(ServerOptions { params: Box::new(|p| p.initial_max_streams_bidi = 2), ..ServerOptions::default() });
+        let mut l = link(ServerOptions {
+            params: Box::new(|p| p.initial_max_streams_bidi = 2),
+            ..ServerOptions::default()
+        });
         confirmed(&mut l);
         let a = l.client.open_stream(true).unwrap();
         let b = l.client.open_stream(true).unwrap();
         assert_eq!(l.client.open_stream(true), Err(StreamError::Blocked));
         l.advance(ms(100));
-        assert!(l.server.log.iter().any(|s| s.contains("StreamsBlocked")), "{:?}", l.server.log);
+        assert!(
+            l.server.log.iter().any(|s| s.contains("StreamsBlocked")),
+            "{:?}",
+            l.server.log
+        );
         // both streams are used and finished, on both sides: the server lets the client open another
         for id in [a, b] {
             l.client.stream_write(id, b"request", true).unwrap();
@@ -2572,7 +3417,11 @@ mod tests {
             assert_eq!(l.client.stream_read(id, &mut [0u8; 20]), Ok((2, true)));
         }
         l.advance(ms(300));
-        assert!(client_stream_events(&mut l).contains(&StreamEvent::Available { bidirectional: true }));
+        assert!(
+            client_stream_events(&mut l).contains(&StreamEvent::Available {
+                bidirectional: true
+            })
+        );
         assert!(l.client.open_stream(true).is_ok());
     }
 
@@ -2582,14 +3431,20 @@ mod tests {
         confirmed(&mut l);
         let id = l.server.streams.open(false).unwrap();
         assert_eq!(id, 3);
-        l.server.streams.write(id, b"control stream", false).unwrap();
+        l.server
+            .streams
+            .write(id, b"control stream", false)
+            .unwrap();
         l.advance(ms(100));
         assert_eq!(client_stream_events(&mut l), vec![StreamEvent::Readable(3)]);
         let mut buf = [0u8; 50];
         assert_eq!(l.client.stream_read(3, &mut buf), Ok((14, false)));
         assert_eq!(l.client.stream_read(3, &mut buf), Err(StreamError::Blocked));
         // the client has no stream to write to on it
-        assert_eq!(l.client.stream_write(3, b"x", false), Err(StreamError::Unknown));
+        assert_eq!(
+            l.client.stream_write(3, b"x", false),
+            Err(StreamError::Unknown)
+        );
     }
 
     #[test]
@@ -2601,7 +3456,10 @@ mod tests {
         l.advance(ms(100));
         l.client.stream_reset(a, 42).unwrap();
         l.advance(ms(100));
-        assert_eq!(l.server.streams.read(a, &mut [0u8; 10]), Err(StreamError::Reset(42)));
+        assert_eq!(
+            l.server.streams.read(a, &mut [0u8; 10]),
+            Err(StreamError::Reset(42))
+        );
         // the server asks the client to stop sending on another
         let b = l.client.open_stream(true).unwrap();
         l.client.stream_write(b, &pattern(5000, 2), false).unwrap();
@@ -2609,7 +3467,10 @@ mod tests {
         l.server.streams.stop_sending(b, 7).unwrap();
         l.advance(ms(200));
         assert!(client_stream_events(&mut l).contains(&StreamEvent::Stopped(b, 7)));
-        assert_eq!(l.client.stream_write(b, b"x", false), Err(StreamError::Stopped(7)));
+        assert_eq!(
+            l.client.stream_write(b, b"x", false),
+            Err(StreamError::Stopped(7))
+        );
         assert!(!l.client.is_closing() && l.server.stream_error.is_none());
     }
 
@@ -2619,20 +3480,38 @@ mod tests {
         let mut l = link(ServerOptions::default());
         confirmed(&mut l);
         let mut frame = Vec::new();
-        Frame::Stream { id: 3, offset: (1 << 20) + 10, data: &[0; 10], fin: false }.write(&mut frame);
+        Frame::Stream {
+            id: 3,
+            offset: (1 << 20) + 10,
+            data: &[0; 10],
+            fin: false,
+        }
+        .write(&mut frame);
         l.server.queued = frame;
         l.flush();
         assert!(l.run_until(ms(500), |l| l.server.close_received.is_some()));
-        assert_eq!(l.server.close_received.as_ref().map(|c| c.0), Some(code::FLOW_CONTROL_ERROR));
+        assert_eq!(
+            l.server.close_received.as_ref().map(|c| c.0),
+            Some(code::FLOW_CONTROL_ERROR)
+        );
         assert!(l.client.is_closing());
         // a frame for a stream that the client only sends on
         let mut l = link(ServerOptions::default());
         confirmed(&mut l);
         let mut frame = Vec::new();
-        Frame::Stream { id: 2, offset: 0, data: &[0; 10], fin: false }.write(&mut frame);
+        Frame::Stream {
+            id: 2,
+            offset: 0,
+            data: &[0; 10],
+            fin: false,
+        }
+        .write(&mut frame);
         l.server.queued = frame;
         l.flush();
         assert!(l.run_until(ms(500), |l| l.server.close_received.is_some()));
-        assert_eq!(l.server.close_received.as_ref().map(|c| c.0), Some(code::STREAM_STATE_ERROR));
+        assert_eq!(
+            l.server.close_received.as_ref().map(|c| c.0),
+            Some(code::STREAM_STATE_ERROR)
+        );
     }
 }

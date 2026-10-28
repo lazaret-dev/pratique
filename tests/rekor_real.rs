@@ -45,37 +45,66 @@ fn checkpoint(note: &str) -> Checkpoint {
     let mut lines = opened.text.lines();
     let origin = lines.next().unwrap().to_string();
     let size: u64 = lines.next().unwrap().parse().unwrap();
-    let root: Hash = pem::base64_decode_strict(lines.next().unwrap()).unwrap().try_into().unwrap();
+    let root: Hash = pem::base64_decode_strict(lines.next().unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
     assert_eq!(lines.next(), None);
     Checkpoint { origin, size, root }
 }
 
 #[test]
 fn rekor_v1_checkpoints_verify_with_the_logs_ecdsa_key() {
-    for (note, size) in [(NEW, 2_976_019_742u64), (OLD, 2_953_640_305), (SHARD_A, 4_163_431), (SHARD_B, 117_740_831)] {
+    for (note, size) in [
+        (NEW, 2_976_019_742u64),
+        (OLD, 2_953_640_305),
+        (SHARD_A, 4_163_431),
+        (SHARD_B, 117_740_831),
+    ] {
         let cp = checkpoint(note);
-        assert!(cp.origin.starts_with("rekor.sigstore.dev - "), "{}", cp.origin);
+        assert!(
+            cp.origin.starts_with("rekor.sigstore.dev - "),
+            "{}",
+            cp.origin
+        );
         assert_eq!(cp.size, size);
 
         // no change to the note goes unnoticed (a bit in every byte, the signature line included)
         for i in 0..note.len() {
             let mut t = note.as_bytes().to_vec();
             t[i] ^= 1;
-            assert!(note::open(&t, &[rekor()]).is_err(), "{} byte {i}", cp.origin);
+            assert!(
+                note::open(&t, &[rekor()]).is_err(),
+                "{} byte {i}",
+                cp.origin
+            );
         }
     }
     // the log has been sharded: the three trees have three origins
-    let origins: Vec<String> = [NEW, SHARD_A, SHARD_B].iter().map(|n| checkpoint(n).origin).collect();
+    let origins: Vec<String> = [NEW, SHARD_A, SHARD_B]
+        .iter()
+        .map(|n| checkpoint(n).origin)
+        .collect();
     assert!(origins[0] != origins[1] && origins[1] != origins[2] && origins[0] != origins[2]);
     // a signature of one head is not one of another (same log, same key)
     let (a, b) = (checkpoint(NEW), checkpoint(OLD));
     assert_eq!(a.origin, b.origin);
-    let spliced = format!("{}{}", &NEW[..NEW.rfind("\n\n").unwrap()], &OLD[OLD.rfind("\n\n").unwrap()..]);
-    assert!(matches!(note::open(spliced.as_bytes(), &[rekor()]), Err(note::Error::InvalidSignature { .. })));
+    let spliced = format!(
+        "{}{}",
+        &NEW[..NEW.rfind("\n\n").unwrap()],
+        &OLD[OLD.rfind("\n\n").unwrap()..]
+    );
+    assert!(matches!(
+        note::open(spliced.as_bytes(), &[rekor()]),
+        Err(note::Error::InvalidSignature { .. })
+    ));
 }
 
 fn proof() -> Vec<Hash> {
-    PROOF.lines().map(|l| unhex(l).try_into().unwrap()).collect()
+    PROOF
+        .lines()
+        .map(|l| unhex(l).try_into().unwrap())
+        .collect()
 }
 
 #[test]
@@ -91,7 +120,10 @@ fn the_real_consistency_proof_from_the_older_head_to_the_current_one() {
         for byte in [0usize, 31] {
             let mut q = p.clone();
             q[i][byte] ^= 0x10;
-            assert!(tlog::verify_consistency(&q, old.size, &old.root, new.size, &new.root).is_err(), "hash {i}");
+            assert!(
+                tlog::verify_consistency(&q, old.size, &old.root, new.size, &new.root).is_err(),
+                "hash {i}"
+            );
         }
     }
     let mut r = old.root;
@@ -119,7 +151,10 @@ fn rekor_v2_checkpoint_has_an_ed25519_signature_and_witness_cosignatures() {
     let (name, spki_b64) = V2_KEY.trim().split_once('\n').unwrap();
     let spki = pem::base64_decode_strict(spki_b64).unwrap();
     assert_eq!(spki.len(), 44);
-    assert_eq!(spki[..12], [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00]);
+    assert_eq!(
+        spki[..12],
+        [0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00]
+    );
     let key: [u8; 32] = spki[12..].try_into().unwrap();
     let verifier = Verifier::ed25519(name, &key).unwrap();
 
@@ -128,11 +163,21 @@ fn rekor_v2_checkpoint_has_an_ed25519_signature_and_witness_cosignatures() {
     assert_eq!(opened.signatures[0].name, "log2025-1.rekor.sigstore.dev");
     // the three witnesses' cosignatures are kept aside: this key is not theirs
     let witnesses: Vec<&str> = opened.unverified.iter().map(|s| s.name.as_str()).collect();
-    assert_eq!(witnesses, ["staging.witness.transparency.goog/ring-any-bells", "witness.stagemole.eu", "witness.navigli.sunlight.geomys.org"]);
+    assert_eq!(
+        witnesses,
+        [
+            "staging.witness.transparency.goog/ring-any-bells",
+            "witness.stagemole.eu",
+            "witness.navigli.sunlight.geomys.org"
+        ]
+    );
     let mut lines = opened.text.lines();
     assert_eq!(lines.next(), Some(name));
     assert_eq!(lines.next(), Some("139792683"));
-    assert_eq!(lines.next(), Some("N3l8Cl0M364zobtnGGMUwFswMriGT7xefzOuB/wMBFA="));
+    assert_eq!(
+        lines.next(),
+        Some("N3l8Cl0M364zobtnGGMUwFswMriGT7xefzOuB/wMBFA=")
+    );
     assert_eq!(lines.next(), None);
 
     // a change to the text or to the log's own signature is refused

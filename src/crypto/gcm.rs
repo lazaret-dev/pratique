@@ -1,9 +1,9 @@
 //! AES-GCM authenticated encryption (NIST SP 800-38D), 96-bit nonces only (as in TLS 1.3).
 
-use super::dit::Dit;
 use super::aes::Aes;
 #[cfg(any(test, pratique_fuzzing))]
 use super::aes::Backend;
+use super::dit::Dit;
 use super::ghash::GhashKey;
 use crate::util::ct_eq;
 use crate::zeroize::Zeroize;
@@ -113,7 +113,12 @@ impl AesGcm {
     /// Decrypts in place. `buf` holds ciphertext || tag. On success returns the plaintext length
     /// and `buf[..len]` holds the plaintext; on failure returns `None` and `buf` is untouched
     /// (the tag is verified before anything is decrypted).
-    pub fn open_in_place(&self, nonce: &[u8; NONCE_LEN], aad: &[u8], buf: &mut [u8]) -> Option<usize> {
+    pub fn open_in_place(
+        &self,
+        nonce: &[u8; NONCE_LEN],
+        aad: &[u8],
+        buf: &mut [u8],
+    ) -> Option<usize> {
         let _dit = Dit::on(); // data-independent timing while the key and the data are in use (crypto::dit)
         if buf.len() < TAG_LEN {
             return None;
@@ -165,7 +170,12 @@ impl AesGcm {
     /// before B-85 gave it one pass. Test builds only, for the timing tests that compare the two
     /// (`crypto::timing::aes_gcm_seal_parts`).
     #[cfg(test)]
-    pub(crate) fn seal_in_place_two_passes(&self, nonce: &[u8; NONCE_LEN], aad: &[u8], buf: &mut [u8]) {
+    pub(crate) fn seal_in_place_two_passes(
+        &self,
+        nonce: &[u8; NONCE_LEN],
+        aad: &[u8],
+        buf: &mut [u8],
+    ) {
         let _dit = Dit::on();
         let n = buf.len() - TAG_LEN;
         let (data, tag_out) = buf.split_at_mut(n);
@@ -178,7 +188,12 @@ impl AesGcm {
     /// group of ciphertext back from memory to hash it; `aes_hw::SEAL_BY_RELOAD`). The same as `seal_in_place` elsewhere.
     /// Test builds only.
     #[cfg(test)]
-    pub(crate) fn seal_in_place_by_reload(&self, nonce: &[u8; NONCE_LEN], aad: &[u8], buf: &mut [u8]) {
+    pub(crate) fn seal_in_place_by_reload(
+        &self,
+        nonce: &[u8; NONCE_LEN],
+        aad: &[u8],
+        buf: &mut [u8],
+    ) {
         super::aes_hw::SEAL_BY_RELOAD.with(|c| c.set(true));
         self.seal_in_place(nonce, aad, buf);
         super::aes_hw::SEAL_BY_RELOAD.with(|c| c.set(false));
@@ -194,7 +209,12 @@ impl AesGcm {
     }
 
     /// Verifies the tag over `ciphertext_and_tag` and returns the plaintext.
-    pub fn open(&self, nonce: &[u8; NONCE_LEN], aad: &[u8], ciphertext_and_tag: &[u8]) -> Option<Vec<u8>> {
+    pub fn open(
+        &self,
+        nonce: &[u8; NONCE_LEN],
+        aad: &[u8],
+        ciphertext_and_tag: &[u8],
+    ) -> Option<Vec<u8>> {
         let mut buf = ciphertext_and_tag.to_vec();
         let n = self.open_in_place(nonce, aad, &mut buf)?;
         buf.truncate(n);
@@ -235,8 +255,18 @@ mod tests {
                     g.seal_in_place(&nonce, b"aad", &mut one);
                     g.seal_in_place_two_passes(&nonce, b"aad", &mut two);
                     g.seal_in_place_by_reload(&nonce, b"aad", &mut reload);
-                    assert_eq!(one, two, "{:?}, {key_len}-byte key, {len} bytes", g.backend());
-                    assert_eq!(one, reload, "{:?}, {key_len}-byte key, {len} bytes (by reload)", g.backend());
+                    assert_eq!(
+                        one,
+                        two,
+                        "{:?}, {key_len}-byte key, {len} bytes",
+                        g.backend()
+                    );
+                    assert_eq!(
+                        one,
+                        reload,
+                        "{:?}, {key_len}-byte key, {len} bytes (by reload)",
+                        g.backend()
+                    );
                     // and it opens
                     assert_eq!(g.open_in_place(&nonce, b"aad", &mut one), Some(len));
                     assert_eq!(one[..len], plain[..]);
@@ -249,7 +279,12 @@ mod tests {
     fn nist_test_case_1_and_2() {
         let nonce = [0u8; 12];
         for g in gcms(&[0u8; 16]) {
-            assert_eq!(hex(&g.seal(&nonce, &[], &[])), "58e2fccefa7e3061367f1d57a4e7455a", "{:?}", g.backend());
+            assert_eq!(
+                hex(&g.seal(&nonce, &[], &[])),
+                "58e2fccefa7e3061367f1d57a4e7455a",
+                "{:?}",
+                g.backend()
+            );
             assert_eq!(
                 hex(&g.seal(&nonce, &[], &[0u8; 16])),
                 "0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf",
@@ -303,8 +338,20 @@ mod tests {
         for (key, pt, aad, ct, tag) in cases {
             for g in gcms(key) {
                 let out = g.seal(&nonce, aad, pt);
-                assert_eq!(hex(&out[..pt.len()]), ct, "ciphertext, {:?}, key {}", g.backend(), key.len());
-                assert_eq!(hex(&out[pt.len()..]), tag, "tag, {:?}, key {}", g.backend(), key.len());
+                assert_eq!(
+                    hex(&out[..pt.len()]),
+                    ct,
+                    "ciphertext, {:?}, key {}",
+                    g.backend(),
+                    key.len()
+                );
+                assert_eq!(
+                    hex(&out[pt.len()..]),
+                    tag,
+                    "tag, {:?}, key {}",
+                    g.backend(),
+                    key.len()
+                );
                 assert_eq!(g.open(&nonce, aad, &out).unwrap(), pt);
             }
         }
@@ -324,7 +371,10 @@ mod tests {
                 hex(&ct),
                 "2cd0cbc979ed22bbd19e6960cfd68df4fb515037e4aba5f1360ca34579bf4e73c963bdc822d9ac16ec0a25609fcd41e5857b82fadd2ec0224db01aa5deb1cfc2c16e79435e224169784e0e34b5fb3b1756198fc2272cbd14ae438cfccb"
             );
-            assert_eq!(g.open(&nonce, b"tls13 record header", &ct).unwrap(), sample_plaintext());
+            assert_eq!(
+                g.open(&nonce, b"tls13 record header", &ct).unwrap(),
+                sample_plaintext()
+            );
         }
     }
 
@@ -338,7 +388,10 @@ mod tests {
                 hex(&ct),
                 "ec9a2c39a74caa83be6b3b7d967a7f2c27ca67a70006b3e4dd260ba92f31eb9e2ea7dfdfb552cba6018ef34dc32c9bce838b0c1e67c5b2efb9fee64c02a2582a4ac4f9c1f7672a202aa4974f00a639d57d29bdc1882422f2f96fd39eb4"
             );
-            assert_eq!(g.open(&nonce, b"tls13 record header", &ct).unwrap(), sample_plaintext());
+            assert_eq!(
+                g.open(&nonce, b"tls13 record header", &ct).unwrap(),
+                sample_plaintext()
+            );
         }
     }
 
@@ -352,7 +405,12 @@ mod tests {
                 let aad = det_aad(idx, alen);
                 let pt = det_pt(idx, n);
                 let out = g.seal(&nonce, &aad, &pt);
-                assert_eq!(hex(&Sha256::digest(&out[..n])), ct_sha, "ciphertext, vector {idx} (len {n}, key {klen}, {:?})", g.backend());
+                assert_eq!(
+                    hex(&Sha256::digest(&out[..n])),
+                    ct_sha,
+                    "ciphertext, vector {idx} (len {n}, key {klen}, {:?})",
+                    g.backend()
+                );
                 assert_eq!(hex(&out[n..]), tag, "tag, vector {idx}, {:?}", g.backend());
                 assert_eq!(g.open(&nonce, &aad, &out).unwrap(), pt);
             }
@@ -365,11 +423,31 @@ mod tests {
     fn backends_agree_on_random_inputs() {
         let mut state = 0x1234_5678_9abc_def0_u64;
         let mut next = || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (state >> 33) as u8
         };
         for key_len in [16usize, 32] {
-            for len in [0usize, 1, 15, 16, 17, 47, 63, 64, 65, 127, 128, 129, 255, 256, 1000, 4096, 16384 + 1] {
+            for len in [
+                0usize,
+                1,
+                15,
+                16,
+                17,
+                47,
+                63,
+                64,
+                65,
+                127,
+                128,
+                129,
+                255,
+                256,
+                1000,
+                4096,
+                16384 + 1,
+            ] {
                 for aad_len in [0usize, 5, 16, 29] {
                     let key: Vec<u8> = (0..key_len).map(|_| next()).collect();
                     let nonce: [u8; 12] = core::array::from_fn(|_| next());
@@ -378,7 +456,12 @@ mod tests {
                     let all = gcms(&key);
                     let want = all[0].seal(&nonce, &aad, &pt);
                     for g in &all {
-                        assert_eq!(g.seal(&nonce, &aad, &pt), want, "{:?} key {key_len} len {len} aad {aad_len}", g.backend());
+                        assert_eq!(
+                            g.seal(&nonce, &aad, &pt),
+                            want,
+                            "{:?} key {key_len} len {len} aad {aad_len}",
+                            g.backend()
+                        );
                         assert_eq!(g.open(&nonce, &aad, &want).as_deref(), Some(&pt[..]));
                     }
                 }

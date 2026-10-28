@@ -105,16 +105,24 @@ const SYSTEM_PROXY_PORT: u16 = 80;
 
 /// `s` if it is not empty once trimmed.
 fn present(s: Option<&str>) -> Option<String> {
-    s.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+    s.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// A proxy from `host` and `port` as a system names them, or why it cannot be used.
 fn proxy_at(host: &str, port: u16) -> Result<Proxy, String> {
     let host = host.trim();
-    let bracketed = if host.contains(':') && !host.starts_with('[') { format!("[{host}]") } else { host.to_string() };
+    let bracketed = if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    };
     match Proxy::parse(&format!("http://{bracketed}:{port}")) {
         Ok(p) if p.auth.is_none() && p.port == port => Ok(p),
-        _ => Err(format!("the proxy {host:?} is not a host this client can reach")),
+        _ => Err(format!(
+            "the proxy {host:?} is not a host this client can reach"
+        )),
     }
 }
 
@@ -124,7 +132,11 @@ fn proxy_from_address(address: &str) -> Result<Proxy, String> {
     let address = address.trim();
     let rest = match address.split_once("://") {
         Some((scheme, rest)) if scheme.eq_ignore_ascii_case("http") => rest,
-        Some((scheme, _)) => return Err(format!("the proxy {address:?} is a {scheme} proxy, which this client does not speak")),
+        Some((scheme, _)) => {
+            return Err(format!(
+                "the proxy {address:?} is a {scheme} proxy, which this client does not speak"
+            ))
+        }
         None => address,
     };
     let rest = rest.trim_end_matches('/');
@@ -144,7 +156,11 @@ fn proxy_from_address(address: &str) -> Result<Proxy, String> {
         None => SYSTEM_PROXY_PORT,
         Some(p) => match p.parse::<u16>() {
             Ok(p) if p != 0 => p,
-            _ => return Err(format!("the proxy {address:?} has no port this client can use")),
+            _ => {
+                return Err(format!(
+                    "the proxy {address:?} has no port this client can use"
+                ))
+            }
         },
     };
     proxy_at(&host, port)
@@ -172,9 +188,18 @@ impl SystemProxy {
     pub(crate) fn from_mac(m: &MacSettings) -> SystemProxy {
         let mut s = SystemProxy {
             source: Some(SettingsSource::MacOs),
-            bypass: m.exceptions.iter().map(|e| e.trim().to_string()).filter(|e| !e.is_empty()).collect(),
+            bypass: m
+                .exceptions
+                .iter()
+                .map(|e| e.trim().to_string())
+                .filter(|e| !e.is_empty())
+                .collect(),
             bypass_simple: m.exclude_simple,
-            pac: if m.pac_enable { present(m.pac_url.as_deref()).or(Some(String::new())) } else { None },
+            pac: if m.pac_enable {
+                present(m.pac_url.as_deref()).or(Some(String::new()))
+            } else {
+                None
+            },
             auto_detect: m.auto_discovery,
             ..SystemProxy::default()
         };
@@ -194,7 +219,8 @@ impl SystemProxy {
             _ => {}
         }
         if m.socks_enable {
-            s.ignored.push("a SOCKS proxy is set, and this client does not speak SOCKS".into());
+            s.ignored
+                .push("a SOCKS proxy is set, and this client does not speak SOCKS".into());
         }
         s
     }
@@ -208,7 +234,14 @@ impl SystemProxy {
             auto_detect: w.connection_flags.is_some_and(|f| f & AUTO_DETECT != 0),
             ..SystemProxy::default()
         };
-        for entry in w.proxy_override.as_deref().unwrap_or("").split(';').map(str::trim).filter(|e| !e.is_empty()) {
+        for entry in w
+            .proxy_override
+            .as_deref()
+            .unwrap_or("")
+            .split(';')
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+        {
             if entry.eq_ignore_ascii_case("<local>") {
                 s.bypass_simple = true;
             } else {
@@ -216,7 +249,9 @@ impl SystemProxy {
             }
         }
         let server = present(w.proxy_server.as_deref());
-        let Some(server) = server.filter(|_| w.proxy_enable) else { return s };
+        let Some(server) = server.filter(|_| w.proxy_enable) else {
+            return s;
+        };
         // one address for every scheme, or `scheme=address` entries
         let https = if !server.contains('=') && !server.contains(';') {
             Some(server.as_str())
@@ -225,14 +260,23 @@ impl SystemProxy {
             let mut socks = false;
             for entry in server.split(';').map(str::trim).filter(|e| !e.is_empty()) {
                 match entry.split_once('=') {
-                    Some((scheme, address)) if scheme.trim().eq_ignore_ascii_case("https") => https = Some(address),
-                    Some((scheme, _)) if scheme.trim().eq_ignore_ascii_case("socks") => socks = true,
+                    Some((scheme, address)) if scheme.trim().eq_ignore_ascii_case("https") => {
+                        https = Some(address)
+                    }
+                    Some((scheme, _)) if scheme.trim().eq_ignore_ascii_case("socks") => {
+                        socks = true
+                    }
                     Some(_) => {}
-                    None => s.ignored.push(format!("the ProxyServer entry {entry:?} is not scheme=address")),
+                    None => s.ignored.push(format!(
+                        "the ProxyServer entry {entry:?} is not scheme=address"
+                    )),
                 }
             }
             if https.is_none() && socks {
-                s.ignored.push("the proxy for https is a SOCKS proxy, and this client does not speak SOCKS".into());
+                s.ignored.push(
+                    "the proxy for https is a SOCKS proxy, and this client does not speak SOCKS"
+                        .into(),
+                );
             }
             https
         };
@@ -275,16 +319,29 @@ impl SystemProxy {
     /// What a log should say about these settings: the proxy that is used, and what is set and not followed (a PAC file, discovery, what
     /// this client does not speak). Empty when nothing is set.
     pub fn notes(&self) -> Vec<String> {
-        let Some(source) = self.source else { return Vec::new() };
+        let Some(source) = self.source else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         if let Some(p) = &self.https {
-            let host = if p.host.contains(':') { format!("[{}]", p.host) } else { p.host.clone() };
-            out.push(format!("{source} name {host}:{} as the proxy for https", p.port));
+            let host = if p.host.contains(':') {
+                format!("[{}]", p.host)
+            } else {
+                p.host.clone()
+            };
+            out.push(format!(
+                "{source} name {host}:{} as the proxy for https",
+                p.port
+            ));
         }
         if let Some(pac) = &self.pac {
             // (the URL without its query, which some services use for an account's key)
             let shown = pac.split(['?', '#']).next().unwrap_or("");
-            let shown = if shown.is_empty() { String::from("with no URL") } else { format!("at {shown}") };
+            let shown = if shown.is_empty() {
+                String::from("with no URL")
+            } else {
+                format!("at {shown}")
+            };
             out.push(format!("{source} set a proxy auto-config file ({shown}), which is not followed (it is a script): name the proxy it gives in HTTPS_PROXY"));
         }
         if self.auto_detect {
@@ -297,7 +354,11 @@ impl SystemProxy {
 
 /// `localhost`, a name under it, or a loopback address.
 fn is_loopback(host: &str) -> bool {
-    host == "localhost" || host.ends_with(".localhost") || host.parse::<std::net::IpAddr>().is_ok_and(|a| a.is_loopback())
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|a| a.is_loopback())
 }
 
 /// The address prefix an entry of macOS's list begins with, as Python reads it (`(\d+(?:\.\d+)*)(/\d+)?` at the start of the entry): the
@@ -325,7 +386,9 @@ fn address_prefix(entry: &str) -> Option<(u128, u32)> {
         return None;
     }
     let mask = match b.get(i) {
-        Some(b'/') if digits(i + 1) > 0 => entry[i + 1..i + 1 + digits(i + 1)].parse::<u32>().unwrap_or(u32::MAX),
+        Some(b'/') if digits(i + 1) > 0 => entry[i + 1..i + 1 + digits(i + 1)]
+            .parse::<u32>()
+            .unwrap_or(u32::MAX),
         _ => 8 * parts.len() as u32,
     };
     parts.resize(4, 0);
@@ -377,10 +440,21 @@ mod imp {
         fn CFArrayGetValueAtIndex(array: CFTypeRef, index: CFIndex) -> CFTypeRef;
         fn CFDictionaryGetValue(dict: CFTypeRef, key: CFTypeRef) -> CFTypeRef;
         fn CFNumberGetValue(number: CFTypeRef, the_type: CFIndex, out: *mut c_void) -> u8;
-        fn CFStringCreateWithBytes(alloc: CFTypeRef, bytes: *const u8, len: CFIndex, encoding: u32, external: u8) -> CFTypeRef;
+        fn CFStringCreateWithBytes(
+            alloc: CFTypeRef,
+            bytes: *const u8,
+            len: CFIndex,
+            encoding: u32,
+            external: u8,
+        ) -> CFTypeRef;
         fn CFStringGetLength(s: CFTypeRef) -> CFIndex;
         fn CFStringGetMaximumSizeForEncoding(len: CFIndex, encoding: u32) -> CFIndex;
-        fn CFStringGetCString(s: CFTypeRef, buffer: *mut c_char, size: CFIndex, encoding: u32) -> u8;
+        fn CFStringGetCString(
+            s: CFTypeRef,
+            buffer: *mut c_char,
+            size: CFIndex,
+            encoding: u32,
+        ) -> u8;
         fn CFRelease(cf: CFTypeRef);
         fn CFGetTypeID(cf: CFTypeRef) -> usize;
         fn CFNumberGetTypeID() -> usize;
@@ -412,7 +486,9 @@ mod imp {
     /// A CFString of `s`.
     fn cfstr(s: &str) -> Owned {
         // SAFETY: the bytes are valid for `s.len()` and are copied; a null allocator is the default one.
-        Owned(unsafe { CFStringCreateWithBytes(core::ptr::null(), s.as_ptr(), s.len() as CFIndex, UTF8, 0) })
+        Owned(unsafe {
+            CFStringCreateWithBytes(core::ptr::null(), s.as_ptr(), s.len() as CFIndex, UTF8, 0)
+        })
     }
 
     /// The text of a CFString.
@@ -462,7 +538,11 @@ mod imp {
         let string = |key: &str| -> Option<String> {
             let v = value(key);
             // SAFETY: `v` is a live CFString (checked).
-            unsafe { (!v.is_null() && CFGetTypeID(v) == CFStringGetTypeID()).then(|| text(v)).flatten() }
+            unsafe {
+                (!v.is_null() && CFGetTypeID(v) == CFStringGetTypeID())
+                    .then(|| text(v))
+                    .flatten()
+            }
         };
         let strings = |key: &str| -> Vec<String> {
             let v = value(key);
@@ -505,8 +585,21 @@ mod imp {
 
     #[link(name = "advapi32")]
     extern "system" {
-        fn RegOpenKeyExW(key: Hkey, subkey: *const u16, options: u32, sam: u32, result: *mut Hkey) -> i32;
-        fn RegQueryValueExW(key: Hkey, name: *const u16, reserved: *mut u32, kind: *mut u32, data: *mut u8, len: *mut u32) -> i32;
+        fn RegOpenKeyExW(
+            key: Hkey,
+            subkey: *const u16,
+            options: u32,
+            sam: u32,
+            result: *mut Hkey,
+        ) -> i32;
+        fn RegQueryValueExW(
+            key: Hkey,
+            name: *const u16,
+            reserved: *mut u32,
+            kind: *mut u32,
+            data: *mut u8,
+            len: *mut u32,
+        ) -> i32;
         fn RegCloseKey(key: Hkey) -> i32;
     }
 
@@ -515,7 +608,8 @@ mod imp {
         0x8000_0001_u32 as i32 as isize as Hkey
     }
 
-    pub(super) const INTERNET_SETTINGS: &str = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+    pub(super) const INTERNET_SETTINGS: &str =
+        r"Software\Microsoft\Windows\CurrentVersion\Internet Settings";
     const KEY_READ: u32 = 0x2_0019;
     const REG_SZ: u32 = 1;
     const REG_EXPAND_SZ: u32 = 2;
@@ -552,13 +646,31 @@ mod imp {
             let name = wide(name);
             let (mut kind, mut len) = (0u32, 0u32);
             // SAFETY: a null buffer asks for the size; `name` is NUL-terminated.
-            let status = unsafe { RegQueryValueExW(self.0, name.as_ptr(), core::ptr::null_mut(), &mut kind, core::ptr::null_mut(), &mut len) };
+            let status = unsafe {
+                RegQueryValueExW(
+                    self.0,
+                    name.as_ptr(),
+                    core::ptr::null_mut(),
+                    &mut kind,
+                    core::ptr::null_mut(),
+                    &mut len,
+                )
+            };
             if status != 0 || len > MAX_VALUE {
                 return None;
             }
             let mut data = vec![0u8; len as usize];
             // SAFETY: `data` has `len` bytes, which the call writes at most.
-            let status = unsafe { RegQueryValueExW(self.0, name.as_ptr(), core::ptr::null_mut(), &mut kind, data.as_mut_ptr(), &mut len) };
+            let status = unsafe {
+                RegQueryValueExW(
+                    self.0,
+                    name.as_ptr(),
+                    core::ptr::null_mut(),
+                    &mut kind,
+                    data.as_mut_ptr(),
+                    &mut len,
+                )
+            };
             if status != 0 {
                 return None;
             }
@@ -571,13 +683,19 @@ mod imp {
             if kind != REG_SZ && kind != REG_EXPAND_SZ {
                 return None;
             }
-            let units: Vec<u16> = data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&u| u != 0).collect();
+            let units: Vec<u16> = data
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .take_while(|&u| u != 0)
+                .collect();
             String::from_utf16(&units).ok()
         }
 
         fn dword(&self, name: &str) -> Option<u32> {
             match self.raw(name)? {
-                (REG_DWORD, d) if d.len() >= 4 => Some(u32::from_le_bytes([d[0], d[1], d[2], d[3]])),
+                (REG_DWORD, d) if d.len() >= 4 => {
+                    Some(u32::from_le_bytes([d[0], d[1], d[2], d[3]]))
+                }
                 _ => None,
             }
         }
@@ -596,7 +714,9 @@ mod imp {
 
     /// The settings under `path` (and its `Connections` key) of `root`.
     pub(super) fn read_key(root: Hkey, path: &str) -> WindowsSettings {
-        let Some(key) = Key::open(root, path) else { return WindowsSettings::default() };
+        let Some(key) = Key::open(root, path) else {
+            return WindowsSettings::default();
+        };
         let flags = Key::open(root, &format!(r"{path}\Connections"))
             .and_then(|c| c.binary("DefaultConnectionSettings"))
             .filter(|d| d.len() >= 12)
@@ -616,8 +736,25 @@ mod imp {
 
         #[link(name = "advapi32")]
         extern "system" {
-            fn RegCreateKeyExW(key: Hkey, subkey: *const u16, reserved: u32, class: *const u16, options: u32, sam: u32, attrs: *const c_void, result: *mut Hkey, disposition: *mut u32) -> i32;
-            fn RegSetValueExW(key: Hkey, name: *const u16, reserved: u32, kind: u32, data: *const u8, len: u32) -> i32;
+            fn RegCreateKeyExW(
+                key: Hkey,
+                subkey: *const u16,
+                reserved: u32,
+                class: *const u16,
+                options: u32,
+                sam: u32,
+                attrs: *const c_void,
+                result: *mut Hkey,
+                disposition: *mut u32,
+            ) -> i32;
+            fn RegSetValueExW(
+                key: Hkey,
+                name: *const u16,
+                reserved: u32,
+                kind: u32,
+                data: *const u8,
+                len: u32,
+            ) -> i32;
             fn RegDeleteTreeW(key: Hkey, subkey: *const u16) -> i32;
         }
 
@@ -633,18 +770,48 @@ mod imp {
         impl Scratch {
             fn new() -> Scratch {
                 let root = format!(r"Software\pratique-test-{}", std::process::id());
-                Scratch { path: format!(r"{root}\Internet Settings"), root }
+                Scratch {
+                    path: format!(r"{root}\Internet Settings"),
+                    root,
+                }
             }
 
             fn set(&self, sub: &str, name: &str, kind: u32, data: &[u8]) {
-                let path = wide(&if sub.is_empty() { self.path.clone() } else { format!(r"{}\{sub}", self.path) });
+                let path = wide(&if sub.is_empty() {
+                    self.path.clone()
+                } else {
+                    format!(r"{}\{sub}", self.path)
+                });
                 let mut key: Hkey = core::ptr::null_mut();
                 // SAFETY: the strings are NUL-terminated and live through the calls; the key is closed by `Key`.
                 unsafe {
                     let mut disposition = 0;
-                    assert_eq!(RegCreateKeyExW(current_user(), path.as_ptr(), 0, core::ptr::null(), 0, KEY_ALL_ACCESS, core::ptr::null(), &mut key, &mut disposition), 0);
+                    assert_eq!(
+                        RegCreateKeyExW(
+                            current_user(),
+                            path.as_ptr(),
+                            0,
+                            core::ptr::null(),
+                            0,
+                            KEY_ALL_ACCESS,
+                            core::ptr::null(),
+                            &mut key,
+                            &mut disposition
+                        ),
+                        0
+                    );
                     let key = Key(key);
-                    assert_eq!(RegSetValueExW(key.0, wide(name).as_ptr(), 0, kind, data.as_ptr(), data.len() as u32), 0);
+                    assert_eq!(
+                        RegSetValueExW(
+                            key.0,
+                            wide(name).as_ptr(),
+                            0,
+                            kind,
+                            data.as_ptr(),
+                            data.len() as u32
+                        ),
+                        0
+                    );
                 }
             }
 
@@ -665,28 +832,59 @@ mod imp {
         fn the_settings_are_read_from_the_registry() {
             let scratch = Scratch::new();
             // nothing there yet: nothing read
-            assert!(read_key(current_user(), &scratch.path).proxy_server.is_none());
+            assert!(read_key(current_user(), &scratch.path)
+                .proxy_server
+                .is_none());
             scratch.set("", "ProxyEnable", REG_DWORD, &1u32.to_le_bytes());
-            scratch.string("", "ProxyServer", "http=web.example:80;https=secure.example:8443;socks=s.example:1080");
+            scratch.string(
+                "",
+                "ProxyServer",
+                "http=web.example:80;https=secure.example:8443;socks=s.example:1080",
+            );
             scratch.string("", "ProxyOverride", "*.corp.example;<local>;10.*");
             scratch.string("", "AutoConfigURL", "http://wpad.corp.example/proxy.pac");
             let mut connection = vec![0x46, 0, 0, 0, 5, 0, 0, 0];
             connection.extend_from_slice(&(0x01u32 | 0x08).to_le_bytes());
             connection.extend_from_slice(&[0; 20]);
-            scratch.set("Connections", "DefaultConnectionSettings", REG_BINARY, &connection);
+            scratch.set(
+                "Connections",
+                "DefaultConnectionSettings",
+                REG_BINARY,
+                &connection,
+            );
             let w = read_key(current_user(), &scratch.path);
             assert!(w.proxy_enable);
-            assert_eq!(w.proxy_server.as_deref(), Some("http=web.example:80;https=secure.example:8443;socks=s.example:1080"));
-            assert_eq!(w.proxy_override.as_deref(), Some("*.corp.example;<local>;10.*"));
-            assert_eq!(w.auto_config_url.as_deref(), Some("http://wpad.corp.example/proxy.pac"));
+            assert_eq!(
+                w.proxy_server.as_deref(),
+                Some("http=web.example:80;https=secure.example:8443;socks=s.example:1080")
+            );
+            assert_eq!(
+                w.proxy_override.as_deref(),
+                Some("*.corp.example;<local>;10.*")
+            );
+            assert_eq!(
+                w.auto_config_url.as_deref(),
+                Some("http://wpad.corp.example/proxy.pac")
+            );
             assert_eq!(w.connection_flags, Some(0x09));
             let s = super::super::SystemProxy::from_windows(&w);
             let p = s.https.as_ref().unwrap();
             assert_eq!((p.host.as_str(), p.port), ("secure.example", 8443));
-            assert!(s.bypass_simple && s.auto_detect && s.bypasses("a.corp.example") && s.bypasses("10.1.2.3") && !s.bypasses("pypi.org"));
+            assert!(
+                s.bypass_simple
+                    && s.auto_detect
+                    && s.bypasses("a.corp.example")
+                    && s.bypasses("10.1.2.3")
+                    && !s.bypasses("pypi.org")
+            );
             // off: the server is there and is not used
             scratch.set("", "ProxyEnable", REG_DWORD, &0u32.to_le_bytes());
-            assert!(super::super::SystemProxy::from_windows(&read_key(current_user(), &scratch.path)).https.is_none());
+            assert!(super::super::SystemProxy::from_windows(&read_key(
+                current_user(),
+                &scratch.path
+            ))
+            .https
+            .is_none());
         }
     }
 }
@@ -717,13 +915,26 @@ mod tests {
     fn the_secure_web_proxy_of_macos_is_the_one_for_https() {
         let s = SystemProxy::from_mac(&mac(Some(("proxy.corp.example", 3128))));
         assert_eq!(at(&s), Some(("proxy.corp.example".into(), 3128)));
-        assert_eq!(s.proxy_for(&url("https://pypi.org/simple/")).map(|p| p.port), Some(3128));
+        assert_eq!(
+            s.proxy_for(&url("https://pypi.org/simple/"))
+                .map(|p| p.port),
+            Some(3128)
+        );
         // not for plain http, and not for what the list sends direct (macOS's default list: `*.local` and the link-local addresses)
         assert!(s.proxy_for(&url("http://pypi.org/")).is_none());
-        for direct in ["https://printer.local/", "https://169.254.10.20/", "https://localhost/", "https://127.0.0.1/", "https://[::1]/"] {
+        for direct in [
+            "https://printer.local/",
+            "https://169.254.10.20/",
+            "https://localhost/",
+            "https://127.0.0.1/",
+            "https://[::1]/",
+        ] {
             assert!(s.proxy_for(&url(direct)).is_none(), "{direct}");
         }
-        assert!(s.proxy_for(&url("https://169.255.0.1/")).is_some() && s.proxy_for(&url("https://local/")).is_some());
+        assert!(
+            s.proxy_for(&url("https://169.255.0.1/")).is_some()
+                && s.proxy_for(&url("https://local/")).is_some()
+        );
         // off, or with no server: none (and the second is said)
         let mut m = mac(Some(("proxy.corp.example", 3128)));
         m.https_enable = false;
@@ -731,71 +942,176 @@ mod tests {
         let mut m = mac(Some(("", 3128)));
         m.https_proxy = None;
         let s = SystemProxy::from_mac(&m);
-        assert!(s.https.is_none() && s.ignored[0].contains("names no server"), "{s:?}");
+        assert!(
+            s.https.is_none() && s.ignored[0].contains("names no server"),
+            "{s:?}"
+        );
         // a port of 0 or none is 80 (as Python makes `http://host` of it); an IPv6 address is one
-        assert_eq!(at(&SystemProxy::from_mac(&mac(Some(("proxy.corp.example", 0))))), Some(("proxy.corp.example".into(), 80)));
-        assert_eq!(at(&SystemProxy::from_mac(&mac(Some(("fd00::1", 8080))))), Some(("fd00::1".into(), 8080)));
+        assert_eq!(
+            at(&SystemProxy::from_mac(&mac(Some((
+                "proxy.corp.example",
+                0
+            ))))),
+            Some(("proxy.corp.example".into(), 80))
+        );
+        assert_eq!(
+            at(&SystemProxy::from_mac(&mac(Some(("fd00::1", 8080))))),
+            Some(("fd00::1".into(), 8080))
+        );
         // what cannot be a proxy is said, not used
-        for (host, port) in [("proxy.corp.example", 70000), ("bad host", 3128), ("user@proxy", 3128), ("proxy/x", 3128)] {
+        for (host, port) in [
+            ("proxy.corp.example", 70000),
+            ("bad host", 3128),
+            ("user@proxy", 3128),
+            ("proxy/x", 3128),
+        ] {
             let s = SystemProxy::from_mac(&mac(Some((host, port))));
-            assert!(s.https.is_none() && s.ignored.len() == 1, "{host}:{port}: {s:?}");
+            assert!(
+                s.https.is_none() && s.ignored.len() == 1,
+                "{host}:{port}: {s:?}"
+            );
         }
     }
 
     #[test]
     fn a_web_proxy_for_http_alone_and_socks_are_reported_and_not_used() {
-        let m = MacSettings { http_enable: true, socks_enable: true, ..mac(None) };
+        let m = MacSettings {
+            http_enable: true,
+            socks_enable: true,
+            ..mac(None)
+        };
         let s = SystemProxy::from_mac(&m);
         assert!(s.https.is_none());
         assert_eq!(s.ignored.len(), 2, "{s:?}");
-        assert!(s.notes().iter().any(|n| n.contains("SOCKS")) && s.notes().iter().any(|n| n.contains("not used for https")));
+        assert!(
+            s.notes().iter().any(|n| n.contains("SOCKS"))
+                && s.notes().iter().any(|n| n.contains("not used for https"))
+        );
     }
 
     #[test]
     fn a_pac_file_and_discovery_are_reported_and_not_followed() {
-        let m = MacSettings { pac_enable: true, pac_url: Some("https://pac.example/corp/proxy.pac?key=secret".into()), auto_discovery: true, ..mac(None) };
+        let m = MacSettings {
+            pac_enable: true,
+            pac_url: Some("https://pac.example/corp/proxy.pac?key=secret".into()),
+            auto_discovery: true,
+            ..mac(None)
+        };
         let s = SystemProxy::from_mac(&m);
-        assert_eq!(s.pac.as_deref(), Some("https://pac.example/corp/proxy.pac?key=secret"));
-        assert!(s.auto_detect && s.https.is_none() && s.proxy_for(&url("https://pypi.org/")).is_none());
+        assert_eq!(
+            s.pac.as_deref(),
+            Some("https://pac.example/corp/proxy.pac?key=secret")
+        );
+        assert!(
+            s.auto_detect && s.https.is_none() && s.proxy_for(&url("https://pypi.org/")).is_none()
+        );
         let notes = s.notes().join("\n");
-        assert!(notes.contains("https://pac.example/corp/proxy.pac") && !notes.contains("secret"), "{notes}");
-        assert!(notes.contains("not followed") && notes.contains("WPAD"), "{notes}");
+        assert!(
+            notes.contains("https://pac.example/corp/proxy.pac") && !notes.contains("secret"),
+            "{notes}"
+        );
+        assert!(
+            notes.contains("not followed") && notes.contains("WPAD"),
+            "{notes}"
+        );
         // set and off: nothing
-        let m = MacSettings { pac_enable: false, pac_url: Some("https://pac.example/proxy.pac".into()), ..mac(None) };
-        assert!(SystemProxy::from_mac(&m).pac.is_none() && SystemProxy::from_mac(&m).notes().is_empty());
+        let m = MacSettings {
+            pac_enable: false,
+            pac_url: Some("https://pac.example/proxy.pac".into()),
+            ..mac(None)
+        };
+        assert!(
+            SystemProxy::from_mac(&m).pac.is_none() && SystemProxy::from_mac(&m).notes().is_empty()
+        );
         // with a static proxy as well: the static one is used, and the PAC file is still said
-        let m = MacSettings { pac_enable: true, pac_url: Some("https://pac.example/proxy.pac".into()), ..mac(Some(("proxy.corp.example", 3128))) };
+        let m = MacSettings {
+            pac_enable: true,
+            pac_url: Some("https://pac.example/proxy.pac".into()),
+            ..mac(Some(("proxy.corp.example", 3128)))
+        };
         let s = SystemProxy::from_mac(&m);
-        assert!(s.proxy_for(&url("https://pypi.org/")).is_some() && s.notes().len() == 2, "{:?}", s.notes());
+        assert!(
+            s.proxy_for(&url("https://pypi.org/")).is_some() && s.notes().len() == 2,
+            "{:?}",
+            s.notes()
+        );
     }
 
     #[test]
     fn the_bypass_list_of_macos_is_read_as_python_reads_it() {
-        let m = MacSettings { exceptions: vec!["*.corp.example".into(), "Build.Example".into(), "10/8".into(), "192.168.1.*".into(), "172.16/12".into(), "1.2.3.4/40".into(), "".into()], ..mac(Some(("p.example", 3128))) };
+        let m = MacSettings {
+            exceptions: vec![
+                "*.corp.example".into(),
+                "Build.Example".into(),
+                "10/8".into(),
+                "192.168.1.*".into(),
+                "172.16/12".into(),
+                "1.2.3.4/40".into(),
+                "".into(),
+            ],
+            ..mac(Some(("p.example", 3128)))
+        };
         let s = SystemProxy::from_mac(&m);
-        for direct in ["a.corp.example", "a.b.corp.example", "build.example", "10.200.3.4", "192.168.1.77", "172.31.255.1", "172.16.0.1"] {
+        for direct in [
+            "a.corp.example",
+            "a.b.corp.example",
+            "build.example",
+            "10.200.3.4",
+            "192.168.1.77",
+            "172.31.255.1",
+            "172.16.0.1",
+        ] {
             assert!(s.bypasses(direct), "{direct}");
         }
-        for proxied in ["corp.example", "a.corp.example.evil.net", "build.example.org", "11.0.0.1", "192.168.2.1", "172.32.0.1", "1.2.3.4", "pypi.org", "simple"] {
+        for proxied in [
+            "corp.example",
+            "a.corp.example.evil.net",
+            "build.example.org",
+            "11.0.0.1",
+            "192.168.2.1",
+            "172.32.0.1",
+            "1.2.3.4",
+            "pypi.org",
+            "simple",
+        ] {
             assert!(!s.bypasses(proxied), "{proxied}");
         }
         // an address prefix is about addresses: a name is matched by the glob, which `10/8` is not
         assert!(!s.bypasses("10.example"));
         // "exclude simple hostnames": a name without a dot
-        let s = SystemProxy::from_mac(&MacSettings { exclude_simple: true, ..m });
+        let s = SystemProxy::from_mac(&MacSettings {
+            exclude_simple: true,
+            ..m
+        });
         assert!(s.bypasses("simple") && s.bypasses("intranet") && !s.bypasses("pypi.org"));
     }
 
     #[test]
     fn windows_has_one_proxy_for_every_scheme_or_one_for_each() {
-        let w = |server: &str| WindowsSettings { proxy_enable: true, proxy_server: Some(server.into()), ..WindowsSettings::default() };
+        let w = |server: &str| WindowsSettings {
+            proxy_enable: true,
+            proxy_server: Some(server.into()),
+            ..WindowsSettings::default()
+        };
         for (server, want) in [
-            ("proxy.corp.example:8080", Some(("proxy.corp.example", 8080))),
-            ("http://proxy.corp.example:8080", Some(("proxy.corp.example", 8080))),
+            (
+                "proxy.corp.example:8080",
+                Some(("proxy.corp.example", 8080)),
+            ),
+            (
+                "http://proxy.corp.example:8080",
+                Some(("proxy.corp.example", 8080)),
+            ),
             ("proxy.corp.example", Some(("proxy.corp.example", 80))),
             ("[fd00::1]:3128", Some(("fd00::1", 3128))),
-            ("http=web.example:80;https=secure.example:443", Some(("secure.example", 443))),
-            ("HTTPS = secure.example:443 ; http=web.example:80", Some(("secure.example", 443))),
+            (
+                "http=web.example:80;https=secure.example:443",
+                Some(("secure.example", 443)),
+            ),
+            (
+                "HTTPS = secure.example:443 ; http=web.example:80",
+                Some(("secure.example", 443)),
+            ),
             ("http=web.example:80", None),
             ("http=web.example:80;ftp=f.example:21", None),
         ] {
@@ -803,37 +1119,82 @@ mod tests {
             assert_eq!(at(&s), want.map(|(h, p)| (h.to_string(), p)), "{server}");
         }
         // what this client does not speak, and what cannot be read, is said and not used
-        for server in ["socks=s.example:1080", "https://secure.example:443", "https=socks5://s.example:1080", "proxy.corp.example:0", "proxy.corp.example:x", "http=a;nonsense"] {
+        for server in [
+            "socks=s.example:1080",
+            "https://secure.example:443",
+            "https=socks5://s.example:1080",
+            "proxy.corp.example:0",
+            "proxy.corp.example:x",
+            "http=a;nonsense",
+        ] {
             let s = SystemProxy::from_windows(&w(server));
-            assert!(s.https.is_none() && !s.ignored.is_empty(), "{server}: {s:?}");
+            assert!(
+                s.https.is_none() && !s.ignored.is_empty(),
+                "{server}: {s:?}"
+            );
         }
         // off: not used
-        let s = SystemProxy::from_windows(&WindowsSettings { proxy_enable: false, ..w("proxy.corp.example:8080") });
+        let s = SystemProxy::from_windows(&WindowsSettings {
+            proxy_enable: false,
+            ..w("proxy.corp.example:8080")
+        });
         assert!(s.https.is_none() && s.ignored.is_empty());
     }
 
     #[test]
     fn the_bypass_list_of_windows_matches_whole_hosts() {
-        let w = WindowsSettings { proxy_enable: true, proxy_server: Some("p.example:8080".into()), proxy_override: Some(" *.corp.example ; <local>;Build.Example;10.*;192.168.?.1;;".into()), ..WindowsSettings::default() };
+        let w = WindowsSettings {
+            proxy_enable: true,
+            proxy_server: Some("p.example:8080".into()),
+            proxy_override: Some(
+                " *.corp.example ; <local>;Build.Example;10.*;192.168.?.1;;".into(),
+            ),
+            ..WindowsSettings::default()
+        };
         let s = SystemProxy::from_windows(&w);
         assert!(s.bypass_simple);
-        assert_eq!(s.bypass, ["*.corp.example", "Build.Example", "10.*", "192.168.?.1"]);
-        for direct in ["a.corp.example", "build.example", "10.1.2.3", "192.168.5.1", "intranet"] {
+        assert_eq!(
+            s.bypass,
+            ["*.corp.example", "Build.Example", "10.*", "192.168.?.1"]
+        );
+        for direct in [
+            "a.corp.example",
+            "build.example",
+            "10.1.2.3",
+            "192.168.5.1",
+            "intranet",
+        ] {
             assert!(s.bypasses(direct), "{direct}");
         }
         // (Python's match is anchored at the start only; this one is not, so that these go through the proxy)
-        for proxied in ["build.example.evil.net", "corp.example", "192.168.15.1", "pypi.org", "a.corp.example.org"] {
+        for proxied in [
+            "build.example.evil.net",
+            "corp.example",
+            "192.168.15.1",
+            "pypi.org",
+            "a.corp.example.org",
+        ] {
             assert!(!s.bypasses(proxied), "{proxied}");
         }
     }
 
     #[test]
     fn windows_reports_its_setup_script_and_discovery() {
-        let w = WindowsSettings { auto_config_url: Some("http://wpad.corp.example/proxy.pac".into()), connection_flags: Some(0x0d), ..WindowsSettings::default() };
+        let w = WindowsSettings {
+            auto_config_url: Some("http://wpad.corp.example/proxy.pac".into()),
+            connection_flags: Some(0x0d),
+            ..WindowsSettings::default()
+        };
         let s = SystemProxy::from_windows(&w);
         assert!(s.pac.is_some() && s.auto_detect && s.https.is_none());
         assert_eq!(s.notes().len(), 2);
-        assert!(!SystemProxy::from_windows(&WindowsSettings { connection_flags: Some(0x01), ..w }).auto_detect);
+        assert!(
+            !SystemProxy::from_windows(&WindowsSettings {
+                connection_flags: Some(0x01),
+                ..w
+            })
+            .auto_detect
+        );
     }
 
     #[test]
@@ -857,17 +1218,31 @@ mod tests {
 
     #[test]
     fn an_address_prefix_is_read_as_python_reads_it() {
-        assert_eq!(address_prefix("169.254/16"), Some(((169 << 24) | (254 << 16), 16)));
+        assert_eq!(
+            address_prefix("169.254/16"),
+            Some(((169 << 24) | (254 << 16), 16))
+        );
         assert_eq!(address_prefix("10"), Some((10 << 24, 8)));
-        assert_eq!(address_prefix("192.168.1.*"), Some(((192 << 24) | (168 << 16) | (1 << 8), 24)));
-        assert_eq!(address_prefix("1.2.3.4.5"), Some(((1 << 24) | (2 << 16) | (3 << 8) | 4, 40)));
+        assert_eq!(
+            address_prefix("192.168.1.*"),
+            Some(((192 << 24) | (168 << 16) | (1 << 8), 24))
+        );
+        assert_eq!(
+            address_prefix("1.2.3.4.5"),
+            Some(((1 << 24) | (2 << 16) | (3 << 8) | 4, 40))
+        );
         assert_eq!(address_prefix("*.local"), None);
         assert_eq!(address_prefix("local"), None);
     }
 
     #[test]
     fn nothing_set_is_nothing_to_say() {
-        assert!(SystemProxy::default().notes().is_empty() && SystemProxy::default().proxy_for(&url("https://pypi.org/")).is_none());
+        assert!(
+            SystemProxy::default().notes().is_empty()
+                && SystemProxy::default()
+                    .proxy_for(&url("https://pypi.org/"))
+                    .is_none()
+        );
         // (on this system, whatever it is, reading gives something that can be asked)
         let _ = SystemProxy::read().proxy_for(&url("https://pypi.org/"));
     }

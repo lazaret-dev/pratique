@@ -5,15 +5,19 @@
 //! `--http3` tries QUIC first and goes over TCP if that does not work (as curl's does); `--alt-svc` goes over TCP first and over QUIC for
 //! an origin that has said, in an `Alt-Svc` field, that it offers it (with `--repeat 2` the second request shows it). `-i` shows the protocol.
 
-use std::io::Write;
 use pratique::tls::ClientConfig;
 use pratique::Client;
+use std::io::Write;
 
 /// The CPU time this process has used (user + system, all threads), in seconds, read from `/proc/self/stat`; 0 where there is none.
 fn cpu_time() -> f64 {
-    let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else { return 0.0 };
+    let Ok(stat) = std::fs::read_to_string("/proc/self/stat") else {
+        return 0.0;
+    };
     // the fields after the command name (which is in parentheses and may hold spaces): utime and stime are the 12th and 13th after it
-    let Some(rest) = stat.rsplit_once(')').map(|(_, r)| r) else { return 0.0 };
+    let Some(rest) = stat.rsplit_once(')').map(|(_, r)| r) else {
+        return 0.0;
+    };
     let f: Vec<&str> = rest.split_whitespace().collect();
     let ticks = |i: usize| f.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
     (ticks(11) + ticks(12)) / 100.0
@@ -25,7 +29,9 @@ fn thread_times() -> String {
     if let Ok(dir) = std::fs::read_dir("/proc/self/task") {
         for e in dir.flatten() {
             let stat = std::fs::read_to_string(e.path().join("stat")).unwrap_or_default();
-            let Some((head, rest)) = stat.rsplit_once(')') else { continue };
+            let Some((head, rest)) = stat.rsplit_once(')') else {
+                continue;
+            };
             let name = head.split_once('(').map_or("?", |(_, n)| n);
             let f: Vec<&str> = rest.split_whitespace().collect();
             let t = |i: usize| f.get(i).and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0) / 100.0;
@@ -86,7 +92,10 @@ fn main() {
             Some(path) => pratique::sys::trust_store_from_pem_file(path)?,
             None => pratique::sys::system_trust_store()?,
         };
-        let mut client = Client::with_tls_config(ClientConfig::new(trust)).http2(http2).http3(http3 > 0).http3_eager(http3 == 2);
+        let mut client = Client::with_tls_config(ClientConfig::new(trust))
+            .http2(http2)
+            .http3(http3 > 0)
+            .http3_eager(http3 == 2);
         if use_proxy {
             client = client.proxy_from_env();
         }
@@ -132,7 +141,9 @@ fn main() {
             let started = std::time::Instant::now();
             let cpu_before = cpu_time();
             let mut results: Vec<_> = std::thread::scope(|scope| {
-                let handles: Vec<_> = (0..parallel).map(|_| scope.spawn(|| client.get(&url))).collect();
+                let handles: Vec<_> = (0..parallel)
+                    .map(|_| scope.spawn(|| client.get(&url)))
+                    .collect();
                 handles.into_iter().map(|h| h.join().unwrap()).collect()
             });
             let ok = results.iter().filter(|r| r.is_ok()).count();
@@ -146,7 +157,9 @@ fn main() {
             );
             return match results.iter().position(|r| r.is_ok()) {
                 Some(i) => results.swap_remove(i),
-                None => results.pop().unwrap_or_else(|| Err(pratique::error::Error::Http("no request was made".into()))),
+                None => results.pop().unwrap_or_else(|| {
+                    Err(pratique::error::Error::Http("no request was made".into()))
+                }),
             };
         }
         if stream {
@@ -168,14 +181,28 @@ fn main() {
                     Err(e) => return Err(e.into()),
                 }
             }
-            eprintln!("streamed {total} bytes: wall {:.3} s, cpu {:.3} s  [{}]", started.elapsed().as_secs_f64(), cpu_time() - cpu_before, thread_times());
+            eprintln!(
+                "streamed {total} bytes: wall {:.3} s, cpu {:.3} s  [{}]",
+                started.elapsed().as_secs_f64(),
+                cpu_time() - cpu_before,
+                thread_times()
+            );
             std::process::exit(0);
         }
         let started = std::time::Instant::now();
         let cpu_before = cpu_time();
-        let r = if head_only { client.head(&url) } else { client.get(&url) };
+        let r = if head_only {
+            client.head(&url)
+        } else {
+            client.get(&url)
+        };
         if std::env::var_os("FETCH_TIMES").is_some() {
-            eprintln!("wall {:.3} s, cpu {:.3} s  [{}]", started.elapsed().as_secs_f64(), cpu_time() - cpu_before, thread_times());
+            eprintln!(
+                "wall {:.3} s, cpu {:.3} s  [{}]",
+                started.elapsed().as_secs_f64(),
+                cpu_time() - cpu_before,
+                thread_times()
+            );
         }
         r
     })();

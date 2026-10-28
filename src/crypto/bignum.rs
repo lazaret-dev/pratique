@@ -119,7 +119,10 @@ impl Mont {
     /// `modulus` must be odd and greater than 1.
     pub fn new(modulus: &[u64]) -> Mont {
         let n = trimmed_len(modulus);
-        assert!(n > 0 && modulus[0] & 1 == 1, "Montgomery modulus must be odd");
+        assert!(
+            n > 0 && modulus[0] & 1 == 1,
+            "Montgomery modulus must be odd"
+        );
         let m = modulus[..n].to_vec();
         // -m^-1 mod 2^64 by Newton iteration
         let mut inv = 1u64;
@@ -127,7 +130,13 @@ impl Mont {
             inv = inv.wrapping_mul(2u64.wrapping_sub(m[0].wrapping_mul(inv)));
         }
         let m0inv = inv.wrapping_neg();
-        let mut ctx = Mont { m, n, m0inv, one: vec![0; n], r2: vec![0; n] };
+        let mut ctx = Mont {
+            m,
+            n,
+            m0inv,
+            one: vec![0; n],
+            r2: vec![0; n],
+        };
         if n == 1 && ctx.m[0] == 1 {
             return ctx; // everything is 0 modulo 1
         }
@@ -377,7 +386,13 @@ pub(crate) mod fixed {
                 inv = inv.wrapping_mul(2u64.wrapping_sub(m[0].wrapping_mul(inv)));
             }
             let p256 = N == 4 && m[..] == P256[..];
-            let mut f = Field { m, m0inv: inv.wrapping_neg(), one: [0; N], r2: [0; N], p256 };
+            let mut f = Field {
+                m,
+                m0inv: inv.wrapping_neg(),
+                one: [0; N],
+                r2: [0; N],
+                p256,
+            };
             // R mod m: the highest power of two below m, doubled up to 2^(64 N) (at most 64 doublings: the top limb is not 0)
             let bits = 64 * N - m[N - 1].leading_zeros() as usize;
             let mut x = [0u64; N];
@@ -454,7 +469,10 @@ pub(crate) mod fixed {
         pub(super) fn mul_rows(&self, a: &Fe<N>, b: &Fe<N>) -> Fe<N> {
             if N == 4 && self.p256 {
                 let mut r = [0u64; N];
-                r[..4].copy_from_slice(&mul_p256(a[..4].try_into().unwrap(), b[..4].try_into().unwrap()));
+                r[..4].copy_from_slice(&mul_p256(
+                    a[..4].try_into().unwrap(),
+                    b[..4].try_into().unwrap(),
+                ));
                 return r;
             }
             let mut t = [0u64; N];
@@ -781,7 +799,11 @@ pub(crate) mod fixed {
         // the remainder, below v, in u's low N limbs: shifted back
         let mut r = [0u64; N];
         for i in 0..N {
-            r[i] = if d == 0 { u[i] } else { (u[i] >> d) | (u[i + 1] << (64 - d)) };
+            r[i] = if d == 0 {
+                u[i]
+            } else {
+                (u[i] >> d) | (u[i + 1] << (64 - d))
+            };
         }
         r
     }
@@ -884,7 +906,9 @@ mod tests {
             seed ^= seed << 17;
             seed
         };
-        for n in [1usize, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 32, 33, 47, 48, 64, 65] {
+        for n in [
+            1usize, 2, 3, 4, 5, 6, 7, 8, 9, 16, 17, 32, 33, 47, 48, 64, 65,
+        ] {
             for top in [1u64, 3, 0x1ff, 0x8000_0000_0000_0000, u64::MAX, 0] {
                 let mut m: Vec<u64> = (0..n).map(|_| next()).collect();
                 if top != 0 {
@@ -1007,12 +1031,26 @@ mod tests {
             one[0] = 1;
             for a in &values {
                 let inv = f.inv_vartime(a);
-                assert_eq!(inv, f.from_mont(&f.inv(&f.to_mont(a))), "{N} limbs, a {a:x?}");
-                assert_eq!(f.mul(&f.to_mont(a), &inv), one, "a times its inverse, {N} limbs");
+                assert_eq!(
+                    inv,
+                    f.from_mont(&f.inv(&f.to_mont(a))),
+                    "{N} limbs, a {a:x?}"
+                );
+                assert_eq!(
+                    f.mul(&f.to_mont(a), &inv),
+                    one,
+                    "a times its inverse, {N} limbs"
+                );
             }
         }
-        check::<4>("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", &mut next);
-        check::<4>("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", &mut next);
+        check::<4>(
+            "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+            &mut next,
+        );
+        check::<4>(
+            "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551",
+            &mut next,
+        );
         check::<6>("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", &mut next);
         check::<6>("ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", &mut next);
         check::<9>("01ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", &mut next);
@@ -1045,7 +1083,11 @@ mod tests {
                 values.push(a);
             }
             for x in &values {
-                assert_eq!(fixed::shift_mod(&m, x).to_vec(), g.to_mont(x), "{N} limbs, m {m:x?}, x {x:x?}");
+                assert_eq!(
+                    fixed::shift_mod(&m, x).to_vec(),
+                    g.to_mont(x),
+                    "{N} limbs, m {m:x?}, x {x:x?}"
+                );
             }
         }
         // the rare paths: m = 2^191 + 2^64 - 1 is normalized, and for x = 2^128 (or 2^128 + 1) the first quotient limb is
@@ -1089,7 +1131,11 @@ mod tests {
         fn check<const N: usize>(m: [u64; N], next: &mut impl FnMut() -> u64) {
             let f = fixed::Field::<N>::from_modulus(m);
             let g = Mont::new(&m);
-            assert_eq!((f.one.to_vec(), f.r2_for_tests().to_vec()), (g.one.clone(), g.r2.clone()), "constants, {N} limbs");
+            assert_eq!(
+                (f.one.to_vec(), f.r2_for_tests().to_vec()),
+                (g.one.clone(), g.r2.clone()),
+                "constants, {N} limbs"
+            );
             let below = |next: &mut dyn FnMut() -> u64| -> [u64; N] {
                 let mut a: [u64; N] = core::array::from_fn(|_| next());
                 a[N - 1] %= m[N - 1]; // under m's top limb, so under m
@@ -1109,7 +1155,11 @@ mod tests {
                     assert_eq!(f.mul(a, b).to_vec(), g.mul(a, b), "product, {N} limbs");
                 }
                 for e in [3u64, 65537, next() | 1 | (1 << 63)] {
-                    assert_eq!(f.pow_odd(a, e).to_vec(), g.from_mont(&g.pow(&g.to_mont(a), &[e])), "power {e}, {N} limbs");
+                    assert_eq!(
+                        f.pow_odd(a, e).to_vec(),
+                        g.from_mont(&g.pow(&g.to_mont(a), &[e])),
+                        "power {e}, {N} limbs"
+                    );
                 }
             }
         }
@@ -1130,9 +1180,10 @@ mod tests {
         }
         sizes!(4, 6, 9, 16, 17, 24, 32, 48, 64);
         // P-256's prime takes its own reduction
-        let p256: [u64; 4] = fixed::limbs_from_hex("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
+        let p256: [u64; 4] = fixed::limbs_from_hex(
+            "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+        );
         check::<4>(p256, &mut next);
         assert!(fixed::Field::<4>::from_modulus(p256).is_p256());
     }
 }
-

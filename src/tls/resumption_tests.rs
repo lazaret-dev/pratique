@@ -5,9 +5,9 @@ use super::messages::*;
 use super::scripted::*;
 use super::server::*;
 use super::session::{Scope, Session as Kept};
-use crate::zeroize::Zeroizing;
 use super::suite::*;
 use super::*;
+use crate::zeroize::Zeroizing;
 use std::net::{TcpListener, TcpStream};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -68,7 +68,11 @@ fn the_second_connection_resumes_with_every_suite() {
         let (port, handle) = serve(server.clone(), 3);
         let (resumed, chain1) = exchange(port, "server.test", &client).unwrap();
         assert!(!resumed);
-        assert_eq!(client.resumption.sessions(), 1, "the server's ticket is kept");
+        assert_eq!(
+            client.resumption.sessions(),
+            1,
+            "the server's ticket is kept"
+        );
         let (resumed, chain2) = exchange(port, "server.test", &client).unwrap();
         assert!(resumed, "{suite:?}");
         // the chain of the full handshake is reported again
@@ -90,7 +94,10 @@ fn a_ticket_is_offered_once_and_only_to_its_server_name() {
     // another name of the same server: no ticket for it, a full handshake (whose ticket is kept under that name)
     assert!(!exchange(port, "other.test", &client).unwrap().0);
     assert_eq!(client.resumption.sessions(), 2);
-    assert!(exchange(port, "SERVER.test.", &client).unwrap().0, "the same name in another spelling");
+    assert!(
+        exchange(port, "SERVER.test.", &client).unwrap().0,
+        "the same name in another spelling"
+    );
     assert!(exchange(port, "other.test", &client).unwrap().0);
     handle.join().unwrap();
 }
@@ -106,9 +113,16 @@ fn tickets_resume_on_any_server_that_shares_the_ticket_keys() {
     handle.join().unwrap();
     // another server (another configuration) with the same keys resumes the first one's ticket
     let (port, handle) = serve(b.clone(), 1);
-    assert!(exchange(port, "server.test", &client).unwrap().0, "resumed on the other server");
+    assert!(
+        exchange(port, "server.test", &client).unwrap().0,
+        "resumed on the other server"
+    );
     assert_eq!(handle.join().unwrap(), [true]);
-    assert_eq!(b.resumed_count(), 1, "the clones of one configuration share its counts");
+    assert_eq!(
+        b.resumed_count(),
+        1,
+        "the clones of one configuration share its counts"
+    );
     // after the keys rotate the old tickets still resume (the old key is kept while its tickets live)
     b.ticket_keys.as_ref().unwrap().rotate().unwrap();
     let (port, handle) = serve(b.clone(), 1);
@@ -125,9 +139,14 @@ fn a_server_that_does_not_know_the_ticket_makes_a_full_handshake() {
     exchange(port, "server.test", &client).unwrap();
     handle.join().unwrap();
     assert_eq!(client.resumption.sessions(), 1);
-    let fresh = Arc::new(server.with_ticket_keys(Arc::new(crate::tls::tickets::TicketKeys::new(86_400).unwrap())));
+    let fresh = Arc::new(server.with_ticket_keys(Arc::new(
+        crate::tls::tickets::TicketKeys::new(86_400).unwrap(),
+    )));
     let (port, handle) = serve(fresh.clone(), 1);
-    assert!(!exchange(port, "server.test", &client).unwrap().0, "offered, not taken: a full handshake, checked in full");
+    assert!(
+        !exchange(port, "server.test", &client).unwrap().0,
+        "offered, not taken: a full handshake, checked in full"
+    );
     assert_eq!(handle.join().unwrap(), [false]);
     // and a server that resumes nothing sends tickets that lead nowhere: the client tries one and does a full handshake
     let (port, handle) = serve(first, 1);
@@ -149,7 +168,10 @@ fn after_a_hello_retry_request_the_session_is_offered_again_with_a_new_binder() 
 #[test]
 fn a_session_of_another_hash_is_not_resumed_by_a_suite_of_this_one() {
     let (server, client) = setup();
-    let (port, handle) = serve(Arc::new(server.clone().with_suites(&[Suite::Aes256GcmSha384])), 1);
+    let (port, handle) = serve(
+        Arc::new(server.clone().with_suites(&[Suite::Aes256GcmSha384])),
+        1,
+    );
     exchange(port, "server.test", &client).unwrap();
     handle.join().unwrap();
     // the same store, but only SHA-256 suites now: the ticket (of a SHA-384 suite) cannot be used
@@ -176,7 +198,10 @@ fn a_session_is_used_only_under_the_trust_it_was_checked_with() {
 fn a_session_is_not_used_past_its_max_age_after_the_full_handshake() {
     let (server, client) = setup();
     let now = crate::sys::now_unix();
-    let at = |t: i64| ClientConfig { time_override: Some(t), ..client.clone() };
+    let at = |t: i64| ClientConfig {
+        time_override: Some(t),
+        ..client.clone()
+    };
     let (port, handle) = serve(Arc::new(server), 4);
     exchange(port, "server.test", &at(now)).unwrap();
     // half an hour later: resumed, and the new ticket still rests on the check of the first connection
@@ -228,7 +253,11 @@ fn the_client_hello_offers_the_ticket_last_with_a_fresh_key_exchange() {
     let ids_len = u16::from_be_bytes([psk[0], psk[1]]) as usize;
     let binders = &psk[2 + ids_len..];
     assert!(binders.len() == 2 + 1 + 32 || binders.len() == 2 + 1 + 48);
-    assert_eq!(client.resumption.sessions(), 0, "the ticket is taken when it is offered");
+    assert_eq!(
+        client.resumption.sessions(),
+        0,
+        "the ticket is taken when it is offered"
+    );
 }
 
 /// The extensions of a ClientHello handshake message, in order.
@@ -251,7 +280,11 @@ fn parse_client_hello_for_tests(msg: &[u8]) -> Vec<(u16, Vec<u8>)> {
 /// A client configuration with one session for `host` of `suite`, its PSK all 0x11.
 fn with_session(host: &str, suite: Suite) -> ClientConfig {
     let cfg = ClientConfig::new(TrustStore::empty());
-    let scope = Scope { trust: cfg.trust_store.clone(), verify: true, revocation: cfg.revocation.mode };
+    let scope = Scope {
+        trust: cfg.trust_store.clone(),
+        verify: true,
+        revocation: cfg.revocation.mode,
+    };
     let session = Kept {
         ticket: vec![9; 16],
         psk: Zeroizing::new(vec![0x11; suite.hash().output_len()]),
@@ -275,11 +308,19 @@ fn refused(cfg: &ClientConfig, respond: impl FnOnce(Hello) -> Vec<u8> + 'static)
     }
 }
 
-fn server_hello_with(suite: Suite, extra: Vec<(u16, Vec<u8>)>, psk: Option<Vec<u8>>, flight: Vec<Vec<u8>>) -> impl FnOnce(Hello) -> Vec<u8> {
+fn server_hello_with(
+    suite: Suite,
+    extra: Vec<(u16, Vec<u8>)>,
+    psk: Option<Vec<u8>>,
+    flight: Vec<Vec<u8>>,
+) -> impl FnOnce(Hello) -> Vec<u8> {
     move |h| {
         let mut s = super::scripted::Session::new(h, suite);
         s.psk = psk;
-        let o = ShOpts { extra_extensions: extra, ..ShOpts::default() };
+        let o = ShOpts {
+            extra_extensions: extra,
+            ..ShOpts::default()
+        };
         let (mut out, sh) = s.hello_records(&o);
         let mut c = s.flight_cipher(&sh);
         out.extend(sealed_flight(&mut c, &flight));
@@ -291,16 +332,28 @@ fn server_hello_with(suite: Suite, extra: Vec<(u16, Vec<u8>)>, psk: Option<Vec<u
 fn a_server_may_take_only_the_identity_that_was_offered_with_a_suite_of_its_hash() {
     let suite = Suite::Chacha20Poly1305Sha256;
     // no PSK offered (no session), and the server says it took one
-    let e = refused(&ClientConfig::new(TrustStore::empty()), server_hello_with(suite, vec![(EXT_PRE_SHARED_KEY, vec![0, 0])], None, vec![]));
+    let e = refused(
+        &ClientConfig::new(TrustStore::empty()),
+        server_hello_with(suite, vec![(EXT_PRE_SHARED_KEY, vec![0, 0])], None, vec![]),
+    );
     assert!(e.contains("took a PSK that was not offered"), "{e}");
     // identity 1, when one was offered
-    let e = refused(&with_session("server.test", suite), server_hello_with(suite, vec![(EXT_PRE_SHARED_KEY, vec![0, 1])], None, vec![]));
+    let e = refused(
+        &with_session("server.test", suite),
+        server_hello_with(suite, vec![(EXT_PRE_SHARED_KEY, vec![0, 1])], None, vec![]),
+    );
     assert!(e.contains("took PSK identity 1"), "{e}");
     // a session of SHA-384 resumed with a SHA-256 suite
-    let e = refused(&with_session("server.test", Suite::Aes256GcmSha384), server_hello_with(suite, vec![(EXT_PRE_SHARED_KEY, vec![0, 0])], None, vec![]));
+    let e = refused(
+        &with_session("server.test", Suite::Aes256GcmSha384),
+        server_hello_with(suite, vec![(EXT_PRE_SHARED_KEY, vec![0, 0])], None, vec![]),
+    );
     assert!(e.contains("cipher suite of another hash"), "{e}");
     // a malformed pre_shared_key
-    let e = refused(&with_session("server.test", suite), server_hello_with(suite, vec![(EXT_PRE_SHARED_KEY, vec![0])], None, vec![]));
+    let e = refused(
+        &with_session("server.test", suite),
+        server_hello_with(suite, vec![(EXT_PRE_SHARED_KEY, vec![0])], None, vec![]),
+    );
     assert!(e.contains("pre_shared_key"), "{e}");
 }
 
@@ -310,7 +363,15 @@ fn a_resumed_handshake_with_a_certificate_is_refused() {
     let cfg = with_session("server.test", suite);
     let ee = handshake_message(HS_ENCRYPTED_EXTENSIONS, &[0, 0]);
     let cert = handshake_message(HS_CERTIFICATE, &[0, 0, 0, 0]);
-    let e = refused(&cfg, server_hello_with(suite, vec![(EXT_PRE_SHARED_KEY, vec![0, 0])], Some(vec![0x11; 32]), vec![ee, cert]));
+    let e = refused(
+        &cfg,
+        server_hello_with(
+            suite,
+            vec![(EXT_PRE_SHARED_KEY, vec![0, 0])],
+            Some(vec![0x11; 32]),
+            vec![ee, cert],
+        ),
+    );
     assert!(e.contains("unexpected_message"), "{e}");
 }
 
@@ -325,11 +386,31 @@ fn malformed_tickets_end_the_connection() {
         b
     };
     let t = parse_new_session_ticket(&ok(7200, b"abc")).unwrap();
-    assert_eq!((t.lifetime, t.age_add, t.nonce.as_slice(), t.ticket.as_slice()), (7200, 7, &[0u8][..], &b"abc"[..]));
-    assert!(parse_new_session_ticket(&ok(7200, b"")).is_err(), "an empty ticket");
-    assert!(parse_new_session_ticket(&ok(604_801, b"abc")).is_err(), "more than seven days");
-    assert!(parse_new_session_ticket(&ok(7200, b"abc")[..12]).is_err(), "cut short");
-    assert!(parse_new_session_ticket(&[ok(7200, b"abc"), vec![0]].concat()).is_err(), "trailing bytes");
+    assert_eq!(
+        (
+            t.lifetime,
+            t.age_add,
+            t.nonce.as_slice(),
+            t.ticket.as_slice()
+        ),
+        (7200, 7, &[0u8][..], &b"abc"[..])
+    );
+    assert!(
+        parse_new_session_ticket(&ok(7200, b"")).is_err(),
+        "an empty ticket"
+    );
+    assert!(
+        parse_new_session_ticket(&ok(604_801, b"abc")).is_err(),
+        "more than seven days"
+    );
+    assert!(
+        parse_new_session_ticket(&ok(7200, b"abc")[..12]).is_err(),
+        "cut short"
+    );
+    assert!(
+        parse_new_session_ticket(&[ok(7200, b"abc"), vec![0]].concat()).is_err(),
+        "trailing bytes"
+    );
     // an extension (early_data) is skipped; the same one twice is an error
     let mut with_ext = ok(7200, b"abc");
     with_ext.truncate(with_ext.len() - 2);
@@ -337,6 +418,8 @@ fn malformed_tickets_end_the_connection() {
     assert!(parse_new_session_ticket(&with_ext).is_ok());
     let mut twice = ok(7200, b"abc");
     twice.truncate(twice.len() - 2);
-    twice.extend_from_slice(&[0, 16, 0, 42, 0, 4, 0, 0, 0x40, 0, 0, 42, 0, 4, 0, 0, 0x40, 0]);
+    twice.extend_from_slice(&[
+        0, 16, 0, 42, 0, 4, 0, 0, 0x40, 0, 0, 42, 0, 4, 0, 0, 0x40, 0,
+    ]);
     assert!(parse_new_session_ticket(&twice).is_err());
 }

@@ -43,7 +43,10 @@ struct Hook(String);
 
 impl Dns01 for Hook {
     fn present(&self, name: &str, value: &str) -> Result<(), String> {
-        let status = Command::new(&self.0).args(["present", name, value]).status().map_err(|e| format!("{}: {e}", self.0))?;
+        let status = Command::new(&self.0)
+            .args(["present", name, value])
+            .status()
+            .map_err(|e| format!("{}: {e}", self.0))?;
         if status.success() {
             Ok(())
         } else {
@@ -51,7 +54,9 @@ impl Dns01 for Hook {
         }
     }
     fn cleanup(&self, name: &str, value: &str) {
-        let _ = Command::new(&self.0).args(["cleanup", name, value]).status();
+        let _ = Command::new(&self.0)
+            .args(["cleanup", name, value])
+            .status();
     }
 }
 
@@ -63,7 +68,15 @@ fn main() {
                 opts.insert(k.to_string(), v.to_string());
             }
             None => {
-                eprintln!("{}", include_str!("acme_serve.rs").lines().take_while(|l| l.starts_with("//")).map(|l| l.trim_start_matches("//").trim_start_matches(' ')).collect::<Vec<_>>().join("\n"));
+                eprintln!(
+                    "{}",
+                    include_str!("acme_serve.rs")
+                        .lines()
+                        .take_while(|l| l.starts_with("//"))
+                        .map(|l| l.trim_start_matches("//").trim_start_matches(' '))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
                 std::process::exit(2);
             }
         }
@@ -73,7 +86,10 @@ fn main() {
         eprintln!("names= is required (try without arguments for the options)");
         std::process::exit(2);
     };
-    let sets: Vec<Vec<String>> = names.split(';').map(|set| set.split(',').map(str::to_string).collect()).collect();
+    let sets: Vec<Vec<String>> = names
+        .split(';')
+        .map(|set| set.split(',').map(str::to_string).collect())
+        .collect();
     let directory = match get("directory", "staging").as_str() {
         "staging" => acme::LETS_ENCRYPT_STAGING.to_string(),
         "production" => acme::LETS_ENCRYPT.to_string(),
@@ -89,7 +105,11 @@ fn main() {
         config = match c {
             "tls-alpn-01" => config.tls_alpn01(&tls_alpn01),
             "http-01" => config.http01(&http01),
-            "dns-01" => config.dns01(Hook(opts.get("dns01_cmd").cloned().expect("dns-01 needs dns01_cmd="))),
+            "dns-01" => config.dns01(Hook(
+                opts.get("dns01_cmd")
+                    .cloned()
+                    .expect("dns-01 needs dns01_cmd="),
+            )),
             other => panic!("unknown challenge {other}"),
         };
     }
@@ -108,16 +128,34 @@ fn main() {
     let acme = Acme::new(config).unwrap_or_else(|e| panic!("{e}"));
 
     let mut tls = ServerConfig::with_certificates(CertStore::new()).with_alpn(&["h2", "http/1.1"]);
-    let store = tls.store.clone().expect("a configuration made with a store");
+    let store = tls
+        .store
+        .clone()
+        .expect("a configuration made with a store");
     tls.certs = tls_alpn01.wrap(tls.certs.clone());
     let https = get("https", "[::]:443");
     let https_port = https.rsplit(':').next().and_then(|p| p.parse().ok());
     let server = ServerBuilder::new(|req: Request| {
-        let who = req.connection().tls.as_ref().and_then(|t| t.server_name.clone()).unwrap_or_default();
-        Response::text(200, format!("hello from {who} over {:?}: {}\n", req.version(), req.path()))
+        let who = req
+            .connection()
+            .tls
+            .as_ref()
+            .and_then(|t| t.server_name.clone())
+            .unwrap_or_default();
+        Response::text(
+            200,
+            format!(
+                "hello from {who} over {:?}: {}\n",
+                req.version(),
+                req.path()
+            ),
+        )
     })
     .tls(&https, Arc::new(tls))
-    .plain_with(&get("http", "[::]:80"), http01.wrap(redirect_to_https(https_port)))
+    .plain_with(
+        &get("http", "[::]:80"),
+        http01.wrap(redirect_to_https(https_port)),
+    )
     .start()
     .unwrap_or_else(|e| panic!("listening: {e}"));
     for a in server.local_addrs() {
@@ -135,7 +173,14 @@ fn main() {
         let mut have = 0;
         while have < sets.len() {
             match done_rx.recv_timeout(Duration::from_secs(600)) {
-                Ok(m) if m.starts_with("certificate for ") && (m.contains(" obtained") || m.contains(" loaded from") || m.contains(" renewed")) => have += 1,
+                Ok(m)
+                    if m.starts_with("certificate for ")
+                        && (m.contains(" obtained")
+                            || m.contains(" loaded from")
+                            || m.contains(" renewed")) =>
+                {
+                    have += 1
+                }
                 Ok(m) if m.starts_with("certificate for ") => {
                     eprintln!("failed: {m}");
                     std::process::exit(1);
@@ -149,7 +194,10 @@ fn main() {
         }
         for set in &sets {
             let names: Vec<&str> = set.iter().map(String::as_str).collect();
-            println!("saved {}", acme.certificate_dir(&names).expect("names").display());
+            println!(
+                "saved {}",
+                acme.certificate_dir(&names).expect("names").display()
+            );
         }
         drop(manager);
         server.shutdown(Duration::from_secs(1));

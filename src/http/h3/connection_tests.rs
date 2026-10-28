@@ -3,7 +3,9 @@ use crate::http::h2::hpack::FieldRef;
 use crate::http::h3::frame::{put_data, put_frame_header, put_headers, FrameReader};
 use crate::http::h3::qpack;
 
-use crate::http::h3::connection::harness::{Fake, SERVER_CONTROL, SERVER_QPACK_DECODER, SERVER_QPACK_ENCODER};
+use crate::http::h3::connection::harness::{
+    Fake, SERVER_CONTROL, SERVER_QPACK_DECODER, SERVER_QPACK_ENCODER,
+};
 
 // ---------------------------------------------------------------------------------------------------- a server of sorts
 
@@ -38,8 +40,19 @@ fn started() -> (Connection, Fake) {
 }
 
 fn fields_block(fields: &[(&str, &str)]) -> Vec<u8> {
-    let mut enc = Encoder::new(EncoderConfig { table_capacity: 0, blocked_streams: 0, only_safe_names: true });
-    let refs: Vec<FieldRef<'_>> = fields.iter().map(|(n, v)| FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false }).collect();
+    let mut enc = Encoder::new(EncoderConfig {
+        table_capacity: 0,
+        blocked_streams: 0,
+        only_safe_names: true,
+    });
+    let refs: Vec<FieldRef<'_>> = fields
+        .iter()
+        .map(|(n, v)| FieldRef {
+            name: n.as_bytes(),
+            value: v.as_bytes(),
+            sensitive: false,
+        })
+        .collect();
     let mut out = vec![];
     enc.encode(0, &refs, &mut out);
     out
@@ -64,7 +77,14 @@ fn get(c: &mut Connection, f: &mut Fake) -> u64 {
 
 fn request(c: &mut Connection, f: &mut Fake, method: &str, path: &str) -> u64 {
     let headers = vec![("accept".to_string(), "*/*".to_string())];
-    let r = Request { method, scheme: "https", authority: "example.com", path, headers: &headers, secret: &[] };
+    let r = Request {
+        method,
+        scheme: "https",
+        authority: "example.com",
+        path,
+        headers: &headers,
+        secret: &[],
+    };
     c.open_stream(f, &r, true).unwrap()
 }
 
@@ -123,7 +143,9 @@ fn the_client_opens_its_control_stream_and_the_two_of_qpack() {
     let control = f.written(2);
     assert_eq!(control[0], 0x00, "the control stream's type");
     let ev = frames_of(&control[1..], Kind::Control);
-    let Event::Settings(pairs) = &ev[0] else { panic!("{ev:?}") };
+    let Event::Settings(pairs) = &ev[0] else {
+        panic!("{ev:?}")
+    };
     assert_eq!(&pairs[..3], &[(0x01, 4096), (0x07, 16), (0x06, 64 << 10)]);
     assert_eq!(f.written(6), &[0x02]);
     assert_eq!(f.written(10), &[0x03]);
@@ -145,7 +167,14 @@ fn the_streams_are_opened_when_the_server_allows_them() {
     // and a request waits for its own limit
     f.max_open[0] = 0;
     let headers = vec![];
-    let r = Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] };
+    let r = Request {
+        method: "GET",
+        scheme: "https",
+        authority: "example.com",
+        path: "/",
+        headers: &headers,
+        secret: &[],
+    };
     assert_eq!(c.open_stream(&mut f, &r, true), Err(OpenError::Full));
     assert!(c.usable());
     f.max_open[0] = 1;
@@ -155,22 +184,57 @@ fn the_streams_are_opened_when_the_server_allows_them() {
 #[test]
 fn a_request_is_a_headers_frame_and_the_end_of_the_stream() {
     let (mut c, mut f) = started();
-    let headers = vec![("Accept".to_string(), "*/*".to_string()), ("Connection".to_string(), "close".to_string()), ("Host".to_string(), "other".to_string())];
-    let r = Request { method: "GET", scheme: "https", authority: "example.com", path: "/a?b=c", headers: &headers, secret: &[] };
+    let headers = vec![
+        ("Accept".to_string(), "*/*".to_string()),
+        ("Connection".to_string(), "close".to_string()),
+        ("Host".to_string(), "other".to_string()),
+    ];
+    let r = Request {
+        method: "GET",
+        scheme: "https",
+        authority: "example.com",
+        path: "/a?b=c",
+        headers: &headers,
+        secret: &[],
+    };
     let id = c.open_stream(&mut f, &r, true).unwrap();
     assert_eq!(id, 0);
     let s = &f.sent[&0];
     assert!(s.fin);
     let ev = frames_of(&s.data, Kind::Request);
-    let Event::Headers(block) = &ev[0] else { panic!("{ev:?}") };
+    let Event::Headers(block) = &ev[0] else {
+        panic!("{ev:?}")
+    };
     assert_eq!(ev.len(), 1);
     // what a decoder makes of it: the pseudo-headers, then the fields in lower case, with the connection-specific ones and Host gone
     let mut dec = Decoder::new(0, 0, 1 << 20);
     let mut got = vec![];
-    assert!(matches!(dec.decode(0, block, &mut got), Ok(Decoded::Done { within_limit: true })));
-    let got: Vec<(String, String)> = got.iter().map(|f| (String::from_utf8(f.name.clone()).unwrap(), String::from_utf8(f.value.clone()).unwrap())).collect();
-    let want = [(":method", "GET"), (":scheme", "https"), (":authority", "example.com"), (":path", "/a?b=c"), ("accept", "*/*")];
-    assert_eq!(got, want.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>());
+    assert!(matches!(
+        dec.decode(0, block, &mut got),
+        Ok(Decoded::Done { within_limit: true })
+    ));
+    let got: Vec<(String, String)> = got
+        .iter()
+        .map(|f| {
+            (
+                String::from_utf8(f.name.clone()).unwrap(),
+                String::from_utf8(f.value.clone()).unwrap(),
+            )
+        })
+        .collect();
+    let want = [
+        (":method", "GET"),
+        (":scheme", "https"),
+        (":authority", "example.com"),
+        (":path", "/a?b=c"),
+        ("accept", "*/*"),
+    ];
+    assert_eq!(
+        got,
+        want.iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect::<Vec<_>>()
+    );
     c.assert_books();
 }
 
@@ -178,7 +242,14 @@ fn a_request_is_a_headers_frame_and_the_end_of_the_stream() {
 fn a_request_with_a_body_is_headers_then_data_frames() {
     let (mut c, mut f) = started();
     let headers = vec![];
-    let r = Request { method: "POST", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] };
+    let r = Request {
+        method: "POST",
+        scheme: "https",
+        authority: "example.com",
+        path: "/",
+        headers: &headers,
+        secret: &[],
+    };
     let id = c.open_stream(&mut f, &r, false).unwrap();
     assert!(!f.sent[&id].fin);
     assert_eq!(c.send_data(&mut f, id, b"hello ", false), Ok(6));
@@ -209,7 +280,14 @@ fn what_the_transport_does_not_take_is_written_when_it_does() {
     let (mut c, mut f) = started();
     f.room = 10;
     let headers = vec![];
-    let r = Request { method: "POST", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] };
+    let r = Request {
+        method: "POST",
+        scheme: "https",
+        authority: "example.com",
+        path: "/",
+        headers: &headers,
+        secret: &[],
+    };
     let id = c.open_stream(&mut f, &r, false).unwrap();
     let body = vec![7u8; 5000];
     assert_eq!(c.send_data(&mut f, id, &body, true), Ok(5000));
@@ -227,20 +305,36 @@ fn what_the_transport_does_not_take_is_written_when_it_does() {
     let mut r = FrameReader::new(Kind::Request, 1 << 20);
     let mut ev = vec![];
     r.feed(f.written(id), &mut ev).unwrap();
-    let got: usize = ev.iter().map(|e| if let Event::Data(r) = e { r.len() } else { 0 }).sum();
+    let got: usize = ev
+        .iter()
+        .map(|e| if let Event::Data(r) = e { r.len() } else { 0 })
+        .sum();
     assert_eq!(got, 5000);
 }
 
 #[test]
 fn how_much_body_is_taken_is_bounded() {
-    let cfg = Config { send_buffer: 1000, ..Config::default() };
+    let cfg = Config {
+        send_buffer: 1000,
+        ..Config::default()
+    };
     let (mut c, mut f) = started_with(cfg, &[]);
     f.room = 0;
     let headers = vec![];
-    let r = Request { method: "POST", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] };
+    let r = Request {
+        method: "POST",
+        scheme: "https",
+        authority: "example.com",
+        path: "/",
+        headers: &headers,
+        secret: &[],
+    };
     let id = c.open_stream(&mut f, &r, false).unwrap();
     let before = c.send_capacity(id);
-    assert!(before < 1000 && before > 900, "{before}: what is left of 1000 after the request's head");
+    assert!(
+        before < 1000 && before > 900,
+        "{before}: what is left of 1000 after the request's head"
+    );
     let n = c.send_data(&mut f, id, &[1; 5000], true).unwrap();
     assert_eq!(n, before);
     assert_eq!(c.send_capacity(id), 0);
@@ -257,15 +351,27 @@ fn how_much_body_is_taken_is_bounded() {
 fn a_response_is_a_head_a_body_and_an_end() {
     let (mut c, mut f) = started();
     let id = get(&mut c, &mut f);
-    let mut bytes = response(200, &[("content-type", "text/plain"), ("content-length", "11")], b"hello ");
+    let mut bytes = response(
+        200,
+        &[("content-type", "text/plain"), ("content-length", "11")],
+        b"hello ",
+    );
     put_data(&mut bytes, b"world");
     f.push(id, &bytes, true);
     c.process(&mut f).unwrap();
     let ev = events(&mut c, id);
     assert_eq!(ev.len(), 3, "{ev:?}");
-    let StreamEvent::Head(h) = &ev[0] else { panic!() };
+    let StreamEvent::Head(h) = &ev[0] else {
+        panic!()
+    };
     assert_eq!(h.status, 200);
-    assert_eq!(h.headers, vec![("content-type".to_string(), "text/plain".to_string()), ("content-length".to_string(), "11".to_string())]);
+    assert_eq!(
+        h.headers,
+        vec![
+            ("content-type".to_string(), "text/plain".to_string()),
+            ("content-length".to_string(), "11".to_string())
+        ]
+    );
     assert_eq!(ev[1], StreamEvent::Data(11));
     assert_eq!(ev[2], StreamEvent::End);
     // (it stays ended)
@@ -279,7 +385,9 @@ fn the_pieces_a_response_comes_in_do_not_matter() {
     for i in 0..30u8 {
         put_data(&mut bytes, &vec![i; 100 + usize::from(i) * 7]);
     }
-    let expected: Vec<u8> = (0..30u8).flat_map(|i| vec![i; 100 + usize::from(i) * 7]).collect();
+    let expected: Vec<u8> = (0..30u8)
+        .flat_map(|i| vec![i; 100 + usize::from(i) * 7])
+        .collect();
     for step in [1usize, 2, 3, 7, 50, 1000, 100_000] {
         let (mut c, mut f) = started();
         let id = get(&mut c, &mut f);
@@ -314,7 +422,10 @@ fn the_body_is_what_the_server_sent() {
     put_data(&mut bytes, b"defgh");
     f.push(id, &bytes, true);
     c.process(&mut f).unwrap();
-    assert!(matches!(c.poll_stream(id, &mut [0; 1]), StreamEvent::Head(_)));
+    assert!(matches!(
+        c.poll_stream(id, &mut [0; 1]),
+        StreamEvent::Head(_)
+    ));
     let mut got = vec![];
     let mut buf = [0u8; 3];
     loop {
@@ -330,7 +441,10 @@ fn the_body_is_what_the_server_sent() {
     let id = get(&mut c, &mut f);
     f.push(id, &bytes, true);
     c.process(&mut f).unwrap();
-    assert!(matches!(c.take_stream_data(id, &mut vec![]), StreamEvent::Head(_)));
+    assert!(matches!(
+        c.take_stream_data(id, &mut vec![]),
+        StreamEvent::Head(_)
+    ));
     let mut into = vec![];
     assert_eq!(c.take_stream_data(id, &mut into), StreamEvent::Data(8));
     assert_eq!(into, b"abcdefgh");
@@ -347,7 +461,10 @@ fn trailers_come_after_the_body() {
     c.process(&mut f).unwrap();
     let ev = events(&mut c, id);
     assert_eq!(ev.len(), 4, "{ev:?}");
-    assert_eq!(ev[2], StreamEvent::Trailers(vec![("x-checksum".to_string(), "abc".to_string())]));
+    assert_eq!(
+        ev[2],
+        StreamEvent::Trailers(vec![("x-checksum".to_string(), "abc".to_string())])
+    );
     assert_eq!(ev[3], StreamEvent::End);
 }
 
@@ -356,7 +473,10 @@ fn a_stream_is_ready_when_the_application_has_something_to_poll() {
     // what the transport asks whom to wake: a stream that has news is ready, one that has none is not, a stream that is not known is
     let (mut c, mut f) = started();
     let id = get(&mut c, &mut f);
-    assert!(c.ready(id + 400), "an unknown stream fails when it is polled");
+    assert!(
+        c.ready(id + 400),
+        "an unknown stream fails when it is polled"
+    );
     assert!(!c.ready(id), "nothing has come");
     // the head
     let head = response(200, &[], b"");
@@ -379,7 +499,10 @@ fn a_stream_is_ready_when_the_application_has_something_to_poll() {
     f.push(id, &trailers, false);
     c.process(&mut f).unwrap();
     assert!(c.ready(id), "the trailers are something");
-    assert!(matches!(c.poll_stream(id, &mut [0; 8]), StreamEvent::Trailers(_)));
+    assert!(matches!(
+        c.poll_stream(id, &mut [0; 8]),
+        StreamEvent::Trailers(_)
+    ));
     assert!(!c.ready(id));
     // the end, with nothing with it
     f.push(id, &[], true);
@@ -391,7 +514,10 @@ fn a_stream_is_ready_when_the_application_has_something_to_poll() {
     f.reset_by_server(id, 0x10c);
     c.process(&mut f).unwrap();
     assert!(c.ready(id));
-    assert!(matches!(c.poll_stream(id, &mut [0; 8]), StreamEvent::Failed(_)));
+    assert!(matches!(
+        c.poll_stream(id, &mut [0; 8]),
+        StreamEvent::Failed(_)
+    ));
 }
 
 #[test]
@@ -404,7 +530,10 @@ fn trailers_with_a_pseudo_header_are_a_stream_error() {
     c.process(&mut f).unwrap();
     let ev = events(&mut c, id);
     assert_eq!(failure(ev.last().unwrap()).code, code::H3_MESSAGE_ERROR);
-    assert!(c.usable() && f.closed.is_none(), "the connection is not lost for it");
+    assert!(
+        c.usable() && f.closed.is_none(),
+        "the connection is not lost for it"
+    );
     // the server is told, both ways
     assert_eq!(f.stopped_by_us.get(&id), Some(&code::H3_MESSAGE_ERROR));
     assert_eq!(f.sent[&id].reset, Some(code::H3_MESSAGE_ERROR));
@@ -435,7 +564,10 @@ fn interim_responses_are_dropped_and_a_101_is_an_error() {
     let id = get(&mut c, &mut f);
     f.push(id, &response(100, &[], b""), true);
     c.process(&mut f).unwrap();
-    assert_eq!(failure(&events(&mut c, id)[0]).code, code::H3_REQUEST_INCOMPLETE);
+    assert_eq!(
+        failure(&events(&mut c, id)[0]).code,
+        code::H3_REQUEST_INCOMPLETE
+    );
     assert!(f.closed.is_none());
 }
 
@@ -443,12 +575,31 @@ fn interim_responses_are_dropped_and_a_101_is_an_error() {
 fn a_response_that_is_not_one_is_a_stream_error() {
     let cases: Vec<(&str, Vec<(&str, &str)>)> = vec![
         ("no status", vec![("content-type", "x")]),
-        ("a status twice", vec![(":status", "200"), (":status", "200")]),
-        ("a pseudo-header after a field", vec![("a", "b"), (":status", "200")]),
-        ("a pseudo-header of a request", vec![(":status", "200"), (":path", "/")]),
-        ("a connection-specific field", vec![(":status", "200"), ("transfer-encoding", "chunked")]),
+        (
+            "a status twice",
+            vec![(":status", "200"), (":status", "200")],
+        ),
+        (
+            "a pseudo-header after a field",
+            vec![("a", "b"), (":status", "200")],
+        ),
+        (
+            "a pseudo-header of a request",
+            vec![(":status", "200"), (":path", "/")],
+        ),
+        (
+            "a connection-specific field",
+            vec![(":status", "200"), ("transfer-encoding", "chunked")],
+        ),
         ("a status that is not a number", vec![(":status", "2xx")]),
-        ("two lengths that differ", vec![(":status", "200"), ("content-length", "1"), ("content-length", "2")]),
+        (
+            "two lengths that differ",
+            vec![
+                (":status", "200"),
+                ("content-length", "1"),
+                ("content-length", "2"),
+            ],
+        ),
     ];
     for (what, fields) in cases {
         let (mut c, mut f) = started();
@@ -458,7 +609,11 @@ fn a_response_that_is_not_one_is_a_stream_error() {
         f.push(id, &bytes, false);
         c.process(&mut f).unwrap();
         let ev = events(&mut c, id);
-        assert_eq!(failure(ev.last().unwrap()).code, code::H3_MESSAGE_ERROR, "{what}");
+        assert_eq!(
+            failure(ev.last().unwrap()).code,
+            code::H3_MESSAGE_ERROR,
+            "{what}"
+        );
         assert!(f.closed.is_none(), "{what}");
     }
 }
@@ -468,23 +623,39 @@ fn the_length_a_response_says_is_the_length_it_has() {
     // more data than the length says: at once
     let (mut c, mut f) = started();
     let id = get(&mut c, &mut f);
-    f.push(id, &response(200, &[("content-length", "3")], b"abcd"), false);
+    f.push(
+        id,
+        &response(200, &[("content-length", "3")], b"abcd"),
+        false,
+    );
     c.process(&mut f).unwrap();
     let ev = events(&mut c, id);
     assert_eq!(failure(ev.last().unwrap()).code, code::H3_MESSAGE_ERROR);
     // less: when the stream ends
     let (mut c, mut f) = started();
     let id = get(&mut c, &mut f);
-    f.push(id, &response(200, &[("content-length", "5")], b"abcd"), false);
+    f.push(
+        id,
+        &response(200, &[("content-length", "5")], b"abcd"),
+        false,
+    );
     c.process(&mut f).unwrap();
-    assert_eq!(events(&mut c, id).len(), 2, "head and data, and the rest to come");
+    assert_eq!(
+        events(&mut c, id).len(),
+        2,
+        "head and data, and the rest to come"
+    );
     f.push(id, &[], true);
     c.process(&mut f).unwrap();
     assert_eq!(failure(&events(&mut c, id)[0]).code, code::H3_MESSAGE_ERROR);
     // as it says: fine
     let (mut c, mut f) = started();
     let id = get(&mut c, &mut f);
-    f.push(id, &response(200, &[("content-length", "4")], b"abcd"), true);
+    f.push(
+        id,
+        &response(200, &[("content-length", "4")], b"abcd"),
+        true,
+    );
     c.process(&mut f).unwrap();
     assert_eq!(events(&mut c, id).last(), Some(&StreamEvent::End));
 }
@@ -495,7 +666,11 @@ fn a_response_with_no_body_has_none() {
     for status in [204u16, 304] {
         let (mut c, mut f) = started();
         let id = get(&mut c, &mut f);
-        f.push(id, &response(status, &[("content-length", "100")], b""), true);
+        f.push(
+            id,
+            &response(status, &[("content-length", "100")], b""),
+            true,
+        );
         c.process(&mut f).unwrap();
         let ev = events(&mut c, id);
         assert_eq!(ev.last(), Some(&StreamEvent::End), "{status}");
@@ -503,7 +678,11 @@ fn a_response_with_no_body_has_none() {
         let id = get(&mut c, &mut f);
         f.push(id, &response(status, &[], b"x"), true);
         c.process(&mut f).unwrap();
-        assert_eq!(failure(events(&mut c, id).last().unwrap()).code, code::H3_MESSAGE_ERROR, "{status} with data");
+        assert_eq!(
+            failure(events(&mut c, id).last().unwrap()).code,
+            code::H3_MESSAGE_ERROR,
+            "{status} with data"
+        );
     }
     // the response to HEAD
     let (mut c, mut f) = started();
@@ -536,8 +715,14 @@ fn a_stream_the_server_resets_fails_and_a_rejected_request_may_be_sent_again() {
     c.process(&mut f).unwrap();
     let ea = events(&mut c, a);
     let eb = events(&mut c, b);
-    assert_eq!((failure(&ea[0]).code, failure(&ea[0]).retry_safe), (code::H3_REQUEST_REJECTED, true));
-    assert_eq!((failure(&eb[0]).code, failure(&eb[0]).retry_safe), (code::H3_INTERNAL_ERROR, false));
+    assert_eq!(
+        (failure(&ea[0]).code, failure(&ea[0]).retry_safe),
+        (code::H3_REQUEST_REJECTED, true)
+    );
+    assert_eq!(
+        (failure(&eb[0]).code, failure(&eb[0]).retry_safe),
+        (code::H3_INTERNAL_ERROR, false)
+    );
     assert!(c.usable());
 }
 
@@ -557,7 +742,10 @@ fn what_arrived_before_a_reset_is_seen_first() {
 
 #[test]
 fn a_body_that_is_not_read_holds_the_server_back() {
-    let cfg = Config { body_buffer: 10_000, ..Config::default() };
+    let cfg = Config {
+        body_buffer: 10_000,
+        ..Config::default()
+    };
     let (mut c, mut f) = started_with(cfg, &[]);
     let id = get(&mut c, &mut f);
     let mut bytes = response(200, &[], b"");
@@ -568,7 +756,10 @@ fn a_body_that_is_not_read_holds_the_server_back() {
     c.process(&mut f).unwrap();
     // some of it was taken in, no more than the limit and a read's worth, and the rest is still with the transport
     let waiting = f.recv[&id].data.len();
-    assert!(waiting > 100_000, "{waiting} bytes are left for the transport to hold");
+    assert!(
+        waiting > 100_000,
+        "{waiting} bytes are left for the transport to hold"
+    );
     c.assert_books();
     // as the application reads, the rest comes (nothing says so but the call: the connection has to be asked)
     let mut buf = vec![0u8; 100_000];
@@ -583,7 +774,10 @@ fn a_body_that_is_not_read_holds_the_server_back() {
                 break;
             }
             StreamEvent::Pending => {
-                assert!(c.needs_processing(), "the stream waits and nothing will wake the connection");
+                assert!(
+                    c.needs_processing(),
+                    "the stream waits and nothing will wake the connection"
+                );
                 c.process(&mut f).unwrap();
             }
             e => panic!("{e:?}"),
@@ -598,13 +792,24 @@ fn a_body_that_is_not_read_holds_the_server_back() {
 
 /// A server's encoder that makes a table for the client (4096 bytes, 16 streams may wait).
 fn server_encoder() -> Encoder {
-    let mut e = Encoder::new(EncoderConfig { table_capacity: 4096, blocked_streams: 16, only_safe_names: false });
+    let mut e = Encoder::new(EncoderConfig {
+        table_capacity: 4096,
+        blocked_streams: 16,
+        only_safe_names: false,
+    });
     e.set_peer_settings(4096, 16);
     e
 }
 
 fn encode_with(e: &mut Encoder, stream: u64, fields: &[(&str, &str)]) -> Vec<u8> {
-    let refs: Vec<FieldRef<'_>> = fields.iter().map(|(n, v)| FieldRef { name: n.as_bytes(), value: v.as_bytes(), sensitive: false }).collect();
+    let refs: Vec<FieldRef<'_>> = fields
+        .iter()
+        .map(|(n, v)| FieldRef {
+            name: n.as_bytes(),
+            value: v.as_bytes(),
+            sensitive: false,
+        })
+        .collect();
     let mut out = vec![];
     e.encode(stream, &refs, &mut out);
     out
@@ -649,7 +854,13 @@ fn a_response_that_waits_for_the_table_is_read_when_it_comes() {
     let ev = events(&mut c, id);
     assert_eq!(status_of(&ev[0]), 200);
     if let StreamEvent::Head(h) = &ev[0] {
-        assert_eq!(h.headers, vec![("x-a".to_string(), "1111".to_string()), ("x-b".to_string(), "2222".to_string())]);
+        assert_eq!(
+            h.headers,
+            vec![
+                ("x-a".to_string(), "1111".to_string()),
+                ("x-b".to_string(), "2222".to_string())
+            ]
+        );
     }
     assert_eq!(ev.last(), Some(&StreamEvent::End));
     let ev2 = events(&mut c, id2);
@@ -659,7 +870,10 @@ fn a_response_that_waits_for_the_table_is_read_when_it_comes() {
     // the client told the server: a section acknowledgment for each stream, on the QPACK decoder stream
     let out = f.written(10);
     assert_eq!(out[0], 0x03);
-    assert!(out.contains(&(0x80 | id as u8)) && out.contains(&(0x80 | id2 as u8)), "{out:02x?}");
+    assert!(
+        out.contains(&(0x80 | id as u8)) && out.contains(&(0x80 | id2 as u8)),
+        "{out:02x?}"
+    );
 }
 
 #[test]
@@ -674,7 +888,11 @@ fn what_comes_behind_a_waiting_section_waits_with_it() {
     let inserts = enc.take_output();
     f.push(id, &bytes, true);
     c.process(&mut f).unwrap();
-    assert_eq!(events(&mut c, id), vec![], "nothing is seen of a stream whose head waits");
+    assert_eq!(
+        events(&mut c, id),
+        vec![],
+        "nothing is seen of a stream whose head waits"
+    );
     assert_eq!(c.decoder.blocked_streams(), 1);
     c.assert_books();
     f.push(SERVER_QPACK_ENCODER, &inserts, false);
@@ -682,14 +900,20 @@ fn what_comes_behind_a_waiting_section_waits_with_it() {
     let ev = events(&mut c, id);
     assert_eq!(status_of(&ev[0]), 200);
     assert_eq!(ev[1], StreamEvent::Data(5));
-    assert_eq!(ev[2], StreamEvent::Trailers(vec![("x-a".to_string(), "1111".to_string())]));
+    assert_eq!(
+        ev[2],
+        StreamEvent::Trailers(vec![("x-a".to_string(), "1111".to_string())])
+    );
     assert_eq!(ev[3], StreamEvent::End);
     c.assert_books();
 }
 
 #[test]
 fn more_streams_waiting_than_were_allowed_is_an_error_of_the_connection() {
-    let cfg = Config { qpack_blocked_streams: 1, ..Config::default() };
+    let cfg = Config {
+        qpack_blocked_streams: 1,
+        ..Config::default()
+    };
     let (mut c, mut f) = started_with(cfg, &[(0x01, 4096), (0x07, 1)]);
     let a = get(&mut c, &mut f);
     let b = get(&mut c, &mut f);
@@ -712,12 +936,18 @@ fn an_instruction_that_makes_no_sense_ends_the_connection() {
     assert_eq!(f.closed_with(), Some(qpack::ENCODER_STREAM_ERROR));
     assert!(!c.usable());
     // and from then on every call says so
-    assert_eq!(c.process(&mut f).unwrap_err().code, qpack::ENCODER_STREAM_ERROR);
+    assert_eq!(
+        c.process(&mut f).unwrap_err().code,
+        qpack::ENCODER_STREAM_ERROR
+    );
 
     // an acknowledgment of a stream that has no section waiting
     let (mut c, mut f) = started();
     f.push(SERVER_QPACK_DECODER, &[0x84], false);
-    assert_eq!(c.process(&mut f).unwrap_err().code, qpack::DECODER_STREAM_ERROR);
+    assert_eq!(
+        c.process(&mut f).unwrap_err().code,
+        qpack::DECODER_STREAM_ERROR
+    );
 }
 
 #[test]
@@ -870,22 +1100,53 @@ fn the_control_stream_must_begin_with_settings_and_have_them_once() {
 
 #[test]
 fn the_servers_settings_are_what_the_client_keeps_to() {
-    let (mut c, mut f) = started_with(Config::default(), &[(0x01, 2048), (0x07, 5), (0x06, 200), (0x21, 9)]);
-    assert_eq!(c.peer_settings().copied(), Some(PeerSettings { qpack_max_table_capacity: 2048, qpack_blocked_streams: 5, max_field_section_size: Some(200) }));
+    let (mut c, mut f) = started_with(
+        Config::default(),
+        &[(0x01, 2048), (0x07, 5), (0x06, 200), (0x21, 9)],
+    );
+    assert_eq!(
+        c.peer_settings().copied(),
+        Some(PeerSettings {
+            qpack_max_table_capacity: 2048,
+            qpack_blocked_streams: 5,
+            max_field_section_size: Some(200)
+        })
+    );
     // a request whose header list is over what the server takes is not sent
     let big = vec![("x-long".to_string(), "v".repeat(300))];
-    let r = Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &big, secret: &[] };
-    assert!(matches!(c.open_stream(&mut f, &r, true), Err(OpenError::Invalid(_))));
+    let r = Request {
+        method: "GET",
+        scheme: "https",
+        authority: "example.com",
+        path: "/",
+        headers: &big,
+        secret: &[],
+    };
+    assert!(matches!(
+        c.open_stream(&mut f, &r, true),
+        Err(OpenError::Invalid(_))
+    ));
     // (and no stream was opened for it)
     assert_eq!(f.opened[0], 0);
     let small = vec![];
-    let r = Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &small, secret: &[] };
+    let r = Request {
+        method: "GET",
+        scheme: "https",
+        authority: "example.com",
+        path: "/",
+        headers: &small,
+        secret: &[],
+    };
     assert!(c.open_stream(&mut f, &r, true).is_ok());
     // the limit is on a size that is the sum of the lengths of names and values and 32 for each field: 177 for this one, which is let
     // through at that and not at one less
     for (limit, ok) in [(177u64, true), (176, false)] {
         let (mut c, mut f) = started_with(Config::default(), &[(0x06, limit)]);
-        assert_eq!(c.open_stream(&mut f, &r, true).is_ok(), ok, "a limit of {limit}");
+        assert_eq!(
+            c.open_stream(&mut f, &r, true).is_ok(),
+            ok,
+            "a limit of {limit}"
+        );
     }
 }
 
@@ -894,7 +1155,10 @@ fn a_stream_of_a_type_that_is_not_known_is_turned_away() {
     let (mut c, mut f) = started();
     f.push(15, &[0x40, 0x21, 1, 2, 3], false);
     c.process(&mut f).unwrap();
-    assert_eq!(f.stopped_by_us.get(&15), Some(&code::H3_STREAM_CREATION_ERROR));
+    assert_eq!(
+        f.stopped_by_us.get(&15),
+        Some(&code::H3_STREAM_CREATION_ERROR)
+    );
     assert!(f.closed.is_none());
     // what still comes is thrown away: not read as the start of another stream, whatever it is
     f.push(15, &[0x00, 0x04, 0x00, 0x03], false);
@@ -921,7 +1185,10 @@ fn a_stream_that_says_nothing_of_what_it_is_costs_nothing() {
     c.process(&mut f).unwrap();
     f.push(19, &[0x21], false);
     c.process(&mut f).unwrap();
-    assert_eq!(f.stopped_by_us.get(&19), Some(&code::H3_STREAM_CREATION_ERROR));
+    assert_eq!(
+        f.stopped_by_us.get(&19),
+        Some(&code::H3_STREAM_CREATION_ERROR)
+    );
 }
 
 #[test]
@@ -944,7 +1211,10 @@ fn a_stream_that_ends_inside_a_frame_ends_the_connection() {
 
 #[test]
 fn a_field_section_over_the_limit_loses_the_stream_not_the_connection() {
-    let cfg = Config { max_header_list: 200, ..Config::default() };
+    let cfg = Config {
+        max_header_list: 200,
+        ..Config::default()
+    };
     let (mut c, mut f) = started_with(cfg, &[]);
     let id = get(&mut c, &mut f);
     // the frame is longer than the limit: it is refused as soon as its length is known
@@ -958,13 +1228,18 @@ fn a_field_section_over_the_limit_loses_the_stream_not_the_connection() {
     // a section that is small as sent and large as a list (it repeats a long static entry): the decoder says so
     let id = get(&mut c, &mut f);
     let mut fields = vec![(":status", "200")];
-    let many: Vec<(&str, &str)> = (0..20).map(|_| ("content-type", "application/x-www-form-urlencoded")).collect();
+    let many: Vec<(&str, &str)> = (0..20)
+        .map(|_| ("content-type", "application/x-www-form-urlencoded"))
+        .collect();
     fields.extend(many);
     let mut bytes = vec![];
     put_headers(&mut bytes, &fields_block(&fields));
     f.push(id, &bytes, false);
     c.process(&mut f).unwrap();
-    assert_eq!(failure(&events(&mut c, id)[0]).code, code::H3_EXCESSIVE_LOAD);
+    assert_eq!(
+        failure(&events(&mut c, id)[0]).code,
+        code::H3_EXCESSIVE_LOAD
+    );
     assert!(f.closed.is_none());
 }
 
@@ -983,7 +1258,10 @@ fn goaway_ends_new_requests_and_fails_the_ones_that_were_not_taken() {
     f.push(SERVER_CONTROL, &bytes, false);
     c.process(&mut f).unwrap();
     assert!(!c.usable());
-    assert!(c.error().is_none(), "the connection is not lost: what was taken goes on");
+    assert!(
+        c.error().is_none(),
+        "the connection is not lost: what was taken goes on"
+    );
     // stream 0 goes on; 4 and 8 were not taken, and may be sent again
     f.push(a, &response(200, &[], b"ok"), true);
     c.process(&mut f).unwrap();
@@ -991,11 +1269,22 @@ fn goaway_ends_new_requests_and_fails_the_ones_that_were_not_taken() {
     for id in [b, d] {
         let ev = events(&mut c, id);
         let e = failure(&ev[0]);
-        assert_eq!((e.code, e.retry_safe), (code::H3_REQUEST_REJECTED, true), "stream {id}");
+        assert_eq!(
+            (e.code, e.retry_safe),
+            (code::H3_REQUEST_REJECTED, true),
+            "stream {id}"
+        );
         assert_eq!(f.stopped_by_us.get(&id), Some(&code::H3_REQUEST_REJECTED));
     }
     let headers = vec![];
-    let r = Request { method: "GET", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] };
+    let r = Request {
+        method: "GET",
+        scheme: "https",
+        authority: "example.com",
+        path: "/",
+        headers: &headers,
+        secret: &[],
+    };
     assert_eq!(c.open_stream(&mut f, &r, true), Err(OpenError::Unavailable));
 }
 
@@ -1037,9 +1326,17 @@ fn goaway_may_only_go_down_and_must_name_a_request_stream() {
 fn the_server_stopping_our_request_is_not_the_end_of_its_response() {
     let (mut c, mut f) = started();
     let headers = vec![];
-    let r = Request { method: "POST", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] };
+    let r = Request {
+        method: "POST",
+        scheme: "https",
+        authority: "example.com",
+        path: "/",
+        headers: &headers,
+        secret: &[],
+    };
     let id = c.open_stream(&mut f, &r, false).unwrap();
-    f.events.push_back(TransportEvent::Stopped(id, code::H3_NO_ERROR));
+    f.events
+        .push_back(TransportEvent::Stopped(id, code::H3_NO_ERROR));
     f.push(id, &response(413, &[], b"too big"), true);
     c.process(&mut f).unwrap();
     // the application learns when it sends more
@@ -1078,7 +1375,10 @@ fn a_released_stream_that_is_done_costs_nothing_more() {
     assert_eq!(events(&mut c, id).last(), Some(&StreamEvent::End));
     c.release_stream(&mut f, id);
     assert_eq!(c.active_streams(), 0);
-    assert!(f.stopped_by_us.is_empty(), "nothing is cancelled that was complete");
+    assert!(
+        f.stopped_by_us.is_empty(),
+        "nothing is cancelled that was complete"
+    );
     assert_eq!(f.sent[&id].reset, None);
     // (and what comes for a stream that is gone is not looked at)
     f.push(id, &[0, 1, 2], false);
@@ -1091,7 +1391,14 @@ fn a_released_stream_that_is_done_costs_nothing_more() {
 fn a_released_stream_that_is_not_done_is_cancelled_both_ways() {
     let (mut c, mut f) = started();
     let headers = vec![];
-    let r = Request { method: "POST", scheme: "https", authority: "example.com", path: "/", headers: &headers, secret: &[] };
+    let r = Request {
+        method: "POST",
+        scheme: "https",
+        authority: "example.com",
+        path: "/",
+        headers: &headers,
+        secret: &[],
+    };
     let id = c.open_stream(&mut f, &r, false).unwrap();
     f.push(id, &response(200, &[], b"part"), false);
     c.process(&mut f).unwrap();
@@ -1119,12 +1426,25 @@ fn everything_a_server_may_say_leaves_the_books_balanced() {
     let mut rng = Xorshift(0x1234_5678_9abc_def1);
     let mut ended = 0;
     for _ in 0..300 {
-        let (mut c, mut f) = started_with(Config { body_buffer: 5000, ..Config::default() }, &[(0x01, 4096), (0x07, 16)]);
+        let (mut c, mut f) = started_with(
+            Config {
+                body_buffer: 5000,
+                ..Config::default()
+            },
+            &[(0x01, 4096), (0x07, 16)],
+        );
         let ids: Vec<u64> = (0..3).map(|_| get(&mut c, &mut f)).collect();
         for _ in 0..40 {
-            let id = [SERVER_CONTROL, SERVER_QPACK_ENCODER, ids[rng.below(3)], ids[rng.below(3)]][rng.below(4)];
+            let id = [
+                SERVER_CONTROL,
+                SERVER_QPACK_ENCODER,
+                ids[rng.below(3)],
+                ids[rng.below(3)],
+            ][rng.below(4)];
             let n = rng.below(60);
-            let bytes: Vec<u8> = (0..n).map(|_| [0u8, 1, 2, 3, 4, 0x80, 0xc0, 0x40, 0x21, 7, 0xff][rng.below(11)]).collect();
+            let bytes: Vec<u8> = (0..n)
+                .map(|_| [0u8, 1, 2, 3, 4, 0x80, 0xc0, 0x40, 0x21, 7, 0xff][rng.below(11)])
+                .collect();
             f.push(id, &bytes, rng.below(20) == 0);
             let _ = c.process(&mut f);
             c.assert_books();
@@ -1147,15 +1467,25 @@ fn whatever_a_script_makes_of_a_well_made_server_the_connection_is_not_lost() {
     use crate::http::h3::qpack::harness::Xorshift;
     let (mut responses, mut waited, mut inserted) = (0, 0, 0);
     for seed in 1..=1500u64 {
-        let s = exchange(&mut Xorshift(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1), 150, false);
+        let s = exchange(
+            &mut Xorshift(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1),
+            150,
+            false,
+        );
         assert_eq!(s.lost, 0);
         responses += s.responses;
         waited += s.waited;
         inserted += s.inserted;
     }
     assert!(responses > 3000, "{responses} responses were read");
-    assert!(waited > 100, "{waited} steps with a stream waiting for the table");
-    assert!(inserted > 500, "{inserted} entries in the tables of the servers");
+    assert!(
+        waited > 100,
+        "{waited} steps with a stream waiting for the table"
+    );
+    assert!(
+        inserted > 500,
+        "{inserted} entries in the tables of the servers"
+    );
 }
 
 #[test]
@@ -1164,7 +1494,11 @@ fn whatever_a_script_makes_of_a_bad_server_the_books_balance() {
     use crate::http::h3::qpack::harness::Xorshift;
     let (mut lost, mut responses) = (0, 0);
     for seed in 1..=1500u64 {
-        let s = exchange(&mut Xorshift(seed.wrapping_mul(0xd1b5_4a32_d192_ed03) | 1), 150, true);
+        let s = exchange(
+            &mut Xorshift(seed.wrapping_mul(0xd1b5_4a32_d192_ed03) | 1),
+            150,
+            true,
+        );
         lost += s.lost;
         responses += s.responses;
     }
@@ -1178,11 +1512,17 @@ fn whatever_a_script_makes_of_a_bad_server_the_books_balance() {
 fn sweep() {
     use super::harness::exchange;
     use crate::http::h3::qpack::harness::Xorshift;
-    let n: u64 = std::env::var("H3_SWEEP").ok().and_then(|v| v.parse().ok()).unwrap_or(20_000);
+    let n: u64 = std::env::var("H3_SWEEP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(20_000);
     let (mut responses, mut lost) = (0, 0);
     for seed in 1..=n {
         let run = |garbage: bool, mul: u64| {
-            std::panic::catch_unwind(|| exchange(&mut Xorshift(seed.wrapping_mul(mul) | 1), 300, garbage)).unwrap_or_else(|_| panic!("the failure above is of seed {seed} (garbage: {garbage})"))
+            std::panic::catch_unwind(|| {
+                exchange(&mut Xorshift(seed.wrapping_mul(mul) | 1), 300, garbage)
+            })
+            .unwrap_or_else(|_| panic!("the failure above is of seed {seed} (garbage: {garbage})"))
         };
         let s = run(false, 0x9e37_79b9_7f4a_7c15);
         assert_eq!(s.lost, 0, "seed {seed}");

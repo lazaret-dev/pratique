@@ -52,14 +52,56 @@ pub const PUBLIC_KEY_LEN: usize = 32;
 /// The length of a signature in bytes.
 pub const SIGNATURE_LEN: usize = 64;
 
+/// Whether the bytes decode as an Ed25519 public point. This checks encoding,
+/// not whether the key has small order; use `verify_strict` for authentication.
+pub fn public_key_is_valid(bytes: &[u8]) -> bool {
+    <&[u8; 32]>::try_from(bytes)
+        .ok()
+        .and_then(Point::decode)
+        .is_some()
+}
+
+/// Strict, cofactorless verification for mail authentication. In addition to
+/// `verify`'s canonical scalar and recomputed-R checks, reject small-order A and
+/// R. This matches the strict policy used by Workglen's former Ed25519 provider.
+/// The general Go-compatible `verify` entry point retains its existing policy.
+pub fn verify_strict(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
+    let (Ok(a), Ok(sig)) = (
+        <&[u8; 32]>::try_from(public_key),
+        <&[u8; 64]>::try_from(signature),
+    ) else {
+        return false;
+    };
+    let r: &[u8; 32] = sig[..32].try_into().expect("fixed-size signature");
+    let (Some(a), Some(r)) = (Point::decode(a), Point::decode(r)) else {
+        return false;
+    };
+    let mut identity = [0u8; 32];
+    identity[0] = 1;
+    if a.double().double().double().encode() == identity
+        || r.double().double().double().encode() == identity
+    {
+        return false;
+    }
+    verify(public_key, message, signature)
+}
+
 /// The order of the base point, L = 2^252 + 27742317777372353535851937790883648493, as four
 /// little-endian 64-bit limbs.
-const L: [u64; 4] = [0x5812631a5cf5d3ed, 0x14def9dea2f79cd6, 0, 0x1000000000000000];
+const L: [u64; 4] = [
+    0x5812631a5cf5d3ed,
+    0x14def9dea2f79cd6,
+    0,
+    0x1000000000000000,
+];
 
 /// Verifies `signature` over `message` against `public_key`. A key or signature of the wrong length
 /// is simply not valid.
 pub fn verify(public_key: &[u8], message: &[u8], signature: &[u8]) -> bool {
-    let (Ok(a_bytes), Ok(sig)) = (<&[u8; 32]>::try_from(public_key), <&[u8; 64]>::try_from(signature)) else {
+    let (Ok(a_bytes), Ok(sig)) = (
+        <&[u8; 32]>::try_from(public_key),
+        <&[u8; 64]>::try_from(signature),
+    ) else {
         return false;
     };
     if sig[63] & 224 != 0 {
@@ -171,10 +213,20 @@ pub(super) struct Point {
 
 impl Point {
     #[cfg(test)]
-    const IDENTITY: Point = Point { x: Fe::ZERO, y: Fe::ONE, z: Fe::ONE, t: Fe::ZERO };
+    const IDENTITY: Point = Point {
+        x: Fe::ZERO,
+        y: Fe::ONE,
+        z: Fe::ONE,
+        t: Fe::ZERO,
+    };
 
     pub(super) fn base() -> Point {
-        Point { x: Fe::BASE_X, y: Fe::BASE_Y, z: Fe::ONE, t: Fe::BASE_X.mul(Fe::BASE_Y) }
+        Point {
+            x: Fe::BASE_X,
+            y: Fe::BASE_Y,
+            z: Fe::ONE,
+            t: Fe::BASE_X.mul(Fe::BASE_Y),
+        }
     }
 
     /// Decodes a point the way `ref10` and Go do: `y` is the low 255 bits (reduced modulo p if they
@@ -189,7 +241,12 @@ impl Point {
         if x.is_negative() != (bytes[31] >> 7 == 1) {
             x = x.neg();
         }
-        Some(Point { x, y, z: Fe::ONE, t: x.mul(y) })
+        Some(Point {
+            x,
+            y,
+            z: Fe::ONE,
+            t: x.mul(y),
+        })
     }
 
     /// The canonical encoding: y, with the parity of x in the top bit.
@@ -203,7 +260,12 @@ impl Point {
     }
 
     fn neg(&self) -> Point {
-        Point { x: self.x.neg(), y: self.y, z: self.z, t: self.t.neg() }
+        Point {
+            x: self.x.neg(),
+            y: self.y,
+            z: self.z,
+            t: self.t.neg(),
+        }
     }
 
     /// The unified addition law (add-2008-hwcd-3 with a = -1 and k = 2d). It has no exceptional cases
@@ -219,7 +281,12 @@ impl Point {
         let f = d.sub(c);
         let g = d.add(c);
         let h = b.add(a);
-        Point { x: e.mul(f), y: g.mul(h), z: f.mul(g), t: e.mul(h) }
+        Point {
+            x: e.mul(f),
+            y: g.mul(h),
+            z: f.mul(g),
+            t: e.mul(h),
+        }
     }
 
     /// Doubling (dbl-2008-hwcd with a = -1).
@@ -233,7 +300,12 @@ impl Point {
         let g = d.add(b);
         let f = g.sub(c);
         let h = d.sub(b);
-        Point { x: e.mul(f), y: g.mul(h), z: f.mul(g), t: e.mul(h) }
+        Point {
+            x: e.mul(f),
+            y: g.mul(h),
+            z: f.mul(g),
+            t: e.mul(h),
+        }
     }
 }
 
@@ -280,11 +352,19 @@ pub(super) fn double_scalar_mul_base(k: &[u8; 32], p: &Point, s: &[u8; 32]) -> P
         let (dk, ds) = (kd[i], sd[i]);
         if dk != 0 {
             let e = c.to_extended();
-            c = if dk > 0 { e.add_cached(&pt[(dk / 2) as usize]) } else { e.sub_cached(&pt[(-dk / 2) as usize]) };
+            c = if dk > 0 {
+                e.add_cached(&pt[(dk / 2) as usize])
+            } else {
+                e.sub_cached(&pt[(-dk / 2) as usize])
+            };
         }
         if ds != 0 {
             let e = c.to_extended();
-            c = if ds > 0 { e.add_affine(&bt[(ds / 2) as usize]) } else { e.sub_affine(&bt[(-ds / 2) as usize]) };
+            c = if ds > 0 {
+                e.add_affine(&bt[(ds / 2) as usize])
+            } else {
+                e.sub_affine(&bt[(-ds / 2) as usize])
+            };
         }
         r = c.to_projective();
     }
@@ -339,7 +419,11 @@ fn base_table() -> &'static [Affine; 64] {
         let b = Point::base();
         let b2 = b.double();
         let mut cur = b;
-        let mut out = [Affine { ypx: Fe::ZERO, ymx: Fe::ZERO, xy2d: Fe::ZERO }; 64];
+        let mut out = [Affine {
+            ypx: Fe::ZERO,
+            ymx: Fe::ZERO,
+            xy2d: Fe::ZERO,
+        }; 64];
         for (i, slot) in out.iter_mut().enumerate() {
             if i > 0 {
                 cur = cur.add(&b2);
@@ -384,7 +468,11 @@ pub(super) struct Projective {
 }
 
 impl Projective {
-    const IDENTITY: Projective = Projective { x: Fe::ZERO, y: Fe::ONE, z: Fe::ONE };
+    const IDENTITY: Projective = Projective {
+        x: Fe::ZERO,
+        y: Fe::ONE,
+        z: Fe::ONE,
+    };
 
     /// Doubling (dbl-2008-hwcd with a = -1, ref10's `ge_p2_dbl`): four squarings.
     pub(super) fn double(&self) -> Completed {
@@ -395,21 +483,40 @@ impl Projective {
         let aa = self.x.add(self.y).square();
         let y = yy.add(xx);
         let z = yy.sub(xx);
-        Completed { x: aa.sub(y), y, z, t: b.sub(z) }
+        Completed {
+            x: aa.sub(y),
+            y,
+            z,
+            t: b.sub(z),
+        }
     }
 
     fn to_extended(&self) -> Point {
-        Point { x: self.x.mul(self.z), y: self.y.mul(self.z), z: self.z.square(), t: self.x.mul(self.y) }
+        Point {
+            x: self.x.mul(self.z),
+            y: self.y.mul(self.z),
+            z: self.z.square(),
+            t: self.x.mul(self.y),
+        }
     }
 }
 
 impl Completed {
     pub(super) fn to_projective(&self) -> Projective {
-        Projective { x: self.x.mul(self.t), y: self.y.mul(self.z), z: self.z.mul(self.t) }
+        Projective {
+            x: self.x.mul(self.t),
+            y: self.y.mul(self.z),
+            z: self.z.mul(self.t),
+        }
     }
 
     pub(super) fn to_extended(&self) -> Point {
-        Point { x: self.x.mul(self.t), y: self.y.mul(self.z), z: self.z.mul(self.t), t: self.x.mul(self.y) }
+        Point {
+            x: self.x.mul(self.t),
+            y: self.y.mul(self.z),
+            z: self.z.mul(self.t),
+            t: self.x.mul(self.y),
+        }
     }
 }
 
@@ -422,7 +529,12 @@ impl Cached {
 
 impl Point {
     fn to_cached(&self) -> Cached {
-        Cached { ypx: self.y.add(self.x), ymx: self.y.sub(self.x), z: self.z, t2d: self.t.mul(Fe::D2) }
+        Cached {
+            ypx: self.y.add(self.x),
+            ymx: self.y.sub(self.x),
+            z: self.z,
+            t2d: self.t.mul(Fe::D2),
+        }
     }
 
     /// The affine form; only for the base-point table, which is made once.
@@ -433,7 +545,11 @@ impl Point {
     /// The affine form, given 1/Z (for tables whose inverses are made together).
     pub(super) fn to_affine_given(&self, zinv: Fe) -> Affine {
         let (x, y) = (self.x.mul(zinv), self.y.mul(zinv));
-        Affine { ypx: y.add(x), ymx: y.sub(x), xy2d: x.mul(y).mul(Fe::D2) }
+        Affine {
+            ypx: y.add(x),
+            ymx: y.sub(x),
+            xy2d: x.mul(y).mul(Fe::D2),
+        }
     }
 
     /// self + q (ref10's `ge_add`; add-2008-hwcd-3 with the addend's products made beforehand).
@@ -443,7 +559,12 @@ impl Point {
         let c = q.t2d.mul(self.t);
         let zz = self.z.mul(q.z);
         let d = zz.add(zz);
-        Completed { x: b.sub(a), y: b.add(a), z: d.add(c), t: d.sub(c) }
+        Completed {
+            x: b.sub(a),
+            y: b.add(a),
+            z: d.add(c),
+            t: d.sub(c),
+        }
     }
 
     /// self - q (ref10's `ge_sub`).
@@ -453,7 +574,12 @@ impl Point {
         let c = q.t2d.mul(self.t);
         let zz = self.z.mul(q.z);
         let d = zz.add(zz);
-        Completed { x: b.sub(a), y: b.add(a), z: d.sub(c), t: d.add(c) }
+        Completed {
+            x: b.sub(a),
+            y: b.add(a),
+            z: d.sub(c),
+            t: d.add(c),
+        }
     }
 
     /// self + q for an affine q (ref10's `ge_madd`): one multiplication fewer.
@@ -462,7 +588,12 @@ impl Point {
         let b = self.y.add(self.x).mul(q.ypx);
         let c = q.xy2d.mul(self.t);
         let d = self.z.add(self.z);
-        Completed { x: b.sub(a), y: b.add(a), z: d.add(c), t: d.sub(c) }
+        Completed {
+            x: b.sub(a),
+            y: b.add(a),
+            z: d.add(c),
+            t: d.sub(c),
+        }
     }
 
     /// self - q for an affine q (ref10's `ge_msub`).
@@ -471,7 +602,12 @@ impl Point {
         let b = self.y.add(self.x).mul(q.ymx);
         let c = q.xy2d.mul(self.t);
         let d = self.z.add(self.z);
-        Completed { x: b.sub(a), y: b.add(a), z: d.sub(c), t: d.add(c) }
+        Completed {
+            x: b.sub(a),
+            y: b.add(a),
+            z: d.sub(c),
+            t: d.add(c),
+        }
     }
 }
 
@@ -524,7 +660,10 @@ mod tests {
     fn rfc8032_section_7_1() {
         // TEST 1 and TEST 2 are the first two lines of the known-answer file.
         let v = sign_input();
-        assert_eq!(hex(&v[0].0), "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
+        assert_eq!(
+            hex(&v[0].0),
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+        );
         assert!(v[0].1.is_empty());
         assert!(verify(&v[0].0, &v[0].1, &v[0].2));
         assert_eq!(hex(&v[1].1), "72");
@@ -552,7 +691,10 @@ mod tests {
                 let bit = (n * 37 + j * 91) % 512;
                 let mut bad = sig.clone();
                 bad[bit / 8] ^= 1 << (bit % 8);
-                assert!(!verify(pk, msg, &bad), "vector {n}: flipped signature bit {bit}");
+                assert!(
+                    !verify(pk, msg, &bad),
+                    "vector {n}: flipped signature bit {bit}"
+                );
             }
             for j in 0..2 {
                 let bit = (n * 53 + j * 101) % 256;
@@ -593,18 +735,31 @@ mod tests {
     fn agrees_with_go_on_every_vector() {
         let mut n = 0;
         let mut accepted = 0;
-        for line in VECTORS.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+        for line in VECTORS
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
             let f: Vec<&str> = line.split(':').collect();
             assert_eq!(f.len(), 6, "{line}");
             let (family, key, sig, msg, go) = (f[0], unhex(f[1]), unhex(f[2]), unhex(f[3]), f[4]);
             let ours = verify(&key, &msg, &sig);
-            assert_eq!(ours, go == "1", "{family}: key {} sig {} message {}: Go says {go}", f[1], f[2], f[3]);
+            assert_eq!(
+                ours,
+                go == "1",
+                "{family}: key {} sig {} message {}: Go says {go}",
+                f[1],
+                f[2],
+                f[3]
+            );
             n += 1;
             accepted += ours as usize;
         }
         // the file really has the families it is meant to have
         assert!(n >= 1000, "{n} vectors");
-        assert!(accepted > 50 && accepted < n / 2, "{accepted} of {n} accepted");
+        assert!(
+            accepted > 50 && accepted < n / 2,
+            "{accepted} of {n} accepted"
+        );
     }
 
     /// The vector families that pin the individual rules, spelled out so that a change to one of them shows
@@ -647,14 +802,19 @@ mod tests {
         // any message, in all three of the identity's encodings that Go accepts as a key
         let identity = "0100000000000000000000000000000000000000000000000000000000000000";
         let identity_sign = "0100000000000000000000000000000000000000000000000000000000000080";
-        let identity_noncanonical = "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f";
+        let identity_noncanonical =
+            "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f";
         let zero_sig = unhex(&format!("{identity}{}", "00".repeat(32)));
         for key in [identity, identity_sign, identity_noncanonical] {
             assert!(verify(&unhex(key), b"anything at all", &zero_sig), "{key}");
         }
         // ... but R is compared as bytes, so the same signature with R written non-canonically does not
         let noncanonical_r = unhex(&format!("{identity_noncanonical}{}", "00".repeat(32)));
-        assert!(!verify(&unhex(identity), b"anything at all", &noncanonical_r));
+        assert!(!verify(
+            &unhex(identity),
+            b"anything at all",
+            &noncanonical_r
+        ));
         let sign_r = unhex(&format!("{identity_sign}{}", "00".repeat(32)));
         assert!(!verify(&unhex(identity), b"anything at all", &sign_r));
     }
@@ -699,27 +859,51 @@ mod tests {
     #[test]
     fn the_group_law() {
         let b = Point::base();
-        assert_eq!(hex(&b.encode()), "5866666666666666666666666666666666666666666666666666666666666666");
-        assert_eq!(hex(&b.double().encode()), "c9a3f86aae465f0e56513864510f3997561fa2c9e85ea21dc2292309f3cd6022");
+        assert_eq!(
+            hex(&b.encode()),
+            "5866666666666666666666666666666666666666666666666666666666666666"
+        );
+        assert_eq!(
+            hex(&b.double().encode()),
+            "c9a3f86aae465f0e56513864510f3997561fa2c9e85ea21dc2292309f3cd6022"
+        );
         assert_eq!(hex(&b.add(&b).encode()), hex(&b.double().encode()));
-        assert_eq!(hex(&b.add(&b.double()).encode()), "d4b4f5784868c3020403246717ec169ff79e26608ea126a1ab69ee77d1b16712");
-        assert_eq!(hex(&b.double().double().double().encode()), "b4b937fca95b2f1e93e41e62fc3c78818ff38a66096fad6e7973e5c90006d321");
+        assert_eq!(
+            hex(&b.add(&b.double()).encode()),
+            "d4b4f5784868c3020403246717ec169ff79e26608ea126a1ab69ee77d1b16712"
+        );
+        assert_eq!(
+            hex(&b.double().double().double().encode()),
+            "b4b937fca95b2f1e93e41e62fc3c78818ff38a66096fad6e7973e5c90006d321"
+        );
         // [1000]B by the double-scalar routine, with k = 0 and s = 1000
         let mut s = [0u8; 32];
         s[..2].copy_from_slice(&1000u16.to_le_bytes());
-        assert_eq!(hex(&double_scalar_mul_base(&[0; 32], &Point::IDENTITY, &s).encode()), "e7caaa83373a94afae43fec59b447c99ba282b19a7616c24c785ad8966a1e10e");
+        assert_eq!(
+            hex(&double_scalar_mul_base(&[0; 32], &Point::IDENTITY, &s).encode()),
+            "e7caaa83373a94afae43fec59b447c99ba282b19a7616c24c785ad8966a1e10e"
+        );
         // the order of B is L: [L]B is the identity and [L-1]B is -B
         let identity = "0100000000000000000000000000000000000000000000000000000000000000";
         let l = limbs_to_le(&L);
-        assert_eq!(hex(&double_scalar_mul_base(&[0; 32], &Point::IDENTITY, &l).encode()), identity);
+        assert_eq!(
+            hex(&double_scalar_mul_base(&[0; 32], &Point::IDENTITY, &l).encode()),
+            identity
+        );
         let mut l1 = l;
         l1[0] -= 1;
-        assert_eq!(hex(&double_scalar_mul_base(&[0; 32], &Point::IDENTITY, &l1).encode()), hex(&b.neg().encode()));
+        assert_eq!(
+            hex(&double_scalar_mul_base(&[0; 32], &Point::IDENTITY, &l1).encode()),
+            hex(&b.neg().encode())
+        );
         // the two scalars act on their own points: [3]B + [5]B = [8]B
         let (mut k, mut s) = ([0u8; 32], [0u8; 32]);
         k[0] = 3;
         s[0] = 5;
-        assert_eq!(hex(&double_scalar_mul_base(&k, &b, &s).encode()), "b4b937fca95b2f1e93e41e62fc3c78818ff38a66096fad6e7973e5c90006d321");
+        assert_eq!(
+            hex(&double_scalar_mul_base(&k, &b, &s).encode()),
+            "b4b937fca95b2f1e93e41e62fc3c78818ff38a66096fad6e7973e5c90006d321"
+        );
         // P + (-P) is the identity, and the identity is neutral
         assert_eq!(hex(&b.add(&b.neg()).encode()), identity);
         assert_eq!(hex(&b.add(&Point::IDENTITY).encode()), hex(&b.encode()));
@@ -729,13 +913,22 @@ mod tests {
     #[test]
     fn points_of_small_order() {
         // the two generators of the points of order 8 that the vector generator found
-        for enc in ["26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05", "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a"] {
+        for enc in [
+            "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+            "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+        ] {
             let t = Point::decode(&arr32(enc)).expect("on the curve");
             assert_eq!(hex(&t.encode()), enc);
             let t4 = t.double().double();
             // order exactly 8: 4T is not the identity (it is the point of order 2, (0, -1)), 8T is
-            assert_eq!(hex(&t4.encode()), "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
-            assert_eq!(hex(&t4.double().encode()), "0100000000000000000000000000000000000000000000000000000000000000");
+            assert_eq!(
+                hex(&t4.encode()),
+                "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+            );
+            assert_eq!(
+                hex(&t4.double().encode()),
+                "0100000000000000000000000000000000000000000000000000000000000000"
+            );
         }
     }
 
@@ -743,42 +936,163 @@ mod tests {
     fn decoding_is_as_permissive_as_ref10_and_no_more() {
         let canonical = |s: &str| hex(&Point::decode(&arr32(s)).expect(s).encode());
         // y = p and y = p + 1 reduce to y = 0 and y = 1
-        assert_eq!(canonical("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"), "0000000000000000000000000000000000000000000000000000000000000000");
-        assert_eq!(canonical("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"), "0100000000000000000000000000000000000000000000000000000000000000");
+        assert_eq!(
+            canonical("edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(
+            canonical("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"),
+            "0100000000000000000000000000000000000000000000000000000000000000"
+        );
         // x = 0 with the sign bit set is accepted and means x = 0
-        assert_eq!(canonical("0100000000000000000000000000000000000000000000000000000000000080"), "0100000000000000000000000000000000000000000000000000000000000000");
-        assert_eq!(canonical("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"), "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+        assert_eq!(
+            canonical("0100000000000000000000000000000000000000000000000000000000000080"),
+            "0100000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(
+            canonical("ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+            "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f"
+        );
         // the sign bit picks the other root otherwise
-        let b = Point::decode(&arr32("5866666666666666666666666666666666666666666666666666666666666666")).unwrap();
-        let minus_b = Point::decode(&arr32("58666666666666666666666666666666666666666666666666666666666666e6")).unwrap();
+        let b = Point::decode(&arr32(
+            "5866666666666666666666666666666666666666666666666666666666666666",
+        ))
+        .unwrap();
+        let minus_b = Point::decode(&arr32(
+            "58666666666666666666666666666666666666666666666666666666666666e6",
+        ))
+        .unwrap();
         assert_eq!(hex(&b.neg().encode()), hex(&minus_b.encode()));
         // y = 2 is not on the curve ((y^2 - 1) / (d y^2 + 1) is not a square)
-        assert!(Point::decode(&arr32("0200000000000000000000000000000000000000000000000000000000000000")).is_none());
+        assert!(Point::decode(&arr32(
+            "0200000000000000000000000000000000000000000000000000000000000000"
+        ))
+        .is_none());
     }
 
     /// (A, k, s, [k]A + [s]B) for random points A, computed with an independent implementation (Python
     /// integers, affine coordinates, tools/ed25519_vectors.py). The scalars are not reduced.
     const MULTIPLES: &[(&str, &str, &str, &str)] = &[
-        ("3dd392cc02d0b240df956e5306318332acfb903db2fa70316a0593d217d94678", "bccfd54a23a7ea79e8a8faf35d30d28eee3fecffe352809c8c26e13cc6b3a704", "90dc4e8e025172a1a9323fa9329e288016009f008dece2d9ba2daa47dc40e800", "f65bce1ba2f6aeff2e34f089f2edc7de3b40bb13a024242cd675b7295d02ae92"),
-        ("58f066984c724ab46130eb89b0518813a0698f196a9ce8d664d828cd38f0b47d", "6a0b4f148c65b7ea98db14c87c81c0c8a0a6b889d0a226f9790c421b7099b308", "abaddb71149a87a0561adfc6e96173eb4c69538dfba4a5f9d950191f6fc73e0b", "493dfde57f72a5754d79059f41bae234043e66332ed91b4f8a153c82984775a4"),
-        ("2996d5efe7e89b87c9d16f0e911704d4a9c4d5d7c6cf92c57c5659f9a8a1b833", "acde190ae428efbe8b46a95b8fac99c2f8cb42fdb65ccc6e1b8b2e1e95793108", "3bd231c04ac85c6aa46e59930a972e007139ec0f3b234bcb588e3e7b8c98af04", "b4f44e980c277a883bece0fb126af4b954d6129fa418651f00eff6bfbce9dbeb"),
-        ("9a8db8c22cb424d4167387c17312a5e72797d706ecb774b346ea19026c3cb51e", "ba7da3aa6199a1ecb2225d776d6d0b1de4cf32ddedfce763fc2b76f92d2a751e", "8a469993e50249b6b68673bbbf37e299e646d56a4235517dfdcca281dcb92311", "90f2dad41e7567b7a175fc4ddce6af42ca3c969bb96963682e66bf8cdc20464f"),
-        ("8c62a249dc262874c3a1b7df2cde6930ab68af042e93829702fa8b7c3d570e09", "92d8d004cbd630bc1ffb2d24e3264202a65c0617dd729ca8aaa6d4e03898fe06", "d63ca982c4343b340697c1ad260a4515aaf76fc73d98d76c8844542aac72f106", "89ae93828e841e5b7ae3e0cee4dd0f92fb471b04e8981c17de272bf6340897bb"),
-        ("445aa6db3fb20b86482bcf5220b2a4505ff1f3e9f9a99e31a3649fc61797f9a3", "6185f8b43245a2a87aa3264f2d59c6ec1c1c321426ff36461aded5ac4d6b9906", "8d2121251c7b37233d2a0c5cd3ccf3ed1fff13c804402fb21f008b0cd94a930d", "fb3a286b8ff063d125653bfd3cfb1a256bd8f431871577cc1ab104a2f6478633"),
-        ("dd770b6e91352c0187ce0c1c53200e08f75c396096c5e6c7766b6a2058b7e884", "a6114ed172335e99fdbcc9ef564a4e418c9017a26e3d0be8acba32d308682a0b", "cdd64c7b1bfa383448b19f8a90b35b911c1afac430f6bfbc886d8d52472dc714", "4feace3d0e50ee19c40e6337763d125447adae5341f4769db0e6d1a34518cda4"),
-        ("82cb31361b3d3ac9d6e8269d0af6f1a70aa97bfea6d9b4a553d7844e317e5cd2", "7b8aee560aa202f77f52eea4a4e8e76d7978fa307433cc8084492c802bc69c16", "6cd36b722bf9dc4a18916d4dd6c71b7e54e6433d97af2cb2bd1a3ff15e7b0406", "e135ce0fe244ac3a35a691607719ffa5bd2e59a28485dd2358a8b58c2afa9514"),
-        ("738ed77acf0370964f0d88ae8f6b6611d89170471ba80d4a2a914d2cb56f807b", "9d1ff8612255c4e4cbdd672be261cd62737b666393fd0adef648e08d17777e1b", "f177c04800854b704301de82bf8de5dee9c71a7174833eae5aee409195c14e01", "a897b4a51112cb770ebf979296e71200f1bb3a8825fcbc49f837f7f2cc957eb0"),
-        ("00d18d9336f794133fb16663f45ea25462150ce85cb5aef83d86885ff12818d4", "1120069996a942fff57b26dcd76e2b1c171ca759bd26345bda756a251fcee107", "62993f0614cd217978a0a4969a51d01976b97e8228b30fa22c1b816e2761d30e", "0bdca1e070c6293056944ee8c89a908cf67f65dda584844856d6869c1572df59"),
-        ("5f5d7f82410eda5c571cb084862f083b6b119295550165e11359a3df22bbdd59", "853dafa9181dcda9f0d430cb16fc8b93113acff3da015eb783d923b8ed108d0a", "315de94d598d740da9ccf1bd406a9f8b32930089ac5d2416430f9f85eb2f110c", "c387989b1fa48793a7938389a4bab2cb5c259f4df5b20e0a9fa038c293f880ed"),
-        ("22be858b4cb1c07a2efecd721a5f72bbd6ac3362c5c3e2b9c18c0b69c95f9bcb", "0c8e9c185e67a85e8395012b9df0551fca9caca3dc40347f3a7dcc3b38522b12", "df4e69ce180cffca2762e7818cf999f46e151450a371cebeb41a6a430d8d1b15", "6d90b83b6fbc8033e964b69394f5950eadb0ed65cabea32e406333eee3bf728c"),
-        ("18a0d9f0edf9037afa57905dd1e931bdb4048c509485a33a631100e762925266", "02592d7f0946402e8ea0e6f285f8616656e8d47b50cffaf2743bbe68a1b6b509", "8593095ec7b22976575b31f63938ecdf9a34ee2ef2f3dc1a92a71bc3273a6f0a", "b1363d428e9837093529428a36ef0cd8e1dd72003cb7f009a27015383e68d2d8"),
-        ("f384404a2f55f9442b9a267163fd0d3959dea6699fc5e3404dbb66b91862842b", "bcb440a648dfb2010b85408e5afd7ba80f63e4e61531dcfc5daa44c0813ff11e", "022ee8b4cf8fba0707a78dcad13e09b4970522b45f68896f79be79a476a0b918", "1cdf4aacc03a3d1b79efd50f63693b707ff31d3c9eded5b351353457b4d42b60"),
-        ("b72d218b2b9da74518c473ae5ad2ee6474cfc51ab785c320a63ce7aa8fab3963", "3308f81d8ed83c83d94da7954ddd0607d89632237ac7da4edac0b06b38a60507", "b54cf1bb70eba08590dcdd3967423bc5c5d9c9b6ce06886e1f181466d2fd5718", "427e0c7fdab4134adb221166bb491366ad51ae13acbeb9d04dd359371c92046d"),
-        ("a151f4b5ae07be65a317c7fabe2f61062524243324708435aa1e8309e7569e4f", "93164f92d218af8404e1a9bf157dbbfa87c93a27fdad612a480cf0f40a4b5213", "ebd3f973a7d695b2c57e4e23d77eeee5598c18110fcb5e8887213010babb9604", "ddf021b163ccfde1c4037e75ece3584a0fe0e405108e2640db85577699ade921"),
-        ("2ca64c25d01b97e9c1a158869f85773b19004bbcb4a58fe630c16874b6b26969", "bf802cb4cf561be23e4fb9adfca15c0a5ca554fefed452d5dccdc01e1076c80e", "e943104fc56e9e0e5d136987d45e1e9e669585ca529bdc18ea511afe53564213", "66a4c8d350ae8b906b8f4d66bc3597801d1f80082b2bebef9d635a7643ab877c"),
-        ("d2016def0673fce1a1fc09a0ae668fe69a66f204d5095b7f14846180467beb3c", "6a85afaa9e20bd0fa15943e3b2380abe6cecf3917fe9e6c27a7e8ad3b4842718", "02101d29e193aa94259f4238c39e5a0323393064f8857be0484a5bf2b3c3131f", "148954c6fe1ba3782528792faecc6ccf0aa8b1de874c5d53cfda040bb542ce60"),
-        ("4af93e82683c0ddc119d48497fdb27e8dd3f7d0225dcda3f11377164b59a56af", "8c3487ae558946f661da7cd59aaac4837b119d5707ca98f82a6081bf15aba719", "60074daf2854f1af47ee1ede3daacf93a29f5f6c074ec56fe675be30a2418a00", "969defad3f61ff94876690dbd2958672d9c5c453abba043d8fdc0efa719c46c2"),
-        ("a9056a4b4505ca33699c8d5650b172577f8ae94504f0273899438a7792261f46", "847c11e5f36c23e6ae35fb0ff2259d281c562b6b5a941d228fa64e6c989f5518", "77002bcf882d35670e16fa2fb643510af89e5eca4270bb955248278d0f584606", "161e04935fcef0aebb21bdd0a7845954bcebbebc07925a4f76d73717c79f02cb"),
+        (
+            "3dd392cc02d0b240df956e5306318332acfb903db2fa70316a0593d217d94678",
+            "bccfd54a23a7ea79e8a8faf35d30d28eee3fecffe352809c8c26e13cc6b3a704",
+            "90dc4e8e025172a1a9323fa9329e288016009f008dece2d9ba2daa47dc40e800",
+            "f65bce1ba2f6aeff2e34f089f2edc7de3b40bb13a024242cd675b7295d02ae92",
+        ),
+        (
+            "58f066984c724ab46130eb89b0518813a0698f196a9ce8d664d828cd38f0b47d",
+            "6a0b4f148c65b7ea98db14c87c81c0c8a0a6b889d0a226f9790c421b7099b308",
+            "abaddb71149a87a0561adfc6e96173eb4c69538dfba4a5f9d950191f6fc73e0b",
+            "493dfde57f72a5754d79059f41bae234043e66332ed91b4f8a153c82984775a4",
+        ),
+        (
+            "2996d5efe7e89b87c9d16f0e911704d4a9c4d5d7c6cf92c57c5659f9a8a1b833",
+            "acde190ae428efbe8b46a95b8fac99c2f8cb42fdb65ccc6e1b8b2e1e95793108",
+            "3bd231c04ac85c6aa46e59930a972e007139ec0f3b234bcb588e3e7b8c98af04",
+            "b4f44e980c277a883bece0fb126af4b954d6129fa418651f00eff6bfbce9dbeb",
+        ),
+        (
+            "9a8db8c22cb424d4167387c17312a5e72797d706ecb774b346ea19026c3cb51e",
+            "ba7da3aa6199a1ecb2225d776d6d0b1de4cf32ddedfce763fc2b76f92d2a751e",
+            "8a469993e50249b6b68673bbbf37e299e646d56a4235517dfdcca281dcb92311",
+            "90f2dad41e7567b7a175fc4ddce6af42ca3c969bb96963682e66bf8cdc20464f",
+        ),
+        (
+            "8c62a249dc262874c3a1b7df2cde6930ab68af042e93829702fa8b7c3d570e09",
+            "92d8d004cbd630bc1ffb2d24e3264202a65c0617dd729ca8aaa6d4e03898fe06",
+            "d63ca982c4343b340697c1ad260a4515aaf76fc73d98d76c8844542aac72f106",
+            "89ae93828e841e5b7ae3e0cee4dd0f92fb471b04e8981c17de272bf6340897bb",
+        ),
+        (
+            "445aa6db3fb20b86482bcf5220b2a4505ff1f3e9f9a99e31a3649fc61797f9a3",
+            "6185f8b43245a2a87aa3264f2d59c6ec1c1c321426ff36461aded5ac4d6b9906",
+            "8d2121251c7b37233d2a0c5cd3ccf3ed1fff13c804402fb21f008b0cd94a930d",
+            "fb3a286b8ff063d125653bfd3cfb1a256bd8f431871577cc1ab104a2f6478633",
+        ),
+        (
+            "dd770b6e91352c0187ce0c1c53200e08f75c396096c5e6c7766b6a2058b7e884",
+            "a6114ed172335e99fdbcc9ef564a4e418c9017a26e3d0be8acba32d308682a0b",
+            "cdd64c7b1bfa383448b19f8a90b35b911c1afac430f6bfbc886d8d52472dc714",
+            "4feace3d0e50ee19c40e6337763d125447adae5341f4769db0e6d1a34518cda4",
+        ),
+        (
+            "82cb31361b3d3ac9d6e8269d0af6f1a70aa97bfea6d9b4a553d7844e317e5cd2",
+            "7b8aee560aa202f77f52eea4a4e8e76d7978fa307433cc8084492c802bc69c16",
+            "6cd36b722bf9dc4a18916d4dd6c71b7e54e6433d97af2cb2bd1a3ff15e7b0406",
+            "e135ce0fe244ac3a35a691607719ffa5bd2e59a28485dd2358a8b58c2afa9514",
+        ),
+        (
+            "738ed77acf0370964f0d88ae8f6b6611d89170471ba80d4a2a914d2cb56f807b",
+            "9d1ff8612255c4e4cbdd672be261cd62737b666393fd0adef648e08d17777e1b",
+            "f177c04800854b704301de82bf8de5dee9c71a7174833eae5aee409195c14e01",
+            "a897b4a51112cb770ebf979296e71200f1bb3a8825fcbc49f837f7f2cc957eb0",
+        ),
+        (
+            "00d18d9336f794133fb16663f45ea25462150ce85cb5aef83d86885ff12818d4",
+            "1120069996a942fff57b26dcd76e2b1c171ca759bd26345bda756a251fcee107",
+            "62993f0614cd217978a0a4969a51d01976b97e8228b30fa22c1b816e2761d30e",
+            "0bdca1e070c6293056944ee8c89a908cf67f65dda584844856d6869c1572df59",
+        ),
+        (
+            "5f5d7f82410eda5c571cb084862f083b6b119295550165e11359a3df22bbdd59",
+            "853dafa9181dcda9f0d430cb16fc8b93113acff3da015eb783d923b8ed108d0a",
+            "315de94d598d740da9ccf1bd406a9f8b32930089ac5d2416430f9f85eb2f110c",
+            "c387989b1fa48793a7938389a4bab2cb5c259f4df5b20e0a9fa038c293f880ed",
+        ),
+        (
+            "22be858b4cb1c07a2efecd721a5f72bbd6ac3362c5c3e2b9c18c0b69c95f9bcb",
+            "0c8e9c185e67a85e8395012b9df0551fca9caca3dc40347f3a7dcc3b38522b12",
+            "df4e69ce180cffca2762e7818cf999f46e151450a371cebeb41a6a430d8d1b15",
+            "6d90b83b6fbc8033e964b69394f5950eadb0ed65cabea32e406333eee3bf728c",
+        ),
+        (
+            "18a0d9f0edf9037afa57905dd1e931bdb4048c509485a33a631100e762925266",
+            "02592d7f0946402e8ea0e6f285f8616656e8d47b50cffaf2743bbe68a1b6b509",
+            "8593095ec7b22976575b31f63938ecdf9a34ee2ef2f3dc1a92a71bc3273a6f0a",
+            "b1363d428e9837093529428a36ef0cd8e1dd72003cb7f009a27015383e68d2d8",
+        ),
+        (
+            "f384404a2f55f9442b9a267163fd0d3959dea6699fc5e3404dbb66b91862842b",
+            "bcb440a648dfb2010b85408e5afd7ba80f63e4e61531dcfc5daa44c0813ff11e",
+            "022ee8b4cf8fba0707a78dcad13e09b4970522b45f68896f79be79a476a0b918",
+            "1cdf4aacc03a3d1b79efd50f63693b707ff31d3c9eded5b351353457b4d42b60",
+        ),
+        (
+            "b72d218b2b9da74518c473ae5ad2ee6474cfc51ab785c320a63ce7aa8fab3963",
+            "3308f81d8ed83c83d94da7954ddd0607d89632237ac7da4edac0b06b38a60507",
+            "b54cf1bb70eba08590dcdd3967423bc5c5d9c9b6ce06886e1f181466d2fd5718",
+            "427e0c7fdab4134adb221166bb491366ad51ae13acbeb9d04dd359371c92046d",
+        ),
+        (
+            "a151f4b5ae07be65a317c7fabe2f61062524243324708435aa1e8309e7569e4f",
+            "93164f92d218af8404e1a9bf157dbbfa87c93a27fdad612a480cf0f40a4b5213",
+            "ebd3f973a7d695b2c57e4e23d77eeee5598c18110fcb5e8887213010babb9604",
+            "ddf021b163ccfde1c4037e75ece3584a0fe0e405108e2640db85577699ade921",
+        ),
+        (
+            "2ca64c25d01b97e9c1a158869f85773b19004bbcb4a58fe630c16874b6b26969",
+            "bf802cb4cf561be23e4fb9adfca15c0a5ca554fefed452d5dccdc01e1076c80e",
+            "e943104fc56e9e0e5d136987d45e1e9e669585ca529bdc18ea511afe53564213",
+            "66a4c8d350ae8b906b8f4d66bc3597801d1f80082b2bebef9d635a7643ab877c",
+        ),
+        (
+            "d2016def0673fce1a1fc09a0ae668fe69a66f204d5095b7f14846180467beb3c",
+            "6a85afaa9e20bd0fa15943e3b2380abe6cecf3917fe9e6c27a7e8ad3b4842718",
+            "02101d29e193aa94259f4238c39e5a0323393064f8857be0484a5bf2b3c3131f",
+            "148954c6fe1ba3782528792faecc6ccf0aa8b1de874c5d53cfda040bb542ce60",
+        ),
+        (
+            "4af93e82683c0ddc119d48497fdb27e8dd3f7d0225dcda3f11377164b59a56af",
+            "8c3487ae558946f661da7cd59aaac4837b119d5707ca98f82a6081bf15aba719",
+            "60074daf2854f1af47ee1ede3daacf93a29f5f6c074ec56fe675be30a2418a00",
+            "969defad3f61ff94876690dbd2958672d9c5c453abba043d8fdc0efa719c46c2",
+        ),
+        (
+            "a9056a4b4505ca33699c8d5650b172577f8ae94504f0273899438a7792261f46",
+            "847c11e5f36c23e6ae35fb0ff2259d281c562b6b5a941d228fa64e6c989f5518",
+            "77002bcf882d35670e16fa2fb643510af89e5eca4270bb955248278d0f584606",
+            "161e04935fcef0aebb21bdd0a7845954bcebbebc07925a4f76d73717c79f02cb",
+        ),
     ];
 
     /// The windowed double-scalar multiplication (B-103) gives the plain one's point for random scalars over all of
@@ -804,7 +1118,11 @@ mod tests {
             for j in 0..scalars.len() {
                 let (k, s) = (scalars[j], scalars[(j * 7 + i) % scalars.len()]);
                 let want = double_scalar_mul_base_plain(&k, p, &s).encode();
-                assert_eq!(double_scalar_mul_base(&k, p, &s).encode(), want, "point {i}, scalars {j}");
+                assert_eq!(
+                    double_scalar_mul_base(&k, p, &s).encode(),
+                    want,
+                    "point {i}, scalars {j}"
+                );
             }
         }
     }
@@ -814,14 +1132,21 @@ mod tests {
     fn the_signed_digits_represent_the_scalar() {
         let mut rng = crate::fuzz::Rng::new(0x5a1e);
         for t in 0..300 {
-            let k: [u8; 32] = if t == 0 { [0xffu8; 32] } else { rng.bytes(32).try_into().unwrap() };
+            let k: [u8; 32] = if t == 0 {
+                [0xffu8; 32]
+            } else {
+                rng.bytes(32).try_into().unwrap()
+            };
             for w in [5usize, 8] {
                 let d = wnaf(&k, w);
                 // the sum, in 64-bit limbs with a fifth for the carry, as a signed 2-adic sum
                 let mut acc = [0i128; 6];
                 for (i, &digit) in d.iter().enumerate() {
                     if digit != 0 {
-                        assert!(digit % 2 != 0 && (digit.unsigned_abs() as i32) < (1 << (w - 1)), "digit {digit}");
+                        assert!(
+                            digit % 2 != 0 && (digit.unsigned_abs() as i32) < (1 << (w - 1)),
+                            "digit {digit}"
+                        );
                         acc[i / 64] += (digit as i128) << (i % 64);
                     }
                 }
@@ -836,7 +1161,10 @@ mod tests {
                 }
                 assert_eq!(acc[4], 0, "w = {w}");
                 let nz: Vec<usize> = (0..257).filter(|&i| d[i] != 0).collect();
-                assert!(nz.windows(2).all(|p| p[1] - p[0] >= w), "w = {w}: digits too close");
+                assert!(
+                    nz.windows(2).all(|p| p[1] - p[0] >= w),
+                    "w = {w}: digits too close"
+                );
             }
         }
     }
@@ -845,7 +1173,11 @@ mod tests {
     fn double_scalar_multiplication_agrees_with_an_independent_implementation() {
         for (a, k, s, want) in MULTIPLES {
             let p = Point::decode(&arr32(a)).expect(a);
-            assert_eq!(hex(&double_scalar_mul_base(&arr32(k), &p, &arr32(s)).encode()), *want, "A = {a}");
+            assert_eq!(
+                hex(&double_scalar_mul_base(&arr32(k), &p, &arr32(s)).encode()),
+                *want,
+                "A = {a}"
+            );
         }
     }
 
@@ -885,9 +1217,13 @@ mod tests {
             k[0] = 3;
             s[0] = 5;
             let whole = double_scalar_mul_base(&k, &p, &s);
-            let parts = double_scalar_mul_base(&k, &p, &[0; 32]).add(&double_scalar_mul_base(&[0; 32], &p, &s));
+            let parts = double_scalar_mul_base(&k, &p, &[0; 32])
+                .add(&double_scalar_mul_base(&[0; 32], &p, &s));
             assert_eq!(e(&whole), e(&parts));
-            assert_eq!(e(&double_scalar_mul_base(&k, &p, &[0; 32])), e(&p.add(&p).add(&p)));
+            assert_eq!(
+                e(&double_scalar_mul_base(&k, &p, &[0; 32])),
+                e(&p.add(&p).add(&p))
+            );
         }
     }
 }

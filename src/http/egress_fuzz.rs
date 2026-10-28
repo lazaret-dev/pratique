@@ -22,7 +22,10 @@ enum Entry {
 fn canonical(host: &str) -> String {
     let lower = host.to_ascii_lowercase();
     let host = lower.strip_suffix('.').unwrap_or(&lower);
-    let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
     match host.parse::<Ipv6Addr>() {
         Ok(a) => a.to_string(),
         Err(_) => host.to_string(),
@@ -37,12 +40,17 @@ fn entry_of(text: &str) -> Entry {
     }
     if let Some(inner) = lower.strip_prefix('[') {
         let end = inner.find(']').expect("brackets were checked");
-        let port = inner[end + 1..].strip_prefix(':').map(|p| p.parse::<u16>().expect("a port was checked"));
+        let port = inner[end + 1..]
+            .strip_prefix(':')
+            .map(|p| p.parse::<u16>().expect("a port was checked"));
         return Entry::Host(canonical(&inner[..end]), port);
     }
     if lower.matches(':').count() == 1 {
         let (host, port) = lower.split_once(':').unwrap();
-        return Entry::Host(canonical(host), Some(port.parse::<u16>().expect("a port was checked")));
+        return Entry::Host(
+            canonical(host),
+            Some(port.parse::<u16>().expect("a port was checked")),
+        );
     }
     Entry::Host(canonical(&lower), None)
 }
@@ -61,10 +69,22 @@ impl Model {
     fn label_ok(&self, before: &str) -> bool {
         let edge = |l: &str| l.starts_with('-') || l.ends_with('-');
         if self.one_label {
-            !before.is_empty() && before.len() <= 63 && !edge(before) && before.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            !before.is_empty()
+                && before.len() <= 63
+                && !edge(before)
+                && before
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         } else {
             before.len() <= 253
-                && before.split('.').all(|l| !l.is_empty() && l.len() <= 63 && !edge(l) && l.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_'))
+                && before.split('.').all(|l| {
+                    !l.is_empty()
+                        && l.len() <= 63
+                        && !edge(l)
+                        && l.bytes().all(|b| {
+                            b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_'
+                        })
+                })
         }
     }
 
@@ -87,22 +107,29 @@ impl Model {
         // (a host whose last label is a number (`1`, `0x7f`) is an address to a URL parser, and is never under a wildcard)
         let last = host.rsplit('.').next().unwrap_or("");
         let hex = last.strip_prefix("0x");
-        if !last.is_empty() && (last.chars().all(|c| c.is_ascii_digit()) || hex.is_some_and(|h| h.chars().all(|c| c.is_ascii_hexdigit()))) {
+        if !last.is_empty()
+            && (last.chars().all(|c| c.is_ascii_digit())
+                || hex.is_some_and(|h| h.chars().all(|c| c.is_ascii_hexdigit())))
+        {
             return false;
         }
         self.entries.iter().any(|e| match e {
-            Entry::Wild(d) => host.strip_suffix(&format!(".{d}")).is_some_and(|before| self.label_ok(before)),
+            Entry::Wild(d) => host
+                .strip_suffix(&format!(".{d}"))
+                .is_some_and(|before| self.label_ok(before)),
             Entry::Host(..) => false,
         })
     }
 
     /// Whether the limits on a URL let this text through.
     fn text_ok(&self, text: &str) -> bool {
-        self.max_length.map_or(true, |m| text.len() <= m) && (!self.printable || text.bytes().all(|b| (b'!'..=b'~').contains(&b)))
+        self.max_length.map_or(true, |m| text.len() <= m)
+            && (!self.printable || text.bytes().all(|b| (b'!'..=b'~').contains(&b)))
     }
 
     fn url_ok(&self, url: &Url) -> bool {
-        (!self.https_only || url.scheme == "https") && (!self.no_credentials || url.userinfo.is_none())
+        (!self.https_only || url.scheme == "https")
+            && (!self.no_credentials || url.userinfo.is_none())
     }
 
     fn target_ok(&self, url: &Url) -> bool {
@@ -114,7 +141,10 @@ impl Model {
 const OWN: [&str; 3] = ["host", "connection", "content-length"];
 
 fn token(name: &str) -> bool {
-    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b))
 }
 
 /// What the hook gives for a hop: the headers of the input, and one of its own that says where the hop goes.
@@ -125,53 +155,118 @@ fn given(spec: &[(String, String)], url: &Url) -> Vec<(String, String)> {
 }
 
 fn spec_ok(spec: &[(String, String)]) -> bool {
-    spec.iter().all(|(n, v)| token(n) && !v.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0) && !OWN.iter().any(|o| n.eq_ignore_ascii_case(o)))
+    spec.iter().all(|(n, v)| {
+        token(n)
+            && !v.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0)
+            && !OWN.iter().any(|o| n.eq_ignore_ascii_case(o))
+    })
 }
 
 fn same(a: &Hop, b: &Hop) -> bool {
-    (&a.method, &a.url, &a.headers, &a.body, &a.granted, a.index) == (&b.method, &b.url, &b.headers, &b.body, &b.granted, b.index)
+    (&a.method, &a.url, &a.headers, &a.body, &a.granted, a.index)
+        == (&b.method, &b.url, &b.headers, &b.body, &b.granted, b.index)
 }
 
 fn copy(h: &Hop) -> Hop {
-    Hop { method: h.method.clone(), url: h.url.clone(), headers: h.headers.clone(), body: h.body.clone(), granted: h.granted.clone(), index: h.index, decode: h.decode, min_tls: h.min_tls, running: None }
+    Hop {
+        method: h.method.clone(),
+        url: h.url.clone(),
+        headers: h.headers.clone(),
+        body: h.body.clone(),
+        granted: h.granted.clone(),
+        index: h.index,
+        decode: h.decode,
+        min_tls: h.min_tls,
+        running: None,
+    }
 }
 
 /// The header list that goes with `hop` is well made, and is what the caller, the hook and the client each give.
 fn check_sent(client: &Client, hop: &Hop, insecure_ok: bool) {
     let sent = client.request_headers(hop);
     if !hop.url.is_https() && !insecure_ok {
-        assert!(matches!(&sent, Err(Error::Refused(r)) if r.hop == hop.index), "plain http without leave: {sent:?}");
+        assert!(
+            matches!(&sent, Err(Error::Refused(r)) if r.hop == hop.index),
+            "plain http without leave: {sent:?}"
+        );
         return;
     }
     let sent = sent.unwrap_or_else(|e| panic!("headers for {} were refused: {e}", hop.url));
     for (n, v) in &sent {
         assert!(token(n), "a header name {n:?} that is not a token");
-        assert!(!v.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0), "a header value with a line break or NUL ({n})");
+        assert!(
+            !v.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0),
+            "a header value with a line break or NUL ({n})"
+        );
     }
-    let count = |name: &str| sent.iter().filter(|(n, _)| n.eq_ignore_ascii_case(name)).count();
-    let hosts: Vec<_> = sent.iter().filter(|(n, _)| n.eq_ignore_ascii_case("host")).collect();
+    let count = |name: &str| {
+        sent.iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case(name))
+            .count()
+    };
+    let hosts: Vec<_> = sent
+        .iter()
+        .filter(|(n, _)| n.eq_ignore_ascii_case("host"))
+        .collect();
     assert_eq!(hosts.len(), 1, "Host is set once");
     assert_eq!(hosts[0].1, hop.url.host_header());
-    assert!(count("connection") <= 1 && count("content-length") <= usize::from(!hop.body.is_empty() || matches!(hop.method.as_str(), "POST" | "PUT" | "PATCH")));
+    assert!(
+        count("connection") <= 1
+            && count("content-length")
+                <= usize::from(
+                    !hop.body.is_empty() || matches!(hop.method.as_str(), "POST" | "PUT" | "PATCH")
+                )
+    );
     // what the hook gave is there, as it gave it; and the caller's of the same name is not
-    let mut names: Vec<String> = hop.granted.iter().map(|(n, _)| n.to_ascii_lowercase()).collect();
+    let mut names: Vec<String> = hop
+        .granted
+        .iter()
+        .map(|(n, _)| n.to_ascii_lowercase())
+        .collect();
     names.sort();
     names.dedup();
     for name in &names {
-        let want: Vec<&String> = hop.granted.iter().filter(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v).collect();
-        let got: Vec<&String> = sent.iter().filter(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, v)| v).collect();
-        assert_eq!(got, want, "what the hook gave under {name} and what was sent");
+        let want: Vec<&String> = hop
+            .granted
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v)
+            .collect();
+        let got: Vec<&String> = sent
+            .iter()
+            .filter(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v)
+            .collect();
+        assert_eq!(
+            got, want,
+            "what the hook gave under {name} and what was sent"
+        );
     }
     // a hop's header is the hook's for this hop and no other
-    let hosts: Vec<&String> = sent.iter().filter(|(n, _)| n.eq_ignore_ascii_case("x-hop-host")).map(|(_, v)| v).collect();
-    assert!(hosts.len() <= 1 && hosts.iter().all(|h| **h == hop.url.host), "a header of another hop: {hosts:?} at {}", hop.url);
+    let hosts: Vec<&String> = sent
+        .iter()
+        .filter(|(n, _)| n.eq_ignore_ascii_case("x-hop-host"))
+        .map(|(_, v)| v)
+        .collect();
+    assert!(
+        hosts.len() <= 1 && hosts.iter().all(|h| **h == hop.url.host),
+        "a header of another hop: {hosts:?} at {}",
+        hop.url
+    );
 }
 
 pub fn egress(data: &[u8]) {
-    let Some((&flags, rest)) = data.split_first() else { return };
+    let Some((&flags, rest)) = data.split_first() else {
+        return;
+    };
     let text = String::from_utf8_lossy(rest);
     let mut lines = text.split('\n');
-    let entries: Vec<&str> = lines.next().unwrap_or("").split(' ').filter(|e| !e.is_empty()).collect();
+    let entries: Vec<&str> = lines
+        .next()
+        .unwrap_or("")
+        .split(' ')
+        .filter(|e| !e.is_empty())
+        .collect();
     let first = lines.next().unwrap_or("");
     let spec: Vec<(String, String)> = lines
         .next()
@@ -191,7 +286,9 @@ pub fn egress(data: &[u8]) {
         Err(_) => return,
     };
     let (one_label, default_port_only) = (flags & 1 != 0, flags & 2 != 0);
-    let rules = rules.one_label_wildcards(one_label).default_port_only(default_port_only);
+    let rules = rules
+        .one_label_wildcards(one_label)
+        .default_port_only(default_port_only);
     let mut limits = UrlLimits::new();
     let mut model = Model {
         entries: entries.iter().map(|e| entry_of(e)).collect(),
@@ -202,7 +299,10 @@ pub fn egress(data: &[u8]) {
         no_credentials: flags & 8 != 0,
         https_only: flags & 16 != 0,
     };
-    limits = limits.printable_ascii_only(model.printable).refuse_credentials(model.no_credentials).https_only(model.https_only);
+    limits = limits
+        .printable_ascii_only(model.printable)
+        .refuse_credentials(model.no_credentials)
+        .https_only(model.https_only);
     if flags & 64 != 0 {
         model.max_length = Some(60);
         limits = limits.max_length(60);
@@ -215,10 +315,15 @@ pub fn egress(data: &[u8]) {
         .allowed_hosts(rules)
         .url_limits(limits)
         .hop_headers(move |info: &HopInfo<'_>| Ok(given(&hook_spec, info.url)));
-    let caller: Vec<(String, String)> = [("Authorization", "Bearer caller"), ("Cookie", "k=v"), ("X-Caller", "1"), ("Private-Token", "caller-token")]
-        .iter()
-        .map(|(n, v)| (n.to_string(), v.to_string()))
-        .collect();
+    let caller: Vec<(String, String)> = [
+        ("Authorization", "Bearer caller"),
+        ("Cookie", "k=v"),
+        ("X-Caller", "1"),
+        ("Private-Token", "caller-token"),
+    ]
+    .iter()
+    .map(|(n, v)| (n.to_string(), v.to_string()))
+    .collect();
 
     // the rule about hosts, asked of every host this input names, is what the simple account says
     let judged = |u: &Url| {
@@ -229,7 +334,9 @@ pub fn egress(data: &[u8]) {
     };
 
     // ---- the request itself
-    let expected = model.text_ok(first) && Url::parse(first).map_or(false, |u| model.target_ok(&u)) && spec_is_ok;
+    let expected = model.text_ok(first)
+        && Url::parse(first).map_or(false, |u| model.target_ok(&u))
+        && spec_is_ok;
     let started = client.start(method.to_string(), first, caller.clone(), b"{}".to_vec());
     assert_eq!(started.is_ok(), expected, "the request {first:?}: the client says {:?}, the simple account {expected} (flags {flags:#x}, entries {entries:?}, spec {spec:?})", started.as_ref().map(|_| ()));
     if let Err(e) = &started {
@@ -240,7 +347,10 @@ pub fn egress(data: &[u8]) {
     }
     let Ok(mut hop) = started else { return };
     judged(&hop.url);
-    assert_eq!((hop.index, hop.granted.clone()), (0, given(&spec, &hop.url)));
+    assert_eq!(
+        (hop.index, hop.granted.clone()),
+        (0, given(&spec, &hop.url))
+    );
     check_sent(&client, &hop, insecure_ok);
 
     // ---- every redirect
@@ -249,17 +359,33 @@ pub fn egress(data: &[u8]) {
         let status = [302u16, 303, 307, 308, 301][i % 5];
         let before = copy(&hop);
         let was = hops;
-        let result = client.follow(&mut hop, status, &[("Location".to_string(), location.to_string())], &mut hops);
+        let result = client.follow(
+            &mut hop,
+            status,
+            &[("Location".to_string(), location.to_string())],
+            &mut hops,
+        );
         if was >= 10 {
             // the limit on redirects (the client's default) is checked before anything else, and before the count goes up
-            assert!(matches!(&result, Err(Error::Http(m)) if m.contains("too many redirects")), "{result:?}");
+            assert!(
+                matches!(&result, Err(Error::Http(m)) if m.contains("too many redirects")),
+                "{result:?}"
+            );
             assert!(same(&before, &hop) && hops == was);
             return;
         }
         assert_eq!(hops, was + 1);
         // what the simple account says about this one
-        let next = if model.text_ok(location) { before.url.join(location).ok() } else { None };
-        let next_ok = next.as_ref().is_some_and(|n| model.text_ok(&n.to_string()) && !(before.url.is_https() && !n.is_https()) && model.target_ok(n));
+        let next = if model.text_ok(location) {
+            before.url.join(location).ok()
+        } else {
+            None
+        };
+        let next_ok = next.as_ref().is_some_and(|n| {
+            model.text_ok(&n.to_string())
+                && !(before.url.is_https() && !n.is_https())
+                && model.target_ok(n)
+        });
         match (&result, next_ok) {
             (Ok(true), true) => {}
             (Err(Error::Refused(r)), false) => assert_eq!(r.hop, hops, "the hop a refusal names"),
@@ -268,7 +394,10 @@ pub fn egress(data: &[u8]) {
         }
         match result {
             Err(_) => {
-                assert!(same(&before, &hop), "a refused hop leaves the request as it was");
+                assert!(
+                    same(&before, &hop),
+                    "a refused hop leaves the request as it was"
+                );
                 return;
             }
             Ok(followed) => {
@@ -277,15 +406,34 @@ pub fn egress(data: &[u8]) {
                 assert_eq!((&hop.url, hop.index), (&n, hops));
                 judged(&hop.url);
                 // the method and the body: as a redirect of this status makes them
-                let drop_body = status == 303 && before.method != "HEAD" || (status == 301 || status == 302) && before.method == "POST";
-                assert_eq!(hop.method, if drop_body { "GET" } else { before.method.as_str() });
+                let drop_body = status == 303 && before.method != "HEAD"
+                    || (status == 301 || status == 302) && before.method == "POST";
+                assert_eq!(
+                    hop.method,
+                    if drop_body {
+                        "GET"
+                    } else {
+                        before.method.as_str()
+                    }
+                );
                 assert_eq!(hop.body.is_empty(), drop_body || before.body.is_empty());
                 // the credentials of the caller go no further than their origin; what the hook gave is this hop's own
-                let carried = |name: &str| hop.headers.iter().any(|(h, _)| h.eq_ignore_ascii_case(name));
+                let carried = |name: &str| {
+                    hop.headers
+                        .iter()
+                        .any(|(h, _)| h.eq_ignore_ascii_case(name))
+                };
                 if before.url.origin() != hop.url.origin() {
-                    assert!(!carried("authorization") && !carried("cookie"), "a credential followed a redirect to another origin");
+                    assert!(
+                        !carried("authorization") && !carried("cookie"),
+                        "a credential followed a redirect to another origin"
+                    );
                 }
-                assert_eq!(hop.granted, given(&spec, &hop.url), "what the hook gave is for this hop only");
+                assert_eq!(
+                    hop.granted,
+                    given(&spec, &hop.url),
+                    "what the hook gave is for this hop only"
+                );
                 check_sent(&client, &hop, insecure_ok);
             }
         }

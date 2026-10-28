@@ -70,8 +70,8 @@ pub fn has_downgrade_sentinel(random: &[u8; 32]) -> bool {
 
 /// The fixed ServerHello.random value that marks a HelloRetryRequest.
 pub const HELLO_RETRY_REQUEST_RANDOM: [u8; 32] = [
-    0xCF, 0x21, 0xAD, 0x74, 0xE5, 0x9A, 0x61, 0x11, 0xBE, 0x1D, 0x8C, 0x02, 0x1E, 0x65, 0xB8, 0x91, 0xC2, 0xA2, 0x11, 0x16,
-    0x7A, 0xBB, 0x8C, 0x5E, 0x07, 0x9E, 0x09, 0xE2, 0xC8, 0xA8, 0x33, 0x9C,
+    0xCF, 0x21, 0xAD, 0x74, 0xE5, 0x9A, 0x61, 0x11, 0xBE, 0x1D, 0x8C, 0x02, 0x1E, 0x65, 0xB8, 0x91,
+    0xC2, 0xA2, 0x11, 0x16, 0x7A, 0xBB, 0x8C, 0x5E, 0x07, 0x9E, 0x09, 0xE2, 0xC8, 0xA8, 0x33, 0x9C,
 ];
 
 fn put_u16(v: &mut Vec<u8>, x: u16) {
@@ -152,7 +152,11 @@ pub fn build_client_hello(ch: &ClientHello) -> Vec<u8> {
 
     let mut suites: Vec<u16> = Suite::preference_order().iter().map(|s| s.id()).collect();
     if ch.tls12 {
-        suites.extend(super::tls12::Suite12::preference_order().iter().map(|s| s.id()));
+        suites.extend(
+            super::tls12::Suite12::preference_order()
+                .iter()
+                .map(|s| s.id()),
+        );
     }
     put_u16(&mut body, (suites.len() * 2) as u16);
     for s in suites {
@@ -169,7 +173,10 @@ pub fn build_client_hello(ch: &ClientHello) -> Vec<u8> {
         extension(&mut exts, EXT_SERVER_NAME, &e);
     }
     let mut groups = Vec::new();
-    let list: Vec<u8> = SUPPORTED_GROUPS.iter().flat_map(|g| g.to_be_bytes()).collect();
+    let list: Vec<u8> = SUPPORTED_GROUPS
+        .iter()
+        .flat_map(|g| g.to_be_bytes())
+        .collect();
     put_vec16(&mut groups, &list);
     extension(&mut exts, EXT_SUPPORTED_GROUPS, &groups);
 
@@ -182,7 +189,11 @@ pub fn build_client_hello(ch: &ClientHello) -> Vec<u8> {
     extension(&mut exts, EXT_SIGNATURE_ALGORITHMS, &sigs);
 
     if ch.tls12 {
-        extension(&mut exts, EXT_SUPPORTED_VERSIONS, &[4, 0x03, 0x04, 0x03, 0x03]);
+        extension(
+            &mut exts,
+            EXT_SUPPORTED_VERSIONS,
+            &[4, 0x03, 0x04, 0x03, 0x03],
+        );
     } else {
         extension(&mut exts, EXT_SUPPORTED_VERSIONS, &[2, 0x03, 0x04]);
     }
@@ -222,7 +233,9 @@ pub fn build_client_hello(ch: &ClientHello) -> Vec<u8> {
     }
 
     if ch.tls12 {
-        use super::tls12::{EXT_EC_POINT_FORMATS, EXT_EXTENDED_MASTER_SECRET, EXT_RENEGOTIATION_INFO};
+        use super::tls12::{
+            EXT_EC_POINT_FORMATS, EXT_EXTENDED_MASTER_SECRET, EXT_RENEGOTIATION_INFO,
+        };
         extension(&mut exts, EXT_EXTENDED_MASTER_SECRET, &[]);
         // an empty renegotiated_connection: this is a first handshake (RFC 5746), and none will follow
         extension(&mut exts, EXT_RENEGOTIATION_INFO, &[0]);
@@ -292,7 +305,10 @@ pub fn parse_server_hello(body: &[u8]) -> Result<ServerHello> {
         .take(32)
         .and_then(|b| <[u8; 32]>::try_from(b).ok())
         .ok_or_else(|| bad("ServerHello random"))?;
-    let session_id = r.vec8().ok_or_else(|| bad("ServerHello session id"))?.to_vec();
+    let session_id = r
+        .vec8()
+        .ok_or_else(|| bad("ServerHello session id"))?
+        .to_vec();
     let cipher_suite = r.u16().ok_or_else(|| bad("ServerHello cipher suite"))?;
     let compression = r.u8().ok_or_else(|| bad("ServerHello compression"))?;
     let exts = r.vec16().unwrap_or(&[]);
@@ -325,13 +341,21 @@ pub fn parse_server_hello(body: &[u8]) -> Result<ServerHello> {
                 let group = kr.u16().ok_or_else(|| bad("key_share group"))?;
                 // A HelloRetryRequest carries only the group (RFC 8446 section 4.2.8); a
                 // ServerHello carries the group and one key.
-                let key = if is_retry { Vec::new() } else { kr.vec16().ok_or_else(|| bad("key_share key"))?.to_vec() };
+                let key = if is_retry {
+                    Vec::new()
+                } else {
+                    kr.vec16().ok_or_else(|| bad("key_share key"))?.to_vec()
+                };
                 if !kr.is_empty() {
                     return Err(bad("trailing data in key_share"));
                 }
                 sh.key_share = Some((group, key));
             }
-            EXT_COOKIE if !is_retry => return Err(Error::Tls("unsupported_extension: a cookie in a ServerHello".into())),
+            EXT_COOKIE if !is_retry => {
+                return Err(Error::Tls(
+                    "unsupported_extension: a cookie in a ServerHello".into(),
+                ))
+            }
             EXT_COOKIE => {
                 let mut cr = Reader::new(d);
                 let cookie = cr.vec16().ok_or_else(|| bad("cookie"))?;
@@ -346,7 +370,12 @@ pub fn parse_server_hello(body: &[u8]) -> Result<ServerHello> {
                 }
                 sh.selected_identity = Some(u16::from_be_bytes([d[0], d[1]]));
             }
-            _ if is_retry => return Err(Error::Tls(format!("unsupported_extension: unexpected extension {} in ServerHello", t))),
+            _ if is_retry => {
+                return Err(Error::Tls(format!(
+                    "unsupported_extension: unexpected extension {} in ServerHello",
+                    t
+                )))
+            }
             _ => sh.other_extensions.push((t, d.to_vec())),
         }
         Ok(())
@@ -371,14 +400,23 @@ pub struct EncryptedExtensions {
 /// server may always send. Everything else (key_share and supported_versions belong in the
 /// ServerHello, signature_algorithms in CertificateRequest, ...) is `unsupported_extension`.
 #[cfg(test)]
-pub fn parse_encrypted_extensions(body: &[u8], sent_sni: bool, offered_alpn: bool) -> Result<Option<Vec<u8>>> {
+pub fn parse_encrypted_extensions(
+    body: &[u8],
+    sent_sni: bool,
+    offered_alpn: bool,
+) -> Result<Option<Vec<u8>>> {
     Ok(parse_encrypted_extensions_for(body, sent_sni, offered_alpn, false)?.alpn)
 }
 
 /// [`parse_encrypted_extensions`] for a QUIC client too (`quic`): the server's `quic_transport_parameters`, which a client that
 /// sent its own may be answered with, is returned; a client that did not send any refuses them like any other unsolicited
 /// extension.
-pub fn parse_encrypted_extensions_for(body: &[u8], sent_sni: bool, offered_alpn: bool, quic: bool) -> Result<EncryptedExtensions> {
+pub fn parse_encrypted_extensions_for(
+    body: &[u8],
+    sent_sni: bool,
+    offered_alpn: bool,
+    quic: bool,
+) -> Result<EncryptedExtensions> {
     let mut r = Reader::new(body);
     let exts = r.vec16().ok_or_else(|| bad("EncryptedExtensions"))?;
     if !r.is_empty() {
@@ -423,7 +461,10 @@ pub fn parse_encrypted_extensions_for(body: &[u8], sent_sni: bool, offered_alpn:
         }
         Ok(())
     })?;
-    Ok(EncryptedExtensions { alpn, quic_transport_parameters })
+    Ok(EncryptedExtensions {
+        alpn,
+        quic_transport_parameters,
+    })
 }
 
 /// A server's CertificateRequest (RFC 8446 section 4.3.2): its context and the signatures it takes from the client.
@@ -436,8 +477,13 @@ pub struct CertificateRequest {
 /// Parses a CertificateRequest.
 pub fn parse_certificate_request(body: &[u8]) -> Result<CertificateRequest> {
     let mut r = Reader::new(body);
-    let context = r.vec8().ok_or_else(|| bad("CertificateRequest context"))?.to_vec();
-    let exts = r.vec16().ok_or_else(|| bad("CertificateRequest extensions"))?;
+    let context = r
+        .vec8()
+        .ok_or_else(|| bad("CertificateRequest context"))?
+        .to_vec();
+    let exts = r
+        .vec16()
+        .ok_or_else(|| bad("CertificateRequest extensions"))?;
     if !r.is_empty() {
         return Err(bad("trailing data in CertificateRequest"));
     }
@@ -446,15 +492,34 @@ pub fn parse_certificate_request(body: &[u8]) -> Result<CertificateRequest> {
     for_each_extension(exts, |t, d| match t {
         EXT_SIGNATURE_ALGORITHMS => {
             let mut sr = Reader::new(d);
-            let list = sr.vec16().filter(|l| !l.is_empty() && l.len() % 2 == 0 && sr.is_empty()).ok_or_else(|| bad("CertificateRequest signature_algorithms"))?;
-            signature_algorithms = Some(list.chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect());
+            let list = sr
+                .vec16()
+                .filter(|l| !l.is_empty() && l.len() % 2 == 0 && sr.is_empty())
+                .ok_or_else(|| bad("CertificateRequest signature_algorithms"))?;
+            signature_algorithms = Some(
+                list.chunks(2)
+                    .map(|c| u16::from_be_bytes([c[0], c[1]]))
+                    .collect(),
+            );
             Ok(())
         }
-        EXT_STATUS_REQUEST | EXT_SCT | EXT_CERTIFICATE_AUTHORITIES | EXT_OID_FILTERS | EXT_SIGNATURE_ALGORITHMS_CERT => Ok(()),
-        _ => Err(Error::Tls(format!("unsupported_extension: extension {} is not allowed in CertificateRequest", t))),
+        EXT_STATUS_REQUEST
+        | EXT_SCT
+        | EXT_CERTIFICATE_AUTHORITIES
+        | EXT_OID_FILTERS
+        | EXT_SIGNATURE_ALGORITHMS_CERT => Ok(()),
+        _ => Err(Error::Tls(format!(
+            "unsupported_extension: extension {} is not allowed in CertificateRequest",
+            t
+        ))),
     })?;
-    let signature_algorithms = signature_algorithms.ok_or_else(|| Error::Tls("missing_extension: CertificateRequest has no signature_algorithms".into()))?;
-    Ok(CertificateRequest { context, signature_algorithms })
+    let signature_algorithms = signature_algorithms.ok_or_else(|| {
+        Error::Tls("missing_extension: CertificateRequest has no signature_algorithms".into())
+    })?;
+    Ok(CertificateRequest {
+        context,
+        signature_algorithms,
+    })
 }
 
 /// What a server's Certificate message carries.
@@ -472,7 +537,9 @@ pub fn parse_certificate(body: &[u8], status_request_offered: bool) -> Result<Se
     let mut r = Reader::new(body);
     let ctx = r.vec8().ok_or_else(|| bad("Certificate context"))?;
     if !ctx.is_empty() {
-        return Err(Error::Tls("illegal_parameter: non-empty certificate_request_context in server Certificate".into()));
+        return Err(Error::Tls(
+            "illegal_parameter: non-empty certificate_request_context in server Certificate".into(),
+        ));
     }
     let list = r.vec24().ok_or_else(|| bad("Certificate list"))?;
     if !r.is_empty() {
@@ -490,7 +557,9 @@ pub fn parse_certificate(body: &[u8], status_request_offered: bool) -> Result<Se
                 // CertificateStatus: status_type, then (for ocsp) opaque OCSPResponse<1..2^24-1>
                 let mut sr = Reader::new(d);
                 let status_type = sr.u8().ok_or_else(|| bad("CertificateStatus type"))?;
-                let response = sr.vec24().ok_or_else(|| bad("CertificateStatus response"))?;
+                let response = sr
+                    .vec24()
+                    .ok_or_else(|| bad("CertificateStatus response"))?;
                 if !sr.is_empty() {
                     return Err(bad("trailing data in CertificateStatus"));
                 }
@@ -500,7 +569,9 @@ pub fn parse_certificate(body: &[u8], status_request_offered: bool) -> Result<Se
                 Ok(())
             }
             // we asked for nothing else, so a conforming server sends nothing else
-            _ => Err(Error::Tls("unsupported_extension: unsolicited extension in a Certificate entry".into())),
+            _ => Err(Error::Tls(
+                "unsupported_extension: unsolicited extension in a Certificate entry".into(),
+            )),
         })?;
         if der.is_empty() {
             return Err(bad("empty certificate entry"));
@@ -508,19 +579,29 @@ pub fn parse_certificate(body: &[u8], status_request_offered: bool) -> Result<Se
         certs.push(der.to_vec());
         staples.push(staple);
         if certs.len() > 16 {
-            return Err(Error::Tls("illegal_parameter: certificate chain too long".into()));
+            return Err(Error::Tls(
+                "illegal_parameter: certificate chain too long".into(),
+            ));
         }
     }
     if certs.is_empty() {
-        return Err(Error::Tls("decode_error: server sent an empty certificate list".into()));
+        return Err(Error::Tls(
+            "decode_error: server sent an empty certificate list".into(),
+        ));
     }
-    Ok(ServerCertificates { chain: certs, staples })
+    Ok(ServerCertificates {
+        chain: certs,
+        staples,
+    })
 }
 
 pub fn parse_certificate_verify(body: &[u8]) -> Result<(u16, Vec<u8>)> {
     let mut r = Reader::new(body);
     let scheme = r.u16().ok_or_else(|| bad("CertificateVerify scheme"))?;
-    let sig = r.vec16().ok_or_else(|| bad("CertificateVerify signature"))?.to_vec();
+    let sig = r
+        .vec16()
+        .ok_or_else(|| bad("CertificateVerify signature"))?
+        .to_vec();
     if !r.is_empty() {
         return Err(bad("trailing data in CertificateVerify"));
     }
@@ -543,9 +624,17 @@ pub fn parse_new_session_ticket(body: &[u8]) -> Result<NewSessionTicket> {
     let mut r = Reader::new(body);
     let lifetime = r.u32().ok_or_else(|| bad("NewSessionTicket lifetime"))?;
     let age_add = r.u32().ok_or_else(|| bad("NewSessionTicket age_add"))?;
-    let nonce = r.vec8().ok_or_else(|| bad("NewSessionTicket nonce"))?.to_vec();
-    let ticket = r.vec16().ok_or_else(|| bad("NewSessionTicket ticket"))?.to_vec();
-    let exts = r.vec16().ok_or_else(|| bad("NewSessionTicket extensions"))?;
+    let nonce = r
+        .vec8()
+        .ok_or_else(|| bad("NewSessionTicket nonce"))?
+        .to_vec();
+    let ticket = r
+        .vec16()
+        .ok_or_else(|| bad("NewSessionTicket ticket"))?
+        .to_vec();
+    let exts = r
+        .vec16()
+        .ok_or_else(|| bad("NewSessionTicket extensions"))?;
     if !r.is_empty() {
         return Err(bad("trailing data in NewSessionTicket"));
     }
@@ -553,10 +642,17 @@ pub fn parse_new_session_ticket(body: &[u8]) -> Result<NewSessionTicket> {
         return Err(bad("empty ticket in NewSessionTicket"));
     }
     if lifetime > 604_800 {
-        return Err(Error::Tls("illegal_parameter: a ticket lifetime over seven days".into()));
+        return Err(Error::Tls(
+            "illegal_parameter: a ticket lifetime over seven days".into(),
+        ));
     }
     for_each_extension(exts, |_, _| Ok(()))?;
-    Ok(NewSessionTicket { lifetime, age_add, nonce, ticket })
+    Ok(NewSessionTicket {
+        lifetime,
+        age_add,
+        nonce,
+        ticket,
+    })
 }
 
 /// The data a server signs in CertificateVerify (RFC 8446 section 4.4.3).
@@ -614,7 +710,17 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(types, vec![EXT_SERVER_NAME, EXT_SUPPORTED_GROUPS, EXT_SIGNATURE_ALGORITHMS, EXT_SUPPORTED_VERSIONS, EXT_KEY_SHARE, EXT_ALPN]);
+        assert_eq!(
+            types,
+            vec![
+                EXT_SERVER_NAME,
+                EXT_SUPPORTED_GROUPS,
+                EXT_SIGNATURE_ALGORITHMS,
+                EXT_SUPPORTED_VERSIONS,
+                EXT_KEY_SHARE,
+                EXT_ALPN
+            ]
+        );
     }
 
     #[test]
@@ -631,7 +737,7 @@ mod tests {
                 cookie: None,
                 quic_transport_parameters: None,
                 psk: None,
-            tls12: false,
+                tls12: false,
             })
         };
         let extensions = |ch: &[u8]| {
@@ -649,7 +755,9 @@ mod tests {
             .unwrap();
             found
         };
-        assert!(!extensions(&build(false)).iter().any(|(t, _)| *t == EXT_STATUS_REQUEST));
+        assert!(!extensions(&build(false))
+            .iter()
+            .any(|(t, _)| *t == EXT_STATUS_REQUEST));
         let with = extensions(&build(true));
         // status_type ocsp, empty responder id list, empty request extensions
         assert!(with.contains(&(EXT_STATUS_REQUEST, vec![1, 0, 0, 0, 0])));
@@ -694,7 +802,10 @@ mod tests {
     }
 
     fn rejects(body: &[u8]) -> String {
-        parse_server_hello(body).err().expect("must be rejected").to_string()
+        parse_server_hello(body)
+            .err()
+            .expect("must be rejected")
+            .to_string()
     }
 
     #[test]
@@ -703,23 +814,47 @@ mod tests {
         // group only, plus a cookie
         let retry = hello_with(
             HELLO_RETRY_REQUEST_RANDOM,
-            &[versions.clone(), (EXT_KEY_SHARE, GROUP_SECP256R1.to_be_bytes().to_vec()), (EXT_COOKIE, vec![0, 3, 1, 2, 3])],
+            &[
+                versions.clone(),
+                (EXT_KEY_SHARE, GROUP_SECP256R1.to_be_bytes().to_vec()),
+                (EXT_COOKIE, vec![0, 3, 1, 2, 3]),
+            ],
         );
         let hrr = parse_server_hello(&retry).unwrap();
         assert_eq!(hrr.random, HELLO_RETRY_REQUEST_RANDOM);
         assert_eq!(hrr.key_share, Some((GROUP_SECP256R1, Vec::new())));
         assert_eq!(hrr.cookie, Some(vec![1, 2, 3]));
         // a cookie alone is a valid retry as far as parsing goes
-        let cookie_only = parse_server_hello(&hello_with(HELLO_RETRY_REQUEST_RANDOM, &[versions.clone(), (EXT_COOKIE, vec![0, 1, 9])])).unwrap();
+        let cookie_only = parse_server_hello(&hello_with(
+            HELLO_RETRY_REQUEST_RANDOM,
+            &[versions.clone(), (EXT_COOKIE, vec![0, 1, 9])],
+        ))
+        .unwrap();
         assert!(cookie_only.key_share.is_none() && cookie_only.cookie == Some(vec![9]));
 
         // the key_share of a retry is the group and nothing else
-        assert!(rejects(&hello_with(HELLO_RETRY_REQUEST_RANDOM, &[versions.clone(), (EXT_KEY_SHARE, vec![0, 0x17, 0, 0])])).contains("decode_error"));
-        assert!(rejects(&hello_with(HELLO_RETRY_REQUEST_RANDOM, &[versions.clone(), (EXT_KEY_SHARE, vec![0, 0x17, 1])])).contains("decode_error"));
-        assert!(rejects(&hello_with(HELLO_RETRY_REQUEST_RANDOM, &[versions.clone(), (EXT_KEY_SHARE, vec![0])])).contains("decode_error"));
+        assert!(rejects(&hello_with(
+            HELLO_RETRY_REQUEST_RANDOM,
+            &[versions.clone(), (EXT_KEY_SHARE, vec![0, 0x17, 0, 0])]
+        ))
+        .contains("decode_error"));
+        assert!(rejects(&hello_with(
+            HELLO_RETRY_REQUEST_RANDOM,
+            &[versions.clone(), (EXT_KEY_SHARE, vec![0, 0x17, 1])]
+        ))
+        .contains("decode_error"));
+        assert!(rejects(&hello_with(
+            HELLO_RETRY_REQUEST_RANDOM,
+            &[versions.clone(), (EXT_KEY_SHARE, vec![0])]
+        ))
+        .contains("decode_error"));
         // an empty cookie, a cookie with trailing bytes, a length that overruns
         for cookie in [vec![0, 0], vec![0, 1, 9, 9], vec![0, 5, 1]] {
-            assert!(rejects(&hello_with(HELLO_RETRY_REQUEST_RANDOM, &[versions.clone(), (EXT_COOKIE, cookie)])).contains("decode_error"));
+            assert!(rejects(&hello_with(
+                HELLO_RETRY_REQUEST_RANDOM,
+                &[versions.clone(), (EXT_COOKIE, cookie)]
+            ))
+            .contains("decode_error"));
         }
     }
 
@@ -727,14 +862,28 @@ mod tests {
     fn a_server_hello_has_no_cookie_and_always_a_key() {
         let versions = (EXT_SUPPORTED_VERSIONS, vec![0x03, 0x04]);
         // the cookie exists only in a HelloRetryRequest
-        assert!(rejects(&hello_with([9; 32], &[versions.clone(), (EXT_COOKIE, vec![0, 1, 9])])).contains("unsupported_extension"));
+        assert!(rejects(&hello_with(
+            [9; 32],
+            &[versions.clone(), (EXT_COOKIE, vec![0, 1, 9])]
+        ))
+        .contains("unsupported_extension"));
         // a key_share naming only a group is a retry's, not a ServerHello's
-        assert!(rejects(&hello_with([9; 32], &[versions.clone(), (EXT_KEY_SHARE, GROUP_X25519.to_be_bytes().to_vec())])).contains("decode_error"));
+        assert!(rejects(&hello_with(
+            [9; 32],
+            &[
+                versions.clone(),
+                (EXT_KEY_SHARE, GROUP_X25519.to_be_bytes().to_vec())
+            ]
+        ))
+        .contains("decode_error"));
         // trailing bytes after the key
         let mut ks = GROUP_X25519.to_be_bytes().to_vec();
         put_vec16(&mut ks, &[5; 32]);
         ks.push(0);
-        assert!(rejects(&hello_with([9; 32], &[versions, (EXT_KEY_SHARE, ks)])).contains("decode_error"));
+        assert!(
+            rejects(&hello_with([9; 32], &[versions, (EXT_KEY_SHARE, ks)]))
+                .contains("decode_error")
+        );
     }
 
     #[test]
@@ -751,7 +900,7 @@ mod tests {
                 cookie,
                 quic_transport_parameters: None,
                 psk: None,
-            tls12: false,
+                tls12: false,
             })
         };
         let exts = |ch: &[u8]| {
@@ -789,7 +938,10 @@ mod tests {
         let l = entry.len();
         body.extend_from_slice(&[(l >> 16) as u8, (l >> 8) as u8, l as u8]);
         body.append(&mut entry);
-        assert_eq!(parse_certificate(&body, false).unwrap().chain, vec![b"abc".to_vec()]);
+        assert_eq!(
+            parse_certificate(&body, false).unwrap().chain,
+            vec![b"abc".to_vec()]
+        );
         assert!(parse_certificate(&[0, 0, 0, 0], false).is_err()); // empty list
     }
 }
@@ -820,25 +972,45 @@ mod strictness_tests {
     #[test]
     fn encrypted_extensions_accept_only_solicited_extensions() {
         // an empty body, and the extensions a conforming server may send
-        assert_eq!(parse_encrypted_extensions(&block16(&[]), true, true).unwrap(), None);
+        assert_eq!(
+            parse_encrypted_extensions(&block16(&[]), true, true).unwrap(),
+            None
+        );
         let mut ok = ext(EXT_SERVER_NAME, &[]);
         ok.extend(ext(EXT_SUPPORTED_GROUPS, &block16(&[0, 0x1d])));
         ok.extend(alpn_ext(b"h2"));
-        assert_eq!(parse_encrypted_extensions(&block16(&ok), true, true).unwrap(), Some(b"h2".to_vec()));
+        assert_eq!(
+            parse_encrypted_extensions(&block16(&ok), true, true).unwrap(),
+            Some(b"h2".to_vec())
+        );
 
         let reject = |exts: Vec<u8>, sni: bool, alpn: bool| -> String {
-            parse_encrypted_extensions(&block16(&exts), sni, alpn).unwrap_err().to_string()
+            parse_encrypted_extensions(&block16(&exts), sni, alpn)
+                .unwrap_err()
+                .to_string()
         };
         // belongs in another message
-        for t in [EXT_KEY_SHARE, EXT_SUPPORTED_VERSIONS, EXT_SIGNATURE_ALGORITHMS, 41 /* pre_shared_key */, 42 /* early_data */] {
-            assert!(reject(ext(t, &[0, 0]), true, true).contains("unsupported_extension"), "type {}", t);
+        for t in [
+            EXT_KEY_SHARE,
+            EXT_SUPPORTED_VERSIONS,
+            EXT_SIGNATURE_ALGORITHMS,
+            41, /* pre_shared_key */
+            42, /* early_data */
+        ] {
+            assert!(
+                reject(ext(t, &[0, 0]), true, true).contains("unsupported_extension"),
+                "type {}",
+                t
+            );
         }
         // not offered by us
         assert!(reject(ext(EXT_SERVER_NAME, &[]), false, true).contains("unsupported_extension"));
         assert!(reject(alpn_ext(b"h2"), true, false).contains("unsupported_extension"));
         // malformed forms of the allowed ones
         assert!(reject(ext(EXT_SERVER_NAME, &[1]), true, true).contains("decode_error"));
-        assert!(reject(ext(EXT_SUPPORTED_GROUPS, &block16(&[0])), true, true).contains("decode_error"));
+        assert!(
+            reject(ext(EXT_SUPPORTED_GROUPS, &block16(&[0])), true, true).contains("decode_error")
+        );
         assert!(reject(alpn_ext(b""), true, true).contains("decode_error"));
         // duplicates
         let mut dup = alpn_ext(b"h2");
@@ -852,7 +1024,10 @@ mod strictness_tests {
         let mut body = vec![2, 0xaa, 0xbb];
         body.extend(block16(&sigalgs));
         let request = parse_certificate_request(&body).unwrap();
-        assert_eq!((request.context, request.signature_algorithms), (vec![0xaa, 0xbb], vec![0x0403]));
+        assert_eq!(
+            (request.context, request.signature_algorithms),
+            (vec![0xaa, 0xbb], vec![0x0403])
+        );
         // other legitimate extensions are fine alongside it
         let mut more = sigalgs.clone();
         more.extend(ext(EXT_CERTIFICATE_AUTHORITIES, &block16(&[])));
@@ -862,13 +1037,19 @@ mod strictness_tests {
         // missing signature_algorithms
         let mut body = vec![0];
         body.extend(block16(&[]));
-        assert!(parse_certificate_request(&body).unwrap_err().to_string().contains("missing_extension"));
+        assert!(parse_certificate_request(&body)
+            .unwrap_err()
+            .to_string()
+            .contains("missing_extension"));
         // an extension that has no business here
         let mut bad = sigalgs;
         bad.extend(ext(EXT_KEY_SHARE, &[]));
         let mut body = vec![0];
         body.extend(block16(&bad));
-        assert!(parse_certificate_request(&body).unwrap_err().to_string().contains("unsupported_extension"));
+        assert!(parse_certificate_request(&body)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported_extension"));
     }
 
     fn certificate_body(entries: &[(&[u8], &[u8])]) -> Vec<u8> {
@@ -891,10 +1072,21 @@ mod strictness_tests {
         assert_eq!(parsed.staples, vec![None]);
         // an OCSP response we never asked for
         let status = ext(EXT_STATUS_REQUEST, &[1, 0, 0, 1, 0xaa]);
-        let err = parse_certificate(&certificate_body(&[(b"abc", &status)]), false).err().unwrap().to_string();
+        let err = parse_certificate(&certificate_body(&[(b"abc", &status)]), false)
+            .err()
+            .unwrap()
+            .to_string();
         assert!(err.contains("unsupported_extension"), "{}", err);
-        assert!(parse_certificate(&certificate_body(&[(b"", b"")]), false).err().unwrap().to_string().contains("empty certificate"));
-        assert!(parse_certificate(&certificate_body(&[]), false).err().unwrap().to_string().contains("empty certificate list"));
+        assert!(parse_certificate(&certificate_body(&[(b"", b"")]), false)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("empty certificate"));
+        assert!(parse_certificate(&certificate_body(&[]), false)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("empty certificate list"));
     }
 
     #[test]
@@ -906,7 +1098,11 @@ mod strictness_tests {
         assert_eq!(parsed.staples, vec![Some(vec![0xde, 0xad, 0xbf]), None]);
         // a status type other than ocsp is ignored, an empty response is no response
         for data in [&[2u8, 0, 0, 1, 0xaa][..], &[1, 0, 0, 0][..]] {
-            let parsed = parse_certificate(&certificate_body(&[(b"leaf", &ext(EXT_STATUS_REQUEST, data))]), true).unwrap();
+            let parsed = parse_certificate(
+                &certificate_body(&[(b"leaf", &ext(EXT_STATUS_REQUEST, data))]),
+                true,
+            )
+            .unwrap();
             assert_eq!(parsed.staples, vec![None]);
         }
         // malformed: truncated, trailing bytes, a second status_request, another extension type
@@ -917,7 +1113,11 @@ mod strictness_tests {
             [staple.clone(), staple.clone()].concat(),
             ext(EXT_SCT, &[0, 0]),
         ] {
-            assert!(parse_certificate(&certificate_body(&[(b"leaf", &bad_ext)]), true).is_err(), "{:02x?}", bad_ext);
+            assert!(
+                parse_certificate(&certificate_body(&[(b"leaf", &bad_ext)]), true).is_err(),
+                "{:02x?}",
+                bad_ext
+            );
         }
     }
 

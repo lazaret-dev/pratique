@@ -80,12 +80,20 @@ pub struct Limits {
 impl Limits {
     /// A limit on the output and nothing else.
     pub const fn new(max_output: u64) -> Limits {
-        Limits { max_output, max_ratio: 0, ratio_floor: 0 }
+        Limits {
+            max_output,
+            max_ratio: 0,
+            ratio_floor: 0,
+        }
     }
 
     /// No limit at all: only for data that is already trusted, or for tests.
     pub const fn unlimited() -> Limits {
-        Limits { max_output: u64::MAX, max_ratio: 0, ratio_floor: 0 }
+        Limits {
+            max_output: u64::MAX,
+            max_ratio: 0,
+            ratio_floor: 0,
+        }
     }
 
     /// Adds a limit on the ratio of output to input, checked once the output has passed `floor` bytes.
@@ -120,8 +128,14 @@ impl std::fmt::Display for Error {
             Error::Corrupt(m) => write!(f, "invalid compressed data: {m}"),
             Error::Truncated => f.write_str("compressed data ends too early"),
             Error::Checksum(what) => write!(f, "compressed data fails its check ({what})"),
-            Error::OutputLimit { limit } => write!(f, "the data decompresses to more than the limit of {limit} bytes"),
-            Error::RatioLimit { ratio } => write!(f, "the data decompresses to more than {ratio} times its size"),
+            Error::OutputLimit { limit } => write!(
+                f,
+                "the data decompresses to more than the limit of {limit} bytes"
+            ),
+            Error::RatioLimit { ratio } => write!(
+                f,
+                "the data decompresses to more than {ratio} times its size"
+            ),
             Error::Unsupported(m) => write!(f, "unsupported compressed data: {m}"),
         }
     }
@@ -161,7 +175,11 @@ const fn make_crc_tables() -> [[u32; 256]; 8] {
         let mut c = i as u32;
         let mut k = 0;
         while k < 8 {
-            c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            c = if c & 1 != 0 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
             k += 1;
         }
         t[0][i] = c;
@@ -223,14 +241,25 @@ pub fn adler32(adler: u32, data: &[u8]) -> u32 {
 
 // ------------------------------------------------------------------------------------------------ Huffman codes
 
-const LEN_BASE: [u16; 29] = [3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258];
-const LEN_EXTRA: [u8; 29] = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-const DIST_BASE: [u16; 30] = [
-    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+const LEN_BASE: [u16; 29] = [
+    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
+    163, 195, 227, 258,
 ];
-const DIST_EXTRA: [u8; 30] = [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13];
+const LEN_EXTRA: [u8; 29] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0,
+];
+const DIST_BASE: [u16; 30] = [
+    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
+    2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
+];
+const DIST_EXTRA: [u8; 30] = [
+    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
+    13,
+];
 /// The order in which the lengths of the code length code are sent (RFC 1951, 3.2.7).
-const CLEN_ORDER: [usize; 19] = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];
+const CLEN_ORDER: [usize; 19] = [
+    16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15,
+];
 
 /// What a table lookup found.
 enum Lookup {
@@ -257,7 +286,12 @@ struct Huff {
 
 impl Huff {
     fn new() -> Huff {
-        Huff { fast: [0; 1 << FAST_BITS], count: [0; 16], symbol: [0; 288], max_len: 0 }
+        Huff {
+            fast: [0; 1 << FAST_BITS],
+            count: [0; 16],
+            symbol: [0; 288],
+            max_len: 0,
+        }
     }
 
     /// Builds the code from the length of each symbol's code (0 for none). Returns whether the code is complete, or an error if
@@ -317,7 +351,11 @@ impl Huff {
         if l != 0 {
             // The entry was made from the first bits whatever they are; with fewer than FAST_BITS valid, a code that is longer
             // than the valid bits cannot be told from a prefix of one, but one that fits in them is the code.
-            return if l <= cnt { Lookup::Found(e & 0x1ff, l) } else { Lookup::More };
+            return if l <= cnt {
+                Lookup::Found(e & 0x1ff, l)
+            } else {
+                Lookup::More
+            };
         }
         self.slow(buf, cnt)
     }
@@ -481,7 +519,15 @@ impl Inflater {
             hdist: 0,
             hclen: 0,
             clen: Huff::new(),
-            gz: GzHeader { stage: 0, flags: 0, got: 0, extra: 0, total: 0, crc: 0, fixed: [0; 10] },
+            gz: GzHeader {
+                stage: 0,
+                flags: 0,
+                got: 0,
+                extra: 0,
+                total: 0,
+                crc: 0,
+                fixed: [0; 10],
+            },
             total_in: 0,
             total_out: 0,
             member_out: 0,
@@ -520,7 +566,10 @@ impl Inflater {
     }
 
     fn at_member_boundary(&self) -> bool {
-        self.format == Format::Gzip && self.state == State::GzipHeader && self.gz.total == 0 && self.cnt == 0
+        self.format == Format::Gzip
+            && self.state == State::GzipHeader
+            && self.gz.total == 0
+            && self.cnt == 0
     }
 
     /// The bytes that were taken into the bit buffer in an earlier call and turned out to come after the end of the stream
@@ -548,16 +597,30 @@ impl Inflater {
         if let Some(e) = &self.failed {
             return Err(e.clone());
         }
-        let mut io = Io { inp: input, pos: 0, out: output, o: 0, summed: 0 };
+        let mut io = Io {
+            inp: input,
+            pos: 0,
+            out: output,
+            o: 0,
+            summed: 0,
+        };
         let result = self.run(&mut io);
-        self.buf &= if self.cnt >= 64 { u64::MAX } else { (1u64 << self.cnt) - 1 };
+        self.buf &= if self.cnt >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.cnt) - 1
+        };
         let result = result.map(|status| {
             self.fold(&mut io);
             self.total_in += io.pos as u64;
             status
         });
         match result {
-            Ok(status) => Ok(Progress { consumed: io.pos, produced: io.o, status }),
+            Ok(status) => Ok(Progress {
+                consumed: io.pos,
+                produced: io.o,
+                status,
+            }),
             Err(e) => {
                 self.failed = Some(e.clone());
                 Err(e)
@@ -647,7 +710,9 @@ impl Inflater {
     #[inline]
     fn room_for(&self, n: u64) -> Result<(), Error> {
         if self.total_out.saturating_add(n) > self.limits.max_output {
-            return Err(Error::OutputLimit { limit: self.limits.max_output });
+            return Err(Error::OutputLimit {
+                limit: self.limits.max_output,
+            });
         }
         Ok(())
     }
@@ -727,7 +792,8 @@ impl Inflater {
                             if !self.need(io, 16) {
                                 return Ok(Status::NeedInput);
                             }
-                            let (cmf, flg) = ((self.buf & 0xff) as u32, ((self.buf >> 8) & 0xff) as u32);
+                            let (cmf, flg) =
+                                ((self.buf & 0xff) as u32, ((self.buf >> 8) & 0xff) as u32);
                             if cmf & 0x0f == 8 && (cmf << 8 | flg) % 31 == 0 {
                                 Wrapper::Zlib
                             } else {
@@ -749,7 +815,9 @@ impl Inflater {
                     let h = self.take(16);
                     let (cmf, flg) = (h & 0xff, h >> 8);
                     if cmf & 0x0f != 8 {
-                        return Err(Error::Corrupt("zlib: the compression method is not deflate"));
+                        return Err(Error::Corrupt(
+                            "zlib: the compression method is not deflate",
+                        ));
                     }
                     if cmf >> 4 > 7 {
                         return Err(Error::Corrupt("zlib: the window is larger than 32 KiB"));
@@ -796,10 +864,16 @@ impl Inflater {
                     let v = self.take(32);
                     let (len, nlen) = (v & 0xffff, v >> 16);
                     if len != !nlen & 0xffff {
-                        return Err(Error::Corrupt("a stored block's length does not match its complement"));
+                        return Err(Error::Corrupt(
+                            "a stored block's length does not match its complement",
+                        ));
                     }
                     self.check_ratio(io, len as u64, len as u64)?;
-                    self.state = if len == 0 { self.after_block() } else { State::Stored(len) };
+                    self.state = if len == 0 {
+                        self.after_block()
+                    } else {
+                        State::Stored(len)
+                    };
                 }
                 State::Stored(left) => {
                     let mut left = left as usize;
@@ -833,7 +907,8 @@ impl Inflater {
                         while k < n {
                             let w = self.wpos.wrapping_add(k) & MASK;
                             let piece = (n - k).min(WINDOW - w);
-                            self.window[w..w + piece].copy_from_slice(&io.inp[src_start + k..src_start + k + piece]);
+                            self.window[w..w + piece]
+                                .copy_from_slice(&io.inp[src_start + k..src_start + k + piece]);
                             k += piece;
                         }
                         io.out[io.o..io.o + n].copy_from_slice(&io.inp[src_start..src_end]);
@@ -874,7 +949,9 @@ impl Inflater {
                     let lens: [u8; 19] = std::array::from_fn(|k| self.lens[k]);
                     let complete = self.clen.build(&lens)?;
                     if !complete && lens.iter().any(|&l| l != 0) {
-                        return Err(Error::Corrupt("the code that reads the code lengths is incomplete"));
+                        return Err(Error::Corrupt(
+                            "the code that reads the code lengths is incomplete",
+                        ));
                     }
                     self.lens.fill(0);
                     self.tables = Tables::None;
@@ -917,7 +994,9 @@ impl Inflater {
                             match sym {
                                 16 => {
                                     if i == 0 {
-                                        return Err(Error::Corrupt("a repeat of a previous length with none before it"));
+                                        return Err(Error::Corrupt(
+                                            "a repeat of a previous length with none before it",
+                                        ));
                                     }
                                     (self.lens[i - 1], r)
                                 }
@@ -925,7 +1004,9 @@ impl Inflater {
                             }
                         };
                         if i + repeat > total {
-                            return Err(Error::Corrupt("the code lengths run past the end of the table"));
+                            return Err(Error::Corrupt(
+                                "the code lengths run past the end of the table",
+                            ));
                         }
                         self.take(l + extra_bits);
                         self.lens[i..i + repeat].fill(value);
@@ -973,7 +1054,9 @@ impl Inflater {
                             }
                             Ok(Step::Match { len, dist, used }) => {
                                 if dist as usize > self.filled {
-                                    return Err(Error::Corrupt("a match reaches back before the start of the data"));
+                                    return Err(Error::Corrupt(
+                                        "a match reaches back before the start of the data",
+                                    ));
                                 }
                                 self.take(used);
                                 self.check_ratio(io, len as u64, 0)?;
@@ -999,7 +1082,11 @@ impl Inflater {
                     let n = (len as usize).min(room);
                     self.room_for(n as u64)?;
                     self.put_match(io, n, dist as usize);
-                    self.state = if n == len as usize { State::Codes } else { State::Copy(len - n as u16, dist) };
+                    self.state = if n == len as usize {
+                        State::Codes
+                    } else {
+                        State::Copy(len - n as u16, dist)
+                    };
                 }
                 State::Trailer => {
                     self.fold(io);
@@ -1055,7 +1142,15 @@ impl Inflater {
         self.member_out = 0;
         self.crc = 0;
         self.adler = 1;
-        self.gz = GzHeader { stage: 0, flags: 0, got: 0, extra: 0, total: 0, crc: 0, fixed: [0; 10] };
+        self.gz = GzHeader {
+            stage: 0,
+            flags: 0,
+            got: 0,
+            extra: 0,
+            total: 0,
+            crc: 0,
+            fixed: [0; 10],
+        };
     }
 
     /// A member (or the whole zlib or bare stream) is complete and its trailer has been checked.
@@ -1072,7 +1167,11 @@ impl Inflater {
         let give = ((self.cnt / 8) as usize).min(io.pos);
         io.pos -= give;
         self.cnt -= (give * 8) as u32;
-        self.buf &= if self.cnt >= 64 { u64::MAX } else { (1u64 << self.cnt) - 1 };
+        self.buf &= if self.cnt >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.cnt) - 1
+        };
         self.state = State::Done;
     }
 
@@ -1134,9 +1233,17 @@ impl Inflater {
                     // each of the first four bytes is looked at as soon as it is here, so that what is not gzip (bytes after the
                     // last member, say) is called that, and not a stream that ends too early
                     match i {
-                        0 | 1 if b != [0x1f, 0x8b][i] => return Err(Error::Corrupt("not gzip data (the magic number is wrong)")),
-                        2 if b != 8 => return Err(Error::Corrupt("gzip: the compression method is not deflate")),
-                        3 if b & 0xe0 != 0 => return Err(Error::Corrupt("gzip: reserved flag bits are set")),
+                        0 | 1 if b != [0x1f, 0x8b][i] => {
+                            return Err(Error::Corrupt("not gzip data (the magic number is wrong)"))
+                        }
+                        2 if b != 8 => {
+                            return Err(Error::Corrupt(
+                                "gzip: the compression method is not deflate",
+                            ))
+                        }
+                        3 if b & 0xe0 != 0 => {
+                            return Err(Error::Corrupt("gzip: reserved flag bits are set"))
+                        }
                         _ => {}
                     }
                     if g.got == 10 {
@@ -1167,7 +1274,11 @@ impl Inflater {
                 }
                 _ => {
                     // the CRC-16 of the header, low byte first
-                    g.extra = if g.got == 0 { b as u32 } else { g.extra | (b as u32) << 8 };
+                    g.extra = if g.got == 0 {
+                        b as u32
+                    } else {
+                        g.extra | (b as u32) << 8
+                    };
                     g.got += 1;
                     if g.got == 2 {
                         if g.extra != g.crc & 0xffff {
@@ -1220,7 +1331,11 @@ impl Inflater {
             return Ok(Step::More);
         }
         let dist = DIST_BASE[dsym] + ((rest >> dl) & ((1u64 << deb) - 1)) as u16;
-        Ok(Step::Match { len, dist, used: l + eb + dl + deb })
+        Ok(Step::Match {
+            len,
+            dist,
+            used: l + eb + dl + deb,
+        })
     }
 }
 
@@ -1243,7 +1358,13 @@ pub fn decode_all(format: Format, data: &[u8], limits: Limits) -> Result<Vec<u8>
                 return Ok(out);
             }
             Status::Done => {
-                return if pos == data.len() && inf.take_unused().is_empty() { Ok(out) } else { Err(Error::Corrupt("data follows the end of the compressed stream")) };
+                return if pos == data.len() && inf.take_unused().is_empty() {
+                    Ok(out)
+                } else {
+                    Err(Error::Corrupt(
+                        "data follows the end of the compressed stream",
+                    ))
+                };
             }
         }
     }
@@ -1282,7 +1403,13 @@ mod tests {
     // ---- decoding with chosen cuts of the input and the output
 
     /// Decodes `data` giving the decoder `in_chunk` bytes at a time and room for `out_chunk` bytes at a time.
-    fn run_chunked(format: Format, data: &[u8], in_chunk: usize, out_chunk: usize, limits: Limits) -> Result<Vec<u8>, Error> {
+    fn run_chunked(
+        format: Format,
+        data: &[u8],
+        in_chunk: usize,
+        out_chunk: usize,
+        limits: Limits,
+    ) -> Result<Vec<u8>, Error> {
         let mut inf = Inflater::new(format, limits);
         let mut out = Vec::new();
         let mut buf = vec![0u8; out_chunk];
@@ -1326,7 +1453,11 @@ mod tests {
 
     impl Bits {
         fn new() -> Bits {
-            Bits { out: Vec::new(), acc: 0, n: 0 }
+            Bits {
+                out: Vec::new(),
+                acc: 0,
+                n: 0,
+            }
         }
 
         fn put(&mut self, value: u32, bits: u32) {
@@ -1400,7 +1531,12 @@ mod tests {
         while depths.len() < used.len() {
             // split a leaf: often the deepest that can be, to get long codes
             let idx = if rng.chance(60) {
-                let deepest = depths.iter().copied().filter(|&d| d < max_depth).max().unwrap();
+                let deepest = depths
+                    .iter()
+                    .copied()
+                    .filter(|&d| d < max_depth)
+                    .max()
+                    .unwrap();
                 depths.iter().position(|&d| d == deepest).unwrap()
             } else {
                 loop {
@@ -1425,13 +1561,27 @@ mod tests {
     }
 
     fn length_symbol(len: usize) -> (usize, u32, u32) {
-        let i = (0..29).rev().find(|&i| LEN_BASE[i] as usize <= len).unwrap();
-        (257 + i, (len - LEN_BASE[i] as usize) as u32, LEN_EXTRA[i] as u32)
+        let i = (0..29)
+            .rev()
+            .find(|&i| LEN_BASE[i] as usize <= len)
+            .unwrap();
+        (
+            257 + i,
+            (len - LEN_BASE[i] as usize) as u32,
+            LEN_EXTRA[i] as u32,
+        )
     }
 
     fn dist_symbol(dist: usize) -> (usize, u32, u32) {
-        let i = (0..30).rev().find(|&i| DIST_BASE[i] as usize <= dist).unwrap();
-        (i, (dist - DIST_BASE[i] as usize) as u32, DIST_EXTRA[i] as u32)
+        let i = (0..30)
+            .rev()
+            .find(|&i| DIST_BASE[i] as usize <= dist)
+            .unwrap();
+        (
+            i,
+            (dist - DIST_BASE[i] as usize) as u32,
+            DIST_EXTRA[i] as u32,
+        )
     }
 
     fn write_tokens(w: &mut Bits, tokens: &[Token], lit: (&[u8], &[u32]), dist: (&[u8], &[u32])) {
@@ -1452,7 +1602,14 @@ mod tests {
     }
 
     fn fixed_lengths() -> Vec<u8> {
-        (0..288).map(|i| match i { 0..=143 => 8, 144..=255 => 9, 256..=279 => 7, _ => 8 }).collect()
+        (0..288)
+            .map(|i| match i {
+                0..=143 => 8,
+                144..=255 => 9,
+                256..=279 => 7,
+                _ => 8,
+            })
+            .collect()
     }
 
     fn write_fixed(w: &mut Bits, tokens: &[Token], last: bool) {
@@ -1497,11 +1654,24 @@ mod tests {
         let lit_lens = random_lengths(rng, 286, &lit_syms, 15);
         let (hdist, dist_lens) = if dist_syms.is_empty() {
             // no distance is used: one code of length zero says so (or, sometimes, one unused code of one bit)
-            if rng.chance(50) { (1, vec![0u8; 30]) } else { let mut l = vec![0u8; 30]; l[rng.below(30)] = 1; (30, l) }
+            if rng.chance(50) {
+                (1, vec![0u8; 30])
+            } else {
+                let mut l = vec![0u8; 30];
+                l[rng.below(30)] = 1;
+                (30, l)
+            }
         } else {
-            (dist_syms.last().unwrap() + 1, random_lengths(rng, 30, &dist_syms, 15))
+            (
+                dist_syms.last().unwrap() + 1,
+                random_lengths(rng, 30, &dist_syms, 15),
+            )
         };
-        let hdist = if dist_syms.is_empty() && hdist == 30 { 30 } else { hdist };
+        let hdist = if dist_syms.is_empty() && hdist == 30 {
+            30
+        } else {
+            hdist
+        };
         // the lengths in one list, with repeat codes where they pay or where the dice say
         let mut all: Vec<u8> = lit_lens[..hlit].to_vec();
         all.extend_from_slice(&dist_lens[..hdist]);
@@ -1560,7 +1730,12 @@ mod tests {
     }
 
     /// Random tokens that make valid output on top of `history`; returns them and the bytes they stand for.
-    fn random_tokens(rng: &mut Rng, history: &mut Vec<u8>, count: usize, style: usize) -> Vec<Token> {
+    fn random_tokens(
+        rng: &mut Rng,
+        history: &mut Vec<u8>,
+        count: usize,
+        style: usize,
+    ) -> Vec<Token> {
         let mut tokens = Vec::new();
         for _ in 0..count {
             let have = history.len();
@@ -1658,10 +1833,16 @@ mod tests {
         let data: Vec<u8> = (0..20_000u32).map(|i| (i * 7 + i / 13) as u8).collect();
         for cut in [0, 1, 7, 8, 9, 5551, 5552, 5553, 19_999] {
             assert_eq!(crc32(crc32(0, &data[..cut]), &data[cut..]), crc32(0, &data));
-            assert_eq!(adler32(adler32(1, &data[..cut]), &data[cut..]), adler32(1, &data));
+            assert_eq!(
+                adler32(adler32(1, &data[..cut]), &data[cut..]),
+                adler32(1, &data)
+            );
         }
         // a long run of 0xff, which is what the Adler-32 sums overflow on soonest
-        assert_eq!(adler32(1, &vec![0xff; 100_000]), adler_slow(&vec![0xff; 100_000]));
+        assert_eq!(
+            adler32(1, &vec![0xff; 100_000]),
+            adler_slow(&vec![0xff; 100_000])
+        );
         assert_eq!(adler32(1, &data), adler_slow(&data));
     }
 
@@ -1677,12 +1858,27 @@ mod tests {
     // ---- streams made by the encoder above, decoded in every way the interface allows
 
     /// The ways of cutting input and output that the tests run through: (bytes of input per call, room for output per call).
-    const CUTS: [(usize, usize); 8] = [(usize::MAX, 1 << 16), (1, 1 << 16), (usize::MAX, 1), (1, 1), (3, 5), (7, 1000), (4096, 3), (65536, 65536)];
+    const CUTS: [(usize, usize); 8] = [
+        (usize::MAX, 1 << 16),
+        (1, 1 << 16),
+        (usize::MAX, 1),
+        (1, 1),
+        (3, 5),
+        (7, 1000),
+        (4096, 3),
+        (65536, 65536),
+    ];
 
     fn check_all_cuts(format: Format, stream: &[u8], expected: &[u8], what: &str) {
         for (i, o) in CUTS {
-            let out = run_chunked(format, stream, i, o, Limits::unlimited()).unwrap_or_else(|e| panic!("{what}: {e} (input {i}, room {o})"));
-            assert!(out == expected, "{what}: wrong output (input {i}, room {o}): {} bytes, expected {}", out.len(), expected.len());
+            let out = run_chunked(format, stream, i, o, Limits::unlimited())
+                .unwrap_or_else(|e| panic!("{what}: {e} (input {i}, room {o})"));
+            assert!(
+                out == expected,
+                "{what}: wrong output (input {i}, room {o}): {} bytes, expected {}",
+                out.len(),
+                expected.len()
+            );
         }
     }
 
@@ -1699,7 +1895,12 @@ mod tests {
 
     /// Feeds `data` in pieces of `in_chunk` (offering what is left each time) with room for `out_chunk` until the stream is done;
     /// returns what was produced, how much input was taken, and the decoder.
-    fn run_to_done(format: Format, data: &[u8], in_chunk: usize, out_chunk: usize) -> (Vec<u8>, usize, Inflater) {
+    fn run_to_done(
+        format: Format,
+        data: &[u8],
+        in_chunk: usize,
+        out_chunk: usize,
+    ) -> (Vec<u8>, usize, Inflater) {
         let mut inf = Inflater::new(format, Limits::unlimited());
         let mut out = Vec::new();
         let mut buf = vec![0u8; out_chunk];
@@ -1712,7 +1913,10 @@ mod tests {
             if p.status == Status::Done {
                 return (out, pos, inf);
             }
-            assert!(pos < data.len() || p.status == Status::NeedOutput, "the data ended before the stream did");
+            assert!(
+                pos < data.len() || p.status == Status::NeedOutput,
+                "the data ended before the stream did"
+            );
         }
     }
 
@@ -1724,19 +1928,60 @@ mod tests {
             let blocks = 1 + rng.below(5);
             let (raw, expected) = random_stream(&mut rng, blocks);
             total += expected.len();
-            assert_eq!(all(Format::Deflate, &raw).unwrap(), expected, "round {round}, whole");
-            assert_eq!(all(Format::ZlibOrDeflate, &raw).unwrap(), expected, "round {round}, bare, by the guesser");
-            assert_eq!(all(Format::Zlib, &zlib_wrap(&raw, &expected)).unwrap(), expected, "round {round}, zlib");
-            assert_eq!(all(Format::ZlibOrDeflate, &zlib_wrap(&raw, &expected)).unwrap(), expected, "round {round}, zlib, by the guesser");
-            assert_eq!(all(Format::Gzip, &gzip_wrap(&raw, &expected)).unwrap(), expected, "round {round}, gzip");
-            assert_eq!(all(Format::GzipMember, &gzip_wrap(&raw, &expected)).unwrap(), expected, "round {round}, one gzip member");
+            assert_eq!(
+                all(Format::Deflate, &raw).unwrap(),
+                expected,
+                "round {round}, whole"
+            );
+            assert_eq!(
+                all(Format::ZlibOrDeflate, &raw).unwrap(),
+                expected,
+                "round {round}, bare, by the guesser"
+            );
+            assert_eq!(
+                all(Format::Zlib, &zlib_wrap(&raw, &expected)).unwrap(),
+                expected,
+                "round {round}, zlib"
+            );
+            assert_eq!(
+                all(Format::ZlibOrDeflate, &zlib_wrap(&raw, &expected)).unwrap(),
+                expected,
+                "round {round}, zlib, by the guesser"
+            );
+            assert_eq!(
+                all(Format::Gzip, &gzip_wrap(&raw, &expected)).unwrap(),
+                expected,
+                "round {round}, gzip"
+            );
+            assert_eq!(
+                all(Format::GzipMember, &gzip_wrap(&raw, &expected)).unwrap(),
+                expected,
+                "round {round}, one gzip member"
+            );
             // the cuts: all of them on the small ones, a few on the large
             if expected.len() < 40_000 {
-                check_all_cuts(Format::Deflate, &raw, &expected, &format!("round {round} bare"));
-                check_all_cuts(Format::Gzip, &gzip_wrap(&raw, &expected), &expected, &format!("round {round} gzip"));
+                check_all_cuts(
+                    Format::Deflate,
+                    &raw,
+                    &expected,
+                    &format!("round {round} bare"),
+                );
+                check_all_cuts(
+                    Format::Gzip,
+                    &gzip_wrap(&raw, &expected),
+                    &expected,
+                    &format!("round {round} gzip"),
+                );
             } else {
                 for (i, o) in [(1, 4096), (4096, 1), (13, 29)] {
-                    let out = run_chunked(Format::Zlib, &zlib_wrap(&raw, &expected), i, o, Limits::unlimited()).unwrap();
+                    let out = run_chunked(
+                        Format::Zlib,
+                        &zlib_wrap(&raw, &expected),
+                        i,
+                        o,
+                        Limits::unlimited(),
+                    )
+                    .unwrap();
                     assert!(out == expected, "round {round} zlib cut ({i}, {o})");
                 }
             }
@@ -1753,7 +1998,11 @@ mod tests {
             let used: Vec<usize> = (0..286).collect();
             let lens = random_lengths(&mut rng, 286, &used, 15);
             longest = longest.max(*lens.iter().max().unwrap());
-            let kraft: u64 = lens.iter().filter(|&&l| l > 0).map(|&l| 1u64 << (15 - l)).sum();
+            let kraft: u64 = lens
+                .iter()
+                .filter(|&&l| l > 0)
+                .map(|&l| 1u64 << (15 - l))
+                .sum();
             assert_eq!(kraft, 1 << 15, "an incomplete code");
         }
         assert_eq!(longest, 15);
@@ -1818,11 +2067,24 @@ mod tests {
                 for cut in 0..stream.len() {
                     // all at once for every cut, and a byte at a time for a sample of them and the last few
                     let by_byte = cut % 7 == 0 || cut + 12 > stream.len();
-                    let chunks: &[usize] = if by_byte { &[usize::MAX, 1] } else { &[usize::MAX] };
+                    let chunks: &[usize] = if by_byte {
+                        &[usize::MAX, 1]
+                    } else {
+                        &[usize::MAX]
+                    };
                     for &chunk in chunks {
-                        match run_chunked(format, &stream[..cut], chunk, 1 << 16, Limits::unlimited()) {
+                        match run_chunked(
+                            format,
+                            &stream[..cut],
+                            chunk,
+                            1 << 16,
+                            Limits::unlimited(),
+                        ) {
                             Err(Error::Truncated) => {}
-                            other => panic!("round {round}, {format:?} cut at {cut} of {}: {other:?}", stream.len()),
+                            other => panic!(
+                                "round {round}, {format:?} cut at {cut} of {}: {other:?}",
+                                stream.len()
+                            ),
                         }
                     }
                 }
@@ -1835,14 +2097,20 @@ mod tests {
         let mut rng = Rng(4242);
         for round in 0..4 {
             let (raw, plain) = small_stream(&mut rng, 800);
-            for (format, stream) in [(Format::Zlib, zlib_wrap(&raw, &plain)), (Format::Gzip, gzip_wrap(&raw, &plain))] {
+            for (format, stream) in [
+                (Format::Zlib, zlib_wrap(&raw, &plain)),
+                (Format::Gzip, gzip_wrap(&raw, &plain)),
+            ] {
                 for bit in 0..stream.len() * 8 {
                     let mut bad = stream.clone();
                     bad[bit / 8] ^= 1 << (bit % 8);
                     // it nearly always fails; it may decode to exactly the same bytes (the modification time of a gzip header,
                     // the padding before a stored block); it may not decode to anything else
                     if let Ok(out) = all(format, &bad) {
-                        assert!(out == plain, "round {round}, {format:?}, bit {bit}: accepted with different output");
+                        assert!(
+                            out == plain,
+                            "round {round}, {format:?}, bit {bit}: accepted with different output"
+                        );
                     }
                 }
             }
@@ -1910,10 +2178,27 @@ mod tests {
         let mut rng = Rng(9);
         let n = 3_000_000;
         let raw = zeros(&mut rng, n);
-        assert!(raw.len() < n / 100, "the bomb should be small: {} bytes", raw.len());
-        assert_eq!(decode_all(Format::Deflate, &raw, Limits::new(n as u64)).unwrap().len(), n);
-        assert_eq!(decode_all(Format::Deflate, &raw, Limits::new(n as u64 - 1)), Err(Error::OutputLimit { limit: n as u64 - 1 }));
-        assert_eq!(decode_all(Format::Deflate, &raw, Limits::new(0)), Err(Error::OutputLimit { limit: 0 }));
+        assert!(
+            raw.len() < n / 100,
+            "the bomb should be small: {} bytes",
+            raw.len()
+        );
+        assert_eq!(
+            decode_all(Format::Deflate, &raw, Limits::new(n as u64))
+                .unwrap()
+                .len(),
+            n
+        );
+        assert_eq!(
+            decode_all(Format::Deflate, &raw, Limits::new(n as u64 - 1)),
+            Err(Error::OutputLimit {
+                limit: n as u64 - 1
+            })
+        );
+        assert_eq!(
+            decode_all(Format::Deflate, &raw, Limits::new(0)),
+            Err(Error::OutputLimit { limit: 0 })
+        );
         // in small pieces, and with the refusal staying put
         for limit in [1u64, 257, 258, 259, 65_535, 1_000_000] {
             let mut inf = Inflater::new(Format::Deflate, Limits::new(limit));
@@ -1926,7 +2211,11 @@ mod tests {
                 match inf.inflate(&raw[pos..], &mut buf) {
                     Ok(p) => {
                         pos += p.consumed;
-                        assert!(inf.total_out() <= limit, "limit {limit}: {} given", inf.total_out());
+                        assert!(
+                            inf.total_out() <= limit,
+                            "limit {limit}: {} given",
+                            inf.total_out()
+                        );
                         assert_ne!(p.status, Status::Done, "limit {limit}");
                     }
                     Err(e) => break e,
@@ -1943,8 +2232,16 @@ mod tests {
             write_stored(&mut w, &vec![7u8; 5000], true);
             w.finish()
         };
-        assert_eq!(decode_all(Format::Deflate, &stored, Limits::new(5000)).unwrap().len(), 5000);
-        assert!(matches!(decode_all(Format::Deflate, &stored, Limits::new(4999)), Err(Error::OutputLimit { .. })));
+        assert_eq!(
+            decode_all(Format::Deflate, &stored, Limits::new(5000))
+                .unwrap()
+                .len(),
+            5000
+        );
+        assert!(matches!(
+            decode_all(Format::Deflate, &stored, Limits::new(4999)),
+            Err(Error::OutputLimit { .. })
+        ));
         // and the limit is for the whole of a gzip stream, not for each member
         let (a, b) = (vec![1u8; 700], vec![2u8; 700]);
         let member = |data: &[u8]| {
@@ -1953,8 +2250,16 @@ mod tests {
             gzip_wrap(&w.finish(), data)
         };
         let two = [member(&a), member(&b)].concat();
-        assert_eq!(decode_all(Format::Gzip, &two, Limits::new(1400)).unwrap().len(), 1400);
-        assert!(matches!(decode_all(Format::Gzip, &two, Limits::new(1399)), Err(Error::OutputLimit { .. })));
+        assert_eq!(
+            decode_all(Format::Gzip, &two, Limits::new(1400))
+                .unwrap()
+                .len(),
+            1400
+        );
+        assert!(matches!(
+            decode_all(Format::Gzip, &two, Limits::new(1399)),
+            Err(Error::OutputLimit { .. })
+        ));
     }
 
     #[test]
@@ -1965,21 +2270,53 @@ mod tests {
         let ratio = (n / raw.len()) as u64;
         assert!(ratio > 100, "the stream should be a bomb: ratio {ratio}");
         // within the floor, anything goes
-        assert!(decode_all(Format::Deflate, &raw, Limits::unlimited().with_ratio(10, n as u64)).is_ok());
+        assert!(decode_all(
+            Format::Deflate,
+            &raw,
+            Limits::unlimited().with_ratio(10, n as u64)
+        )
+        .is_ok());
         // beyond it, a ratio under the stream's own is refused and one over it is not
-        assert_eq!(decode_all(Format::Deflate, &raw, Limits::unlimited().with_ratio(ratio / 2, 1 << 20)), Err(Error::RatioLimit { ratio: ratio / 2 }));
-        assert!(decode_all(Format::Deflate, &raw, Limits::unlimited().with_ratio(ratio * 2, 1 << 20)).is_ok());
+        assert_eq!(
+            decode_all(
+                Format::Deflate,
+                &raw,
+                Limits::unlimited().with_ratio(ratio / 2, 1 << 20)
+            ),
+            Err(Error::RatioLimit { ratio: ratio / 2 })
+        );
+        assert!(decode_all(
+            Format::Deflate,
+            &raw,
+            Limits::unlimited().with_ratio(ratio * 2, 1 << 20)
+        )
+        .is_ok());
         // the refusal comes early: well before the whole bomb is out
-        let mut inf = Inflater::new(Format::Deflate, Limits::unlimited().with_ratio(ratio / 2, 1 << 20));
+        let mut inf = Inflater::new(
+            Format::Deflate,
+            Limits::unlimited().with_ratio(ratio / 2, 1 << 20),
+        );
         let mut buf = vec![0u8; 4096];
         let mut pos = 0;
         while let Ok(p) = inf.inflate(&raw[pos..], &mut buf) {
             pos += p.consumed;
         }
-        assert!(inf.total_out() < n as u64 / 2, "refused only after {} bytes", inf.total_out());
+        assert!(
+            inf.total_out() < n as u64 / 2,
+            "refused only after {} bytes",
+            inf.total_out()
+        );
         // honest data is nowhere near: no valid stream can pass 1032 to 1
         let (raw2, expected2) = random_stream(&mut rng, 3);
-        assert_eq!(decode_all(Format::Deflate, &raw2, Limits::unlimited().with_ratio(1032, 0)).unwrap(), expected2);
+        assert_eq!(
+            decode_all(
+                Format::Deflate,
+                &raw2,
+                Limits::unlimited().with_ratio(1032, 0)
+            )
+            .unwrap(),
+            expected2
+        );
     }
 
     #[test]
@@ -2005,12 +2342,19 @@ mod tests {
                         }
                     }
                     for (i, o) in CUTS {
-                        assert_eq!(run_chunked(Format::Deflate, &raw, i, o, limits), whole, "round {round}, ratio {r} of {ratio}, floor {floor}, cut ({i}, {o})");
+                        assert_eq!(
+                            run_chunked(Format::Deflate, &raw, i, o, limits),
+                            whole,
+                            "round {round}, ratio {r} of {ratio}, floor {floor}, cut ({i}, {o})"
+                        );
                     }
                 }
             }
         }
-        assert!(refused > 10 && passed > 10, "{refused} refused, {passed} passed");
+        assert!(
+            refused > 10 && passed > 10,
+            "{refused} refused, {passed} passed"
+        );
         // a bomb first, and then enough data that does not compress to bring the ratio of the whole back down: a check made when a
         // call returns would refuse it when the output is taken in small pieces and pass it when it is taken in one
         let mut w = Bits::new();
@@ -2022,7 +2366,11 @@ mod tests {
         let raw = w.finish();
         let limits = Limits::unlimited().with_ratio(10, 0);
         for (i, o) in CUTS {
-            assert_eq!(run_chunked(Format::Deflate, &raw, i, o, limits), Err(Error::RatioLimit { ratio: 10 }), "cut ({i}, {o})");
+            assert_eq!(
+                run_chunked(Format::Deflate, &raw, i, o, limits),
+                Err(Error::RatioLimit { ratio: 10 }),
+                "cut ({i}, {o})"
+            );
         }
     }
 
@@ -2048,8 +2396,12 @@ mod tests {
         // the method, the window, the check bits and the dictionary flag
         assert!(matches!(with_header(0x79, 0x9c), Err(Error::Corrupt(m)) if m.contains("method")));
         assert!(matches!(with_header(0x88, 0x1c), Err(Error::Corrupt(m)) if m.contains("window")));
-        assert!(matches!(with_header(0x78, 0x9d), Err(Error::Corrupt(m)) if m.contains("check bits")));
-        assert!(matches!(with_header(0x78, 0xbb), Err(Error::Unsupported(m)) if m.contains("dictionary")));
+        assert!(
+            matches!(with_header(0x78, 0x9d), Err(Error::Corrupt(m)) if m.contains("check bits"))
+        );
+        assert!(
+            matches!(with_header(0x78, 0xbb), Err(Error::Unsupported(m)) if m.contains("dictionary"))
+        );
         // smaller windows are fine
         assert_eq!(with_header(0x48, 0x89).unwrap(), Vec::<u8>::new());
         // the Adler-32, in each of its bytes
@@ -2057,7 +2409,11 @@ mod tests {
             let mut bad = ok.clone();
             let n = bad.len();
             bad[n - 1 - i] ^= 0x10;
-            assert_eq!(all(Format::Zlib, &bad), Err(Error::Checksum("adler32")), "byte {i}");
+            assert_eq!(
+                all(Format::Zlib, &bad),
+                Err(Error::Checksum("adler32")),
+                "byte {i}"
+            );
         }
     }
 
@@ -2071,8 +2427,14 @@ mod tests {
             let z = zlib_wrap(&raw, &expected);
             assert_eq!(all(Format::ZlibOrDeflate, &z).unwrap(), expected);
             // a byte at a time too
-            assert_eq!(run_chunked(Format::ZlibOrDeflate, &z, 1, 64, Limits::unlimited()).unwrap(), expected);
-            assert_eq!(run_chunked(Format::ZlibOrDeflate, &raw, 1, 64, Limits::unlimited()).unwrap(), expected);
+            assert_eq!(
+                run_chunked(Format::ZlibOrDeflate, &z, 1, 64, Limits::unlimited()).unwrap(),
+                expected
+            );
+            assert_eq!(
+                run_chunked(Format::ZlibOrDeflate, &raw, 1, 64, Limits::unlimited()).unwrap(),
+                expected
+            );
         }
         // the guess needs two bytes; fewer are a stream that stopped short
         assert_eq!(all(Format::ZlibOrDeflate, &[0x03]), Err(Error::Truncated));
@@ -2080,10 +2442,19 @@ mod tests {
         // a zlib stream that is wrong inside is an error, not a reason to try it as bare data
         let mut bad = zlib_wrap(&[0x03, 0x00], &[]);
         bad[5] ^= 1;
-        assert!(matches!(all(Format::ZlibOrDeflate, &bad), Err(Error::Checksum("adler32"))));
+        assert!(matches!(
+            all(Format::ZlibOrDeflate, &bad),
+            Err(Error::Checksum("adler32"))
+        ));
     }
 
-    fn gzip_header_with(flags: u8, extra: &[u8], name: &[u8], comment: &[u8], good_crc: bool) -> Vec<u8> {
+    fn gzip_header_with(
+        flags: u8,
+        extra: &[u8],
+        name: &[u8],
+        comment: &[u8],
+        good_crc: bool,
+    ) -> Vec<u8> {
         let mut h = vec![0x1f, 0x8b, 8, flags, 1, 2, 3, 4, 0, 3];
         if flags & 4 != 0 {
             h.extend_from_slice(&(extra.len() as u16).to_le_bytes());
@@ -2119,13 +2490,18 @@ mod tests {
             let mut member = gzip_header_with(flags, &extra, b"file.txt", b"a comment", true);
             member.extend_from_slice(&body);
             for (i, o) in [(usize::MAX, 1 << 16), (1, 3), (2, 1 << 16)] {
-                let out = run_chunked(Format::Gzip, &member, i, o, Limits::unlimited()).unwrap_or_else(|e| panic!("flags {flags:#x}: {e}"));
+                let out = run_chunked(Format::Gzip, &member, i, o, Limits::unlimited())
+                    .unwrap_or_else(|e| panic!("flags {flags:#x}: {e}"));
                 assert!(out == plain, "flags {flags:#x}, cut ({i}, {o})");
             }
             if flags & 2 != 0 {
                 let mut bad = gzip_header_with(flags, &extra, b"file.txt", b"a comment", false);
                 bad.extend_from_slice(&body);
-                assert_eq!(all(Format::Gzip, &bad), Err(Error::Checksum("header crc")), "flags {flags:#x}");
+                assert_eq!(
+                    all(Format::Gzip, &bad),
+                    Err(Error::Checksum("header crc")),
+                    "flags {flags:#x}"
+                );
             }
         }
         // the things that make it not gzip at all
@@ -2139,7 +2515,10 @@ mod tests {
         assert!(matches!(start(&|m| m[1] = 0x8c), Err(Error::Corrupt(m)) if m.contains("magic")));
         assert!(matches!(start(&|m| m[2] = 7), Err(Error::Corrupt(m)) if m.contains("method")));
         for reserved in [0x20u8, 0x40, 0x80] {
-            assert!(matches!(start(&|m| m[3] = reserved), Err(Error::Corrupt(m)) if m.contains("reserved")), "reserved flag {reserved:#x}");
+            assert!(
+                matches!(start(&|m| m[3] = reserved), Err(Error::Corrupt(m)) if m.contains("reserved")),
+                "reserved flag {reserved:#x}"
+            );
         }
         // the modification time, the extra flags and the operating system are anybody's
         assert_eq!(
@@ -2158,7 +2537,11 @@ mod tests {
             let n = m.len();
             m[n - 1 - i] ^= 0x01;
             let want = if i < 4 { "length" } else { "crc32" };
-            assert_eq!(all(Format::Gzip, &m), Err(Error::Checksum(want)), "trailer byte {i}");
+            assert_eq!(
+                all(Format::Gzip, &m),
+                Err(Error::Checksum(want)),
+                "trailer byte {i}"
+            );
         }
         // a header that goes on and on is refused rather than read to the end
         let long_name = vec![b'x'; 200_000];
@@ -2189,21 +2572,38 @@ mod tests {
         assert_eq!(all(Format::Gzip, &with_empty).unwrap(), expected);
         // stopping between two members is the end; stopping inside one, or having nothing at all, is not
         for (k, &end) in member_ends.iter().enumerate() {
-            assert!(all(Format::Gzip, &stream[..end]).is_ok(), "after member {k}");
-            assert_eq!(all(Format::Gzip, &stream[..end - 1]), Err(Error::Truncated), "one byte short of member {k}");
+            assert!(
+                all(Format::Gzip, &stream[..end]).is_ok(),
+                "after member {k}"
+            );
+            assert_eq!(
+                all(Format::Gzip, &stream[..end - 1]),
+                Err(Error::Truncated),
+                "one byte short of member {k}"
+            );
             if end < stream.len() {
-                assert_eq!(all(Format::Gzip, &stream[..end + 1]), Err(Error::Truncated), "one byte into the header after member {k}");
+                assert_eq!(
+                    all(Format::Gzip, &stream[..end + 1]),
+                    Err(Error::Truncated),
+                    "one byte into the header after member {k}"
+                );
             }
         }
         assert_eq!(all(Format::Gzip, &[]), Err(Error::Truncated));
         // garbage after the last member is not a member
         let mut garbage = stream.clone();
         garbage.extend_from_slice(b"trailing bytes");
-        assert!(matches!(all(Format::Gzip, &garbage), Err(Error::Corrupt(m)) if m.contains("magic")));
+        assert!(
+            matches!(all(Format::Gzip, &garbage), Err(Error::Corrupt(m)) if m.contains("magic"))
+        );
         // the window does not reach into the member before: a match at the start of the second refers to nothing
         let first = {
             let mut w = Bits::new();
-            write_fixed(&mut w, &[Token::Lit(b'a'), Token::Lit(b'b'), Token::Lit(b'c')], true);
+            write_fixed(
+                &mut w,
+                &[Token::Lit(b'a'), Token::Lit(b'b'), Token::Lit(b'c')],
+                true,
+            );
             gzip_wrap(&w.finish(), b"abc")
         };
         let second = {
@@ -2211,7 +2611,9 @@ mod tests {
             write_fixed(&mut w, &[Token::Match(3, 3)], true);
             gzip_wrap(&w.finish(), b"abc")
         };
-        assert!(matches!(all(Format::Gzip, &[first, second].concat()), Err(Error::Corrupt(m)) if m.contains("before the start")));
+        assert!(
+            matches!(all(Format::Gzip, &[first, second].concat()), Err(Error::Corrupt(m)) if m.contains("before the start"))
+        );
     }
 
     #[test]
@@ -2224,19 +2626,27 @@ mod tests {
             if raw.len() > 3000 {
                 continue;
             }
-            for (format, stream) in [(Format::Deflate, raw.clone()), (Format::Zlib, zlib_wrap(&raw, &plain)), (Format::GzipMember, gzip_wrap(&raw, &plain))] {
+            for (format, stream) in [
+                (Format::Deflate, raw.clone()),
+                (Format::Zlib, zlib_wrap(&raw, &plain)),
+                (Format::GzipMember, gzip_wrap(&raw, &plain)),
+            ] {
                 for tail in [&b""[..], &b"x"[..], &b"0123456789abcdef0123456789"[..]] {
                     let mut data = stream.clone();
                     data.extend_from_slice(tail);
                     // with room for everything, the stream ends exactly where it does and the tail is untouched
-                    let (out, consumed, mut inf) = run_to_done(format, &data, usize::MAX, plain.len() + 10);
+                    let (out, consumed, mut inf) =
+                        run_to_done(format, &data, usize::MAX, plain.len() + 10);
                     assert!(out == plain);
                     assert_eq!(consumed, stream.len(), "{format:?}, tail of {}", tail.len());
                     assert!(inf.take_unused().is_empty());
                     // once done it stays done, takes nothing and gives nothing
                     let mut buf = [0u8; 16];
                     let again = inf.inflate(tail, &mut buf).unwrap();
-                    assert_eq!((again.consumed, again.produced, again.status), (0, 0, Status::Done));
+                    assert_eq!(
+                        (again.consumed, again.produced, again.status),
+                        (0, 0, Status::Done)
+                    );
                     // a byte at a time takes no more than the stream either
                     let (out, consumed, mut inf) = run_to_done(format, &data, 1, 4096);
                     assert!(out == plain);
@@ -2250,13 +2660,21 @@ mod tests {
                     let (out, consumed, mut inf) = run_to_done(format, &data, usize::MAX, 1);
                     assert!(out == plain);
                     let unused = inf.take_unused();
-                    assert_eq!(consumed, stream.len() + unused.len(), "{format:?}, tail of {}", tail.len());
+                    assert_eq!(
+                        consumed,
+                        stream.len() + unused.len(),
+                        "{format:?}, tail of {}",
+                        tail.len()
+                    );
                     assert_eq!(&data[stream.len()..consumed], &unused[..]);
                     kept += unused.len();
                 }
             }
         }
-        assert!(kept > 0, "no test left bytes in the bit buffer, so take_unused was not exercised");
+        assert!(
+            kept > 0,
+            "no test left bytes in the bit buffer, so take_unused was not exercised"
+        );
     }
 
     // ---- codes that must be refused, written by hand
@@ -2296,7 +2714,14 @@ mod tests {
     }
 
     /// The header of a dynamic block, by hand.
-    fn hand_header(w: &mut Bits, last: bool, hlit: usize, hdist: usize, clen: &[u8; 19], items: &[(usize, u32, u32)]) {
+    fn hand_header(
+        w: &mut Bits,
+        last: bool,
+        hlit: usize,
+        hdist: usize,
+        clen: &[u8; 19],
+        items: &[(usize, u32, u32)],
+    ) {
         let codes = codes_of(clen);
         let mut hclen = 19;
         while hclen > 4 && clen[CLEN_ORDER[hclen - 1]] == 0 {
@@ -2338,7 +2763,14 @@ mod tests {
         }
         let both: Vec<u8> = ll.iter().chain(dl.iter()).copied().collect();
         let mut w = Bits::new();
-        hand_header(&mut w, true, ll.len(), dl.len(), &spelling_code(), &spell(&both));
+        hand_header(
+            &mut w,
+            true,
+            ll.len(),
+            dl.len(),
+            &spelling_code(),
+            &spell(&both),
+        );
         let (lc, dc) = (codes_of(&ll), codes_of(&dl));
         for s in body {
             match *s {
@@ -2365,10 +2797,24 @@ mod tests {
     fn the_codes_the_format_allows_and_the_ones_it_does_not() {
         use Sym::*;
         // the single code of length one that the RFC allows, for the literals (a block of nothing) and for the distances
-        assert_eq!(all(Format::Deflate, &hand_stream(&[(256, 1)], &[(0, 1)], &[L(256)])).unwrap(), b"");
+        assert_eq!(
+            all(
+                Format::Deflate,
+                &hand_stream(&[(256, 1)], &[(0, 1)], &[L(256)])
+            )
+            .unwrap(),
+            b""
+        );
         // a distance code with one code of one bit, which then serves for distance 1
         let lit = [(97, 2), (98, 2), (257, 2), (256, 2)];
-        assert_eq!(all(Format::Deflate, &hand_stream(&lit, &[(0, 1)], &[L(97), M(257, 0), L(256)])).unwrap(), b"aaaa");
+        assert_eq!(
+            all(
+                Format::Deflate,
+                &hand_stream(&lit, &[(0, 1)], &[L(97), M(257, 0), L(256)])
+            )
+            .unwrap(),
+            b"aaaa"
+        );
         // ... and the one-bit code that is not assigned is not a symbol
         let bad = hand_stream(&lit, &[(0, 1)], &[L(97), L(257), Raw(1, 1), L(256)]);
         assert!(refused_for(all(Format::Deflate, &bad)).contains("distance code"));
@@ -2381,18 +2827,34 @@ mod tests {
         assert!(refused_for(all(Format::Deflate, &bad)).contains("over-subscribed"));
         // incomplete: literals, and distances
         let bad = hand_stream(&[(97, 2), (256, 2)], &[(0, 1)], &[L(256)]);
-        assert!(refused_for(all(Format::Deflate, &bad)).contains("literal/length code is incomplete"));
+        assert!(
+            refused_for(all(Format::Deflate, &bad)).contains("literal/length code is incomplete")
+        );
         let bad = hand_stream(&[(97, 1), (256, 1)], &[(0, 2)], &[L(256)]);
         assert!(refused_for(all(Format::Deflate, &bad)).contains("distance code is incomplete"));
         // no code for the end of the block
         let bad = hand_stream(&[(97, 1), (98, 1)], &[(0, 1)], &[L(97)]);
         assert!(refused_for(all(Format::Deflate, &bad)).contains("end-of-block"));
         // the code that spells the lengths must be complete, even if it is a single code
-        for clen in [{ let mut l = [0u8; 19]; l[0] = 1; l }, { let mut l = [0u8; 19]; l[0] = 2; l[1] = 2; l }] {
+        for clen in [
+            {
+                let mut l = [0u8; 19];
+                l[0] = 1;
+                l
+            },
+            {
+                let mut l = [0u8; 19];
+                l[0] = 2;
+                l[1] = 2;
+                l
+            },
+        ] {
             let mut w = Bits::new();
             hand_header(&mut w, true, 257, 1, &clen, &[]);
             w.put(0, 32);
-            assert!(refused_for(all(Format::Deflate, &w.finish())).contains("reads the code lengths"));
+            assert!(
+                refused_for(all(Format::Deflate, &w.finish())).contains("reads the code lengths")
+            );
         }
     }
 
@@ -2404,11 +2866,20 @@ mod tests {
             let mut w = Bits::new();
             hand_header(&mut w, true, hlit, hdist, &spelling, &[]);
             w.put(0, 64);
-            assert!(refused_for(all(Format::Deflate, &w.finish())).contains("too many"), "{hlit}, {hdist}");
+            assert!(
+                refused_for(all(Format::Deflate, &w.finish())).contains("too many"),
+                "{hlit}, {hdist}"
+            );
         }
         // 286 and 30 are the most, and fine
-        let ll: Vec<u8> = (0..286).map(|i| if i == 256 || i == 97 { 1 } else { 0 }).collect();
-        let dl = [1u8; 1].iter().copied().chain(std::iter::repeat(0).take(29)).collect::<Vec<u8>>();
+        let ll: Vec<u8> = (0..286)
+            .map(|i| if i == 256 || i == 97 { 1 } else { 0 })
+            .collect();
+        let dl = [1u8; 1]
+            .iter()
+            .copied()
+            .chain(std::iter::repeat(0).take(29))
+            .collect::<Vec<u8>>();
         let both: Vec<u8> = ll.iter().chain(dl.iter()).copied().collect();
         let mut w = Bits::new();
         hand_header(&mut w, true, 286, 30, &spelling, &spell(&both));
@@ -2423,7 +2894,14 @@ mod tests {
         assert!(refused_for(all(Format::Deflate, &w.finish())).contains("none before"));
         // runs that go past the end of the 258 lengths
         let mut w = Bits::new();
-        hand_header(&mut w, true, 257, 1, &spelling, &[(18, 127, 7), (18, 127, 7)]);
+        hand_header(
+            &mut w,
+            true,
+            257,
+            1,
+            &spelling,
+            &[(18, 127, 7), (18, 127, 7)],
+        );
         w.put(0, 64);
         assert!(refused_for(all(Format::Deflate, &w.finish())).contains("run past"));
     }
@@ -2433,7 +2911,10 @@ mod tests {
         // a block type that does not exist
         assert!(refused_for(all(Format::Deflate, &[0x07, 0, 0, 0])).contains("block type"));
         // a stored block whose length and its complement do not agree
-        assert!(refused_for(all(Format::Deflate, &[0x01, 3, 0, 0, 0, b'a', b'b', b'c'])).contains("complement"));
+        assert!(
+            refused_for(all(Format::Deflate, &[0x01, 3, 0, 0, 0, b'a', b'b', b'c']))
+                .contains("complement")
+        );
         // symbols that are in the fixed table but not in the format: length codes 286 and 287, distance codes 30 and 31
         let lens = fixed_lengths();
         let codes = codes_of(&lens);
@@ -2444,7 +2925,10 @@ mod tests {
             w.code(codes[b'a' as usize], lens[b'a' as usize] as u32);
             w.code(codes[sym], lens[sym] as u32);
             w.put(0, 32);
-            assert!(refused_for(all(Format::Deflate, &w.finish())).contains("length code"), "symbol {sym}");
+            assert!(
+                refused_for(all(Format::Deflate, &w.finish())).contains("length code"),
+                "symbol {sym}"
+            );
         }
         for sym in [30u32, 31] {
             let mut w = Bits::new();
@@ -2454,13 +2938,23 @@ mod tests {
             w.code(codes[257], lens[257] as u32);
             w.code(sym, 5);
             w.put(0, 32);
-            assert!(refused_for(all(Format::Deflate, &w.finish())).contains("distance code"), "symbol {sym}");
+            assert!(
+                refused_for(all(Format::Deflate, &w.finish())).contains("distance code"),
+                "symbol {sym}"
+            );
         }
         // matches that reach back past what there is
-        for tokens in [vec![Token::Match(3, 1)], vec![Token::Lit(b'a'), Token::Match(3, 2)], vec![Token::Lit(b'a'), Token::Lit(b'b'), Token::Match(4, 3)]] {
+        for tokens in [
+            vec![Token::Match(3, 1)],
+            vec![Token::Lit(b'a'), Token::Match(3, 2)],
+            vec![Token::Lit(b'a'), Token::Lit(b'b'), Token::Match(4, 3)],
+        ] {
             let mut w = Bits::new();
             write_fixed(&mut w, &tokens, true);
-            assert!(refused_for(all(Format::Deflate, &w.finish())).contains("before the start"), "{tokens:?}");
+            assert!(
+                refused_for(all(Format::Deflate, &w.finish())).contains("before the start"),
+                "{tokens:?}"
+            );
         }
         // ... and the one that just fits, overlapping itself
         let mut w = Bits::new();
@@ -2500,9 +2994,21 @@ mod tests {
                 3 if n >= 1 => noise[0] = (noise[0] & 0xf8) | 0x04 | (noise[0] & 1),
                 _ => {}
             }
-            for format in [Format::Deflate, Format::Zlib, Format::ZlibOrDeflate, Format::Gzip, Format::GzipMember] {
+            for format in [
+                Format::Deflate,
+                Format::Zlib,
+                Format::ZlibOrDeflate,
+                Format::Gzip,
+                Format::GzipMember,
+            ] {
                 for chunk in [usize::MAX, 1, 5] {
-                    let _ = run_chunked(format, &noise, chunk, 97, Limits::new(1 << 20).with_ratio(2000, 1 << 16));
+                    let _ = run_chunked(
+                        format,
+                        &noise,
+                        chunk,
+                        97,
+                        Limits::new(1 << 20).with_ratio(2000, 1 << 16),
+                    );
                 }
             }
         }

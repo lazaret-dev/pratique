@@ -75,7 +75,9 @@ pub struct Pool {
 
 impl fmt::Debug for Pool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Pool").field("max_threads", &self.inner.max_threads).finish()
+        f.debug_struct("Pool")
+            .field("max_threads", &self.inner.max_threads)
+            .finish()
     }
 }
 
@@ -91,7 +93,11 @@ impl Pool {
             inner: Arc::new(Inner {
                 max_threads: max_threads.max(1),
                 idle_timeout,
-                state: Mutex::new(State { queue: VecDeque::new(), threads: 0, idle: 0 }),
+                state: Mutex::new(State {
+                    queue: VecDeque::new(),
+                    threads: 0,
+                    idle: 0,
+                }),
                 work: Condvar::new(),
             }),
         }
@@ -106,7 +112,11 @@ impl Pool {
 
     /// Worker threads currently alive (for tests and diagnostics).
     pub fn threads(&self) -> usize {
-        self.inner.state.lock().unwrap_or_else(|e| e.into_inner()).threads
+        self.inner
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .threads
     }
 
     /// Runs `f` on a worker thread. The returned future is ready when `f` has returned (or
@@ -117,15 +127,24 @@ impl Pool {
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
-        let shared = Arc::new(Shared { slot: Mutex::new(Slot { result: None, waker: None }), cancelled: AtomicBool::new(false) });
-        let completer = Completer { shared: Some(shared.clone()) };
+        let shared = Arc::new(Shared {
+            slot: Mutex::new(Slot {
+                result: None,
+                waker: None,
+            }),
+            cancelled: AtomicBool::new(false),
+        });
+        let completer = Completer {
+            shared: Some(shared.clone()),
+        };
         let job: Job = Box::new(move || {
             let mut completer = completer;
             let shared = completer.shared.take().expect("completer is armed once");
             if shared.cancelled.load(Ordering::Acquire) {
                 return;
             }
-            let result = catch_unwind(AssertUnwindSafe(f)).map_err(|p| TaskError::Panicked(panic_message(&*p)));
+            let result = catch_unwind(AssertUnwindSafe(f))
+                .map_err(|p| TaskError::Panicked(panic_message(&*p)));
             shared.finish(result);
         });
         self.submit(job);
@@ -142,7 +161,11 @@ impl Pool {
         } else if st.threads < inner.max_threads {
             st.threads += 1;
             let worker = self.inner.clone();
-            if thread::Builder::new().name("pratique-worker".into()).spawn(move || worker.run()).is_err() {
+            if thread::Builder::new()
+                .name("pratique-worker".into())
+                .spawn(move || worker.run())
+                .is_err()
+            {
                 st.threads -= 1;
                 if st.threads == 0 {
                     // nothing will ever pick the jobs up: drop them, which completes their
@@ -168,7 +191,10 @@ impl Inner {
                         break job;
                     }
                     st.idle += 1;
-                    let (guard, timeout) = self.work.wait_timeout(st, self.idle_timeout).unwrap_or_else(|e| e.into_inner());
+                    let (guard, timeout) = self
+                        .work
+                        .wait_timeout(st, self.idle_timeout)
+                        .unwrap_or_else(|e| e.into_inner());
                     st = guard;
                     st.idle -= 1;
                     if timeout.timed_out() && st.queue.is_empty() {
@@ -302,7 +328,10 @@ mod tests {
             .collect();
         let started = Instant::now();
         let done = block_on(join_all(tasks));
-        assert_eq!(done.into_iter().map(|r| r.unwrap()).collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+        assert_eq!(
+            done.into_iter().map(|r| r.unwrap()).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
         assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(pool.threads(), 4);
     }

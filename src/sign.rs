@@ -20,7 +20,9 @@
 //! The signing itself is in `crypto::ecdsa_sign`, `crypto::ed25519_sign` and `crypto::rsa_sign`, constant time; see
 //! their documentation.
 
-use crate::asn1::{self, write as der, Der, TAG_BIT_STRING, TAG_INTEGER, TAG_OCTET_STRING, TAG_OID, TAG_SEQUENCE};
+use crate::asn1::{
+    self, write as der, Der, TAG_BIT_STRING, TAG_INTEGER, TAG_OCTET_STRING, TAG_OID, TAG_SEQUENCE,
+};
 use crate::crypto::ecdsa::Curve;
 use crate::crypto::sha2::HashAlg;
 use crate::error::{Error, Result};
@@ -123,7 +125,8 @@ impl SigningKey {
             if found.is_some() {
                 return Err(key_err("more than one private key in the PEM text"));
             }
-            let der = ct_base64_decode(&b.body).ok_or_else(|| key_err(format!("the {} block's Base64 is malformed", b.label)))?;
+            let der = ct_base64_decode(&b.body)
+                .ok_or_else(|| key_err(format!("the {} block's Base64 is malformed", b.label)))?;
             found = Some(match b.label.as_str() {
                 "PRIVATE KEY" => SigningKey::from_pkcs8_der(&der)?,
                 "EC PRIVATE KEY" => SigningKey::from_sec1_der(&der, None)?,
@@ -135,7 +138,10 @@ impl SigningKey {
             if labels.is_empty() {
                 key_err("no PEM private key found (no -----BEGIN ... PRIVATE KEY----- block)")
             } else {
-                key_err(format!("no private key in the PEM text, only: {}", labels.join(", ")))
+                key_err(format!(
+                    "no private key in the PEM text, only: {}",
+                    labels.join(", ")
+                ))
             }
         })
     }
@@ -164,13 +170,18 @@ impl SigningKey {
         let mut outer = Der::new(der);
         let mut seq = outer.sequence().map_err(bad)?;
         outer.finish().map_err(bad)?;
-        let version = asn1::unsigned_integer(&seq.expect(TAG_INTEGER).map_err(bad)?).map_err(bad)?;
+        let version =
+            asn1::unsigned_integer(&seq.expect(TAG_INTEGER).map_err(bad)?).map_err(bad)?;
         if version != [0] && version != [1] {
             return Err(key_err("a PKCS#8 private key of an unknown version"));
         }
         let mut alg = seq.sequence().map_err(bad)?;
         let oid = asn1::oid_to_string(alg.expect(TAG_OID).map_err(bad)?.content);
-        let params = if alg.is_empty() { None } else { Some(alg.next().map_err(bad)?) };
+        let params = if alg.is_empty() {
+            None
+        } else {
+            Some(alg.next().map_err(bad)?)
+        };
         let private = seq.expect(TAG_OCTET_STRING).map_err(bad)?;
         // attributes [0] and the public key [1] may follow; they are not needed
         match oid.as_str() {
@@ -200,7 +211,8 @@ impl SigningKey {
     /// SEC 1 `ECPrivateKey` (RFC 5915). Its curve is `curve` (from a PKCS#8 wrapper) or the one it names; if it carries its
     /// public key, that must be the private key's.
     pub fn from_sec1_der(der: &[u8], curve: Option<Curve>) -> Result<SigningKey> {
-        let bad = |e: crate::verify_error::Error| key_err(format!("not an EC private key (SEC 1): {e}"));
+        let bad =
+            |e: crate::verify_error::Error| key_err(format!("not an EC private key (SEC 1): {e}"));
         let mut outer = Der::new(der);
         let mut seq = outer.sequence().map_err(bad)?;
         outer.finish().map_err(bad)?;
@@ -217,17 +229,25 @@ impl SigningKey {
         }
         if let Some(p) = seq.optional(0xa1).map_err(bad)? {
             let mut inner = Der::new(p.content);
-            public = Some(asn1::bit_string_bytes(&inner.expect(TAG_BIT_STRING).map_err(bad)?).map_err(bad)?.to_vec());
+            public = Some(
+                asn1::bit_string_bytes(&inner.expect(TAG_BIT_STRING).map_err(bad)?)
+                    .map_err(bad)?
+                    .to_vec(),
+            );
         }
         let curve = match (curve, named) {
-            (Some(a), Some(b)) if a != b => return Err(key_err("an EC private key that names two different curves")),
+            (Some(a), Some(b)) if a != b => {
+                return Err(key_err("an EC private key that names two different curves"))
+            }
             (Some(c), _) | (None, Some(c)) => c,
             (None, None) => return Err(key_err("an EC private key that does not say its curve")),
         };
         let key = EcdsaSigningKey::from_scalar(curve, &d)?;
         if let Some(p) = public {
             if p != key.public_key() {
-                return Err(key_err("an EC private key whose public key does not match it (a damaged key file?)"));
+                return Err(key_err(
+                    "an EC private key whose public key does not match it (a damaged key file?)",
+                ));
             }
         }
         Ok(key.into())
@@ -250,20 +270,31 @@ impl SigningKey {
                 _ => vec![scheme::ECDSA_SECP256R1_SHA256],
             },
             Kind::Ed25519(_) => vec![scheme::ED25519],
-            Kind::Rsa(_) => vec![scheme::RSA_PSS_RSAE_SHA256, scheme::RSA_PSS_RSAE_SHA384, scheme::RSA_PSS_RSAE_SHA512],
+            Kind::Rsa(_) => vec![
+                scheme::RSA_PSS_RSAE_SHA256,
+                scheme::RSA_PSS_RSAE_SHA384,
+                scheme::RSA_PSS_RSAE_SHA512,
+            ],
         }
     }
 
     /// The signature of `message` in TLS 1.3 signature scheme `scheme` (one of [`tls_schemes`](Self::tls_schemes)).
     pub fn sign_tls(&self, scheme_id: u16, message: &[u8]) -> Result<Vec<u8>> {
         match (&*self.0, scheme_id) {
-            (Kind::Ecdsa(k), scheme::ECDSA_SECP256R1_SHA256) if k.curve() == Curve::P256 => k.sign(HashAlg::Sha256, message),
-            (Kind::Ecdsa(k), scheme::ECDSA_SECP384R1_SHA384) if k.curve() == Curve::P384 => k.sign(HashAlg::Sha384, message),
+            (Kind::Ecdsa(k), scheme::ECDSA_SECP256R1_SHA256) if k.curve() == Curve::P256 => {
+                k.sign(HashAlg::Sha256, message)
+            }
+            (Kind::Ecdsa(k), scheme::ECDSA_SECP384R1_SHA384) if k.curve() == Curve::P384 => {
+                k.sign(HashAlg::Sha384, message)
+            }
             (Kind::Ed25519(k), scheme::ED25519) => Ok(k.sign(message).to_vec()),
             (Kind::Rsa(k), scheme::RSA_PSS_RSAE_SHA256) => k.sign_pss(HashAlg::Sha256, message),
             (Kind::Rsa(k), scheme::RSA_PSS_RSAE_SHA384) => k.sign_pss(HashAlg::Sha384, message),
             (Kind::Rsa(k), scheme::RSA_PSS_RSAE_SHA512) => k.sign_pss(HashAlg::Sha512, message),
-            _ => Err(key_err(format!("a {} key cannot make signature scheme 0x{scheme_id:04x}", self.algorithm()))),
+            _ => Err(key_err(format!(
+                "a {} key cannot make signature scheme 0x{scheme_id:04x}",
+                self.algorithm()
+            ))),
         }
     }
 
@@ -271,13 +302,25 @@ impl SigningKey {
     pub fn public_key_spki(&self) -> Vec<u8> {
         match &*self.0 {
             Kind::Ecdsa(k) => der::sequence(&[
-                &der::sequence(&[&der::oid_str(OID_EC_PUBLIC_KEY), &der::oid_str(curve_oid(k.curve()))]),
+                &der::sequence(&[
+                    &der::oid_str(OID_EC_PUBLIC_KEY),
+                    &der::oid_str(curve_oid(k.curve())),
+                ]),
                 &der::bit_string(0, k.public_key()),
             ]),
-            Kind::Ed25519(k) => der::sequence(&[&der::sequence(&[&der::oid_str(OID_ED25519)]), &der::bit_string(0, k.public_key())]),
+            Kind::Ed25519(k) => der::sequence(&[
+                &der::sequence(&[&der::oid_str(OID_ED25519)]),
+                &der::bit_string(0, k.public_key()),
+            ]),
             Kind::Rsa(k) => {
-                let pkcs1 = der::sequence(&[&der::integer(k.modulus()), &der::integer(k.public_exponent())]);
-                der::sequence(&[&der::sequence(&[&der::oid_str(OID_RSA_ENCRYPTION), &der::null()]), &der::bit_string(0, &pkcs1)])
+                let pkcs1 = der::sequence(&[
+                    &der::integer(k.modulus()),
+                    &der::integer(k.public_exponent()),
+                ]);
+                der::sequence(&[
+                    &der::sequence(&[&der::oid_str(OID_RSA_ENCRYPTION), &der::null()]),
+                    &der::bit_string(0, &pkcs1),
+                ])
             }
         }
     }
@@ -286,7 +329,11 @@ impl SigningKey {
     /// -SHA384, Ed25519, or sha256WithRSAEncryption.
     pub fn x509_algorithm(&self) -> Vec<u8> {
         match &*self.0 {
-            Kind::Ecdsa(k) => der::sequence(&[&der::oid_str(if k.curve() == Curve::P384 { OID_ECDSA_SHA384 } else { OID_ECDSA_SHA256 })]),
+            Kind::Ecdsa(k) => der::sequence(&[&der::oid_str(if k.curve() == Curve::P384 {
+                OID_ECDSA_SHA384
+            } else {
+                OID_ECDSA_SHA256
+            })]),
             Kind::Ed25519(_) => der::sequence(&[&der::oid_str(OID_ED25519)]),
             Kind::Rsa(_) => der::sequence(&[&der::oid_str(OID_SHA256_WITH_RSA), &der::null()]),
         }
@@ -306,7 +353,8 @@ impl SigningKey {
     /// public key bits.
     pub fn matches_certificate(&self, cert: &[u8]) -> Result<bool> {
         let c = crate::x509::Certificate::from_der(cert)?;
-        Ok(spki_identity(c.spki_der()).is_some() && spki_identity(c.spki_der()) == spki_identity(&self.public_key_spki()))
+        Ok(spki_identity(c.spki_der()).is_some()
+            && spki_identity(c.spki_der()) == spki_identity(&self.public_key_spki()))
     }
 
     /// The key as unencrypted PKCS#8 DER (ECDSA and Ed25519 keys; RSA keys are read, never written).
@@ -318,26 +366,33 @@ impl SigningKey {
                     &Zeroizing::new(der::octet_string(k.scalar())),
                     &der::context(1, true, &der::bit_string(0, k.public_key())),
                 ]));
-                (der::sequence(&[&der::oid_str(OID_EC_PUBLIC_KEY), &der::oid_str(curve_oid(k.curve()))]), Zeroizing::new(der::octet_string(&ec)))
+                (
+                    der::sequence(&[
+                        &der::oid_str(OID_EC_PUBLIC_KEY),
+                        &der::oid_str(curve_oid(k.curve())),
+                    ]),
+                    Zeroizing::new(der::octet_string(&ec)),
+                )
             }
-            Kind::Ed25519(k) => (der::sequence(&[&der::oid_str(OID_ED25519)]), Zeroizing::new(der::octet_string(&Zeroizing::new(der::octet_string(k.seed()))))),
+            Kind::Ed25519(k) => (
+                der::sequence(&[&der::oid_str(OID_ED25519)]),
+                Zeroizing::new(der::octet_string(&Zeroizing::new(der::octet_string(
+                    k.seed(),
+                )))),
+            ),
             Kind::Rsa(_) => return Err(key_err("writing out an RSA private key is not supported")),
         };
-        Ok(Zeroizing::new(der::sequence(&[&der::integer(&[0]), &alg, &private])))
+        Ok(Zeroizing::new(der::sequence(&[
+            &der::integer(&[0]),
+            &alg,
+            &private,
+        ])))
     }
 
     /// The key as a PEM `PRIVATE KEY` block (unencrypted PKCS#8), as bytes of text.
     pub fn to_pkcs8_pem(&self) -> Result<Zeroizing<Vec<u8>>> {
         let der = self.to_pkcs8_der()?;
-        let b64 = ct_base64_encode(&der);
-        let mut out = Zeroizing::new(Vec::with_capacity(b64.len() + b64.len() / 64 + 64));
-        out.extend_from_slice(b"-----BEGIN PRIVATE KEY-----\n");
-        for line in b64.chunks(64) {
-            out.extend_from_slice(line);
-            out.push(b'\n');
-        }
-        out.extend_from_slice(b"-----END PRIVATE KEY-----\n");
-        Ok(out)
+        Ok(private_key_pem(&der))
     }
 
     /// The ECDSA key inside, if it is one.
@@ -353,8 +408,12 @@ fn curve_of(oid: &str) -> Result<Curve> {
     match oid {
         OID_P256 => Ok(Curve::P256),
         OID_P384 => Ok(Curve::P384),
-        OID_P521 => Err(key_err("P-521 keys are not supported for signing (P-256 and P-384 are)")),
-        other => Err(key_err(format!("an EC key on curve {other}, which is not supported (P-256 and P-384 are)"))),
+        OID_P521 => Err(key_err(
+            "P-521 keys are not supported for signing (P-256 and P-384 are)",
+        )),
+        other => Err(key_err(format!(
+            "an EC key on curve {other}, which is not supported (P-256 and P-384 are)"
+        ))),
     }
 }
 
@@ -381,10 +440,14 @@ fn spki_identity(spki: &[u8]) -> Option<(String, Option<String>, Vec<u8>)> {
     let mut alg = seq.sequence().ok()?;
     let oid = asn1::oid_to_string(alg.expect(TAG_OID).ok()?.content);
     let curve = match alg.next() {
-        Ok(p) if p.tag == TAG_OID && oid == OID_EC_PUBLIC_KEY => Some(asn1::oid_to_string(p.content)),
+        Ok(p) if p.tag == TAG_OID && oid == OID_EC_PUBLIC_KEY => {
+            Some(asn1::oid_to_string(p.content))
+        }
         _ => None,
     };
-    let bits = asn1::bit_string_bytes(&seq.expect(TAG_BIT_STRING).ok()?).ok()?.to_vec();
+    let bits = asn1::bit_string_bytes(&seq.expect(TAG_BIT_STRING).ok()?)
+        .ok()?
+        .to_vec();
     Some((oid, curve, bits))
 }
 
@@ -403,7 +466,13 @@ fn pem_blocks(text: &str) -> Vec<PemBlock> {
     let mut out = Vec::new();
     let mut lines = text.lines();
     while let Some(line) = lines.next() {
-        let Some(label) = line.trim().strip_prefix("-----BEGIN ").and_then(|l| l.strip_suffix("-----")) else { continue };
+        let Some(label) = line
+            .trim()
+            .strip_prefix("-----BEGIN ")
+            .and_then(|l| l.strip_suffix("-----"))
+        else {
+            continue;
+        };
         let end = format!("-----END {label}-----");
         let mut body = Zeroizing::new(Vec::new());
         let mut encrypted = false;
@@ -423,7 +492,11 @@ fn pem_blocks(text: &str) -> Vec<PemBlock> {
             body.extend(l.bytes().filter(|b| !b.is_ascii_whitespace()));
         }
         if done {
-            out.push(PemBlock { label: label.to_string(), body, encrypted });
+            out.push(PemBlock {
+                label: label.to_string(),
+                body,
+                encrypted,
+            });
         }
     }
     out
@@ -446,7 +519,11 @@ fn b64_value(c: u8) -> (u32, u32) {
     let digit = in_range(c, b'0' as u32, b'9' as u32);
     let plus = in_range(c, b'+' as u32, b'+' as u32);
     let slash = in_range(c, b'/' as u32, b'/' as u32);
-    let v = (upper & c.wrapping_sub(65)) | (lower & c.wrapping_sub(71)) | (digit & c.wrapping_add(4)) | (plus & 62) | (slash & 63);
+    let v = (upper & c.wrapping_sub(65))
+        | (lower & c.wrapping_sub(71))
+        | (digit & c.wrapping_add(4))
+        | (plus & 62)
+        | (slash & 63);
     (v & 63, upper | lower | digit | plus | slash)
 }
 
@@ -497,7 +574,11 @@ fn b64_char(v: u8) -> u8 {
 fn ct_base64_encode(data: &[u8]) -> Zeroizing<Vec<u8>> {
     let mut out = Zeroizing::new(Vec::with_capacity((data.len() + 2) / 3 * 4));
     for chunk in data.chunks(3) {
-        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
         let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
         for i in 0..4 {
             if i <= chunk.len() {
@@ -538,11 +619,17 @@ mod tests {
             let data = rng.bytes(len);
             let enc = crate::pem::base64_encode(&data);
             assert_eq!(&ct_base64_encode(&data)[..], enc.as_bytes(), "encode {len}");
-            assert_eq!(&ct_base64_decode(enc.as_bytes()).unwrap()[..], &data[..], "decode {len}");
+            assert_eq!(
+                &ct_base64_decode(enc.as_bytes()).unwrap()[..],
+                &data[..],
+                "decode {len}"
+            );
         }
         for c in 0..=255u8 {
             let (v, ok) = b64_value(c);
-            let want = crate::pem::base64_decode(&format!("{}AAA", c as char)).ok().map(|d| d[0] >> 2);
+            let want = crate::pem::base64_decode(&format!("{}AAA", c as char))
+                .ok()
+                .map(|d| d[0] >> 2);
             match want {
                 Some(w) if c != b'=' && !c.is_ascii_whitespace() => {
                     assert_eq!(ok, u32::MAX, "{c}");
@@ -561,24 +648,46 @@ mod tests {
 
     #[test]
     fn generated_keys_round_trip_through_pkcs8_and_sign() {
-        for key in [SigningKey::generate_ecdsa(Curve::P256).unwrap(), SigningKey::generate_ecdsa(Curve::P384).unwrap(), SigningKey::generate_ed25519().unwrap()] {
+        for key in [
+            SigningKey::generate_ecdsa(Curve::P256).unwrap(),
+            SigningKey::generate_ecdsa(Curve::P384).unwrap(),
+            SigningKey::generate_ed25519().unwrap(),
+        ] {
             let pem_bytes = key.to_pkcs8_pem().unwrap();
             let text = std::str::from_utf8(&pem_bytes).unwrap();
             let back = SigningKey::from_pem(text).unwrap();
-            assert_eq!(back.public_key_spki(), key.public_key_spki(), "{}", key.algorithm());
+            assert_eq!(
+                back.public_key_spki(),
+                key.public_key_spki(),
+                "{}",
+                key.algorithm()
+            );
             let der = key.to_pkcs8_der().unwrap();
-            assert_eq!(SigningKey::from_der(&der).unwrap().public_key_spki(), key.public_key_spki());
+            assert_eq!(
+                SigningKey::from_der(&der).unwrap().public_key_spki(),
+                key.public_key_spki()
+            );
             for s in key.tls_schemes() {
                 let sig = back.sign_tls(s, b"to be signed").unwrap();
                 match (&*key.0, s) {
                     (Kind::Ecdsa(k), _) => {
                         let alg = crate::crypto::ecdsa_sign::default_hash(k.curve());
-                        assert!(ecdsa::verify_prehashed(k.curve(), k.public_key(), &alg.digest(b"to be signed"), &sig));
+                        assert!(ecdsa::verify_prehashed(
+                            k.curve(),
+                            k.public_key(),
+                            &alg.digest(b"to be signed"),
+                            &sig
+                        ));
                     }
-                    (Kind::Ed25519(k), _) => assert!(ed25519::verify(k.public_key(), b"to be signed", &sig)),
+                    (Kind::Ed25519(k), _) => {
+                        assert!(ed25519::verify(k.public_key(), b"to be signed", &sig))
+                    }
                     _ => unreachable!(),
                 }
-                assert!(back.sign_tls(0x0401, b"x").is_err(), "rsa_pkcs1_sha256 is not offered");
+                assert!(
+                    back.sign_tls(0x0401, b"x").is_err(),
+                    "rsa_pkcs1_sha256 is not offered"
+                );
             }
         }
     }
@@ -590,12 +699,24 @@ mod tests {
     #[test]
     fn keys_openssl_wrote_in_every_format() {
         let mut seen = 0;
-        for line in KEYS.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+        for line in KEYS
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
             let f: Vec<&str> = line.split(' ').collect();
             let (name, label, der, spki) = (f[0], f[1].replace('_', " "), unhex(f[2]), unhex(f[3]));
-            let key = SigningKey::from_pem(&pem(&label, &der)).unwrap_or_else(|e| panic!("{name}: {e}"));
-            assert_eq!(spki_identity(&key.public_key_spki()), spki_identity(&spki), "{name}");
-            assert_eq!(SigningKey::from_der(&der).unwrap().public_key_spki(), key.public_key_spki(), "{name} as DER");
+            let key =
+                SigningKey::from_pem(&pem(&label, &der)).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(
+                spki_identity(&key.public_key_spki()),
+                spki_identity(&spki),
+                "{name}"
+            );
+            assert_eq!(
+                SigningKey::from_der(&der).unwrap().public_key_spki(),
+                key.public_key_spki(),
+                "{name} as DER"
+            );
             seen += 1;
         }
         assert!(seen >= 7);
@@ -619,20 +740,54 @@ mod tests {
         // EC PARAMETERS before the key is passed over
         let ec = SigningKey::generate_ecdsa(Curve::P256).unwrap();
         let k = ec.as_ecdsa().unwrap();
-        let sec1 = der::sequence(&[&der::integer(&[1]), &der::octet_string(k.scalar()), &der::context(0, true, &der::oid_str(OID_P256))]);
-        let text = format!("{}{}", pem("EC PARAMETERS", &der::oid_str(OID_P256)), pem(&format!("EC {PRIV}"), &sec1));
-        assert_eq!(SigningKey::from_pem(&text).unwrap().public_key_spki(), ec.public_key_spki());
+        let sec1 = der::sequence(&[
+            &der::integer(&[1]),
+            &der::octet_string(k.scalar()),
+            &der::context(0, true, &der::oid_str(OID_P256)),
+        ]);
+        let text = format!(
+            "{}{}",
+            pem("EC PARAMETERS", &der::oid_str(OID_P256)),
+            pem(&format!("EC {PRIV}"), &sec1)
+        );
+        assert_eq!(
+            SigningKey::from_pem(&text).unwrap().public_key_spki(),
+            ec.public_key_spki()
+        );
         // a SEC 1 key whose public key is not its own
         let other = SigningKey::generate_ecdsa(Curve::P256).unwrap();
         let wrong = der::sequence(&[
             &der::integer(&[1]),
             &der::octet_string(k.scalar()),
             &der::context(0, true, &der::oid_str(OID_P256)),
-            &der::context(1, true, &der::bit_string(0, other.as_ecdsa().unwrap().public_key())),
+            &der::context(
+                1,
+                true,
+                &der::bit_string(0, other.as_ecdsa().unwrap().public_key()),
+            ),
         ]);
-        assert!(SigningKey::from_der(&wrong).unwrap_err().to_string().contains("does not match"));
+        assert!(SigningKey::from_der(&wrong)
+            .unwrap_err()
+            .to_string()
+            .contains("does not match"));
         // a SEC 1 key with no curve anywhere
         let bare = der::sequence(&[&der::integer(&[1]), &der::octet_string(k.scalar())]);
-        assert!(SigningKey::from_der(&bare).unwrap_err().to_string().contains("curve"));
+        assert!(SigningKey::from_der(&bare)
+            .unwrap_err()
+            .to_string()
+            .contains("curve"));
     }
+}
+
+/// Encodes PKCS#8 DER as private-key PEM without secret-indexed Base64 tables.
+pub fn private_key_pem(der: &[u8]) -> Zeroizing<Vec<u8>> {
+    let b64 = ct_base64_encode(der);
+    let mut out = Zeroizing::new(Vec::with_capacity(b64.len() + b64.len() / 64 + 64));
+    out.extend_from_slice(b"-----BEGIN PRIVATE KEY-----\n");
+    for line in b64.chunks(64) {
+        out.extend_from_slice(line);
+        out.push(b'\n');
+    }
+    out.extend_from_slice(b"-----END PRIVATE KEY-----\n");
+    out
 }

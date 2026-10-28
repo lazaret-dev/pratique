@@ -219,7 +219,11 @@ Lazaret should:
    inspected (`BodyAction::Inspect`) or blocked than passed on unread.
 
 The mirror's certificate must verify for the proxy: an internal CA has to be in the machine's store or in one of the
-variables above, as for a gateway.
+variables above, as for a gateway. A server's chain is also held to the CA/Browser Forum's rules that bind a client (the
+leaf names serverAuth in its extendedKeyUsage, RSA or ECDSA keys, issuer names byte for byte, matching key identifiers),
+as browsers hold it. Most internal CAs meet them; one that does not (a leaf with no extendedKeyUsage, an Ed25519 key)
+needs a client of its own whose store is marked as private anchors, `TrustStore::with_web_pki_rules(false)`, which
+leaves RFC 5280's rules alone (see "Your own client" below).
 
 ## Your own client
 

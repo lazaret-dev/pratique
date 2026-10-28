@@ -95,9 +95,17 @@ pub enum Error {
     /// A form this client does not handle (another major specification version, `succinct_roles`).
     Unsupported(String),
     /// Fewer distinct keys of the role signed than its threshold.
-    Signature { role: String, verified: usize, threshold: u64 },
+    Signature {
+        role: String,
+        verified: usize,
+        threshold: u64,
+    },
     /// Not the version that was expected.
-    Version { role: String, expected: u64, got: u64 },
+    Version {
+        role: String,
+        expected: u64,
+        got: u64,
+    },
     /// Older than what was trusted before, or missing what it had.
     Rollback(String),
     /// Expired at the time the update runs at (Unix seconds of `expires`).
@@ -118,10 +126,21 @@ impl fmt::Display for Error {
             Error::Json(e) => write!(f, "TUF metadata is not strict JSON: {e}"),
             Error::Malformed(m) => write!(f, "malformed TUF metadata: {m}"),
             Error::Unsupported(m) => write!(f, "unsupported TUF metadata: {m}"),
-            Error::Signature { role, verified, threshold } => {
-                write!(f, "{role} metadata is signed by {verified} of its keys and needs {threshold}")
+            Error::Signature {
+                role,
+                verified,
+                threshold,
+            } => {
+                write!(
+                    f,
+                    "{role} metadata is signed by {verified} of its keys and needs {threshold}"
+                )
             }
-            Error::Version { role, expected, got } => write!(f, "{role} metadata has version {got}, expected {expected}"),
+            Error::Version {
+                role,
+                expected,
+                got,
+            } => write!(f, "{role} metadata has version {got}, expected {expected}"),
             Error::Rollback(m) => write!(f, "TUF rollback: {m}"),
             Error::Expired { role, expires } => write!(f, "{role} metadata expired at {expires}"),
             Error::LengthOrHash(m) => write!(f, "TUF length or hash mismatch: {m}"),
@@ -163,7 +182,10 @@ fn write_canonical(v: &Value, out: &mut Vec<u8>) -> Result<(), Error> {
         Value::Bool(false) => out.extend_from_slice(b"false"),
         Value::Number(n) => {
             if !n.is_integer() {
-                return Err(Error::Malformed(format!("the number {} is not an integer, which canonical JSON cannot write", n.text())));
+                return Err(Error::Malformed(format!(
+                    "the number {} is not an integer, which canonical JSON cannot write",
+                    n.text()
+                )));
             }
             // a JSON integer has no leading zeros; Python reads "-0" as 0
             out.extend_from_slice(if n.text() == "-0" { "0" } else { n.text() }.as_bytes());
@@ -229,7 +251,11 @@ enum Material {
 
 impl fmt::Debug for Key {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Key").field("keytype", &self.keytype).field("scheme", &self.scheme).field("usable", &self.material.is_some()).finish()
+        f.debug_struct("Key")
+            .field("keytype", &self.keytype)
+            .field("scheme", &self.scheme)
+            .field("usable", &self.material.is_some())
+            .finish()
     }
 }
 
@@ -237,10 +263,16 @@ impl Key {
     fn parse(v: &Value, path: &str) -> Result<Key, Error> {
         let keytype = text(v, "keytype", path)?;
         let scheme = text(v, "scheme", path)?;
-        let Some(keyval) = v.get("keyval").filter(|k| k.as_object().is_some()) else { return malformed(path, "no keyval object") };
+        let Some(keyval) = v.get("keyval").filter(|k| k.as_object().is_some()) else {
+            return malformed(path, "no keyval object");
+        };
         let public = keyval.get("public").and_then(Value::as_str);
         let material = public.and_then(|p| material(&keytype, &scheme, p));
-        Ok(Key { keytype, scheme, material })
+        Ok(Key {
+            keytype,
+            scheme,
+            material,
+        })
     }
 
     /// Whether the key is of a type and scheme this client verifies.
@@ -254,9 +286,13 @@ impl Key {
 
     fn verify(&self, message: &[u8], signature: &[u8]) -> bool {
         match &self.material {
-            Some((Material::Ecdsa(curve, point, hash), _)) => ecdsa::verify(*curve, point, *hash, message, signature),
+            Some((Material::Ecdsa(curve, point, hash), _)) => {
+                ecdsa::verify(*curve, point, *hash, message, signature)
+            }
             Some((Material::Ed25519(k), _)) => ed25519::verify(k, message, signature),
-            Some((Material::RsaPss(k, hash), _)) => k.verify_pss_any_salt(*hash, message, signature),
+            Some((Material::RsaPss(k, hash), _)) => {
+                k.verify_pss_any_salt(*hash, message, signature)
+            }
             Some((Material::RsaPkcs1(k, hash), _)) => k.verify_pkcs1(*hash, message, signature),
             None => false,
         }
@@ -265,7 +301,9 @@ impl Key {
 
 /// The `SubjectPublicKeyInfo` of a PEM `PUBLIC KEY` block, and the key in it.
 fn spki_from_pem(text: &str) -> Option<(Vec<u8>, PublicKey)> {
-    let block = pem::parse(text).into_iter().find(|b| b.label == "PUBLIC KEY")?;
+    let block = pem::parse(text)
+        .into_iter()
+        .find(|b| b.label == "PUBLIC KEY")?;
     let key = x509::parse_spki(&block.data).ok()?;
     Some((block.data, key))
 }
@@ -278,7 +316,9 @@ fn material(keytype: &str, scheme: &str, public: &str) -> Option<(Material, Vec<
         _ => None,
     };
     match (keytype, scheme) {
-        ("ecdsa" | "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "ecdsa-sha2-nistp521", _) if scheme.starts_with("ecdsa-sha2-nistp") => {
+        ("ecdsa" | "ecdsa-sha2-nistp256" | "ecdsa-sha2-nistp384" | "ecdsa-sha2-nistp521", _)
+            if scheme.starts_with("ecdsa-sha2-nistp") =>
+        {
             // the legacy keytypes name the scheme too, and must name the same one
             if keytype != "ecdsa" && keytype != scheme {
                 return None;
@@ -290,7 +330,11 @@ fn material(keytype: &str, scheme: &str, public: &str) -> Option<(Material, Vec<
                 _ => return None,
             };
             match spki_from_pem(public)?.1 {
-                PublicKey::Ec { curve, point } if curve == want && ecdsa::is_valid_public_key(curve, &point) => Some((Material::Ecdsa(curve, point.clone(), hash), point)),
+                PublicKey::Ec { curve, point }
+                    if curve == want && ecdsa::is_valid_public_key(curve, &point) =>
+                {
+                    Some((Material::Ecdsa(curve, point.clone(), hash), point))
+                }
                 _ => None,
             }
         }
@@ -303,13 +347,23 @@ fn material(keytype: &str, scheme: &str, public: &str) -> Option<(Material, Vec<
             Some((Material::Ed25519(k), k.to_vec()))
         }
         ("rsa", _) => {
-            let (pss, hash) = match (scheme.strip_prefix("rsassa-pss-"), scheme.strip_prefix("rsa-pkcs1v15-")) {
+            let (pss, hash) = match (
+                scheme.strip_prefix("rsassa-pss-"),
+                scheme.strip_prefix("rsa-pkcs1v15-"),
+            ) {
                 (Some(h), _) => (true, hash_of(h)?),
                 (_, Some(h)) => (false, hash_of(h)?),
                 _ => return None,
             };
             match spki_from_pem(public)? {
-                (spki, PublicKey::Rsa(k)) if k.bits() >= 2048 => Some((if pss { Material::RsaPss(k, hash) } else { Material::RsaPkcs1(k, hash) }, spki)),
+                (spki, PublicKey::Rsa(k)) if k.bits() >= 2048 => Some((
+                    if pss {
+                        Material::RsaPss(k, hash)
+                    } else {
+                        Material::RsaPkcs1(k, hash)
+                    },
+                    spki,
+                )),
                 _ => None,
             }
         }
@@ -348,7 +402,10 @@ fn integer(v: &Value, name: &str, path: &str, min: u64) -> Result<u64, Error> {
     match v.get(name) {
         Some(Value::Number(n)) => match n.as_u64() {
             Some(x) if x >= min => Ok(x),
-            _ => malformed(&format!("{path}.{name}"), &format!("not an integer of at least {min}")),
+            _ => malformed(
+                &format!("{path}.{name}"),
+                &format!("not an integer of at least {min}"),
+            ),
         },
         Some(_) => malformed(&format!("{path}.{name}"), "not a number"),
         None => malformed(&format!("{path}.{name}"), "missing"),
@@ -356,8 +413,17 @@ fn integer(v: &Value, name: &str, path: &str, min: u64) -> Result<u64, Error> {
 }
 
 fn strings(v: &Value, path: &str) -> Result<Vec<String>, Error> {
-    let Some(a) = v.as_array() else { return malformed(path, "not an array") };
-    a.iter().enumerate().map(|(i, s)| s.as_str().map(str::to_string).ok_or_else(|| Error::Malformed(format!("{path}[{i}]: not a string")))).collect()
+    let Some(a) = v.as_array() else {
+        return malformed(path, "not an array");
+    };
+    a.iter()
+        .enumerate()
+        .map(|(i, s)| {
+            s.as_str()
+                .map(str::to_string)
+                .ok_or_else(|| Error::Malformed(format!("{path}[{i}]: not a string")))
+        })
+        .collect()
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ`, exactly.
@@ -365,7 +431,10 @@ fn expires(v: &Value, path: &str) -> Result<i64, Error> {
     let s = text(v, "expires", path)?;
     let b = s.as_bytes();
     if b.len() != 20 || b[19] != b'Z' {
-        return malformed(&format!("{path}.expires"), "not of the form YYYY-MM-DDTHH:MM:SSZ");
+        return malformed(
+            &format!("{path}.expires"),
+            "not of the form YYYY-MM-DDTHH:MM:SSZ",
+        );
     }
     match parse_rfc3339(&s) {
         Some((t, 0)) => Ok(t),
@@ -391,17 +460,33 @@ fn common(signed: &Value, kind: &str) -> Result<Common, Error> {
     }
     let t = text(signed, "_type", path)?;
     if t != kind {
-        return malformed(&format!("{path}._type"), &format!("is {t:?}, expected {kind:?}"));
+        return malformed(
+            &format!("{path}._type"),
+            &format!("is {t:?}, expected {kind:?}"),
+        );
     }
     let spec_version = text(signed, "spec_version", path)?;
     let parts: Vec<&str> = spec_version.split('.').collect();
-    if !(2..=3).contains(&parts.len()) || !parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) {
-        return malformed(&format!("{path}.spec_version"), &format!("{spec_version:?} is not a version"));
+    if !(2..=3).contains(&parts.len())
+        || !parts
+            .iter()
+            .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return malformed(
+            &format!("{path}.spec_version"),
+            &format!("{spec_version:?} is not a version"),
+        );
     }
     if parts[0] != "1" {
-        return Err(Error::Unsupported(format!("specification version {spec_version}")));
+        return Err(Error::Unsupported(format!(
+            "specification version {spec_version}"
+        )));
     }
-    Ok(Common { spec_version, version: integer(signed, "version", path, 1)?, expires: expires(signed, path)? })
+    Ok(Common {
+        spec_version,
+        version: integer(signed, "version", path, 1)?,
+        expires: expires(signed, path)?,
+    })
 }
 
 /// Metadata as it arrived: the `signed` value, its canonical bytes, and the signatures by key id.
@@ -416,7 +501,9 @@ fn envelope(bytes: &[u8]) -> Result<Envelope, Error> {
     if doc.as_object().is_none() {
         return malformed("$", "not an object");
     }
-    let Some(signed) = doc.get("signed").cloned() else { return malformed("$.signed", "missing") };
+    let Some(signed) = doc.get("signed").cloned() else {
+        return malformed("$.signed", "missing");
+    };
     let mut signatures: Vec<(String, Vec<u8>)> = Vec::new();
     for (i, s) in array(&doc, "signatures", "$")?.iter().enumerate() {
         let path = format!("$.signatures[{i}]");
@@ -434,7 +521,11 @@ fn envelope(bytes: &[u8]) -> Result<Envelope, Error> {
         signatures.push((keyid, crate::util::unhex(&sig)));
     }
     let payload = canonical_json(&signed)?;
-    Ok(Envelope { signed, payload, signatures })
+    Ok(Envelope {
+        signed,
+        payload,
+        signatures,
+    })
 }
 
 /// The keys a role may sign with, and how many must.
@@ -445,33 +536,58 @@ pub struct RoleKeys {
 }
 
 fn role_keys(v: &Value, path: &str) -> Result<RoleKeys, Error> {
-    let keyids = strings(v.get("keyids").unwrap_or(&Value::Null), &format!("{path}.keyids"))?;
+    let keyids = strings(
+        v.get("keyids").unwrap_or(&Value::Null),
+        &format!("{path}.keyids"),
+    )?;
     for (i, k) in keyids.iter().enumerate() {
         if keyids[..i].contains(k) {
             return malformed(&format!("{path}.keyids"), &format!("{k} twice"));
         }
     }
-    Ok(RoleKeys { keyids, threshold: integer(v, "threshold", path, 1)? })
+    Ok(RoleKeys {
+        keyids,
+        threshold: integer(v, "threshold", path, 1)?,
+    })
 }
 
 fn keys(o: &json::Object, path: &str) -> Result<BTreeMap<String, Key>, Error> {
-    o.iter().map(|(id, k)| Ok((id.to_string(), Key::parse(k, &format!("{path}.{id}"))?))).collect()
+    o.iter()
+        .map(|(id, k)| Ok((id.to_string(), Key::parse(k, &format!("{path}.{id}"))?)))
+        .collect()
 }
 
 /// Checks that distinct keys of `role` (as many as its threshold) signed `env`.
-fn verify_role(name: &str, keys: &BTreeMap<String, Key>, role: &RoleKeys, env: &Envelope) -> Result<(), Error> {
+fn verify_role(
+    name: &str,
+    keys: &BTreeMap<String, Key>,
+    role: &RoleKeys,
+    env: &Envelope,
+) -> Result<(), Error> {
     let mut good: Vec<Vec<u8>> = Vec::new();
     for keyid in &role.keyids {
-        let (Some(key), Some((_, sig))) = (keys.get(keyid), env.signatures.iter().find(|(k, _)| k == keyid)) else { continue };
+        let (Some(key), Some((_, sig))) = (
+            keys.get(keyid),
+            env.signatures.iter().find(|(k, _)| k == keyid),
+        ) else {
+            continue;
+        };
         if key.verify(&env.payload, sig) {
-            let id = key.identity().expect("a key that verifies has material").to_vec();
+            let id = key
+                .identity()
+                .expect("a key that verifies has material")
+                .to_vec();
             if !good.contains(&id) {
                 good.push(id);
             }
         }
     }
     if (good.len() as u64) < role.threshold {
-        return Err(Error::Signature { role: name.to_string(), verified: good.len(), threshold: role.threshold });
+        return Err(Error::Signature {
+            role: name.to_string(),
+            verified: good.len(),
+            threshold: role.threshold,
+        });
     }
     Ok(())
 }
@@ -499,14 +615,31 @@ impl Root {
         let keys = keys(object(signed, "keys", "signed")?, "signed.keys")?;
         let roles = object(signed, "roles", "signed")?;
         if roles.len() != 4 || TOP_LEVEL.iter().any(|r| roles.get(r).is_none()) {
-            return malformed("signed.roles", "must be exactly root, timestamp, snapshot and targets");
+            return malformed(
+                "signed.roles",
+                "must be exactly root, timestamp, snapshot and targets",
+            );
         }
-        let role = |n: &str| role_keys(roles.get(n).expect("checked"), &format!("signed.roles.{n}"));
-        Ok(Root { common, consistent_snapshot, keys, roles: [role("root")?, role("timestamp")?, role("snapshot")?, role("targets")?] })
+        let role =
+            |n: &str| role_keys(roles.get(n).expect("checked"), &format!("signed.roles.{n}"));
+        Ok(Root {
+            common,
+            consistent_snapshot,
+            keys,
+            roles: [
+                role("root")?,
+                role("timestamp")?,
+                role("snapshot")?,
+                role("targets")?,
+            ],
+        })
     }
 
     fn role(&self, name: &str) -> &RoleKeys {
-        &self.roles[TOP_LEVEL.iter().position(|r| *r == name).expect("a top-level role")]
+        &self.roles[TOP_LEVEL
+            .iter()
+            .position(|r| *r == name)
+            .expect("a top-level role")]
     }
 
     fn verify(&self, name: &str, env: &Envelope) -> Result<(), Error> {
@@ -524,11 +657,19 @@ pub struct MetaFile {
 }
 
 fn hashes(v: &Value, path: &str) -> Result<Vec<(String, String)>, Error> {
-    let Some(o) = v.as_object() else { return malformed(path, "not an object") };
+    let Some(o) = v.as_object() else {
+        return malformed(path, "not an object");
+    };
     if o.is_empty() {
         return malformed(path, "empty");
     }
-    o.iter().map(|(alg, h)| h.as_str().map(|h| (alg.to_string(), h.to_string())).ok_or_else(|| Error::Malformed(format!("{path}.{alg}: not a string")))).collect()
+    o.iter()
+        .map(|(alg, h)| {
+            h.as_str()
+                .map(|h| (alg.to_string(), h.to_string()))
+                .ok_or_else(|| Error::Malformed(format!("{path}.{alg}: not a string")))
+        })
+        .collect()
 }
 
 impl MetaFile {
@@ -544,7 +685,11 @@ impl MetaFile {
             None => None,
             Some(h) => Some(hashes(h, &format!("{path}.hashes"))?),
         };
-        Ok(MetaFile { version: integer(v, "version", path, 1)?, length, hashes })
+        Ok(MetaFile {
+            version: integer(v, "version", path, 1)?,
+            length,
+            hashes,
+        })
     }
 
     fn check(&self, what: &str, data: &[u8]) -> Result<(), Error> {
@@ -560,7 +705,10 @@ impl MetaFile {
 
 fn check_length(what: &str, data: &[u8], length: u64) -> Result<(), Error> {
     if data.len() as u64 != length {
-        return Err(Error::LengthOrHash(format!("{what} is {} bytes, not {length}", data.len())));
+        return Err(Error::LengthOrHash(format!(
+            "{what} is {} bytes, not {length}",
+            data.len()
+        )));
     }
     Ok(())
 }
@@ -571,11 +719,17 @@ fn check_hashes(what: &str, data: &[u8], hashes: &[(String, String)]) -> Result<
             "sha256" => HashAlg::Sha256,
             "sha384" => HashAlg::Sha384,
             "sha512" => HashAlg::Sha512,
-            other => return Err(Error::LengthOrHash(format!("{what}: unsupported hash algorithm {other:?}"))),
+            other => {
+                return Err(Error::LengthOrHash(format!(
+                    "{what}: unsupported hash algorithm {other:?}"
+                )))
+            }
         };
         // compared as python-tuf compares them: the lower-case hex digest, as a string
         if hex(&h.digest(data)) != *want {
-            return Err(Error::LengthOrHash(format!("{what}: the {alg} is not {want}")));
+            return Err(Error::LengthOrHash(format!(
+                "{what}: the {alg} is not {want}"
+            )));
         }
     }
     Ok(())
@@ -593,8 +747,13 @@ impl Timestamp {
     fn parse(signed: &Value) -> Result<Timestamp, Error> {
         let common = common(signed, "timestamp")?;
         let meta = object(signed, "meta", "signed")?;
-        let Some(s) = meta.get("snapshot.json") else { return malformed("signed.meta", "no snapshot.json") };
-        Ok(Timestamp { common, snapshot: MetaFile::parse(s, "signed.meta.snapshot.json")? })
+        let Some(s) = meta.get("snapshot.json") else {
+            return malformed("signed.meta", "no snapshot.json");
+        };
+        Ok(Timestamp {
+            common,
+            snapshot: MetaFile::parse(s, "signed.meta.snapshot.json")?,
+        })
     }
 }
 
@@ -610,7 +769,15 @@ impl Snapshot {
     fn parse(signed: &Value) -> Result<Snapshot, Error> {
         let common = common(signed, "snapshot")?;
         let meta = object(signed, "meta", "signed")?;
-        let meta = meta.iter().map(|(n, m)| Ok((n.to_string(), MetaFile::parse(m, &format!("signed.meta.{n}"))?))).collect::<Result<_, Error>>()?;
+        let meta = meta
+            .iter()
+            .map(|(n, m)| {
+                Ok((
+                    n.to_string(),
+                    MetaFile::parse(m, &format!("signed.meta.{n}"))?,
+                ))
+            })
+            .collect::<Result<_, Error>>()?;
         Ok(Snapshot { common, meta })
     }
 }
@@ -666,8 +833,15 @@ impl DelegatedRole {
 /// python-tuf's rule: the same number of `/`-separated segments, each matching its pattern with `fnmatch` (`*`, `?`,
 /// `[...]` and `[!...]`, case-sensitive, so that `*` never crosses a `/`).
 pub fn path_matches(target: &str, pattern: &str) -> bool {
-    let (t, p): (Vec<&str>, Vec<&str>) = (target.split('/').collect(), pattern.split('/').collect());
-    t.len() == p.len() && t.iter().zip(&p).all(|(t, p)| fnmatch(&t.chars().collect::<Vec<_>>(), &p.chars().collect::<Vec<_>>()))
+    let (t, p): (Vec<&str>, Vec<&str>) =
+        (target.split('/').collect(), pattern.split('/').collect());
+    t.len() == p.len()
+        && t.iter().zip(&p).all(|(t, p)| {
+            fnmatch(
+                &t.chars().collect::<Vec<_>>(),
+                &p.chars().collect::<Vec<_>>(),
+            )
+        })
 }
 
 /// One element of a pattern.
@@ -675,7 +849,10 @@ enum Pat {
     Char(char),
     Any,
     Star,
-    Set { negated: bool, items: Vec<(char, char)> },
+    Set {
+        negated: bool,
+        items: Vec<(char, char)>,
+    },
 }
 
 fn compile(p: &[char]) -> Vec<Pat> {
@@ -747,7 +924,9 @@ fn fnmatch(text: &[char], pattern: &[char]) -> bool {
     let one = |p: &Pat, c: char| match p {
         Pat::Char(x) => *x == c,
         Pat::Any => true,
-        Pat::Set { negated, items } => items.iter().any(|(lo, hi)| (*lo..=*hi).contains(&c)) != *negated,
+        Pat::Set { negated, items } => {
+            items.iter().any(|(lo, hi)| (*lo..=*hi).contains(&c)) != *negated
+        }
         Pat::Star => false,
     };
     let (mut t, mut p) = (0, 0);
@@ -795,17 +974,28 @@ impl Targets {
             if t.as_object().is_none() {
                 return malformed(&p, "not an object");
             }
-            let Some(h) = t.get("hashes") else { return malformed(&format!("{p}.hashes"), "missing") };
+            let Some(h) = t.get("hashes") else {
+                return malformed(&format!("{p}.hashes"), "missing");
+            };
             targets.insert(
                 path.to_string(),
-                TargetFile { path: path.to_string(), length: integer(t, "length", &p, 0)?, hashes: hashes(h, &format!("{p}.hashes"))?, custom: t.get("custom").cloned() },
+                TargetFile {
+                    path: path.to_string(),
+                    length: integer(t, "length", &p, 0)?,
+                    hashes: hashes(h, &format!("{p}.hashes"))?,
+                    custom: t.get("custom").cloned(),
+                },
             );
         }
         let delegations = match signed.get("delegations") {
             None => None,
             Some(d) => Some(Delegations::parse(d)?),
         };
-        Ok(Targets { common, targets, delegations })
+        Ok(Targets {
+            common,
+            targets,
+            delegations,
+        })
     }
 }
 
@@ -816,7 +1006,9 @@ impl Delegations {
             return malformed(path, "not an object");
         }
         if d.get("succinct_roles").is_some() {
-            return Err(Error::Unsupported("succinct_roles (hash-bin delegations)".into()));
+            return Err(Error::Unsupported(
+                "succinct_roles (hash-bin delegations)".into(),
+            ));
         }
         let keys = keys(object(d, "keys", path)?, &format!("{path}.keys"))?;
         let mut roles: Vec<DelegatedRole> = Vec::new();
@@ -827,7 +1019,10 @@ impl Delegations {
             }
             let name = text(r, "name", &p)?;
             if name.is_empty() || TOP_LEVEL.contains(&name.as_str()) {
-                return malformed(&format!("{p}.name"), "empty or the name of a top-level role");
+                return malformed(
+                    &format!("{p}.name"),
+                    "empty or the name of a top-level role",
+                );
             }
             if roles.iter().any(|x| x.name == name) {
                 return malformed(&format!("{p}.name"), &format!("{name:?} twice"));
@@ -836,12 +1031,24 @@ impl Delegations {
                 Some(Value::Bool(b)) => *b,
                 _ => return malformed(&format!("{p}.terminating"), "missing or not a boolean"),
             };
-            let paths = r.get("paths").map(|v| strings(v, &format!("{p}.paths"))).transpose()?;
-            let path_hash_prefixes = r.get("path_hash_prefixes").map(|v| strings(v, &format!("{p}.path_hash_prefixes"))).transpose()?;
+            let paths = r
+                .get("paths")
+                .map(|v| strings(v, &format!("{p}.paths")))
+                .transpose()?;
+            let path_hash_prefixes = r
+                .get("path_hash_prefixes")
+                .map(|v| strings(v, &format!("{p}.path_hash_prefixes")))
+                .transpose()?;
             if paths.is_some() == path_hash_prefixes.is_some() {
                 return malformed(&p, "must have exactly one of paths and path_hash_prefixes");
             }
-            roles.push(DelegatedRole { name, keys: role_keys(r, &p)?, terminating, paths, path_hash_prefixes });
+            roles.push(DelegatedRole {
+                name,
+                keys: role_keys(r, &p)?,
+                terminating,
+                paths,
+                path_hash_prefixes,
+            });
         }
         Ok(Delegations { keys, roles })
     }
@@ -900,7 +1107,17 @@ impl Updater {
         let env = envelope(trusted_root)?;
         let root = Root::parse(&env.signed)?;
         root.verify("root", &env)?;
-        Ok(Updater { now, root: Trusted { meta: root, bytes: trusted_root.to_vec() }, rotations: 0, timestamp: None, snapshot: None, targets: BTreeMap::new() })
+        Ok(Updater {
+            now,
+            root: Trusted {
+                meta: root,
+                bytes: trusted_root.to_vec(),
+            },
+            rotations: 0,
+            timestamp: None,
+            snapshot: None,
+            targets: BTreeMap::new(),
+        })
     }
 
     /// The time the update checks expiry at.
@@ -920,12 +1137,16 @@ impl Updater {
 
     /// The trusted timestamp and its bytes (to keep for rollback protection), once there is one.
     pub fn timestamp(&self) -> Option<(&Timestamp, &[u8])> {
-        self.timestamp.as_ref().map(|t| (&t.meta, t.bytes.as_slice()))
+        self.timestamp
+            .as_ref()
+            .map(|t| (&t.meta, t.bytes.as_slice()))
     }
 
     /// The trusted snapshot and its bytes, once there is one.
     pub fn snapshot(&self) -> Option<(&Snapshot, &[u8])> {
-        self.snapshot.as_ref().map(|t| (&t.meta, t.bytes.as_slice()))
+        self.snapshot
+            .as_ref()
+            .map(|t| (&t.meta, t.bytes.as_slice()))
     }
 
     /// The trusted targets metadata of a role (`targets` or a delegated one), once loaded.
@@ -941,7 +1162,10 @@ impl Updater {
         if self.timestamp.is_some() || self.rotations >= limits::ROOT_ROTATIONS {
             return None;
         }
-        Some(Request { path: format!("{}.root.json", self.root.meta.common.version + 1), max_length: limits::ROOT })
+        Some(Request {
+            path: format!("{}.root.json", self.root.meta.common.version + 1),
+            max_length: limits::ROOT,
+        })
     }
 
     /// Takes `N+1.root.json`: version N+1, signed by a threshold of the trusted root's root keys and of its own. Its expiry
@@ -955,20 +1179,30 @@ impl Updater {
         self.root.meta.verify("root", &env)?;
         let expected = self.root.meta.common.version + 1;
         if new.common.version != expected {
-            return Err(Error::Version { role: "root".into(), expected, got: new.common.version });
+            return Err(Error::Version {
+                role: "root".into(),
+                expected,
+                got: new.common.version,
+            });
         }
         new.verify("root", &env)?;
         // (a timestamp or snapshot kept from before is loaded only after this, and so checked with the new root's keys: one
         // whose key was rotated away does not verify and is dropped, which is the specification's recovery from a
         // fast-forward attack)
-        self.root = Trusted { meta: new, bytes: bytes.to_vec() };
+        self.root = Trusted {
+            meta: new,
+            bytes: bytes.to_vec(),
+        };
         self.rotations += 1;
         Ok(())
     }
 
     fn check_expiry(&self, role: &str, c: &Common) -> Result<(), Error> {
         if self.now >= c.expires {
-            return Err(Error::Expired { role: role.into(), expires: c.expires });
+            return Err(Error::Expired {
+                role: role.into(),
+                expires: c.expires,
+            });
         }
         Ok(())
     }
@@ -977,7 +1211,10 @@ impl Updater {
 
     /// What to fetch for the timestamp: `timestamp.json`.
     pub fn timestamp_request(&self) -> Request {
-        Request { path: "timestamp.json".into(), max_length: limits::TIMESTAMP }
+        Request {
+            path: "timestamp.json".into(),
+            max_length: limits::TIMESTAMP,
+        }
     }
 
     /// Takes a timestamp the caller kept from an earlier update, for rollback protection. It is checked against the
@@ -1005,22 +1242,35 @@ impl Updater {
         self.root.meta.verify("timestamp", &env)?;
         if let Some(old) = &self.timestamp {
             if new.common.version < old.meta.common.version {
-                return Err(Error::Rollback(format!("timestamp version {} after {}", new.common.version, old.meta.common.version)));
+                return Err(Error::Rollback(format!(
+                    "timestamp version {} after {}",
+                    new.common.version, old.meta.common.version
+                )));
             }
             if new.common.version == old.meta.common.version {
                 return Ok(TimestampUpdate::Unchanged);
             }
             if new.snapshot.version < old.meta.snapshot.version {
-                return Err(Error::Rollback(format!("the timestamp names snapshot version {} after {}", new.snapshot.version, old.meta.snapshot.version)));
+                return Err(Error::Rollback(format!(
+                    "the timestamp names snapshot version {} after {}",
+                    new.snapshot.version, old.meta.snapshot.version
+                )));
             }
         }
-        self.timestamp = Some(Trusted { meta: new, bytes: bytes.to_vec() });
+        self.timestamp = Some(Trusted {
+            meta: new,
+            bytes: bytes.to_vec(),
+        });
         self.check_final_timestamp()?;
         Ok(TimestampUpdate::New)
     }
 
     fn check_final_timestamp(&self) -> Result<&Timestamp, Error> {
-        let t = &self.timestamp.as_ref().ok_or_else(|| Error::State("no timestamp".into()))?.meta;
+        let t = &self
+            .timestamp
+            .as_ref()
+            .ok_or_else(|| Error::State("no timestamp".into()))?
+            .meta;
         self.check_expiry("timestamp", &t.common)?;
         Ok(t)
     }
@@ -1031,8 +1281,15 @@ impl Updater {
     /// repository without consistent snapshots), as long as the timestamp says, or [`limits::SNAPSHOT`].
     pub fn snapshot_request(&self) -> Result<Request, Error> {
         let t = self.check_final_timestamp()?;
-        let path = if self.root.meta.consistent_snapshot { format!("{}.snapshot.json", t.snapshot.version) } else { "snapshot.json".into() };
-        Ok(Request { path, max_length: t.snapshot.length.unwrap_or(limits::SNAPSHOT) })
+        let path = if self.root.meta.consistent_snapshot {
+            format!("{}.snapshot.json", t.snapshot.version)
+        } else {
+            "snapshot.json".into()
+        };
+        Ok(Request {
+            path,
+            max_length: t.snapshot.length.unwrap_or(limits::SNAPSHOT),
+        })
     }
 
     /// Takes a snapshot the caller kept from an earlier update. It need not have the hashes the current timestamp gives;
@@ -1068,22 +1325,42 @@ impl Updater {
         if let Some(old) = &self.snapshot {
             for (name, m) in &old.meta.meta {
                 match new.meta.get(name) {
-                    None => return Err(Error::Rollback(format!("the snapshot no longer lists {name}"))),
-                    Some(n) if n.version < m.version => return Err(Error::Rollback(format!("{name} version {} after {}", n.version, m.version))),
+                    None => {
+                        return Err(Error::Rollback(format!(
+                            "the snapshot no longer lists {name}"
+                        )))
+                    }
+                    Some(n) if n.version < m.version => {
+                        return Err(Error::Rollback(format!(
+                            "{name} version {} after {}",
+                            n.version, m.version
+                        )))
+                    }
                     _ => {}
                 }
             }
         }
-        self.snapshot = Some(Trusted { meta: new, bytes: bytes.to_vec() });
+        self.snapshot = Some(Trusted {
+            meta: new,
+            bytes: bytes.to_vec(),
+        });
         self.check_final_snapshot().map(|_| ())
     }
 
     fn check_final_snapshot(&self) -> Result<&Snapshot, Error> {
         let t = self.check_final_timestamp()?;
-        let s = &self.snapshot.as_ref().ok_or_else(|| Error::State("no snapshot".into()))?.meta;
+        let s = &self
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| Error::State("no snapshot".into()))?
+            .meta;
         self.check_expiry("snapshot", &s.common)?;
         if s.common.version != t.snapshot.version {
-            return Err(Error::Version { role: "snapshot".into(), expected: t.snapshot.version, got: s.common.version });
+            return Err(Error::Version {
+                role: "snapshot".into(),
+                expected: t.snapshot.version,
+                got: s.common.version,
+            });
         }
         Ok(s)
     }
@@ -1094,10 +1371,21 @@ impl Updater {
     /// as python-tuf does), as long as the snapshot says, or [`limits::TARGETS`].
     pub fn targets_request(&self, role: &str) -> Result<Request, Error> {
         let s = self.check_final_snapshot()?;
-        let Some(m) = s.meta.get(&format!("{role}.json")) else { return Err(Error::Malformed(format!("the snapshot does not list {role}.json"))) };
+        let Some(m) = s.meta.get(&format!("{role}.json")) else {
+            return Err(Error::Malformed(format!(
+                "the snapshot does not list {role}.json"
+            )));
+        };
         let name = quote(role);
-        let path = if self.root.meta.consistent_snapshot { format!("{}.{name}.json", m.version) } else { format!("{name}.json") };
-        Ok(Request { path, max_length: m.length.unwrap_or(limits::TARGETS) })
+        let path = if self.root.meta.consistent_snapshot {
+            format!("{}.{name}.json", m.version)
+        } else {
+            format!("{name}.json")
+        };
+        Ok(Request {
+            path,
+            max_length: m.length.unwrap_or(limits::TARGETS),
+        })
     }
 
     /// Takes the top-level `targets` metadata.
@@ -1107,9 +1395,18 @@ impl Updater {
 
     /// Takes the metadata of `role`, delegated by `delegator` (`root` for `targets`): the length, hashes and version the
     /// snapshot gives; signed by a threshold of the keys the delegator gives the role; not expired.
-    pub fn update_delegated(&mut self, role: &str, delegator: &str, bytes: &[u8]) -> Result<(), Error> {
+    pub fn update_delegated(
+        &mut self,
+        role: &str,
+        delegator: &str,
+        bytes: &[u8],
+    ) -> Result<(), Error> {
         let s = self.check_final_snapshot()?;
-        let Some(meta) = s.meta.get(&format!("{role}.json")).cloned() else { return Err(Error::Malformed(format!("the snapshot does not list {role}.json"))) };
+        let Some(meta) = s.meta.get(&format!("{role}.json")).cloned() else {
+            return Err(Error::Malformed(format!(
+                "the snapshot does not list {role}.json"
+            )));
+        };
         meta.check(role, bytes)?;
         let env = envelope(bytes)?;
         let new = Targets::parse(&env.signed)?;
@@ -1119,13 +1416,27 @@ impl Updater {
             }
             self.root.meta.verify("targets", &env)?;
         } else {
-            let parent = self.targets.get(delegator).ok_or_else(|| Error::State(format!("{delegator} is not loaded")))?;
-            let d = parent.delegations.as_ref().ok_or_else(|| Error::State(format!("{delegator} delegates nothing")))?;
-            let r = d.roles.iter().find(|r| r.name == role).ok_or_else(|| Error::State(format!("{delegator} does not delegate {role}")))?;
+            let parent = self
+                .targets
+                .get(delegator)
+                .ok_or_else(|| Error::State(format!("{delegator} is not loaded")))?;
+            let d = parent
+                .delegations
+                .as_ref()
+                .ok_or_else(|| Error::State(format!("{delegator} delegates nothing")))?;
+            let r = d
+                .roles
+                .iter()
+                .find(|r| r.name == role)
+                .ok_or_else(|| Error::State(format!("{delegator} does not delegate {role}")))?;
             verify_role(role, &d.keys, &r.keys, &env)?;
         }
         if new.common.version != meta.version {
-            return Err(Error::Version { role: role.into(), expected: meta.version, got: new.common.version });
+            return Err(Error::Version {
+                role: role.into(),
+                expected: meta.version,
+                got: new.common.version,
+            });
         }
         self.check_expiry(role, &new.common)?;
         self.targets.insert(role.to_string(), new);
@@ -1144,7 +1455,12 @@ impl Updater {
             if visited.contains(&role) {
                 continue;
             }
-            let Some(t) = self.targets.get(&role) else { return Ok(Lookup::Load { role, delegator: parent }) };
+            let Some(t) = self.targets.get(&role) else {
+                return Ok(Lookup::Load {
+                    role,
+                    delegator: parent,
+                });
+            };
             if let Some(f) = t.targets.get(path) {
                 return Ok(Lookup::Found(f.clone()));
             }
@@ -1177,7 +1493,10 @@ impl Updater {
         } else {
             target.path.clone()
         };
-        Request { path, max_length: target.length }
+        Request {
+            path,
+            max_length: target.length,
+        }
     }
 }
 
@@ -1218,7 +1537,11 @@ pub struct Local<'a> {
 /// compared against), the repository's timestamp, the local snapshot (used as it is if it is the current one), the
 /// repository's snapshot, and the top-level targets. Each file is fetched with `metadata` (a path relative to the metadata
 /// URL, and the most bytes to take).
-pub fn refresh(u: &mut Updater, local: Local, metadata: &mut dyn FnMut(&Request) -> Result<Fetched, String>) -> Result<(), Error> {
+pub fn refresh(
+    u: &mut Updater,
+    local: Local,
+    metadata: &mut dyn FnMut(&Request) -> Result<Fetched, String>,
+) -> Result<(), Error> {
     while let Some(req) = u.next_root() {
         match fetch(metadata, &req)? {
             Fetched::Data(d) => u.update_root(&d)?,
@@ -1269,20 +1592,32 @@ pub fn fetch_target(
     Ok((info, data))
 }
 
-fn fetch(f: &mut dyn FnMut(&Request) -> Result<Fetched, String>, req: &Request) -> Result<Fetched, Error> {
+fn fetch(
+    f: &mut dyn FnMut(&Request) -> Result<Fetched, String>,
+    req: &Request,
+) -> Result<Fetched, Error> {
     let got = f(req).map_err(|e| Error::Fetch(format!("{}: {e}", req.path)))?;
     if let Fetched::Data(d) = &got {
         if d.len() as u64 > req.max_length {
-            return Err(Error::LengthOrHash(format!("{} is longer than {} bytes", req.path, req.max_length)));
+            return Err(Error::LengthOrHash(format!(
+                "{} is longer than {} bytes",
+                req.path, req.max_length
+            )));
         }
     }
     Ok(got)
 }
 
-fn required(f: &mut dyn FnMut(&Request) -> Result<Fetched, String>, req: &Request) -> Result<Vec<u8>, Error> {
+fn required(
+    f: &mut dyn FnMut(&Request) -> Result<Fetched, String>,
+    req: &Request,
+) -> Result<Vec<u8>, Error> {
     match fetch(f, req)? {
         Fetched::Data(d) => Ok(d),
-        Fetched::NotFound => Err(Error::Fetch(format!("{} is not in the repository", req.path))),
+        Fetched::NotFound => Err(Error::Fetch(format!(
+            "{} is not in the repository",
+            req.path
+        ))),
     }
 }
 
@@ -1292,18 +1627,31 @@ mod tests {
 
     #[test]
     fn canonical_json_is_securesystemslibs() {
-        let v = json::parse(r#"{"b": [1, -0, true, null], "a": "q\"\\\n\u00e9", "\u00e9": {}, "B": 2}"#.as_bytes()).unwrap();
-        assert_eq!(canonical_json(&v).unwrap(), "{\"B\":2,\"a\":\"q\\\"\\\\\n\u{e9}\",\"b\":[1,0,true,null],\"\u{e9}\":{}}".as_bytes());
+        let v = json::parse(
+            r#"{"b": [1, -0, true, null], "a": "q\"\\\n\u00e9", "\u00e9": {}, "B": 2}"#.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            canonical_json(&v).unwrap(),
+            "{\"B\":2,\"a\":\"q\\\"\\\\\n\u{e9}\",\"b\":[1,0,true,null],\"\u{e9}\":{}}".as_bytes()
+        );
         assert!(canonical_json(&json::parse(b"[1.5]").unwrap()).is_err());
         assert!(canonical_json(&json::parse(b"[1e3]").unwrap()).is_err());
-        assert_eq!(canonical_json(&json::parse(b"[123456789012345678901234567890]").unwrap()).unwrap(), b"[123456789012345678901234567890]");
+        assert_eq!(
+            canonical_json(&json::parse(b"[123456789012345678901234567890]").unwrap()).unwrap(),
+            b"[123456789012345678901234567890]"
+        );
     }
 
     #[test]
     fn path_patterns_match_segment_by_segment() {
         for (t, p, want) in [
             ("registry.npmjs.org/keys.json", "registry.npmjs.org/*", true),
-            ("registry.npmjs.org/a/keys.json", "registry.npmjs.org/*", false),
+            (
+                "registry.npmjs.org/a/keys.json",
+                "registry.npmjs.org/*",
+                false,
+            ),
             ("registry.npmjs.org", "registry.npmjs.org/*", false),
             ("a/b.txt", "*/*.txt", true),
             ("a/b.txt", "*", false),
@@ -1333,7 +1681,10 @@ mod tests {
     fn a_role_covers_paths_or_hash_prefixes() {
         let r = |paths: Option<Vec<&str>>, prefixes: Option<Vec<&str>>| DelegatedRole {
             name: "r".into(),
-            keys: RoleKeys { keyids: vec![], threshold: 1 },
+            keys: RoleKeys {
+                keyids: vec![],
+                threshold: 1,
+            },
             terminating: false,
             paths: paths.map(|v| v.into_iter().map(str::to_string).collect()),
             path_hash_prefixes: prefixes.map(|v| v.into_iter().map(str::to_string).collect()),
@@ -1356,8 +1707,18 @@ mod tests {
     #[test]
     fn expiry_must_be_whole_seconds_in_utc() {
         let v = |s: &str| json::parse(format!("{{\"expires\": \"{s}\"}}").as_bytes()).unwrap();
-        assert_eq!(expires(&v("2030-01-01T00:00:00Z"), "s").unwrap(), 1_893_456_000);
-        for bad in ["2030-01-01T00:00:00.5Z", "2030-01-01T00:00:00+00:00", "2030-01-01 00:00:00Z", "2030-02-30T00:00:00Z", "2030-01-01T00:00:60Z", "2030-1-01T00:00:00Z"] {
+        assert_eq!(
+            expires(&v("2030-01-01T00:00:00Z"), "s").unwrap(),
+            1_893_456_000
+        );
+        for bad in [
+            "2030-01-01T00:00:00.5Z",
+            "2030-01-01T00:00:00+00:00",
+            "2030-01-01 00:00:00Z",
+            "2030-02-30T00:00:00Z",
+            "2030-01-01T00:00:60Z",
+            "2030-1-01T00:00:00Z",
+        ] {
             assert!(expires(&v(bad), "s").is_err(), "{bad}");
         }
     }
@@ -1368,8 +1729,23 @@ mod tests {
         let h = hex(&HashAlg::Sha256.digest(d));
         assert!(check_hashes("f", d, &[("sha256".into(), h.clone())]).is_ok());
         assert!(check_hashes("f", d, &[("sha256".into(), h.to_uppercase())]).is_err());
-        assert!(check_hashes("f", d, &[("sha256".into(), h.clone()), ("md5".into(), "00".into())]).unwrap_err().to_string().contains("unsupported hash algorithm"));
-        assert!(check_hashes("f", d, &[("sha512".into(), hex(&HashAlg::Sha512.digest(d))), ("sha384".into(), hex(&HashAlg::Sha384.digest(d)))]).is_ok());
+        assert!(check_hashes(
+            "f",
+            d,
+            &[("sha256".into(), h.clone()), ("md5".into(), "00".into())]
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("unsupported hash algorithm"));
+        assert!(check_hashes(
+            "f",
+            d,
+            &[
+                ("sha512".into(), hex(&HashAlg::Sha512.digest(d))),
+                ("sha384".into(), hex(&HashAlg::Sha384.digest(d)))
+            ]
+        )
+        .is_ok());
         assert!(check_length("f", d, 4).is_ok() && check_length("f", d, 5).is_err());
     }
 
@@ -1381,10 +1757,18 @@ mod tests {
         assert!(r.consistent_snapshot);
         assert_eq!((r.roles[0].threshold, r.roles[0].keyids.len()), (3, 5));
         assert!(r.keys.values().all(Key::usable));
-        assert_eq!(u.next_root().unwrap(), Request { path: "16.root.json".into(), max_length: limits::ROOT });
+        assert_eq!(
+            u.next_root().unwrap(),
+            Request {
+                path: "16.root.json".into(),
+                max_length: limits::ROOT
+            }
+        );
         // the root's expiry is checked only once it is the last: then it is an error
         let mut later = Updater::new(SIGSTORE_ROOT, 1_900_000_000).unwrap();
-        assert!(matches!(later.update_timestamp(b"{}"), Err(Error::Expired { ref role, .. }) if role == "root"));
+        assert!(
+            matches!(later.update_timestamp(b"{}"), Err(Error::Expired { ref role, .. }) if role == "root")
+        );
     }
 
     #[test]
@@ -1392,10 +1776,21 @@ mod tests {
         let all = [
             Error::Malformed("x".into()),
             Error::Unsupported("x".into()),
-            Error::Signature { role: "root".into(), verified: 1, threshold: 3 },
-            Error::Version { role: "snapshot".into(), expected: 2, got: 1 },
+            Error::Signature {
+                role: "root".into(),
+                verified: 1,
+                threshold: 3,
+            },
+            Error::Version {
+                role: "snapshot".into(),
+                expected: 2,
+                got: 1,
+            },
             Error::Rollback("x".into()),
-            Error::Expired { role: "timestamp".into(), expires: 5 },
+            Error::Expired {
+                role: "timestamp".into(),
+                expires: 5,
+            },
             Error::LengthOrHash("x".into()),
             Error::NotFound("p".into()),
             Error::State("x".into()),
@@ -1404,6 +1799,14 @@ mod tests {
         for e in all {
             assert!(!e.to_string().is_empty());
         }
-        assert_eq!(Error::Signature { role: "root".into(), verified: 1, threshold: 3 }.to_string(), "root metadata is signed by 1 of its keys and needs 3");
+        assert_eq!(
+            Error::Signature {
+                role: "root".into(),
+                verified: 1,
+                threshold: 3
+            }
+            .to_string(),
+            "root metadata is signed by 1 of its keys and needs 3"
+        );
     }
 }
