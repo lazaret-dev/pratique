@@ -738,6 +738,14 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
         let id = inner.next_id.fetch_add(1, Ordering::SeqCst);
         let ctl = {
             let mut conns = inner.conns();
+            // the shutdown may have begun since the look above: its list of the connections to close, taken under this
+            // lock, would not have this one, which would be served as if nothing had happened and cut at the end of the
+            // grace. Looked at again under the lock, either the shutdown finds the entry or this finds the shutdown.
+            if inner.stopping.load(Ordering::SeqCst) {
+                drop(conns);
+                let _ = socket.shutdown(std::net::Shutdown::Both);
+                return;
+            }
             let from_ip = conns.per_ip.get(&key).copied().unwrap_or(0);
             if conns.open.len() >= inner.limits.max_connections
                 || from_ip >= inner.limits.max_connections_per_ip
