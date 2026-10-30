@@ -1037,6 +1037,11 @@ struct GateState {
     held: AtomicUsize,
     /// The sends under way at each end of what the connection sends (`Outbound::finish`).
     finishes: Mutex<Vec<usize>>,
+    /// Hold the next sender that looks at the engine for the last time and finds our side not finished
+    /// (`Outbound::looked`), until this is false again.
+    hold_look: std::sync::atomic::AtomicBool,
+    /// A sender is held there.
+    at_look: std::sync::atomic::AtomicBool,
 }
 
 impl GateState {
@@ -1081,6 +1086,19 @@ impl Outbound for Gate {
             .unwrap()
             .push(s.sending.load(Ordering::SeqCst));
         let _ = self.inner.shutdown(std::net::Shutdown::Write);
+    }
+
+    fn looked(&mut self, finished: bool) {
+        let s = &*self.state;
+        if finished || !s.hold_look.load(Ordering::SeqCst) {
+            return;
+        }
+        s.at_look.store(true, Ordering::SeqCst);
+        let give_up = Instant::now() + Duration::from_secs(10);
+        while s.hold_look.load(Ordering::SeqCst) && Instant::now() < give_up {
+            thread::sleep(Duration::from_millis(5));
+        }
+        s.at_look.store(false, Ordering::SeqCst);
     }
 }
 
@@ -1216,6 +1234,95 @@ fn a_shutdown_ends_a_connection_once_the_last_of_its_response_is_sent_and_reads_
     drop(c);
     assert!(server.join().unwrap().is_ok());
     assert_eq!(stops.lock().unwrap().len(), 0, "the reading was stopped");
+    drop(ctl);
+}
+
+#[test]
+fn the_end_is_not_lost_to_a_change_made_while_another_thread_holds_the_right_to_send() {
+    // The review of round 7 of B-119's branch, its LOW-5: whoever sends looks at the engine a last time, holding the
+    // right to send, and ends our side if the connection is over then. A change made after that look, by a thread that
+    // could not take the right to send (it tries, and leaves the sending to whoever holds it), was left undone: here the
+    // client resets the last stream (which frames nothing) while the shutdown's GOAWAY sender is between its last look
+    // and letting go, and nobody ended what the connection sends. The one who lets go now looks again.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let gate = Arc::new(GateState::default());
+    let (ctl_tx, ctl_rx) = std::sync::mpsc::channel();
+    let server = {
+        let gate = gate.clone();
+        thread::spawn(move || {
+            let (sock, peer) = listener.accept().unwrap();
+            let writer = Gate {
+                inner: sock.try_clone().unwrap(),
+                state: gate,
+            };
+            let ctl = runtime::Ctl::detached_with_stop(|| {});
+            ctl_tx.send(ctl.clone()).unwrap();
+            let handler: Arc<dyn Handler> = Arc::new(|_req: Request| {
+                Response::bytes(200, "application/octet-stream", vec![7; 1000])
+            });
+            let info = ConnInfo {
+                peer: Some(peer),
+                ..ConnInfo::default()
+            };
+            super::h2::serve(
+                Box::new(sock),
+                Box::new(writer),
+                Arc::new(info),
+                handler,
+                &HttpConfig::default(),
+                ctl,
+            )
+        })
+    };
+    // no window for response data: the response's body waits in the engine, its handler done, its stream open
+    let mut c = Raw::connect_to(addr, &[(setting::INITIAL_WINDOW_SIZE, 0)]);
+    let ctl = ctl_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    c.get(1, "/");
+    let head = c.until(|f| f.h.stream == 1 && f.is(kind::HEADERS));
+    assert!(
+        head.last()
+            .is_some_and(|f| f.fields.contains(&(":status".into(), "200".into()))),
+        "{head:?}"
+    );
+    thread::sleep(Duration::from_millis(100));
+    // the shutdown says GOAWAY, sends it, and looks: a stream is left, so the connection is not over; it is held there
+    gate.hold_look.store(true, Ordering::SeqCst);
+    let closer = {
+        let ctl = ctl.clone();
+        thread::spawn(move || ctl.begin_close())
+    };
+    let t = Instant::now();
+    while !gate.at_look.load(Ordering::SeqCst) {
+        assert!(t.elapsed() < Duration::from_secs(5), "no sender looked");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let frames = c.until(|f| f.is(kind::GOAWAY));
+    assert!(
+        frames.last().is_some_and(|f| f.is(kind::GOAWAY)),
+        "{frames:?}"
+    );
+    // the client resets the stream: the last one is gone and the connection is over, but the reading thread cannot take
+    // the right to send
+    let mut out = Vec::new();
+    frame::write_rst_stream(&mut out, 1, ErrorCode::CANCEL);
+    c.send(&out);
+    thread::sleep(Duration::from_millis(200));
+    assert!(gate.finishes.lock().unwrap().is_empty());
+    gate.hold_look.store(false, Ordering::SeqCst);
+    closer.join().unwrap();
+    // the sender let go and looked again: what the connection sends ends
+    let t = Instant::now();
+    while gate.finishes.lock().unwrap().is_empty() {
+        assert!(
+            t.elapsed() < Duration::from_secs(2),
+            "the connection is over, and what it sends was never ended"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(c.next().is_none(), "the server's sending ends");
+    drop(c);
+    assert!(server.join().unwrap().is_ok());
     drop(ctl);
 }
 
@@ -1373,6 +1480,80 @@ fn a_body_read_in_part_gives_the_connection_its_window_back_once_whatever_stops_
             (32_767, 32_767),
             "{stop}: the connection's credit (all, sent) for 32,767 bytes"
         );
+    }
+}
+
+#[test]
+fn the_idle_time_begins_once_all_that_was_framed_is_sent_and_after_the_end_counts_each_credit() {
+    // The review of round 7 of B-119's branch, its MEDIUM-2, on the engine alone: the idle time began when the last
+    // stream ended, its last frame framed but not yet sent, and a client still reading that tail was cut when it ran out;
+    // the reset that its credit drew then threw the tail away (B-120). The idle time now begins once the sender has
+    // handed everything framed to the system; and once our side has ended, the client has the idle time again from each
+    // credit it gives (it gives credit as it reads), and from nothing else.
+    let pause = || thread::sleep(Duration::from_millis(10));
+    let mut e = engine_with_small_windows();
+    let mut c = ClientFrames::new();
+    c.post(1).data(1, 4, true);
+    assert_eq!(e.receive(&c.take()).unwrap().len(), 1);
+    e.send_head(1, 200, &[], true).unwrap();
+    e.handler_returned(1);
+    assert!(
+        e.idle_since().is_none(),
+        "idle with the response still to be sent"
+    );
+    pause();
+    let t = Instant::now();
+    e.out.clear();
+    assert!(!e.all_sent(), "finished without a GOAWAY");
+    assert!(e.idle_since().is_some_and(|since| since >= t));
+    // the end of our side: from then
+    pause();
+    let t = Instant::now();
+    e.go_away();
+    e.out.clear();
+    assert!(e.all_sent(), "not finished after GOAWAY with no stream");
+    assert!(e.idle_since().is_some_and(|since| since >= t));
+    // a credit counts again from then; a PING does not
+    pause();
+    let t = Instant::now();
+    let mut up = Vec::new();
+    frame::write_window_update(&mut up, 0, 16_384);
+    e.receive(&up).unwrap();
+    assert!(e.idle_since().is_some_and(|since| since >= t));
+    pause();
+    let t = Instant::now();
+    let mut ping = Vec::new();
+    frame::write_ping(&mut ping, false, *b"anybody?");
+    e.receive(&ping).unwrap();
+    assert!(e.idle_since().is_some_and(|since| since < t));
+
+    // an end that the idle time began counts from when that began, for a client that has given no credit since; from
+    // the end for one that has
+    for credit in [false, true] {
+        let mut e = engine_with_small_windows();
+        let mut c = ClientFrames::new();
+        c.post(1).data(1, 4, true);
+        e.receive(&c.take()).unwrap();
+        e.send_head(1, 200, &[], true).unwrap();
+        e.handler_returned(1);
+        e.out.clear();
+        e.all_sent();
+        let began = e.idle_since().unwrap();
+        pause();
+        if credit {
+            e.receive(&up).unwrap();
+        }
+        let t = Instant::now();
+        assert!(e.go_away_idle());
+        e.out.clear();
+        assert!(e.all_sent());
+        let since = e.idle_since().unwrap();
+        if credit {
+            assert!(since >= t, "credit given: from the end");
+        } else {
+            assert_eq!(since, began, "no credit: from when the idle time began");
+        }
+        assert!(!e.go_away_idle(), "a second GOAWAY");
     }
 }
 

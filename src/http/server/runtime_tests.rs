@@ -454,7 +454,10 @@ fn a_body_a_handler_keeps_does_not_hold_an_http2_connection_open_after_a_shutdow
     // B-119 (the review of round 3): the state an HTTP/2 connection's threads share held the runtime's hold on the
     // connection, which has a handle to the socket, and a body a handler keeps reads through that state. After a
     // shutdown such a connection was over, but its socket stayed open: no FIN, and its client saw the end only at its own
-    // timeout (5 s), against a few milliseconds without the kept body. The client must see the end promptly.
+    // timeout (5 s), against a few milliseconds without the kept body. The client must see the end promptly; and since
+    // the end is now a FIN from the end of our sending side (B-120), which comes whether or not the socket is held open,
+    // the socket must also be closed once the connection is over (the review of round 7, its LOW-4): here the client
+    // leaves it open, the connection ends at its idle time, and what the client sends after that draws a reset.
     let kept = Arc::new(Mutex::new(Vec::new()));
     let server = {
         let kept = kept.clone();
@@ -465,7 +468,7 @@ fn a_body_a_handler_keeps_does_not_hold_an_http2_connection_open_after_a_shutdow
             })
             .plain("127.0.0.1:0")
             .limits(Limits {
-                idle_timeout: Duration::from_secs(30),
+                idle_timeout: Duration::from_millis(500),
                 ..quick()
             })
             .start()
@@ -509,9 +512,30 @@ fn a_body_a_handler_keeps_does_not_hold_an_http2_connection_open_after_a_shutdow
         took < Duration::from_secs(2),
         "the client saw the end of the connection only after {took:?}"
     );
-    // the client ends the connection, which the server reads until it does (B-120)
-    drop(c);
+    // the client does not end the connection: the server reads it until the idle time is up, and then closes it, which
+    // the shutdown waits for (well within its grace)
     stopper.join().unwrap();
+    assert!(
+        t.elapsed() < Duration::from_secs(5),
+        "the shutdown waited for its grace: {:?}",
+        t.elapsed()
+    );
+    // the socket is closed, not held open by the kept body: what the client sends now draws a reset, and a send fails
+    let mut s = c.socket();
+    let mut ping = Vec::new();
+    frame::write_ping(&mut ping, false, *b"anybody?");
+    let t = Instant::now();
+    loop {
+        if s.write_all(&ping).is_err() {
+            break;
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(3),
+            "the server's socket is still open after the connection is over"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+    drop(c);
     // the body is still kept: it was so all along
     assert_eq!(kept.lock().unwrap().len(), 1);
 }
@@ -680,29 +704,26 @@ fn a_shutdown_lets_a_tls_client_that_reads_slowly_have_all_of_a_response() {
 fn a_client_that_goes_on_sending_after_the_end_is_cut_at_the_grace_or_past_a_megabyte() {
     // B-120: once its side of an HTTP/2 connection has ended (GOAWAY, close_notify, FIN), the server reads what the
     // client still sends until the client ends the connection: but no longer than a shutdown's grace, and no more than a
-    // megabyte of it.
+    // megabyte of it. The frames sent past the megabyte are ones no flood budget counts, GOAWAYs with 16 KiB of debug
+    // data each, so that nothing but that megabyte ends the connection before the grace does (frames of a kind nobody
+    // knows, which round 7 sent, use up the budget for PRIORITY frames at about 16 MiB: the review of round 7, its
+    // MEDIUM-1).
     let ping = {
         let mut out = Vec::new();
         frame::write_ping(&mut out, false, *b"stillup!");
         out
     };
-    let junk = {
+    let goaway = {
         let mut out = Vec::new();
-        frame::Header {
-            length: 16_384,
-            kind: 0x20,
-            flags: 0,
-            stream: 0,
-        }
-        .write(&mut out);
-        out.extend_from_slice(&[0u8; 16_384]);
+        frame::write_goaway(&mut out, 0, ErrorCode::NO_ERROR, &[0u8; 16_376]);
+        assert_eq!(out.len(), 9 + 16_384);
         out
     };
     for (what, frame, grace) in [
         ("PINGs, ten a second", ping, Duration::from_secs(1)),
         (
-            "frames of a kind nobody knows",
-            junk,
+            "GOAWAYs with 16 KiB of debug data, which no budget counts",
+            goaway,
             Duration::from_secs(10),
         ),
     ] {
@@ -775,6 +796,118 @@ fn a_client_that_goes_on_sending_after_the_end_is_cut_at_the_grace_or_past_a_meg
             "{what}: the client could still send after 20 s"
         );
     }
+}
+
+/// The review of round 7 of B-119's branch, its MEDIUM-2 (so on main too, on every system): the idle time of an HTTP/2
+/// connection began when the last frame of its last response was framed, while that frame and a few hundred kilobytes
+/// before it were still to be sent and the systems' buffers held a few megabytes more. A client still reading them when
+/// the idle time ran out had its connection closed, and the credit it gave as it read drew a reset that threw the rest
+/// away: with an idle timeout of 300 ms, 0.84 to 1.7 of 4 MiB arrived. The idle time now begins once everything framed
+/// is handed to the system; an idle connection ends as the others do (GOAWAY, then the end of what is sent); and once
+/// our side has ended the client has the idle time again from each credit it gives.
+///
+/// Here a 4 MiB response, all of it within the client's windows from the start, to a client that reads 64 KiB at a time
+/// with 100 ms between (640 KB a second, six or seven seconds in all) and gives credit for each DATA frame it reads; the
+/// idle timeout is 300 ms. `close`: the handler says `Connection: close`, so the connection ends with the response.
+fn a_slow_reader_has_all_of_a_response_whatever_the_idle_timeout(close: bool) {
+    const N: usize = 4 << 20;
+    let body: Arc<Vec<u8>> = Arc::new((0..N).map(|i| (i % 251) as u8).collect());
+    let server = {
+        let body = body.clone();
+        let mut http = HttpConfig::default();
+        http.h2.stream_send_buffer = 16 << 20;
+        ServerBuilder::new(move |_req: Request| {
+            let r = Response::bytes(200, "application/octet-stream", body.to_vec());
+            if close {
+                r.with_header("connection", "close")
+            } else {
+                r
+            }
+        })
+        .plain("127.0.0.1:0")
+        .http_config(http)
+        .limits(Limits {
+            idle_timeout: Duration::from_millis(300),
+            write_timeout: Duration::from_secs(30),
+            ..Limits::default()
+        })
+        .start()
+        .unwrap()
+    };
+    let mut c = Raw::connect_to(
+        server.local_addrs()[0],
+        &[(setting::INITIAL_WINDOW_SIZE, 16 << 20)],
+    );
+    let mut out = Vec::new();
+    frame::write_window_update(&mut out, 0, 16 << 20);
+    c.send(&out);
+    c.get(1, "/big");
+    c.read_slowly(Duration::from_millis(100));
+    let mut got = Vec::with_capacity(N);
+    let (mut ended, mut goaway) = (false, None);
+    while let Some(f) = c.next() {
+        if f.is(kind::DATA) && f.h.stream == 1 {
+            got.extend_from_slice(&f.p);
+            ended |= f.h.has(flag::END_STREAM);
+            if !f.p.is_empty() {
+                out.clear();
+                frame::write_window_update(&mut out, 0, f.p.len() as u32);
+                c.send(&out);
+            }
+        } else if f.is(kind::GOAWAY) {
+            goaway = Some(u32::from_be_bytes(f.p[4..8].try_into().unwrap()));
+        }
+    }
+    assert!(
+        ended && got[..] == body[..],
+        "Connection: close {close}: {} bytes of {N}, the stream {}",
+        got.len(),
+        if ended { "ended" } else { "not ended" }
+    );
+    // the connection ended: with the response, or once it was idle, either way with a GOAWAY and no error
+    assert_eq!(goaway, Some(0), "Connection: close {close}");
+    drop(c);
+    server.shutdown(Duration::from_secs(1));
+}
+
+#[test]
+fn a_slow_reader_has_all_of_a_response_that_ends_the_connection_whatever_the_idle_timeout() {
+    a_slow_reader_has_all_of_a_response_whatever_the_idle_timeout(true);
+}
+
+#[test]
+fn a_slow_reader_has_all_of_a_response_whose_connection_then_idles_out() {
+    a_slow_reader_has_all_of_a_response_whatever_the_idle_timeout(false);
+}
+
+#[test]
+fn an_http2_client_that_never_reads_is_still_ended_by_the_write_timeout() {
+    // The idle time of an HTTP/2 connection now waits for its responses to be handed to the system (the review of round
+    // 7, its MEDIUM-2): a client that never reads, with windows that let the server send it all, must still have its
+    // connection ended, by the write timeout.
+    let server = plain(quick());
+    let before = server.stats().timed_out;
+    let mut c = Raw::connect_to(
+        server.local_addrs()[0],
+        &[(setting::INITIAL_WINDOW_SIZE, 1 << 30)],
+    );
+    let mut out = Vec::new();
+    frame::write_window_update(&mut out, 0, 1 << 30);
+    c.send(&out);
+    let t = Instant::now();
+    c.get(1, "/huge");
+    // 50 MiB that the client never reads: the server's writes wait, and give up after 400 ms
+    wait_for("the connection to time out", || {
+        server.stats().timed_out > before
+    });
+    wait_for("the connection to close", || server.stats().open == 0);
+    assert!(
+        t.elapsed() < Duration::from_secs(3),
+        "the connection lasted {:?}",
+        t.elapsed()
+    );
+    drop(c);
+    server.shutdown(Duration::from_secs(1));
 }
 
 #[test]
