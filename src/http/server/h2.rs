@@ -94,7 +94,8 @@ struct Stream {
     // the request
     recv: VecDeque<u8>,
     recv_window: i64,
-    /// Body bytes the handler has read and the client has not been given credit for.
+    /// Body bytes the handler has read (and padding) that the client has not been given credit for on the stream. The
+    /// connection has had its credit for them already ([`Engine::credit_connection`]): never give it them again.
     unacked: u32,
     remote_ended: bool,
     trailers: Vec<(String, String)>,
@@ -326,7 +327,10 @@ impl Engine {
     /// Refuses a stream that was taken but cannot be run (the server has no place for its handler).
     pub(super) fn refuse(&mut self, id: u32) {
         frame::write_rst_stream(&mut self.out, id, ErrorCode::REFUSED_STREAM);
-        self.streams.remove(&id);
+        // (its body may have come with its head, in the same read)
+        if let Some(s) = self.streams.remove(&id) {
+            self.credit_connection(s.recv.len() as u32);
+        }
         self.remember(id, Closed::WeReset);
         if self.streams.is_empty() {
             self.idle_since = Some(Instant::now());
@@ -337,6 +341,13 @@ impl Engine {
     #[cfg(pratique_fuzzing)]
     pub(super) fn peer_max_frame_for_fuzz(&self) -> usize {
         self.peer_max_frame
+    }
+
+    /// The connection's credit owed to the client and not yet sent (tests: with what WINDOW_UPDATEs gave, it is all the
+    /// client has been given back).
+    #[cfg(test)]
+    pub(super) fn connection_credit_owed(&self) -> u32 {
+        self.conn_unacked
     }
 
     /// Whether the connection has nothing left to do: we said GOAWAY and every stream is over. (A client's GOAWAY only
@@ -394,7 +405,7 @@ impl Engine {
         if let Some(s) = self.streams.get_mut(&id) {
             s.reset = true;
             s.discard = true;
-            let credit = s.recv.len() as u32 + s.unacked;
+            let credit = s.recv.len() as u32;
             s.recv.clear();
             s.unacked = 0;
             self.credit_connection(credit);
@@ -447,7 +458,10 @@ impl Engine {
             }
             return;
         }
-        self.streams.remove(&id);
+        // (a body that came whole and was not read, all or some of it: the answer to a POST that did not want it)
+        if let Some(s) = self.streams.remove(&id) {
+            self.credit_connection(s.recv.len() as u32);
+        }
         self.remember(id, Closed::Ended);
     }
 
@@ -457,7 +471,7 @@ impl Engine {
             return;
         };
         frame::write_rst_stream(&mut self.out, id, ErrorCode::NO_ERROR);
-        self.credit_connection(s.recv.len() as u32 + s.unacked);
+        self.credit_connection(s.recv.len() as u32);
         self.remember(id, Closed::WeReset);
         if self.streams.is_empty() {
             self.idle_since = Some(Instant::now());
@@ -465,6 +479,13 @@ impl Engine {
     }
 
     /// Gives the client credit on the connection for `n` bytes taken off it (read, or dropped).
+    ///
+    /// The rule: each DATA frame's length is taken off the connection's window when it comes, and given back once,
+    /// whatever becomes of it. Padding at once; the data at once if nobody will read it (a stream reset, closed,
+    /// lingering or discarding), otherwise when the handler reads it ([`Engine::read_body`]) or, if it never does,
+    /// when the stream is dropped with it unread: `recv.len()`, never `unacked`, which counts bytes already read and
+    /// so already given back. A stream's own window is given back as the handler reads (`unacked`), or at once for
+    /// data discarded; once the stream is over its window does not matter.
     fn credit_connection(&mut self, n: u32) {
         if n == 0 {
             return;
@@ -634,7 +655,7 @@ impl Engine {
                     s.reset = true;
                     s.reset_by_client = true;
                     s.discard = true;
-                    let credit = s.recv.len() as u32 + s.unacked;
+                    let credit = s.recv.len() as u32;
                     s.recv.clear();
                     s.unacked = 0;
                     self.credit_connection(credit);
