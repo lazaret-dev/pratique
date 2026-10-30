@@ -1809,9 +1809,9 @@ fn a_caller_who_reads_hands_the_socket_to_the_reader_thread_when_its_own_respons
 
 /// Starts requests on `conn` until one has been given the right to read the socket (when nothing is in flight the reader thread
 /// stays out of the way for a moment after the last request, see `PARK_WINDOW`; a loaded machine can make that moment pass, and
-/// then the request that was started is finished and another is tried). A request that did not lead is read whole, whatever its
-/// size: with a limit of 1,000 bytes, as this had, the download of 4 MB that some tests start failed ("exceeds the configured
-/// size limit") whenever its first try did not lead, which is what made
+/// then the request that was started is finished and another is tried). A request that did not lead is read whole, up to 8 MiB,
+/// more than any request this is given: with a limit of 1,000 bytes, as this had, the download of 4 MB that some tests start
+/// failed ("exceeds the configured size limit") whenever its first try did not lead, which is what made
 /// `what_a_full_buffer_leaves_undecrypted_is_taken_in_by_whoever_reads_next` fail on a busy machine (B-119).
 fn start_with_the_right_to_read(
     conn: &Arc<Shared>,
@@ -2583,14 +2583,19 @@ fn a_whole_download_on_a_connection_that_was_left_alone_is_not_held_up_by_the_re
 
 #[test]
 fn an_upload_that_waits_for_window_credit_on_a_connection_that_was_left_alone_is_not_held_up() {
-    // 30 MB through a stream window of 1 MiB: the upload waits for the server's credit some thirty times, on a connection
-    // left alone (its reader thread out of the way, then reading again). If nobody read that credit when the upload
-    // waited, it would wait for a reader to come by, up to a second each time. The bound was 800 ms, which an
-    // unoptimized build on a busy machine does not keep for 30 MB (951 ms on Lazaret's runner, Oct 30, as often before
-    // B-119's branch as on it); it is now relative to a download of 12 MB on the same connection, timed just before, in
-    // which nobody waits for credit: the upload, two and a half times the bytes, may take four times as long, and half a
-    // second more.
-    let server = H2Server::start(sizes_and_delays);
+    // 4 MB through a stream window of 64 KiB: the upload waits for the server's credit some sixty times, on a connection
+    // left alone (its reader thread out of the way for PARK_WINDOW, then reading again). An upload that waits wakes the
+    // reader thread if it is out of the way; without that, each wait lasts until the reader thread comes back of itself,
+    // up to PARK_WINDOW (25 ms), a second and a half in all. The bound is relative to a download of 12 MB on the same
+    // connection, timed just before, in which nobody waits for credit: twice as long, and 300 ms more. Waits, not bytes,
+    // decide how long the upload takes, so a missing wake-up shows. (The bound was 800 ms on 30 MB, which an unoptimized
+    // build on a busy machine does not keep; round 9 made it four times the download and half a second, on 30 MB through
+    // a window of 1 MiB, some thirty waits, and a missing wake-up, 0.7 to 0.85 s in all, passed it: the review of round 9.)
+    let settings = Settings {
+        initial_window: 64 << 10,
+        ..Settings::default()
+    };
+    let server = H2Server::start_with(sizes_and_delays, settings, |c| c);
     let client = server.client();
     // (the first big transfer of a server is slow, whoever reads: it is not what is looked at)
     assert_eq!(
@@ -2607,14 +2612,14 @@ fn an_upload_that_waits_for_window_credit_on_a_connection_that_was_left_alone_is
     thread::sleep(Duration::from_millis(100));
     let started = Instant::now();
     let r = client
-        .post(&server.url("/up"), vec![5u8; 30_000_000])
+        .post(&server.url("/up"), vec![5u8; 4_000_000])
         .unwrap();
     let took = started.elapsed();
     assert_eq!(r.text(), "hello /up");
-    let bound = download * 4 + Duration::from_millis(500);
+    let bound = download * 2 + Duration::from_millis(300);
     assert!(
         took < bound,
-        "took {took:?}, against {bound:?} (the download of 12 MB took {download:?})"
+        "the upload of 4 MB took {took:?}, against {bound:?} (the download of 12 MB took {download:?})"
     );
 }
 
