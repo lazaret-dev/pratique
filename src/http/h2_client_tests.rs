@@ -2588,7 +2588,9 @@ fn an_upload_that_waits_for_window_credit_on_a_connection_that_was_left_alone_is
     // reader thread if it is out of the way; without that, each wait lasts until the reader thread comes back of itself,
     // up to PARK_WINDOW (25 ms), a second and a half in all. The bound is relative to a download of 12 MB on the same
     // connection, timed just before, in which nobody waits for credit: twice as long, and 300 ms more. Waits, not bytes,
-    // decide how long the upload takes, so a missing wake-up shows. (The bound was 800 ms on 30 MB, which an unoptimized
+    // decide how long the upload takes, so a missing wake-up shows. Each is the quickest of three, taken in turns: on a
+    // machine that other work loads now and then, one upload took 1.2 s and another 1.8 s where the others took 0.1 to
+    // 0.5 s, against 3.2 to 3.4 s for every one without the wake-up. (The bound was 800 ms on 30 MB, which an unoptimized
     // build on a busy machine does not keep; round 9 made it four times the download and half a second, on 30 MB through
     // a window of 1 MiB, some thirty waits, and a missing wake-up, 0.7 to 0.85 s in all, passed it: the review of round 9.)
     let settings = Settings {
@@ -2602,24 +2604,27 @@ fn an_upload_that_waits_for_window_credit_on_a_connection_that_was_left_alone_is
         client.get(&server.url("/n/12000000")).unwrap().body.len(),
         12_000_000
     );
-    thread::sleep(Duration::from_millis(100));
-    let started = Instant::now();
-    assert_eq!(
-        client.get(&server.url("/n/12000000")).unwrap().body.len(),
-        12_000_000
-    );
-    let download = started.elapsed();
-    thread::sleep(Duration::from_millis(100));
-    let started = Instant::now();
-    let r = client
-        .post(&server.url("/up"), vec![5u8; 4_000_000])
-        .unwrap();
-    let took = started.elapsed();
-    assert_eq!(r.text(), "hello /up");
+    let (mut download, mut upload) = (Duration::MAX, Duration::MAX);
+    for _ in 0..3 {
+        thread::sleep(Duration::from_millis(100));
+        let started = Instant::now();
+        assert_eq!(
+            client.get(&server.url("/n/12000000")).unwrap().body.len(),
+            12_000_000
+        );
+        download = download.min(started.elapsed());
+        thread::sleep(Duration::from_millis(100));
+        let started = Instant::now();
+        let r = client
+            .post(&server.url("/up"), vec![5u8; 4_000_000])
+            .unwrap();
+        upload = upload.min(started.elapsed());
+        assert_eq!(r.text(), "hello /up");
+    }
     let bound = download * 2 + Duration::from_millis(300);
     assert!(
-        took < bound,
-        "the upload of 4 MB took {took:?}, against {bound:?} (the download of 12 MB took {download:?})"
+        upload < bound,
+        "the upload of 4 MB took {upload:?} at its quickest, against {bound:?} (the download of 12 MB took {download:?} at its quickest)"
     );
 }
 
