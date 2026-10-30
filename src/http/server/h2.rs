@@ -222,9 +222,9 @@ pub(super) struct Engine {
     /// When everything framed was last handed to the system after the connection became idle.
     sent_at: Option<Instant>,
     /// When our side of the connection ended (GOAWAY said, no stream left, all of it sent; for an end that the idle
-    /// time began, when that began, unless the client has given credit since). The client then has the idle time to
-    /// end the connection, and again from each credit it gives (`credited`): it gives credit as it reads what the
-    /// systems' buffers held at the end (B-120).
+    /// time began, when that began, unless the client has given credit on the connection since). The client then has
+    /// the idle time to end the connection, and again from each credit on the connection it gives (`credited`), as it
+    /// reads what the systems' buffers held at the end (B-120).
     ended: Option<Instant>,
     /// When the client last gave credit on the connection (a WINDOW_UPDATE on stream 0): it is reading. Credit on a
     /// stream does not count: once our side has ended, every stream is closed.
@@ -329,7 +329,7 @@ impl Engine {
 
     /// Since when the connection has had nothing under way (no stream, or only streams whose responses are whole, and
     /// all it framed handed to the system), if it has nothing. Once our side has ended, since then or since the client
-    /// last gave credit, whichever is later (B-120).
+    /// last gave credit on the connection, whichever is later (B-120).
     pub(super) fn idle_since(&self) -> Option<Instant> {
         if let Some(ended) = self.ended {
             return Some(self.credited.map_or(ended, |c| c.max(ended)));
@@ -357,7 +357,8 @@ impl Engine {
     /// connection that is finished ends our side (B-120). Whether it is finished.
     ///
     /// An end that the idle time began counts from when that began, so that a client that says nothing is not given the
-    /// idle time twice; but from now if the client has given credit since, as it is reading what we sent.
+    /// idle time twice; but from now if the client has given credit on the connection since, as it is reading what we
+    /// sent.
     pub(super) fn all_sent(&mut self) -> bool {
         let now = Instant::now();
         if std::mem::take(&mut self.idle_after_send) {
