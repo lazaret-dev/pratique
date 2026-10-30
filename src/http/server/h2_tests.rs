@@ -1042,6 +1042,12 @@ struct GateState {
     hold_look: std::sync::atomic::AtomicBool,
     /// A sender is held there.
     at_look: std::sync::atomic::AtomicBool,
+    /// While this is set, the last looks of every thread but `reader` are counted (`other_looks`), and the n-th waits
+    /// until `allow_looks` is n or more.
+    count_looks: std::sync::atomic::AtomicBool,
+    reader: Mutex<Option<thread::ThreadId>>,
+    other_looks: AtomicUsize,
+    allow_looks: AtomicUsize,
 }
 
 impl GateState {
@@ -1090,6 +1096,15 @@ impl Outbound for Gate {
 
     fn looked(&mut self, finished: bool) {
         let s = &*self.state;
+        if s.count_looks.load(Ordering::SeqCst)
+            && *s.reader.lock().unwrap() != Some(thread::current().id())
+        {
+            let n = s.other_looks.fetch_add(1, Ordering::SeqCst) + 1;
+            let give_up = Instant::now() + Duration::from_secs(10);
+            while s.allow_looks.load(Ordering::SeqCst) < n && Instant::now() < give_up {
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
         if finished || !s.hold_look.load(Ordering::SeqCst) {
             return;
         }
@@ -1324,6 +1339,105 @@ fn the_end_is_not_lost_to_a_change_made_while_another_thread_holds_the_right_to_
     drop(c);
     assert!(server.join().unwrap().is_ok());
     drop(ctl);
+}
+
+#[test]
+fn the_idle_time_is_not_lost_to_a_change_made_while_another_thread_holds_the_right_to_send() {
+    // The review of round 8 of B-119's branch, its MEDIUM-1: as the test above, but with no shutdown. Stream 1's
+    // response waits for a window, its handler done; stream 3 is answered with no body, and its handler's last send is
+    // held at its last look (the connection is not idle then: stream 1 is open); the client resets stream 1, which
+    // takes off the last stream and frames nothing, and the reading thread cannot take the right to send. The one who
+    // lets go must look again and start the idle time, or a silent client keeps the connection for ever: here it ends
+    // at its idle time of 300 ms, with a GOAWAY and the end of what the server sends.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let gate = Arc::new(GateState::default());
+    let server = {
+        let gate = gate.clone();
+        thread::spawn(move || {
+            let (sock, peer) = listener.accept().unwrap();
+            *gate.reader.lock().unwrap() = Some(thread::current().id());
+            let writer = Gate {
+                inner: sock.try_clone().unwrap(),
+                state: gate,
+            };
+            let ctl = runtime::Ctl::detached_with_limits(Limits {
+                idle_timeout: Duration::from_millis(300),
+                write_timeout: Duration::from_secs(30),
+                ..Limits::default()
+            });
+            let timer = ctl.timer.clone().unwrap();
+            let reader = runtime::Timed::new(sock, timer, Duration::from_secs(30)).unwrap();
+            let handler: Arc<dyn Handler> = Arc::new(|req: Request| {
+                let body = if req.path() == "/empty" {
+                    Vec::new()
+                } else {
+                    vec![7; 1000]
+                };
+                Response::bytes(200, "application/octet-stream", body)
+            });
+            let info = ConnInfo {
+                peer: Some(peer),
+                ..ConnInfo::default()
+            };
+            super::h2::serve(
+                Box::new(reader),
+                Box::new(writer),
+                Arc::new(info),
+                handler,
+                &HttpConfig::default(),
+                ctl,
+            )
+        })
+    };
+    // no window for response data: stream 1's body waits in the engine, its handler done, its stream open
+    let mut c = Raw::connect_to(addr, &[(setting::INITIAL_WINDOW_SIZE, 0)]);
+    c.get(1, "/");
+    let head = c.until(|f| f.h.stream == 1 && f.is(kind::HEADERS));
+    assert!(
+        head.last()
+            .is_some_and(|f| f.fields.contains(&(":status".into(), "200".into()))),
+        "{head:?}"
+    );
+    thread::sleep(Duration::from_millis(100));
+    // stream 3's handler looks twice: once it has sent its head (which ends the stream), and once it has returned,
+    // the last; that one is held
+    gate.count_looks.store(true, Ordering::SeqCst);
+    gate.allow_looks.store(1, Ordering::SeqCst);
+    c.get(3, "/empty");
+    let t = Instant::now();
+    while gate.other_looks.load(Ordering::SeqCst) < 2 {
+        assert!(t.elapsed() < Duration::from_secs(5), "no last look");
+        thread::sleep(Duration::from_millis(5));
+    }
+    // the client resets stream 1: no stream is left, and nothing is framed
+    let mut out = Vec::new();
+    frame::write_rst_stream(&mut out, 1, ErrorCode::CANCEL);
+    c.send(&out);
+    thread::sleep(Duration::from_millis(200));
+    gate.allow_looks.store(usize::MAX, Ordering::SeqCst);
+    // the sender lets go, looks again, and the idle time begins: GOAWAY, then the end of what is sent
+    let t = Instant::now();
+    while gate.other_looks.load(Ordering::SeqCst) < 3 {
+        assert!(
+            t.elapsed() < Duration::from_secs(2),
+            "the sender did not look again"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    let frames = c.until(|f| f.is(kind::GOAWAY));
+    assert!(
+        frames.last().is_some_and(|f| f.is(kind::GOAWAY)),
+        "no GOAWAY: {frames:?}"
+    );
+    assert!(c.next().is_none(), "the server's sending ends");
+    assert!(
+        t.elapsed() < Duration::from_secs(3),
+        "the connection idled out only after {:?}",
+        t.elapsed()
+    );
+    drop(c);
+    let _ = server.join().unwrap();
 }
 
 // ------------------------------------------------------------------------------------------------ the engine alone

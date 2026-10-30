@@ -915,6 +915,104 @@ fn an_http2_client_that_never_reads_is_still_ended_by_the_write_timeout() {
 }
 
 #[test]
+fn an_http2_client_that_never_reads_and_pings_is_still_ended() {
+    // The review of round 8 (its MEDIUM-1): the idle time of a connection whose last stream has ended waits for all it
+    // framed to be handed to the system, unless the connection is dead (a write failed). Here a client that never reads
+    // sends a PING while the server's write of 50 MiB waits: the answer is framed behind that write, the write times out,
+    // and the answer is never sent, so nobody ever finds nothing left to send. The connection must still end.
+    let server = plain(quick());
+    let mut c = Raw::connect_to(
+        server.local_addrs()[0],
+        &[(setting::INITIAL_WINDOW_SIZE, 1 << 30)],
+    );
+    let mut out = Vec::new();
+    frame::write_window_update(&mut out, 0, 1 << 30);
+    c.send(&out);
+    let t = Instant::now();
+    c.get(1, "/huge");
+    thread::sleep(Duration::from_millis(150));
+    c.raw_frame(kind::PING, 0, 0, b"anybody?");
+    while server.stats().open > 0 {
+        assert!(
+            t.elapsed() < Duration::from_secs(8),
+            "the connection is still open after {:?}",
+            t.elapsed()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    drop(c);
+    server.shutdown(Duration::from_secs(1));
+}
+
+#[test]
+fn a_client_that_gives_credit_and_reads_nothing_after_the_end_is_cut_at_sixteen_idle_timeouts() {
+    // The review of round 8 (its LOW-2): once our side has ended, the idle time runs again from each credit the client
+    // gives, as it does when it reads the tail; a client that gave credit just inside each idle time, and read nothing,
+    // held the connection until AFTER_END was used up (some 80,000 credits, 56 days at the default idle timeout). It is
+    // now cut sixteen idle timeouts after the end, however often credit comes; and only credit on the connection counts:
+    // credit on a stream, a closed one as in the review's probe, keeps nothing. The client here gives credit every half
+    // idle timeout, from just after its response, for twenty-four idle timeouts; the connection's idle time runs out
+    // (credit before the end keeps nothing either) and it ends with a GOAWAY.
+    const IDLE: Duration = Duration::from_millis(300);
+    for stream in [0u32, 1] {
+        let server = plain(Limits {
+            idle_timeout: IDLE,
+            ..quick()
+        });
+        let mut c = Raw::connect_to(server.local_addrs()[0], &[]);
+        c.get(1, "/");
+        assert_eq!(c.response(1).0, 200, "credit on stream {stream}");
+        let sender = {
+            let mut s = c.socket();
+            thread::spawn(move || {
+                let mut up = Vec::new();
+                frame::write_window_update(&mut up, stream, 1024);
+                let until = Instant::now() + IDLE * 24;
+                while Instant::now() < until {
+                    if s.write_all(&up).is_err() {
+                        return;
+                    }
+                    thread::sleep(IDLE / 2);
+                }
+            })
+        };
+        let frames = c.until(|f| f.is(kind::GOAWAY));
+        assert!(
+            frames.last().is_some_and(|f| f.is(kind::GOAWAY)),
+            "credit on stream {stream}: {frames:?}"
+        );
+        let end = Instant::now();
+        assert!(
+            c.next().is_none(),
+            "credit on stream {stream}: the server's sending ends"
+        );
+        while server.stats().open > 0 {
+            assert!(
+                end.elapsed() < IDLE * 30,
+                "credit on stream {stream}: the connection is still open after {:?}",
+                end.elapsed()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        let held = end.elapsed();
+        if stream == 0 {
+            assert!(
+                held >= IDLE * 13 && held < IDLE * 19,
+                "credit on the connection: read for {held:?} after the end, not sixteen idle timeouts of {IDLE:?}"
+            );
+        } else {
+            assert!(
+                held < IDLE * 3,
+                "credit on a closed stream: read for {held:?} after the end"
+            );
+        }
+        sender.join().unwrap();
+        drop(c);
+        server.shutdown(Duration::from_secs(1));
+    }
+}
+
+#[test]
 fn a_connection_accepted_as_the_shutdown_begins_is_closed_not_served() {
     // B-119: a connection accepted just before the shutdown began, and entered among the connections just after the
     // shutdown had taken its list of those to close, was never asked to close: it was served as if nothing had happened,
