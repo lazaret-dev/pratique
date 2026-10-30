@@ -345,6 +345,21 @@ impl Ctl {
         })
     }
 
+    /// One that does nothing but stop with `stop` (tests of a connection served without the runtime).
+    #[cfg(test)]
+    pub(crate) fn detached_with_stop(stop: impl Fn() + Send + Sync + 'static) -> Arc<Ctl> {
+        Arc::new(Ctl {
+            timer: None,
+            limits: Limits::default(),
+            closing: AtomicBool::new(false),
+            idle: AtomicU8::new(BUSY),
+            h2: Mutex::new(None),
+            log: None,
+            handlers: None,
+            stop_reading: Some(Box::new(stop)),
+        })
+    }
+
     pub(crate) fn is_closing(&self) -> bool {
         self.closing.load(Ordering::SeqCst)
     }
@@ -400,7 +415,7 @@ impl Ctl {
     }
 
     /// Asks the connection to finish: say GOAWAY, or close at the end of the response, or close now if it is idle.
-    fn begin_close(&self) {
+    pub(crate) fn begin_close(&self) {
         self.closing.store(true, Ordering::SeqCst);
         let h2 = self
             .h2
@@ -520,6 +535,8 @@ pub struct ServerBuilder {
     limits: Limits,
     log: Option<AccessLog>,
     errors: Option<ErrorLog>,
+    #[cfg(test)]
+    before_entry: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl ServerBuilder {
@@ -532,7 +549,17 @@ impl ServerBuilder {
             limits: Limits::default(),
             log: None,
             errors: None,
+            #[cfg(test)]
+            before_entry: None,
         }
+    }
+
+    /// Calls `f` when a connection has been accepted and before it is entered among the server's connections (tests:
+    /// to hold it there while the server begins to shut down).
+    #[cfg(test)]
+    pub(crate) fn before_entry(mut self, f: impl Fn() + Send + Sync + 'static) -> ServerBuilder {
+        self.before_entry = Some(Arc::new(f));
+        self
     }
 
     /// Listens for TLS on `addr` (HTTP/2 or HTTP/1.1, as the configuration's ALPN protocols and the client agree).
@@ -618,6 +645,8 @@ impl ServerBuilder {
             handlers: Arc::new(AtomicUsize::new(0)),
             stats: Counters::default(),
             next_id: AtomicU64::new(0),
+            #[cfg(test)]
+            before_entry: self.before_entry,
         });
         let mut addrs = Vec::new();
         let mut listeners = Vec::new();
@@ -691,6 +720,8 @@ struct Inner {
     handlers: Arc<AtomicUsize>,
     stats: Counters,
     next_id: AtomicU64,
+    #[cfg(test)]
+    before_entry: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Inner {
@@ -733,6 +764,10 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
         };
         if inner.stopping.load(Ordering::SeqCst) {
             return;
+        }
+        #[cfg(test)]
+        if let Some(f) = &inner.before_entry {
+            f();
         }
         let key = limit_key(peer.ip());
         let id = inner.next_id.fetch_add(1, Ordering::SeqCst);

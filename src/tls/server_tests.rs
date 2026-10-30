@@ -394,21 +394,25 @@ fn a_connection_cut_without_close_notify_is_an_error_for_the_server() {
         Err(io::ErrorKind::UnexpectedEof)
     );
 
-    // both directions cut once the server has read the data: Linux and macOS send the FIN, Windows resets (the ticket
-    // waits unread), and the server's system says WSAECONNRESET or WSAECONNABORTED. An error each way, never the end
-    // of the stream
+    // both directions cut once the server has read the data: Linux and macOS send the FIN, and the server must say
+    // UnexpectedEof as above; Windows resets (the ticket waits unread), and the server's system says WSAECONNRESET or
+    // WSAECONNABORTED. An error each way, never the end of the stream
     let (first, second) = cut_without_close_notify(std::net::Shutdown::Both, true);
     assert_eq!(first.map_err(|e| e.kind()), Ok(4));
     let second = second.map_err(|e| e.kind());
-    assert!(
-        matches!(
-            second,
-            Err(io::ErrorKind::UnexpectedEof
-                | io::ErrorKind::ConnectionReset
-                | io::ErrorKind::ConnectionAborted)
-        ),
-        "{second:?}"
-    );
+    if cfg!(windows) {
+        assert!(
+            matches!(
+                second,
+                Err(io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::ConnectionAborted)
+            ),
+            "{second:?}"
+        );
+    } else {
+        assert_eq!(second, Err(io::ErrorKind::UnexpectedEof));
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ what the client must refuse

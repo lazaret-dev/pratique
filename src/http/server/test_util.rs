@@ -276,6 +276,8 @@ pub(super) struct Raw {
     buf: Vec<u8>,
     /// Frames read while looking for another stream's.
     pending: std::collections::VecDeque<F>,
+    /// A pause after each read of the socket: a client that reads slowly.
+    pace: Duration,
 }
 
 /// A frame as read: its header and payload, and for HEADERS the fields, decoded as it arrived (the table depends on the
@@ -309,6 +311,7 @@ impl Raw {
             dec: Decoder::new(4096, 1 << 20),
             buf: Vec::new(),
             pending: Default::default(),
+            pace: Duration::ZERO,
         };
         let mut out = PREFACE.to_vec();
         frame::write_settings(&mut out, settings);
@@ -323,6 +326,11 @@ impl Raw {
 
     pub(super) fn send(&mut self, bytes: &[u8]) {
         let _ = self.s.write_all(bytes);
+    }
+
+    /// From now on, pauses for `pace` after each read of the socket (of at most 64 KiB).
+    pub(super) fn read_slowly(&mut self, pace: Duration) {
+        self.pace = pace;
     }
 
     pub(super) fn headers(&mut self, id: u32, fields: &[(&str, &str)], end_stream: bool) {
@@ -428,7 +436,12 @@ impl Raw {
             let mut chunk = [0u8; 65536];
             match self.s.read(&mut chunk) {
                 Ok(0) => return None,
-                Ok(n) => self.buf.extend_from_slice(&chunk[..n]),
+                Ok(n) => {
+                    self.buf.extend_from_slice(&chunk[..n]);
+                    if !self.pace.is_zero() {
+                        thread::sleep(self.pace);
+                    }
+                }
                 Err(e)
                     if matches!(
                         e.kind(),

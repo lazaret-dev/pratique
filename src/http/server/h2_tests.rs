@@ -953,9 +953,12 @@ fn a_stream_answered_before_its_request_ends_is_still_checked_and_stopped_if_it_
     assert_eq!(c.response(1).0, 200);
     c.headers(1, &[("x-t", "1")], false);
     assert_eq!(c.reset_of(1), Some(ErrorCode::PROTOCOL_ERROR.0));
-    // more of a body nobody will read: the client is asked to stop, with no error
+    // more of a body nobody will read: the client is asked to stop, with no error. (Once the handler has returned:
+    // what comes before that is the handler's to read, and the response can end before the handler has returned. On
+    // Lazaret's runner, with the other server tests at once, the more came first, and no reset came at all.)
     c.headers(3, &post, false);
     assert_eq!(c.response(3).0, 200);
+    thread::sleep(Duration::from_millis(100));
     c.data(3, b"more", false);
     assert_eq!(c.reset_of(3), Some(ErrorCode::NO_ERROR.0));
     // a client that ends it properly is not reset at all
@@ -970,4 +973,187 @@ fn a_stream_answered_before_its_request_ends_is_still_checked_and_stopped_if_it_
             .all(|f| !(f.h.stream == 5 && f.is(kind::RST_STREAM))),
         "{frames:?}"
     );
+}
+
+// ------------------------------------------------------------------------------------------------ the shutdown and the sending
+
+/// The writing handle of a connection, with a gate the test holds a send at; it counts the sends under way.
+struct Gate {
+    inner: std::net::TcpStream,
+    state: Arc<GateState>,
+}
+
+#[derive(Default)]
+struct GateState {
+    shut: Mutex<bool>,
+    opened: std::sync::Condvar,
+    /// Sends under way (waiting at the gate, or in the socket).
+    sending: AtomicUsize,
+    /// The bytes of the send that waits at the gate (0: none waits).
+    held: AtomicUsize,
+}
+
+impl GateState {
+    fn set(&self, shut: bool) {
+        *self.shut.lock().unwrap() = shut;
+        self.opened.notify_all();
+    }
+}
+
+impl Write for Gate {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let s = &*self.state;
+        s.sending.fetch_add(1, Ordering::SeqCst);
+        {
+            let give_up = Instant::now() + Duration::from_secs(10);
+            let mut shut = s.shut.lock().unwrap();
+            while *shut && Instant::now() < give_up {
+                s.held.store(buf.len(), Ordering::SeqCst);
+                shut = s
+                    .opened
+                    .wait_timeout(shut, Duration::from_millis(20))
+                    .unwrap()
+                    .0;
+            }
+            s.held.store(0, Ordering::SeqCst);
+        }
+        let n = self.inner.write(buf);
+        s.sending.fetch_sub(1, Ordering::SeqCst);
+        n
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+#[test]
+fn a_shutdown_stops_reading_a_connection_only_once_the_last_of_its_response_is_sent() {
+    // B-119: stopping a connection's reading (a shutdown of its reading side) cancels on Windows a send that is under way
+    // on it, which cuts the response being sent. The HTTP/2 server took a stream off as soon as its last frame was framed,
+    // and a shutdown that came while those frames were being sent found the connection over and stopped it at once. Here
+    // the last of a response, one DATA frame that ends the stream, is held in its send at a gate while the shutdown
+    // begins; the reading may stop only once that send, and the GOAWAY after it, are through.
+    const N: usize = 1 << 20;
+    let body: Vec<u8> = (0..N).map(|i| (i % 251) as u8).collect();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let gate = Arc::new(GateState::default());
+    // what was under way at each stop of the reading
+    let stops = Arc::new(Mutex::new(Vec::new()));
+    let (ctl_tx, ctl_rx) = std::sync::mpsc::channel();
+    let server = {
+        let (gate, stops, body) = (gate.clone(), stops.clone(), body.clone());
+        thread::spawn(move || {
+            let (sock, peer) = listener.accept().unwrap();
+            let stopper = sock.try_clone().unwrap();
+            let writer = Gate {
+                inner: sock.try_clone().unwrap(),
+                state: gate.clone(),
+            };
+            let ctl = runtime::Ctl::detached_with_stop(move || {
+                stops
+                    .lock()
+                    .unwrap()
+                    .push(gate.sending.load(Ordering::SeqCst));
+                let _ = crate::sys::shutdown(&stopper, std::net::Shutdown::Read);
+            });
+            ctl_tx.send(ctl.clone()).unwrap();
+            let mut config = HttpConfig::default();
+            config.h2.stream_send_buffer = 2 * N;
+            let handler: Arc<dyn Handler> = Arc::new(move |_req: Request| {
+                Response::bytes(200, "application/octet-stream", body.clone())
+            });
+            let info = ConnInfo {
+                peer: Some(peer),
+                ..ConnInfo::default()
+            };
+            super::h2::serve(
+                Box::new(sock),
+                Box::new(writer),
+                Arc::new(info),
+                handler,
+                &config,
+                ctl,
+            )
+        })
+    };
+    // no window for response data yet, and frames as large as there are
+    let mut c = Raw::connect_to(
+        addr,
+        &[
+            (setting::INITIAL_WINDOW_SIZE, 0),
+            (setting::MAX_FRAME_SIZE, 16_777_215),
+        ],
+    );
+    let ctl = ctl_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    c.get(1, "/");
+    // the head, sent once the handler has returned its response, whose body waits for a window
+    let head = c.until(|f| f.h.stream == 1 && f.is(kind::HEADERS));
+    assert!(
+        head.last()
+            .is_some_and(|f| f.fields.contains(&(":status".into(), "200".into()))),
+        "{head:?}"
+    );
+    thread::sleep(Duration::from_millis(100));
+    gate.set(true);
+    // the window for all of it, the connection's first: the server frames the whole body as one DATA frame that ends
+    // the stream, which takes the stream off, and its send waits at the gate
+    let mut out = Vec::new();
+    frame::write_window_update(&mut out, 0, N as u32);
+    c.send(&out);
+    thread::sleep(Duration::from_millis(50));
+    out.clear();
+    frame::write_window_update(&mut out, 1, N as u32);
+    c.send(&out);
+    let t = Instant::now();
+    while gate.held.load(Ordering::SeqCst) < N {
+        assert!(
+            t.elapsed() < Duration::from_secs(5),
+            "no send of the body came to the gate"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    // the server begins to shut down: GOAWAY, and the reading stops once that is sent too, not now
+    ctl.begin_close();
+    assert_eq!(
+        stops.lock().unwrap().clone(),
+        Vec::<usize>::new(),
+        "the reading was stopped while the response's last frame was being sent"
+    );
+    gate.set(false);
+    // the client has the whole body, then the GOAWAY
+    let mut got = Vec::with_capacity(N);
+    let (mut ended, mut goaway) = (false, None);
+    while !(ended && goaway.is_some()) {
+        let f = c.next().unwrap_or_else(|| {
+            panic!(
+                "the connection ended with {} of {N} bytes, the stream {}, GOAWAY {goaway:?}",
+                got.len(),
+                if ended { "ended" } else { "not ended" }
+            )
+        });
+        if f.is(kind::DATA) && f.h.stream == 1 {
+            got.extend_from_slice(&f.p);
+            ended = f.h.has(flag::END_STREAM);
+        } else if f.is(kind::GOAWAY) {
+            goaway = Some((
+                u32::from_be_bytes(f.p[..4].try_into().unwrap()),
+                u32::from_be_bytes(f.p[4..8].try_into().unwrap()),
+            ));
+        } else {
+            assert!(!f.is(kind::RST_STREAM), "{f:?}");
+        }
+    }
+    assert!(got == body, "{} bytes of {N}, not the body", got.len());
+    assert_eq!(goaway, Some((1, ErrorCode::NO_ERROR.0)));
+    // the connection ends on the stop of its reading, which came when nothing was being sent
+    assert!(server.join().unwrap().is_ok());
+    let stops = stops.lock().unwrap().clone();
+    assert!(
+        !stops.is_empty() && stops.iter().all(|&n| n == 0),
+        "sends under way at each stop: {stops:?}"
+    );
+    drop(ctl);
+    assert!(c.next().is_none(), "the connection closes");
 }

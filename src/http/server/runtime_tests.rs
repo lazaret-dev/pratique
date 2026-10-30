@@ -351,6 +351,259 @@ fn shutdown_finishes_what_is_under_way_and_closes_the_rest() {
 }
 
 #[test]
+fn a_shutdown_lets_a_slow_client_have_all_of_a_response_whose_handler_has_returned() {
+    // B-119: an HTTP/2 stream is over for the server once its last frame is framed, and a shutdown that began while
+    // that frame was still being sent to a slow client stopped the connection's reading at once, which on Windows also
+    // cancels the send: the client lost the tail of the response. Here the handler has returned, the whole body is
+    // framed as one DATA frame that ends the stream, its send waits for a client that does not read yet, and then the
+    // shutdown begins: the client, reading slowly, must have every byte, then the GOAWAY, then the end of the connection,
+    // and the shutdown must end with the connection, long before its grace.
+    const N: usize = 12 << 20;
+    let body: Arc<Vec<u8>> = Arc::new((0..N).map(|i| (i % 251) as u8).collect());
+    let returned = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let (body, returned) = (body.clone(), returned.clone());
+        let mut http = HttpConfig::default();
+        http.h2.stream_send_buffer = 16 << 20;
+        Arc::new(
+            ServerBuilder::new(move |_req: Request| {
+                let r = Response::bytes(200, "application/octet-stream", body.to_vec());
+                returned.fetch_add(1, Ordering::SeqCst);
+                r
+            })
+            .plain("127.0.0.1:0")
+            .http_config(http)
+            .limits(Limits {
+                idle_timeout: Duration::from_secs(30),
+                write_timeout: Duration::from_secs(30),
+                ..Limits::default()
+            })
+            .start()
+            .unwrap(),
+        )
+    };
+    // no window for response data yet, and frames as large as there are
+    let mut c = Raw::connect_to(
+        server.local_addrs()[0],
+        &[
+            (setting::INITIAL_WINDOW_SIZE, 0),
+            (setting::MAX_FRAME_SIZE, 16_777_215),
+        ],
+    );
+    c.get(1, "/big");
+    let head = c.until(|f| f.h.stream == 1 && f.is(kind::HEADERS));
+    assert!(
+        head.last()
+            .is_some_and(|f| f.fields.contains(&(":status".into(), "200".into()))),
+        "{head:?}"
+    );
+    wait_for("the handler to return", || {
+        returned.load(Ordering::SeqCst) == 1
+    });
+    thread::sleep(Duration::from_millis(100));
+    // the window for all of it, the connection's first: the server frames the body as one DATA frame that ends the
+    // stream, and sends it to a client that reads nothing yet (more than the sockets hold on any system)
+    let mut out = Vec::new();
+    frame::write_window_update(&mut out, 0, N as u32);
+    c.send(&out);
+    thread::sleep(Duration::from_millis(50));
+    out.clear();
+    frame::write_window_update(&mut out, 1, N as u32);
+    c.send(&out);
+    thread::sleep(Duration::from_millis(300));
+    // the shutdown begins while that send waits for the client
+    let t = Instant::now();
+    let stopper = {
+        let server = server.clone();
+        thread::spawn(move || server.shutdown(Duration::from_secs(20)))
+    };
+    thread::sleep(Duration::from_millis(300));
+    // and the client reads, slowly, to the end of the connection
+    c.read_slowly(Duration::from_millis(1));
+    let mut got = Vec::with_capacity(N);
+    let (mut ended, mut goaway) = (false, None);
+    while let Some(f) = c.next() {
+        if f.is(kind::DATA) && f.h.stream == 1 {
+            got.extend_from_slice(&f.p);
+            ended |= f.h.has(flag::END_STREAM);
+        } else if f.is(kind::GOAWAY) {
+            goaway = Some(u32::from_be_bytes(f.p[4..8].try_into().unwrap()));
+        } else {
+            assert!(!f.is(kind::RST_STREAM), "{f:?}");
+        }
+    }
+    assert!(
+        ended && got[..] == body[..],
+        "{} bytes of {N}, the stream {}",
+        got.len(),
+        if ended { "ended" } else { "not ended" }
+    );
+    assert_eq!(goaway, Some(0), "GOAWAY with no error");
+    stopper.join().unwrap();
+    assert!(
+        t.elapsed() < Duration::from_secs(10),
+        "the shutdown waited for its grace: {:?}",
+        t.elapsed()
+    );
+}
+
+#[test]
+fn a_connection_accepted_as_the_shutdown_begins_is_closed_not_served() {
+    // B-119: a connection accepted just before the shutdown began, and entered among the connections just after the
+    // shutdown had taken its list of those to close, was never asked to close: it was served as if nothing had happened,
+    // and cut at the end of the grace. The accept is held between its look at the shutdown and the entry while the
+    // shutdown runs (it has no connection to wait for, and is over at once).
+    let held = Arc::new((Mutex::new(true), Condvar::new()));
+    let arrived = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let (held, arrived) = (held.clone(), arrived.clone());
+        ServerBuilder::new(app)
+            .plain("127.0.0.1:0")
+            .limits(Limits {
+                idle_timeout: Duration::from_secs(30),
+                ..quick()
+            })
+            .before_entry(move || {
+                if arrived.fetch_add(1, Ordering::SeqCst) == 0 {
+                    let (lock, cv) = &*held;
+                    let mut h = lock.lock().unwrap();
+                    let give_up = Instant::now() + Duration::from_secs(10);
+                    while *h && Instant::now() < give_up {
+                        h = cv.wait_timeout(h, Duration::from_millis(50)).unwrap().0;
+                    }
+                }
+            })
+            .start()
+            .unwrap()
+    };
+    let addr = server.local_addrs()[0];
+    let mut s = connect(addr);
+    s.write_all(b"GET /late HTTP/1.1\r\nHost: a\r\n\r\n")
+        .unwrap();
+    wait_for("the accept to be held", || {
+        arrived.load(Ordering::SeqCst) == 1
+    });
+    let t = Instant::now();
+    server.handle().shutdown(Duration::from_secs(3));
+    assert!(
+        t.elapsed() < Duration::from_secs(2),
+        "the shutdown had a connection to wait for: {:?}",
+        t.elapsed()
+    );
+    *held.0.lock().unwrap() = false;
+    held.1.notify_all();
+    let (took, out) = until_closed(&mut s);
+    assert!(
+        out.is_empty() && took < Duration::from_secs(2),
+        "the connection was served ({} bytes) or kept open ({took:?})",
+        out.len()
+    );
+    server.shutdown(Duration::from_secs(1));
+    assert_eq!(server.stats().accepted, 0);
+}
+
+#[test]
+fn an_idle_http1_connection_the_shutdown_takes_is_stopped_and_answers_nothing_more() {
+    // B-119: the shutdown stops an idle HTTP/1.1 connection at once. A request that comes just as it does is not
+    // answered: the stop cancels on Windows a send under way, and the response would be cut short. (The connection's
+    // wait ends with the request as the shutdown takes the connection.)
+    let stops = Arc::new(AtomicUsize::new(0));
+    let ctl = {
+        let stops = stops.clone();
+        runtime::Ctl::detached_with_stop(move || {
+            stops.fetch_add(1, Ordering::SeqCst);
+        })
+    };
+    let waited = ctl.idle_wait(|| {
+        ctl.begin_close();
+        "a request"
+    });
+    assert_eq!((waited, stops.load(Ordering::SeqCst)), (None, 1));
+    // a connection busy with a request when the shutdown begins is not stopped, and waits for no other
+    let stops = Arc::new(AtomicUsize::new(0));
+    let ctl = {
+        let stops = stops.clone();
+        runtime::Ctl::detached_with_stop(move || {
+            stops.fetch_add(1, Ordering::SeqCst);
+        })
+    };
+    assert_eq!(ctl.idle_wait(|| "a request"), Some("a request"));
+    ctl.begin_close();
+    assert_eq!(stops.load(Ordering::SeqCst), 0);
+    assert_eq!(ctl.idle_wait(|| "another"), None);
+}
+
+/// A socket whose first send is cancelled as the system reports one: Windows may have sent some of it, elsewhere a
+/// send that says Interrupted sent nothing.
+struct CancelledOnce {
+    sent: Arc<Mutex<Vec<u8>>>,
+    cancelled: bool,
+}
+
+impl Read for CancelledOnce {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Ok(0)
+    }
+}
+
+impl Write for CancelledOnce {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if !self.cancelled {
+            self.cancelled = true;
+            let partial = if cfg!(windows) { buf.len() / 2 } else { 0 };
+            self.sent.lock().unwrap().extend_from_slice(&buf[..partial]);
+            return Err(std::io::ErrorKind::Interrupted.into());
+        }
+        self.sent.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl crate::tls::Duplex for CancelledOnce {
+    fn duplicate(&self) -> std::io::Result<Self> {
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
+}
+
+impl Socket for CancelledOnce {
+    fn set_read_timeout(&self, _: Option<Duration>) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn set_write_timeout(&self, _: Option<Duration>) -> std::io::Result<()> {
+        Ok(())
+    }
+    fn shutdown(&self) {}
+    fn shutdown_write(&self) {}
+}
+
+#[test]
+fn a_send_that_was_cancelled_is_not_sent_again() {
+    // B-119: on Windows a send that the stop of a connection cancelled fails with no count of what it sent, which may
+    // be some of it; `write_all` sends again after Interrupted, and the client would read those bytes twice. The
+    // server's writes end the connection instead. (Elsewhere Interrupted means that nothing was sent: it is sent again.)
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let socket = CancelledOnce {
+        sent: sent.clone(),
+        cancelled: false,
+    };
+    let mut timed =
+        runtime::Timed::new(socket, runtime::Timer::new(), Duration::from_secs(1)).unwrap();
+    let result = timed.write_all(b"0123456789").map_err(|e| e.kind());
+    let sent = sent.lock().unwrap().clone();
+    if cfg!(windows) {
+        assert_eq!(
+            (result, &sent[..]),
+            (Err(std::io::ErrorKind::ConnectionAborted), &b"01234"[..])
+        );
+    } else {
+        assert_eq!((result, &sent[..]), (Ok(()), &b"0123456789"[..]));
+    }
+}
+
+#[test]
 fn an_idle_http2_connection_is_not_kept_alive_by_pings() {
     let server = plain(quick());
     let mut c = Raw::connect_to(server.local_addrs()[0], &[]);
