@@ -731,7 +731,7 @@ fn pump(up: Upgraded, upstream: TcpStream, idle: Duration, ctl: Option<Arc<Ctl>>
     let _ = io::copy(&mut from_upstream, &mut to_client);
     let _ = to_client.flush();
     // the host is done: so is the client's side (its reading thread is woken by closing the socket's reading side)
-    let _ = from_upstream.shutdown(std::net::Shutdown::Both);
+    let _ = crate::sys::shutdown(&from_upstream, std::net::Shutdown::Both);
     if let Some(ctl) = &ctl {
         ctl.stop();
     }

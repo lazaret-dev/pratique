@@ -725,7 +725,8 @@ impl Shared {
         }
         self.wake_all();
         self.notify_writer();
-        let _ = self.tcp.shutdown(Shutdown::Both);
+        // (the reader thread, waiting on the socket, wakes: on Windows too, B-119)
+        let _ = crate::sys::shutdown(&self.tcp, Shutdown::Both);
         self.give_back_slot();
     }
 
@@ -1128,7 +1129,7 @@ impl Shared {
                     Round::Over => {
                         drop(outbox);
                         self.wake_all();
-                        let _ = self.tcp.shutdown(Shutdown::Both);
+                        let _ = crate::sys::shutdown(&self.tcp, Shutdown::Both);
                         self.give_back_slot();
                         return;
                     }

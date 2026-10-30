@@ -1,8 +1,11 @@
-//! What the library takes from the operating system: the clock and the CA bundle files. Behind the
-//! `net` feature; the pure verification part of the crate is handed the time and the trust anchors.
+//! What the library takes from the operating system: the clock, the CA bundle files, and a socket shutdown that wakes
+//! whoever waits on the socket. Behind the `net` feature; the pure verification part of the crate is handed the time and
+//! the trust anchors.
 
 use crate::error::{cert, Result};
 use crate::x509::TrustStore;
+use std::io;
+use std::net::{Shutdown, TcpStream};
 use std::path::Path;
 
 /// Loads the trust anchors from a PEM file (a CA bundle).
@@ -70,4 +73,44 @@ pub fn now_unix() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// Shuts `tcp` down as [`TcpStream::shutdown`] does, and wakes a thread that is blocked reading or writing it, through any
+/// handle to it, so that the call ends at once. Linux and macOS end such a wait on the shutdown itself. Windows does not:
+/// a blocking `recv` waits on after `shutdown`, and takes what arrives later (B-119). There the calls that wait on the
+/// socket are cancelled as well (`CancelIoEx`), and fail; the next call finds the socket shut. That cancels a write that
+/// waits even when only the reading side is shut (Linux would let it go on); the callers that shut the reading side do it
+/// to a connection that is idle or over, where a write waits only if the peer has stopped reading.
+pub(crate) fn shutdown(tcp: &TcpStream, how: Shutdown) -> io::Result<()> {
+    let result = tcp.shutdown(how);
+    #[cfg(windows)]
+    windows::cancel_io(tcp);
+    result
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::ffi::c_void;
+    use std::net::TcpStream;
+    use std::os::windows::io::AsRawSocket;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CancelIoEx(file: *mut c_void, overlapped: *mut c_void) -> i32;
+    }
+
+    /// Cancels every call of this process that waits on the socket: a blocking `recv` or `send` on a socket made for
+    /// overlapped I/O (the standard library makes its sockets so, and their duplicates) waits for a request that this
+    /// cancels, and then fails.
+    pub(super) fn cancel_io(tcp: &TcpStream) {
+        // SAFETY: the handle is the socket's, open for as long as `tcp` is borrowed (a SOCKET of the system's provider is
+        // a kernel handle, which is what CancelIoEx takes); a null OVERLAPPED asks for every request on it to be
+        // cancelled, and the call writes nothing of ours. With nothing to cancel it fails, which changes nothing.
+        unsafe {
+            CancelIoEx(
+                tcp.as_raw_socket() as usize as *mut c_void,
+                std::ptr::null_mut(),
+            );
+        }
+    }
 }

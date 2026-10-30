@@ -585,7 +585,7 @@ src/sign.rs        private keys (`SigningKey`): PEM and DER in PKCS#8, SEC 1 and
 src/crypto/ecdsa_sign.rs, ed25519_sign.rs, rsa_sign.rs, ct_mod.rs   constant-time signing: ECDSA (RFC 6979, hedged), Ed25519, RSA (CRT, blinded, checked), and the arithmetic modulo group orders and secret primes
 src/crypto/        HMAC/HKDF, AEAD ciphers (ChaCha20-Poly1305, AES-GCM, with the SIMD kernels), X25519, ECDH on P-256/P-384, OS randomness (the files `crypto/mod.rs` lists under "behind net")
 src/error.rs       the error type of the net side (wraps the pure one)
-src/sys.rs         the clock, the CA bundle files and the native store
+src/sys.rs         the clock, the CA bundle files, the native store, and a socket shutdown that wakes whoever waits on the socket (B-119)
 src/native_roots.rs  the operating system's own store of roots: the macOS Keychain's trust settings, the Windows ROOT and Disallowed stores (FFI)
 src/zeroize.rs     wiping secrets (with the SIMD kernels, OS randomness and the few calls into the OS, the only `unsafe`)
 
@@ -881,7 +881,8 @@ ladder and ECDSA P-256's point operations also run from copies compiled for it (
 kernels (AES, GHASH, ChaCha20, Poly1305, SHA-2; in x86-64's AES-GCM kernel also an empty `asm!` that keeps the hash's products
 between the AES rounds, B-103, and in the AVX2 ChaCha20 and Poly1305 empty ones that keep the compiler from rewriting their
 shuffles and products, B-104), those BMI2 copies and their run-time checks, the volatile writes that wipe secrets, the OS random-number calls, the calls into the operating
-systems' certificate-store libraries (`native_roots`), the one `recv` that looks at an idle socket without waiting (`asyncio::net`, B-90)
+systems' certificate-store libraries (`native_roots`), the one `recv` that looks at an idle socket without waiting (`asyncio::net`, B-90),
+the Windows call that ends the socket calls a shutdown should end (`sys::shutdown`, B-119)
 and the two instructions that set and read ARM's data-independent timing bit around secret work (`crypto::dit`) are the only places
 that use `unsafe`.
 

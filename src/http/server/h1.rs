@@ -787,6 +787,8 @@ pub(super) fn serve_with(
                 match waited {
                     Ok(0) => return Ok(()),
                     Ok(_) => {}
+                    // the shutdown ended the wait (on Windows the read it woke fails rather than ending: B-119)
+                    Err(_) if ctl.is_closing() => return Ok(()),
                     Err(e) => return Err(e),
                 }
             }

@@ -647,7 +647,8 @@ impl Drop for Membership {
 
 /// How a request that is under way is stopped.
 pub(crate) enum Interrupt {
-    /// The socket of an HTTP/1.1 connection: shut it down.
+    /// The socket of an HTTP/1.1 connection: shut it down, which ends a read or a write that waits on it (on Windows too:
+    /// [`crate::sys::shutdown`]).
     Socket(std::net::TcpStream),
     /// Anything else (an HTTP/2 stream): call this.
     Call(Box<dyn Fn() + Send + Sync>),
@@ -707,7 +708,7 @@ impl Running {
         };
         match interrupt {
             Some(Interrupt::Socket(s)) => {
-                let _ = s.shutdown(std::net::Shutdown::Both);
+                let _ = crate::sys::shutdown(&s, std::net::Shutdown::Both);
             }
             Some(Interrupt::Call(f)) => f(),
             None => {}

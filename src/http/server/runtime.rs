@@ -728,7 +728,8 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
                 handlers: Some(inner.handlers.clone()),
                 stop_reading: stopper.map(|s| {
                     Box::new(move || {
-                        let _ = s.shutdown(std::net::Shutdown::Read);
+                        // (the connection's thread, waiting to read, wakes: on Windows too, B-119)
+                        let _ = crate::sys::shutdown(&s, std::net::Shutdown::Read);
                     }) as Box<dyn Fn() + Send + Sync>
                 }),
             });
@@ -953,7 +954,7 @@ fn stop(inner: &Inner, addrs: &[SocketAddr], grace: Duration) {
             .0;
     }
     for e in conns.open.values() {
-        let _ = e.socket.shutdown(std::net::Shutdown::Both);
+        let _ = crate::sys::shutdown(&e.socket, std::net::Shutdown::Both);
     }
 }
 

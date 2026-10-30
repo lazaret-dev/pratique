@@ -1826,6 +1826,9 @@ pub(super) fn serve_after_preface(
                     }
                     continue;
                 }
+                // the connection is over on our side (GOAWAY said, nothing left) and its reading was stopped: on Windows
+                // the read that wakes fails rather than ending (B-119)
+                Err(_) if shared.engine().is_finished() => break Ok(()),
                 Err(e) => break Err(e),
             };
             let (new, backlog, done) = {
