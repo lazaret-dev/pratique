@@ -403,7 +403,8 @@ impl Raw {
     }
 
     pub(super) fn read_frame(&mut self) -> Option<F> {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // five seconds of silence, not five seconds for the frame: a large frame read slowly takes longer
+        let mut deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if self.buf.len() >= HEADER_LEN {
                 let h = Header::parse(self.buf[..HEADER_LEN].try_into().unwrap());
@@ -438,6 +439,7 @@ impl Raw {
                 Ok(0) => return None,
                 Ok(n) => {
                     self.buf.extend_from_slice(&chunk[..n]);
+                    deadline = Instant::now() + Duration::from_secs(5);
                     if !self.pace.is_zero() {
                         thread::sleep(self.pace);
                     }

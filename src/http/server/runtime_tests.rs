@@ -448,6 +448,158 @@ fn a_shutdown_lets_a_slow_client_have_all_of_a_response_whose_handler_has_return
 }
 
 #[test]
+fn a_body_a_handler_keeps_does_not_hold_an_http2_connection_open_after_a_shutdown() {
+    // B-119 (the review of round 3): the state an HTTP/2 connection's threads share held the runtime's hold on the
+    // connection, which has a handle to the socket, and a body a handler keeps reads through that state. After a
+    // shutdown such a connection was over, but its socket stayed open: no FIN, and its client saw the end only at its own
+    // timeout (5 s), against a few milliseconds without the kept body. The client must see the end promptly.
+    let kept = Arc::new(Mutex::new(Vec::new()));
+    let server = {
+        let kept = kept.clone();
+        Arc::new(
+            ServerBuilder::new(move |req: Request| {
+                kept.lock().unwrap().push(req.into_body());
+                Response::text(200, "kept\n")
+            })
+            .plain("127.0.0.1:0")
+            .limits(Limits {
+                idle_timeout: Duration::from_secs(30),
+                ..quick()
+            })
+            .start()
+            .unwrap(),
+        )
+    };
+    let mut c = Raw::connect_to(server.local_addrs()[0], &[]);
+    c.headers(
+        1,
+        &[
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/keep"),
+        ],
+        false,
+    );
+    c.data(1, b"a body the handler keeps", true);
+    let (status, _, body) = c.response(1);
+    assert_eq!((status, body), (200, b"kept\n".to_vec()));
+    wait_for("the handler to keep the body", || {
+        kept.lock().unwrap().len() == 1
+    });
+    let t = Instant::now();
+    let stopper = {
+        let server = server.clone();
+        thread::spawn(move || server.shutdown(Duration::from_secs(10)))
+    };
+    let frames = c.until(|f| f.is(kind::GOAWAY));
+    assert_eq!(
+        frames
+            .last()
+            .filter(|f| f.is(kind::GOAWAY))
+            .map(|f| u32::from_be_bytes(f.p[4..8].try_into().unwrap())),
+        Some(0),
+        "GOAWAY with no error"
+    );
+    assert!(c.next().is_none(), "the connection ends");
+    let took = t.elapsed();
+    assert!(
+        took < Duration::from_secs(2),
+        "the client saw the end of the connection only after {took:?}"
+    );
+    stopper.join().unwrap();
+    // the body is still kept: it was so all along
+    assert_eq!(kept.lock().unwrap().len(), 1);
+}
+
+#[test]
+#[ignore = "B-120: a client that sends as it reads loses the tail of a response at a graceful HTTP/2 end"]
+fn a_shutdown_lets_a_client_that_gives_window_credit_as_it_reads_have_all_of_a_response() {
+    // B-120, not fixed yet (the review of round 3's MEDIUM-2, there on main too, on every system): as the 12 MiB test
+    // above, but with frames of 16 KiB and a WINDOW_UPDATE for the connection after each DATA frame read, as a client
+    // does. Once the last of the response is in the server's send buffer, the server stops reading and closes; the
+    // WINDOW_UPDATEs that the client still sends then come to a closed socket, which answers with a reset, and the
+    // reset throws away the tail still in the send buffer (on Linux, about 10 of the 12 MiB arrive). Run it with
+    // `-- --ignored`.
+    const N: usize = 12 << 20;
+    let body: Arc<Vec<u8>> = Arc::new((0..N).map(|i| (i % 251) as u8).collect());
+    let returned = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let (body, returned) = (body.clone(), returned.clone());
+        let mut http = HttpConfig::default();
+        http.h2.stream_send_buffer = 16 << 20;
+        Arc::new(
+            ServerBuilder::new(move |_req: Request| {
+                let r = Response::bytes(200, "application/octet-stream", body.to_vec());
+                returned.fetch_add(1, Ordering::SeqCst);
+                r
+            })
+            .plain("127.0.0.1:0")
+            .http_config(http)
+            .limits(Limits {
+                idle_timeout: Duration::from_secs(30),
+                write_timeout: Duration::from_secs(30),
+                ..Limits::default()
+            })
+            .start()
+            .unwrap(),
+        )
+    };
+    let mut c = Raw::connect_to(
+        server.local_addrs()[0],
+        &[(setting::INITIAL_WINDOW_SIZE, 0)],
+    );
+    c.get(1, "/big");
+    let head = c.until(|f| f.h.stream == 1 && f.is(kind::HEADERS));
+    assert!(
+        head.last()
+            .is_some_and(|f| f.fields.contains(&(":status".into(), "200".into()))),
+        "{head:?}"
+    );
+    wait_for("the handler to return", || {
+        returned.load(Ordering::SeqCst) == 1
+    });
+    thread::sleep(Duration::from_millis(100));
+    let mut out = Vec::new();
+    frame::write_window_update(&mut out, 0, N as u32);
+    c.send(&out);
+    thread::sleep(Duration::from_millis(50));
+    out.clear();
+    frame::write_window_update(&mut out, 1, N as u32);
+    c.send(&out);
+    thread::sleep(Duration::from_millis(300));
+    let stopper = {
+        let server = server.clone();
+        thread::spawn(move || server.shutdown(Duration::from_secs(20)))
+    };
+    thread::sleep(Duration::from_millis(300));
+    c.read_slowly(Duration::from_millis(1));
+    let mut got = Vec::with_capacity(N);
+    let (mut ended, mut goaway) = (false, None);
+    while let Some(f) = c.next() {
+        if f.is(kind::DATA) && f.h.stream == 1 {
+            got.extend_from_slice(&f.p);
+            ended |= f.h.has(flag::END_STREAM);
+            if !f.p.is_empty() {
+                out.clear();
+                frame::write_window_update(&mut out, 0, f.p.len() as u32);
+                c.send(&out);
+            }
+        } else if f.is(kind::GOAWAY) {
+            goaway = Some(u32::from_be_bytes(f.p[4..8].try_into().unwrap()));
+        }
+    }
+    assert!(
+        ended && got[..] == body[..],
+        "{} bytes of {N}, the stream {}",
+        got.len(),
+        if ended { "ended" } else { "not ended" }
+    );
+    assert_eq!(goaway, Some(0), "GOAWAY with no error");
+    stopper.join().unwrap();
+}
+
+#[test]
 fn a_connection_accepted_as_the_shutdown_begins_is_closed_not_served() {
     // B-119: a connection accepted just before the shutdown began, and entered among the connections just after the
     // shutdown had taken its list of those to close, was never asked to close: it was served as if nothing had happened,

@@ -953,12 +953,10 @@ fn a_stream_answered_before_its_request_ends_is_still_checked_and_stopped_if_it_
     assert_eq!(c.response(1).0, 200);
     c.headers(1, &[("x-t", "1")], false);
     assert_eq!(c.reset_of(1), Some(ErrorCode::PROTOCOL_ERROR.0));
-    // more of a body nobody will read: the client is asked to stop, with no error. (Once the handler has returned:
-    // what comes before that is the handler's to read, and the response can end before the handler has returned. On
-    // Lazaret's runner, with the other server tests at once, the more came first, and no reset came at all.)
+    // more of a body nobody will read: the client is asked to stop, with no error (whether the more comes before the
+    // handler has returned or after: the response can end before it has)
     c.headers(3, &post, false);
     assert_eq!(c.response(3).0, 200);
-    thread::sleep(Duration::from_millis(100));
     c.data(3, b"more", false);
     assert_eq!(c.reset_of(3), Some(ErrorCode::NO_ERROR.0));
     // a client that ends it properly is not reset at all
@@ -973,6 +971,52 @@ fn a_stream_answered_before_its_request_ends_is_still_checked_and_stopped_if_it_
             .all(|f| !(f.h.stream == 5 && f.is(kind::RST_STREAM))),
         "{frames:?}"
     );
+}
+
+#[test]
+fn a_body_left_unread_when_the_response_ends_gets_the_client_asked_to_stop_at_once() {
+    // B-119 (the review of round 3): body data that came before the handler returned, and that it did not read, left its
+    // stream lingering, and the client was asked to stop only when it sent more, which a client whose window that data
+    // had used up could not do (it waited for the idle timeout). Here the body comes before the handler returns, the
+    // handler answers without reading it, and the client sends nothing more: the reset must come all the same.
+    let s = Server::plain(
+        |req: Request| {
+            thread::sleep(Duration::from_millis(200));
+            hello(req)
+        },
+        HttpConfig::default(),
+    );
+    let mut c = Raw::connect(&s, &[]);
+    c.headers(
+        1,
+        &[
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/"),
+        ],
+        false,
+    );
+    c.data(1, &[7u8; 20_000], false);
+    assert_eq!(c.response(1).0, 200);
+    assert_eq!(
+        c.reset_of(1),
+        Some(ErrorCode::NO_ERROR.0),
+        "the stream was left to linger with its body unread"
+    );
+    // and the connection goes on
+    c.headers(
+        3,
+        &[
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/next"),
+        ],
+        false,
+    );
+    c.data(3, b"", true);
+    assert_eq!(c.response(3).0, 200);
 }
 
 // ------------------------------------------------------------------------------------------------ the shutdown and the sending
