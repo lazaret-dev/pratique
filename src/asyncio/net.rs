@@ -116,16 +116,7 @@ impl Io {
     /// request.) The socket is polled without blocking and put back as it was.
     pub(crate) fn peer_quiet(&self) -> bool {
         // one system call where the system has a flag for a read that does not wait (BACKLOG B-90)
-        if let Some(quiet) = sys::peek_quiet(&self.tcp) {
-            return quiet;
-        }
-        if self.tcp.set_nonblocking(true).is_err() {
-            return false;
-        }
-        let mut byte = [0u8; 1];
-        let quiet =
-            matches!(self.tcp.peek(&mut byte), Err(e) if e.kind() == io::ErrorKind::WouldBlock);
-        quiet && self.tcp.set_nonblocking(false).is_ok()
+        sys::peek_quiet(&self.tcp).unwrap_or_else(|| quiet_by_switching(&self.tcp))
     }
 
     pub(crate) fn read_ref(&self, buf: &mut [u8]) -> io::Result<usize> {
@@ -152,6 +143,19 @@ impl Write for Io {
     fn flush(&mut self) -> io::Result<()> {
         self.tcp.flush()
     }
+}
+
+/// [`Io::peer_quiet`] where the system has no flag for a read that does not wait (Windows): the socket is made
+/// non-blocking for the look, and put back to blocking whatever the look found. (It was put back only when the peer was
+/// quiet, which left a connection that had something waiting, or had hung up, non-blocking: B-119.)
+fn quiet_by_switching(tcp: &TcpStream) -> bool {
+    if tcp.set_nonblocking(true).is_err() {
+        return false;
+    }
+    let mut byte = [0u8; 1];
+    let quiet = matches!(tcp.peek(&mut byte), Err(e) if e.kind() == io::ErrorKind::WouldBlock);
+    let blocking = tcp.set_nonblocking(false).is_ok();
+    quiet && blocking
 }
 
 /// A look at a socket that does not wait, without making the socket non-blocking and back (which is two more system calls).
