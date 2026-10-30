@@ -37,7 +37,8 @@
 //! * a connection handed over by an upgrade, per read ([`Limits::upgraded_idle_timeout`]).
 //!
 //! **Shutdown.** [`Server::shutdown`] stops accepting, closes the idle connections, lets those under way finish (HTTP/1.1:
-//! the response says `Connection: close`; HTTP/2: GOAWAY with no error) and, at the deadline, cuts what is left.
+//! the response says `Connection: close`; HTTP/2: GOAWAY with no error, and once nothing is left the end of what the
+//! server sends, after which the connection is read until the client closes it) and, at the deadline, cuts what is left.
 
 use super::{Handler, HttpConfig, Socket, Version};
 use crate::tls::certs::{CertStore, CertifiedKey};
@@ -326,8 +327,9 @@ const TAKEN: u8 = 2;
 
 /// An HTTP/2 connection that can be asked to go away.
 pub(crate) trait GoAway: Send + Sync {
-    /// Says GOAWAY. The connection stops its own reading ([`Ctl::stop`]) once no stream is left and all it has to send is
-    /// sent: never while it is sending, which on Windows the stop would cancel (B-119).
+    /// Says GOAWAY. Once no stream is left and all it has to send is sent, the connection ends its sending side (a TLS
+    /// close_notify, then a FIN after the last byte) and reads on until the client ends it (B-120); its reading is not
+    /// stopped, which on Windows would cancel a send under way (B-119) and make what the client still sends reset it.
     fn go_away(&self);
 }
 
@@ -438,7 +440,8 @@ impl Ctl {
 
     /// Closes the reading side, which ends the connection's loop (nothing more will be read). On Windows it also cancels
     /// a send under way on the connection ([`crate::sys::shutdown`]): it is called only when nothing is being sent, an
-    /// HTTP/1.1 connection waiting for a request, an HTTP/2 connection whose last bytes are sent, a tunnel that is over.
+    /// HTTP/1.1 connection waiting for a request, a tunnel that is over. (An HTTP/2 connection is not stopped so: its
+    /// end is the end of its sending side, B-120.)
     pub(crate) fn stop(&self) {
         if let Some(stop) = &self.stop_reading {
             stop();
@@ -963,6 +966,10 @@ impl Server {
     /// the request again on a new connection, an idempotent one at least). Before B-119 such a request was answered
     /// with `Connection: close`; that is not safe, as on Windows the close cancels a send under way and would cut the
     /// response short.
+    ///
+    /// An HTTP/2 connection with nothing left (an idle one at once) ends what it sends, a GOAWAY, then close_notify and
+    /// a FIN after the last byte, and is read until the client closes it, as the client may still be reading the tail
+    /// and answering it (B-120): so the wait is for its client, within the grace. Clients close on that end.
     pub fn shutdown(&self, grace: Duration) {
         stop(&self.inner, &self.addrs, grace);
         for t in self

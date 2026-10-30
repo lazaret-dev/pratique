@@ -216,6 +216,15 @@ impl<S: Duplex> ServerWriteHalf<S> {
         self.shared.send_queued(true)
     }
 
+    /// Sends a close_notify, as [`close`](ServerWriteHalf::close) does (whether or not that succeeds), then calls `f` with
+    /// the transport while it holds the right to send: to shut the transport's sending side, say, with nothing of the TLS
+    /// layer's on its way.
+    pub(crate) fn close_and<R>(&mut self, f: impl FnOnce(&S) -> R) -> R {
+        let _ = self.close();
+        let sender = self.shared.out.lock().unwrap_or_else(|e| e.into_inner());
+        f(&sender.io)
+    }
+
     /// Bytes the connection has queued and not sent (encrypted records waiting for the right to send).
     pub fn queued(&self) -> usize {
         self.shared.conn().output().len()

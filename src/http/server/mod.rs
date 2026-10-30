@@ -70,7 +70,7 @@ pub use runtime::{
 };
 
 use crate::tls::server::ServerStream;
-use crate::tls::server_split::ServerReadHalf;
+use crate::tls::server_split::{ServerReadHalf, ServerWriteHalf};
 use crate::tls::Duplex;
 use std::fmt;
 use std::io::{self, Read, Write};
@@ -323,6 +323,30 @@ pub(crate) trait Inbound: Read + Send {
 impl<S: Socket> Inbound for S {
     fn linger(&mut self) {
         runtime::linger(self);
+    }
+}
+
+/// The writing half of an HTTP/2 connection: what it sends, and the end of it.
+pub(crate) trait Outbound: Write + Send {
+    /// Ends what is sent, after everything written so far (B-120): a TLS close_notify, then the sending side of the
+    /// socket is shut, so that the client reads the end (a FIN) after the last byte. The reading side stays open: the
+    /// connection is read until the client ends it, as closing with its bytes unread, or with more of them to come,
+    /// makes the system reset the connection and throw away what it has not sent yet.
+    fn finish(&mut self);
+}
+
+impl<S: Socket> Outbound for S {
+    fn finish(&mut self) {
+        let _ = self.flush();
+        self.shutdown_write();
+    }
+}
+
+impl<S: Socket> Outbound for ServerWriteHalf<S> {
+    fn finish(&mut self) {
+        // (the close_notify first, and the FIN after it; with the TLS layer's right to send held between, so that the
+        // reading half sends no record of its own after the FIN)
+        self.close_and(|socket| socket.shutdown_write());
     }
 }
 

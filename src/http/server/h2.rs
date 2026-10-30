@@ -20,12 +20,12 @@ use super::h1::valid_authority;
 use super::runtime::{Ctl, GoAway, Pending};
 use super::{
     call, response_head, Body, BodySink, BodySource, BodyWriter, ConnInfo, H2Config, Handler,
-    HttpConfig, Inbound, Request, Response, ResponseBody, Upgraded, Version,
+    HttpConfig, Inbound, Outbound, Request, Response, ResponseBody, Upgraded, Version,
 };
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 pub(super) const PREFACE: &[u8] = frame::PREFACE;
@@ -34,6 +34,11 @@ pub(super) const PREFACE: &[u8] = frame::PREFACE;
 const HIGH_WATER: usize = 256 * 1024;
 /// Closed streams remembered, to tell a frame that was in flight from one that is wrong.
 const REMEMBER_CLOSED: usize = 512;
+/// What the client may send once our side of the connection has ended, before the connection is closed without waiting
+/// for its end: what it sends then is acknowledgments of the response's tail as it reads it (a WINDOW_UPDATE of 13
+/// bytes, about 40 over TLS, for each frame of the tail, which the systems' buffers hold a few megabytes of), a PING,
+/// its GOAWAY and close_notify. A megabyte is many times that, and bounds a client that sends anything else (B-120).
+const AFTER_END: usize = 1 << 20;
 
 // ------------------------------------------------------------------------------------------------ floods
 
@@ -1539,31 +1544,22 @@ struct Shared {
     engine: Mutex<Engine>,
     /// Handlers wait here: for request data, for room to queue response data.
     changed: Condvar,
-    /// The writing handle. Holding it is the right to send.
-    out: Mutex<Option<Box<dyn Write + Send>>>,
+    /// The writing handle. Holding it is the right to send. Taken, and finished, when our side of the connection ends.
+    out: Mutex<Option<Box<dyn Outbound>>>,
     /// How long a handler waits for more of its body, and for room to send (none without the runtime).
     body_wait: Option<Duration>,
     write_wait: Option<Duration>,
-    /// The runtime's hold on the connection: how its reading is stopped. Weak: `Shared` outlives the connection when a
-    /// handler keeps its request's body, and the hold has a handle to the socket, which a strong one would keep open,
-    /// the client told nothing, for as long as the body is kept (HTTP/1.1 guards against the same: `serve_with`'s
-    /// `Closer`).
-    ctl: Weak<Ctl>,
-    /// The server is shutting down (we said GOAWAY): once no stream is left and everything is sent, the connection's
-    /// reading is stopped by whoever sent the last of it, while it still holds the right to send (B-119).
-    stop_when_sent: AtomicBool,
+    /// Our side of the connection is over (B-120): the GOAWAY is sent, no stream is left, and the writer has finished
+    /// (close_notify, then the sending side shut, so that the client reads the end after the last byte). The connection
+    /// is still read, until the client ends it, so that what it sends while it reads the tail (WINDOW_UPDATEs) does not
+    /// make the system reset the connection and throw the tail away; at most `AFTER_END` bytes of it.
+    over: AtomicBool,
 }
 
 impl GoAway for Shared {
     fn go_away(&self) {
-        {
-            let mut e = self.engine();
-            // (set under the engine's lock with the GOAWAY, so that whoever finds the GOAWAY sent finds this too)
-            self.stop_when_sent.store(true, Ordering::SeqCst);
-            e.go_away();
-        }
-        // sent now if nobody is sending; otherwise whoever is sends it, and stops the reading once all is sent. Never
-        // stopped here while somebody sends: on Windows that would cancel the send, and cut a response short.
+        self.engine().go_away();
+        // sent now if nobody is sending; otherwise whoever is sends it, and ends our side once all is sent
         let _ = self.send(false);
     }
 }
@@ -1597,8 +1593,10 @@ impl Shared {
     }
 
     /// Sends what the engine has framed. With `wait`, waits for the right to send; without, sends only if nobody is
-    /// sending (whoever is sends this too). Whoever sends the last of a connection the server is shutting down stops its
-    /// reading, holding the right to send: so nobody is sending when it stops, and no send is cancelled (B-119).
+    /// sending (whoever is sends this too). Whoever sends the last of a connection that has said GOAWAY and has no
+    /// stream left ends our side of it, holding the right to send (B-120): the writer finishes (close_notify, then the
+    /// sending side is shut, so that the FIN follows the last byte), and nothing more is sent. The reading goes on: it is
+    /// never stopped while a send is under way, which on Windows would cancel it (B-119), nor at all at such an end.
     fn send(&self, wait: bool) -> io::Result<()> {
         let mut wait = wait;
         let mut buf = Vec::new();
@@ -1612,14 +1610,13 @@ impl Shared {
                     Err(TryLockError::WouldBlock) => return Ok(()),
                 }
             };
-            let stop = loop {
+            let finished = loop {
                 {
                     let mut e = self.engine();
                     e.pump();
                     if e.out.is_empty() {
-                        // everything is sent: if no stream is left of a connection the server is shutting down, its
-                        // reading stops now (once)
-                        break e.is_finished() && self.stop_when_sent.swap(false, Ordering::SeqCst);
+                        // everything is sent, the GOAWAY too if it is said
+                        break e.is_finished();
                     }
                     std::mem::swap(&mut buf, &mut e.out);
                     e.out.clear();
@@ -1639,10 +1636,11 @@ impl Shared {
                     return Err(e);
                 }
             };
-            if stop {
-                // (gone only once the connection is over, with nothing left to stop)
-                if let Some(ctl) = self.ctl.upgrade() {
-                    ctl.stop();
+            if finished {
+                // our side is over: nothing but a PING's answer could be framed now, and none is wanted
+                if let Some(mut w) = guard.take() {
+                    w.finish();
+                    self.over.store(true, Ordering::SeqCst);
                 }
             }
             drop(guard);
@@ -1780,7 +1778,7 @@ impl Drop for TunnelOut {
 /// Serves an HTTP/2 connection whose preface has not been read yet.
 pub(super) fn serve(
     mut reader: Box<dyn Inbound>,
-    writer: Box<dyn Write + Send>,
+    writer: Box<dyn Outbound>,
     info: Arc<ConnInfo>,
     handler: Arc<dyn Handler>,
     config: &HttpConfig,
@@ -1820,7 +1818,7 @@ fn linger_after_goaway(reader: &mut dyn Inbound, ctl: &Ctl) {
 /// Serves an HTTP/2 connection whose preface has been read.
 pub(super) fn serve_after_preface(
     mut reader: Box<dyn Inbound>,
-    writer: Box<dyn Write + Send>,
+    writer: Box<dyn Outbound>,
     info: Arc<ConnInfo>,
     handler: Arc<dyn Handler>,
     config: &HttpConfig,
@@ -1833,8 +1831,7 @@ pub(super) fn serve_after_preface(
         out: Mutex::new(Some(writer)),
         body_wait: runtime.then_some(ctl.limits.body_wait),
         write_wait: runtime.then_some(ctl.limits.write_timeout),
-        ctl: Arc::downgrade(&ctl),
-        stop_when_sent: AtomicBool::new(false),
+        over: AtomicBool::new(false),
     });
     shared.send(true)?;
     let weak: std::sync::Weak<dyn GoAway> = Arc::downgrade(&shared) as std::sync::Weak<dyn GoAway>;
@@ -1847,6 +1844,8 @@ pub(super) fn serve_after_preface(
     let mut lost_with_goaway = false;
     let result = (|| -> io::Result<()> {
         let mut buf = vec![0u8; 64 * 1024];
+        // what the client has sent since our side ended (B-120)
+        let mut after_end = 0usize;
         let result = loop {
             // idle while no stream is open, from when the last one ended; while streams are open, the handlers' own
             // waits bound them, and the reading only waits for the client
@@ -1888,15 +1887,23 @@ pub(super) fn serve_after_preface(
                     }
                     continue;
                 }
-                // the connection is over on our side (GOAWAY said, nothing left) and its reading was stopped: on Windows
-                // the read that wakes fails rather than ending (B-119)
+                // the connection is over on our side (GOAWAY said, nothing left), and the client resets it rather than
+                // end it, or the server's cut at the end of a shutdown's grace woke the read (on Windows the read fails)
                 Err(_) if shared.engine().is_finished() => break Ok(()),
                 Err(e) => break Err(e),
             };
-            let (new, backlog, done) = {
+            if shared.over.load(Ordering::SeqCst) {
+                // our side has ended: what the client sends is read (it answers what it reads of the tail) until it ends
+                // the connection, the idle timeout or a shutdown's grace runs out, or there is too much of it
+                after_end += n;
+                if after_end > AFTER_END {
+                    break Ok(());
+                }
+            }
+            let (new, backlog, dead) = {
                 let mut e = shared.engine();
                 let new = e.receive(&buf[..n]);
-                (new, e.out.len(), e.is_dead() || e.is_finished())
+                (new, e.out.len(), e.is_dead())
             };
             shared.changed.notify_all();
             let new = match new {
@@ -1942,7 +1949,8 @@ pub(super) fn serve_after_preface(
             if let Err(e) = shared.send(backlog > HIGH_WATER) {
                 break Err(e);
             }
-            if done {
+            // (a connection that said GOAWAY and has nothing left goes on being read: see `Shared::over`)
+            if dead {
                 let _ = shared.send(true);
                 break Ok(());
             }
@@ -2020,22 +2028,10 @@ fn run_stream(
             Err(_) => p.done(ctl, status, 0),
         }
     }
-    let finished = {
-        let mut e = shared.engine();
-        e.handler_returned(id);
-        e.is_finished()
-    };
+    shared.engine().handler_returned(id);
     shared.changed.notify_all();
+    // (if that was the last stream of a connection that has said GOAWAY, whoever sends the last of it ends our side)
     let _ = shared.send(true);
-    if finished {
-        // the GOAWAY has gone and nothing is left: end what we send (a TLS close_notify), and stop reading (the writer is
-        // taken with the right to send, once whoever was sending is done, and no frame is sent after it: the stop
-        // cancels none)
-        if let Some(mut w) = shared.out.lock().unwrap_or_else(|e| e.into_inner()).take() {
-            let _ = w.flush();
-        }
-        ctl.stop();
-    }
 }
 
 /// Sends a response; the status and the body bytes sent.

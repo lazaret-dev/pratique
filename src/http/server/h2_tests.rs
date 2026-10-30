@@ -1035,6 +1035,8 @@ struct GateState {
     sending: AtomicUsize,
     /// The bytes of the send that waits at the gate (0: none waits).
     held: AtomicUsize,
+    /// The sends under way at each end of what the connection sends (`Outbound::finish`).
+    finishes: Mutex<Vec<usize>>,
 }
 
 impl GateState {
@@ -1071,13 +1073,27 @@ impl Write for Gate {
     }
 }
 
+impl Outbound for Gate {
+    fn finish(&mut self) {
+        let s = &*self.state;
+        s.finishes
+            .lock()
+            .unwrap()
+            .push(s.sending.load(Ordering::SeqCst));
+        let _ = self.inner.shutdown(std::net::Shutdown::Write);
+    }
+}
+
 #[test]
-fn a_shutdown_stops_reading_a_connection_only_once_the_last_of_its_response_is_sent() {
+fn a_shutdown_ends_a_connection_once_the_last_of_its_response_is_sent_and_reads_on() {
     // B-119: stopping a connection's reading (a shutdown of its reading side) cancels on Windows a send that is under way
     // on it, which cuts the response being sent. The HTTP/2 server took a stream off as soon as its last frame was framed,
-    // and a shutdown that came while those frames were being sent found the connection over and stopped it at once. Here
-    // the last of a response, one DATA frame that ends the stream, is held in its send at a gate while the shutdown
-    // begins; the reading may stop only once that send, and the GOAWAY after it, are through.
+    // and a shutdown that came while those frames were being sent found the connection over and stopped it at once. And
+    // B-120: stopping the reading at all, and closing, once the last bytes are only in the system's buffer, makes what
+    // the client still sends reset the connection, which throws those bytes away. Here the last of a response, one DATA
+    // frame that ends the stream, is held in its send at a gate while the shutdown begins: the connection's sending may
+    // end only once that send and the GOAWAY are through, and its reading must not be stopped at all, but go on until the
+    // client ends the connection.
     const N: usize = 1 << 20;
     let body: Vec<u8> = (0..N).map(|i| (i % 251) as u8).collect();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1158,12 +1174,12 @@ fn a_shutdown_stops_reading_a_connection_only_once_the_last_of_its_response_is_s
         );
         thread::sleep(Duration::from_millis(5));
     }
-    // the server begins to shut down: GOAWAY, and the reading stops once that is sent too, not now
+    // the server begins to shut down: GOAWAY, and the sending ends once that is sent too, not now
     ctl.begin_close();
     assert_eq!(
-        stops.lock().unwrap().clone(),
-        Vec::<usize>::new(),
-        "the reading was stopped while the response's last frame was being sent"
+        (stops.lock().unwrap().len(), gate.finishes.lock().unwrap().len()),
+        (0, 0),
+        "the connection was stopped or ended (stops, ends) while the response's last frame was being sent"
     );
     gate.set(false);
     // the client has the whole body, then the GOAWAY
@@ -1191,15 +1207,16 @@ fn a_shutdown_stops_reading_a_connection_only_once_the_last_of_its_response_is_s
     }
     assert!(got == body, "{} bytes of {N}, not the body", got.len());
     assert_eq!(goaway, Some((1, ErrorCode::NO_ERROR.0)));
-    // the connection ends on the stop of its reading, which came when nothing was being sent
+    // then the end of what the server sends (its FIN), which came when nothing was being sent
+    assert!(c.next().is_none(), "the server's sending ends");
+    assert_eq!(gate.finishes.lock().unwrap().clone(), vec![0]);
+    // and the connection is still read, until the client ends it; its reading is never stopped
+    thread::sleep(Duration::from_millis(100));
+    assert!(!server.is_finished(), "the server stopped reading");
+    drop(c);
     assert!(server.join().unwrap().is_ok());
-    let stops = stops.lock().unwrap().clone();
-    assert!(
-        !stops.is_empty() && stops.iter().all(|&n| n == 0),
-        "sends under way at each stop: {stops:?}"
-    );
+    assert_eq!(stops.lock().unwrap().len(), 0, "the reading was stopped");
     drop(ctl);
-    assert!(c.next().is_none(), "the connection closes");
 }
 
 // ------------------------------------------------------------------------------------------------ the engine alone

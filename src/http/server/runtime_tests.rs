@@ -439,6 +439,8 @@ fn a_shutdown_lets_a_slow_client_have_all_of_a_response_whose_handler_has_return
         if ended { "ended" } else { "not ended" }
     );
     assert_eq!(goaway, Some(0), "GOAWAY with no error");
+    // the client ends the connection, which the server reads until it does (B-120)
+    drop(c);
     stopper.join().unwrap();
     assert!(
         t.elapsed() < Duration::from_secs(10),
@@ -507,6 +509,8 @@ fn a_body_a_handler_keeps_does_not_hold_an_http2_connection_open_after_a_shutdow
         took < Duration::from_secs(2),
         "the client saw the end of the connection only after {took:?}"
     );
+    // the client ends the connection, which the server reads until it does (B-120)
+    drop(c);
     stopper.join().unwrap();
     // the body is still kept: it was so all along
     assert_eq!(kept.lock().unwrap().len(), 1);
