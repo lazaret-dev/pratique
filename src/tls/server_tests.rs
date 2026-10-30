@@ -355,28 +355,57 @@ fn close_notify_ends_a_stream_in_either_direction() {
     assert_eq!(handle.join().unwrap().unwrap(), b"x");
 }
 
-#[test]
-fn a_connection_cut_without_close_notify_is_an_error_for_the_server() {
+/// Sends `data` and then cuts the connection under the TLS layer with `how`, no close_notify; `after_read` waits for
+/// the server to have read the data first. What the server's two reads gave.
+fn cut_without_close_notify(
+    how: std::net::Shutdown,
+    after_read: bool,
+) -> (io::Result<usize>, io::Result<usize>) {
     let (server, client) = setup(&["server.test"]);
-    let (port, handle) = serve_one(server, |mut s| {
+    let (read, has_read) = std::sync::mpsc::channel();
+    let (port, handle) = serve_one(server, move |mut s| {
         let mut buf = [0u8; 16];
-        let first = s.read(&mut buf).unwrap();
-        let second = s.read(&mut buf);
-        (first, second.map_err(|e| e.kind()))
+        let first = s.read(&mut buf);
+        let _ = read.send(());
+        (first, s.read(&mut buf))
     });
     let mut c = connect(port, "server.test", &client).unwrap();
     c.write_all(b"data").unwrap();
     c.flush().unwrap();
-    // drop the socket under the TLS layer: no close_notify
+    if after_read {
+        has_read.recv_timeout(TIMEOUT).unwrap();
+    }
     let tcp = c.get_ref().try_clone().unwrap();
     std::mem::forget(c);
-    tcp.shutdown(std::net::Shutdown::Both).unwrap();
-    let (first, second) = handle.join().unwrap().unwrap();
-    assert_eq!(first, 4);
+    tcp.shutdown(how).unwrap();
+    handle.join().unwrap().unwrap()
+}
+
+#[test]
+fn a_connection_cut_without_close_notify_is_an_error_for_the_server() {
+    // the client's FIN with no close_notify, what a truncation is on the wire: an error, UnexpectedEof, on every
+    // system. (The client's reading side stays open, as the server's NewSessionTicket comes to it: Windows resets a
+    // connection whose reading side is shut when data comes or waits there, and the reset can throw away the data the
+    // server has not read yet, B-119.)
+    let (first, second) = cut_without_close_notify(std::net::Shutdown::Write, false);
+    assert_eq!(first.map_err(|e| e.kind()), Ok(4));
+    assert_eq!(
+        second.map_err(|e| e.kind()),
+        Err(io::ErrorKind::UnexpectedEof)
+    );
+
+    // both directions cut once the server has read the data: Linux and macOS send the FIN, Windows resets (the ticket
+    // waits unread), and the server's system says WSAECONNRESET or WSAECONNABORTED. An error each way, never the end
+    // of the stream
+    let (first, second) = cut_without_close_notify(std::net::Shutdown::Both, true);
+    assert_eq!(first.map_err(|e| e.kind()), Ok(4));
+    let second = second.map_err(|e| e.kind());
     assert!(
         matches!(
             second,
-            Err(io::ErrorKind::UnexpectedEof | io::ErrorKind::ConnectionReset)
+            Err(io::ErrorKind::UnexpectedEof
+                | io::ErrorKind::ConnectionReset
+                | io::ErrorKind::ConnectionAborted)
         ),
         "{second:?}"
     );

@@ -224,6 +224,31 @@ impl Scanner for Arc<Rules> {
     }
 }
 
+/// Whether this system's `openssl verify` can be asked about a host name: `-verify_hostname` is in its help, or it is
+/// OpenSSL (which has had it since 1.0.2) rather than LibreSSL, whose `openssl` macOS ships as /usr/bin/openssl and
+/// has no such option (B-119). Why not, otherwise.
+fn openssl_verifies_host_names() -> std::result::Result<(), String> {
+    let run = |args: &[&str]| {
+        std::process::Command::new("openssl")
+            .args(args)
+            .output()
+            .map(|out| {
+                String::from_utf8_lossy(&out.stdout).to_string()
+                    + &String::from_utf8_lossy(&out.stderr)
+            })
+    };
+    let version = run(&["version"]).map_err(|e| format!("no openssl here ({e})"))?;
+    let version = version.trim();
+    let help = run(&["verify", "-help"]).unwrap_or_default();
+    if help.contains("-verify_hostname") || !version.starts_with("LibreSSL") {
+        Ok(())
+    } else {
+        Err(format!(
+            "{version}: its `openssl verify` has no -verify_hostname"
+        ))
+    }
+}
+
 #[test]
 fn the_ca_is_limited_to_the_names_it_is_for() {
     let ca = ProxyCa::new(
@@ -271,12 +296,10 @@ fn the_ca_is_limited_to_the_names_it_is_for() {
             "{bad:?}"
         );
     }
-    // and OpenSSL, when it is here
-    if std::process::Command::new("openssl")
-        .arg("version")
-        .output()
-        .is_ok()
-    {
+    // and OpenSSL, when it is here and can check a host name
+    if let Err(why) = openssl_verifies_host_names() {
+        eprintln!("skipping the check by `openssl verify`: {why}");
+    } else {
         let dir = std::env::temp_dir().join(format!("pratique-proxy-ca-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("ca.pem"), ca.certificate_pem()).unwrap();
