@@ -47,7 +47,7 @@ use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime};
@@ -302,8 +302,9 @@ pub(crate) struct Ctl {
     pub(crate) limits: Limits,
     /// The server is shutting down: answer what is under way, take nothing new.
     pub(crate) closing: AtomicBool,
-    /// HTTP/1.1: waiting for the first byte of a request (the shutdown closes such a connection at once).
-    pub(crate) idle: AtomicBool,
+    /// HTTP/1.1: whether the connection waits for the first byte of a request, which the shutdown ends at once
+    /// ([`Ctl::idle_wait`]).
+    idle: AtomicU8,
     /// HTTP/2: how to say GOAWAY on this connection.
     pub(crate) h2: Mutex<Option<Weak<dyn GoAway>>>,
     pub(crate) log: Option<AccessLog>,
@@ -311,6 +312,13 @@ pub(crate) struct Ctl {
     /// To close the reading side of an idle connection.
     pub(crate) stop_reading: Option<Box<dyn Fn() + Send + Sync>>,
 }
+
+/// `Ctl::idle`: the connection is busy (or not HTTP/1.1).
+const BUSY: u8 = 0;
+/// It waits for a request.
+const IDLE: u8 = 1;
+/// The shutdown took it while it waited, and stops it: nothing more is to be written to it.
+const TAKEN: u8 = 2;
 
 /// An HTTP/2 connection that can be asked to go away.
 pub(crate) trait GoAway: Send + Sync {
@@ -325,7 +333,7 @@ impl Ctl {
             timer: None,
             limits: Limits::default(),
             closing: AtomicBool::new(false),
-            idle: AtomicBool::new(false),
+            idle: AtomicU8::new(BUSY),
             h2: Mutex::new(None),
             log: None,
             handlers: None,
@@ -370,6 +378,23 @@ impl Ctl {
         }
     }
 
+    /// HTTP/1.1: waits for the next request with `wait`, as an idle connection, which the shutdown stops at once.
+    /// `None` if the shutdown began first, or took the connection while it waited: then it is stopped, even if a request
+    /// came in the meantime, and nothing more may be written to it (a response would be cut short on Windows, where
+    /// the stop cancels a send under way, B-119); a client sends again a request whose connection closed unanswered.
+    pub(crate) fn idle_wait<R>(&self, wait: impl FnOnce() -> R) -> Option<R> {
+        self.idle.store(IDLE, Ordering::SeqCst);
+        let waited = if self.is_closing() {
+            None
+        } else {
+            Some(wait())
+        };
+        match self.idle.swap(BUSY, Ordering::SeqCst) {
+            TAKEN => None,
+            _ => waited,
+        }
+    }
+
     /// Asks the connection to finish: say GOAWAY, or close at the end of the response, or close now if it is idle.
     fn begin_close(&self) {
         self.closing.store(true, Ordering::SeqCst);
@@ -382,7 +407,12 @@ impl Ctl {
         if let Some(h) = h2 {
             h.go_away();
         }
-        if self.idle.load(Ordering::SeqCst) {
+        // (only if it is still idle, taken so that it stays so: a request that has just come is not answered)
+        if self
+            .idle
+            .compare_exchange(IDLE, TAKEN, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
             self.stop();
         }
     }
@@ -719,7 +749,7 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
                 timer: Some(Timer::new()),
                 limits: inner.limits.clone(),
                 closing: AtomicBool::new(false),
-                idle: AtomicBool::new(false),
+                idle: AtomicU8::new(BUSY),
                 h2: Mutex::new(None),
                 log: inner.log.clone(),
                 handlers: Some(inner.handlers.clone()),
