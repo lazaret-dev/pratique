@@ -78,9 +78,14 @@ pub fn now_unix() -> i64 {
 /// Shuts `tcp` down as [`TcpStream::shutdown`] does, and wakes a thread that is blocked reading or writing it, through any
 /// handle to it, so that the call ends at once. Linux and macOS end such a wait on the shutdown itself. Windows does not:
 /// a blocking `recv` waits on after `shutdown`, and takes what arrives later (B-119). There the calls that wait on the
-/// socket are cancelled as well (`CancelIoEx`), and fail; the next call finds the socket shut. That cancels a write that
-/// waits even when only the reading side is shut (Linux would let it go on); the callers that shut the reading side do it
-/// to a connection that is idle or over, where a write waits only if the peer has stopped reading.
+/// socket are cancelled as well (`CancelIoEx`), and fail; the next call finds the socket shut.
+///
+/// That cancels a send under way even when only the reading side is shut, which Linux and macOS let go on, and a send
+/// cancelled part way does not say how much of it went. So a caller that shuts only the reading side must know that
+/// nothing is being sent on the socket: the server stops an HTTP/1.1 connection that waits for a request, an HTTP/2
+/// connection once its last bytes are sent and while it holds the right to send, and a tunnel that is over; and the
+/// server's writes fail rather than try again a send that was cancelled. Shutting both sides is safe either way: what
+/// is under way is meant to end, and the next send finds the socket shut.
 pub(crate) fn shutdown(tcp: &TcpStream, how: Shutdown) -> io::Result<()> {
     let result = tcp.shutdown(how);
     #[cfg(windows)]

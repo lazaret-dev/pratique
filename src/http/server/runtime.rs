@@ -251,15 +251,19 @@ impl<S: Socket> Read for Timed<S> {
 
 impl<S: Socket> Write for Timed<S> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.write(buf).map_err(|e| {
-            if matches!(
-                e.kind(),
-                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-            ) {
+        self.inner.write(buf).map_err(|e| match e.kind() {
+            io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => {
                 io::Error::new(io::ErrorKind::TimedOut, "the client did not read in time")
-            } else {
-                e
             }
+            // On Windows a send that a stop of the connection cancelled ([`crate::sys::shutdown`]) fails with no count
+            // of what it sent, which may be some of it: `write_all` would send all of it again after Interrupted, and
+            // the client would read bytes twice. The connection is over instead (B-119). (Elsewhere Interrupted means
+            // that nothing was sent, and the send is tried again.)
+            io::ErrorKind::Interrupted if cfg!(windows) => io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                format!("a send that was cancelled, and may have sent some of its bytes: {e}"),
+            ),
+            _ => e,
         })
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -417,7 +421,9 @@ impl Ctl {
         }
     }
 
-    /// Closes the reading side, which ends the connection's loop (nothing more will be read).
+    /// Closes the reading side, which ends the connection's loop (nothing more will be read). On Windows it also cancels
+    /// a send under way on the connection ([`crate::sys::shutdown`]): it is called only when nothing is being sent, an
+    /// HTTP/1.1 connection waiting for a request, an HTTP/2 connection whose last bytes are sent, a tunnel that is over.
     pub(crate) fn stop(&self) {
         if let Some(stop) = &self.stop_reading {
             stop();
