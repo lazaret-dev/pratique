@@ -38,6 +38,8 @@ const REMEMBER_CLOSED: usize = 512;
 /// for its end: what it sends then is acknowledgments of the response's tail as it reads it (a WINDOW_UPDATE of 13
 /// bytes, about 40 over TLS, for each frame of the tail, which the systems' buffers hold a few megabytes of), a PING,
 /// its GOAWAY and close_notify. A megabyte is many times that, and bounds a client that sends anything else (B-120).
+/// Over TLS what is counted is the plaintext the TLS layer hands up: records with none (an empty record, a KeyUpdate)
+/// are not counted here, and the TLS layer's own limits bound those (so many in a row, and no more).
 const AFTER_END: usize = 1 << 20;
 
 // ------------------------------------------------------------------------------------------------ floods
@@ -202,6 +204,22 @@ pub(super) struct Engine {
     going_away: bool,
     /// Since when no stream has been open (frames that are not requests do not end the idle time).
     idle_since: Option<Instant>,
+    /// The connection became idle (its last stream ended, or began to linger) while what it framed was still to be
+    /// sent: its idle time begins once all of that has been handed to the system (`sent_at`), not before. Otherwise a
+    /// client still reading the tail of a response, and giving credit as it does, is cut when the idle time runs out,
+    /// and the reset that its credit then draws throws the tail away (B-120).
+    idle_after_send: bool,
+    /// When everything framed was last handed to the system after the connection became idle.
+    sent_at: Option<Instant>,
+    /// When our side of the connection ended (GOAWAY said, no stream left, all of it sent; for an end that the idle
+    /// time began, when that began, unless the client has given credit since). The client then has the idle time to
+    /// end the connection, and again from each credit it gives (`credited`): it gives credit as it reads what the
+    /// systems' buffers held at the end (B-120).
+    ended: Option<Instant>,
+    /// When the client last gave credit (a WINDOW_UPDATE): it is reading.
+    credited: Option<Instant>,
+    /// The idle time ran out and the connection said GOAWAY for it: when the idle time began.
+    idle_end: Option<Instant>,
     dead: bool,
     budgets: Budgets,
     /// The stream after the one last given a frame, for turns.
@@ -231,6 +249,11 @@ impl Engine {
             peer_goaway: false,
             going_away: false,
             idle_since: Some(Instant::now()),
+            idle_after_send: false,
+            sent_at: None,
+            ended: None,
+            credited: None,
+            idle_end: None,
             dead: false,
             budgets: Budgets {
                 resets: Budget::new(cfg.flood_resets),
@@ -293,15 +316,59 @@ impl Engine {
         self.dead
     }
 
-    /// Since when the connection has had nothing under way (no stream, or only streams whose responses are whole), if it
-    /// has nothing.
+    /// Since when the connection has had nothing under way (no stream, or only streams whose responses are whole, and
+    /// all it framed handed to the system), if it has nothing. Once our side has ended, since then or since the client
+    /// last gave credit, whichever is later (B-120).
     pub(super) fn idle_since(&self) -> Option<Instant> {
+        if let Some(ended) = self.ended {
+            return Some(self.credited.map_or(ended, |c| c.max(ended)));
+        }
+        if self.idle_after_send && !self.dead {
+            return None;
+        }
         let mut since = self.idle_since;
         for s in self.streams.values() {
             let t = s.lingering_since?;
             since = Some(since.map_or(t, |x| x.max(t)));
         }
-        since.or(Some(Instant::now()))
+        let since = since.unwrap_or_else(Instant::now);
+        Some(self.sent_at.map_or(since, |t| t.max(since)))
+    }
+
+    /// Everything framed has been handed to the system (the sender, holding the right to send, found nothing more to
+    /// send): the idle time of a connection that became idle while some of it was still to be sent begins now, and a
+    /// connection that is finished ends our side (B-120). Whether it is finished.
+    ///
+    /// An end that the idle time began counts from when that began, so that a client that says nothing is not given the
+    /// idle time twice; but from now if the client has given credit since, as it is reading what we sent.
+    pub(super) fn all_sent(&mut self) -> bool {
+        let now = Instant::now();
+        if std::mem::take(&mut self.idle_after_send) {
+            self.sent_at = Some(now);
+        }
+        let finished = self.is_finished();
+        if finished && self.ended.is_none() {
+            self.ended = Some(match self.idle_end.take() {
+                Some(since) if !self.credited.is_some_and(|c| c > since) => since,
+                _ => now,
+            });
+        }
+        finished
+    }
+
+    /// The idle time has run out: GOAWAY, so that the connection ends as gracefully as at any other end, its client
+    /// still reading what the systems' buffers hold given the time it gives credit in (B-120). False if the connection
+    /// is not idle, or has said GOAWAY already.
+    pub(super) fn go_away_idle(&mut self) -> bool {
+        if self.going_away || self.dead {
+            return false;
+        }
+        let Some(since) = self.idle_since() else {
+            return false;
+        };
+        self.idle_end = Some(since);
+        self.go_away();
+        true
     }
 
     /// The earliest time a stream began to wait for a window, if one is waiting.
@@ -339,6 +406,7 @@ impl Engine {
         self.remember(id, Closed::WeReset);
         if self.streams.is_empty() {
             self.idle_since = Some(Instant::now());
+            self.idle_after_send = true;
         }
     }
 
@@ -424,6 +492,7 @@ impl Engine {
         self.remove_if_done(id);
         if self.streams.is_empty() && self.idle_since.is_none() {
             self.idle_since = Some(Instant::now());
+            self.idle_after_send = true;
         }
     }
 
@@ -459,7 +528,10 @@ impl Engine {
             if self.going_away || unread {
                 self.stop_lingering(id);
             } else if let Some(s) = self.streams.get_mut(&id) {
-                s.lingering_since.get_or_insert_with(Instant::now);
+                if s.lingering_since.is_none() {
+                    s.lingering_since = Some(Instant::now());
+                    self.idle_after_send = true;
+                }
             }
             return;
         }
@@ -480,6 +552,7 @@ impl Engine {
         self.remember(id, Closed::WeReset);
         if self.streams.is_empty() {
             self.idle_since = Some(Instant::now());
+            self.idle_after_send = true;
         }
     }
 
@@ -706,6 +779,7 @@ impl Engine {
                 if increment < 128 && !self.budgets.small_updates.take() {
                     return Err(self.calm("window updates of a few bytes"));
                 }
+                self.credited = Some(Instant::now());
                 if stream == 0 {
                     self.send_window += increment as i64;
                     if self.send_window > MAX_WINDOW as i64 {
@@ -1552,7 +1626,8 @@ struct Shared {
     /// Our side of the connection is over (B-120): the GOAWAY is sent, no stream is left, and the writer has finished
     /// (close_notify, then the sending side shut, so that the client reads the end after the last byte). The connection
     /// is still read, until the client ends it, so that what it sends while it reads the tail (WINDOW_UPDATEs) does not
-    /// make the system reset the connection and throw the tail away; at most `AFTER_END` bytes of it.
+    /// make the system reset the connection and throw the tail away; at most `AFTER_END` bytes of it, and no longer
+    /// than the idle timeout from the end or from the client's last credit (`Engine::idle_since`).
     over: AtomicBool,
 }
 
@@ -1597,6 +1672,12 @@ impl Shared {
     /// stream left ends our side of it, holding the right to send (B-120): the writer finishes (close_notify, then the
     /// sending side is shut, so that the FIN follows the last byte), and nothing more is sent. The reading goes on: it is
     /// never stopped while a send is under way, which on Windows would cancel it (B-119), nor at all at such an end.
+    /// Whoever finds nothing more to send also starts the idle time of a connection that became idle while it still had
+    /// something to send.
+    ///
+    /// One who could not take the right to send leaves what it changed to the one who holds it, who looks at the engine
+    /// again once it has let go: so a change made after that one's last look (a client's RST_STREAM that takes off the
+    /// last stream, and frames nothing) is not left undone.
     fn send(&self, wait: bool) -> io::Result<()> {
         let mut wait = wait;
         let mut buf = Vec::new();
@@ -1616,7 +1697,7 @@ impl Shared {
                     e.pump();
                     if e.out.is_empty() {
                         // everything is sent, the GOAWAY too if it is said
-                        break e.is_finished();
+                        break e.all_sent();
                     }
                     std::mem::swap(&mut buf, &mut e.out);
                     e.out.clear();
@@ -1636,15 +1717,25 @@ impl Shared {
                     return Err(e);
                 }
             };
+            #[cfg(test)]
+            if let Some(w) = guard.as_mut() {
+                w.looked(finished);
+            }
             if finished {
                 // our side is over: nothing but a PING's answer could be framed now, and none is wanted
                 if let Some(mut w) = guard.take() {
                     w.finish();
-                    self.over.store(true, Ordering::SeqCst);
                 }
+                self.over.store(true, Ordering::SeqCst);
             }
             drop(guard);
-            if self.engine().out.is_empty() {
+            let again = {
+                let e = self.engine();
+                !e.out.is_empty()
+                    || e.idle_after_send
+                    || (e.is_finished() && !self.over.load(Ordering::SeqCst))
+            };
+            if !again {
                 return Ok(());
             }
             wait = false;
@@ -1847,8 +1938,9 @@ pub(super) fn serve_after_preface(
         // what the client has sent since our side ended (B-120)
         let mut after_end = 0usize;
         let result = loop {
-            // idle while no stream is open, from when the last one ended; while streams are open, the handlers' own
-            // waits bound them, and the reading only waits for the client
+            // idle while no stream is open, from when the last one ended and all it framed was handed to the system (and
+            // once our side has ended, from then or from the client's last credit); while streams are open, the
+            // handlers' own waits bound them, and the reading only waits for the client
             // and while response data waits for a window, until the client has had the write timeout to open one
             if let Some(t) = &ctl.timer {
                 let (idle, stalled) = {
@@ -1874,14 +1966,23 @@ pub(super) fn serve_after_preface(
                     continue
                 }
                 Err(e) if e.kind() == io::ErrorKind::TimedOut => {
-                    // a stream that waited too long for a window is reset, and the connection goes on; an idle one ends
+                    // a stream that waited too long for a window is reset, and the connection goes on
                     let reset = shared
                         .engine()
                         .reset_stalled(Instant::now() - ctl.limits.write_timeout);
-                    if reset == 0 {
+                    if reset > 0 {
+                        shared.changed.notify_all();
+                        if let Err(e) = shared.send(true) {
+                            break Err(e);
+                        }
+                        continue;
+                    }
+                    // an idle one ends, as any other end does: GOAWAY, then the end of what we send once all of it is
+                    // sent, and the reading goes on while the client gives credit for what the systems' buffers still
+                    // held (B-120); once our side has ended, the time is up
+                    if shared.over.load(Ordering::SeqCst) || !shared.engine().go_away_idle() {
                         break Err(e);
                     }
-                    shared.changed.notify_all();
                     if let Err(e) = shared.send(true) {
                         break Err(e);
                     }
@@ -1894,7 +1995,8 @@ pub(super) fn serve_after_preface(
             };
             if shared.over.load(Ordering::SeqCst) {
                 // our side has ended: what the client sends is read (it answers what it reads of the tail) until it ends
-                // the connection, the idle timeout or a shutdown's grace runs out, or there is too much of it
+                // the connection, it has given no credit for the idle time, a shutdown's grace runs out, or there is too
+                // much of it
                 after_end += n;
                 if after_end > AFTER_END {
                     break Ok(());

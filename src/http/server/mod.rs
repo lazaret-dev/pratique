@@ -333,6 +333,11 @@ pub(crate) trait Outbound: Write + Send {
     /// connection is read until the client ends it, as closing with its bytes unread, or with more of them to come,
     /// makes the system reset the connection and throw away what it has not sent yet.
     fn finish(&mut self);
+
+    /// Tests: the sender has looked at the engine for the last time, holding the right to send, and found our side
+    /// `finished` or not; a test's writer can hold it here, as another thread changes the engine.
+    #[cfg(test)]
+    fn looked(&mut self, _finished: bool) {}
 }
 
 impl<S: Socket> Outbound for S {

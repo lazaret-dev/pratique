@@ -28,7 +28,10 @@
 //!
 //! * the TLS handshake, in all ([`Limits::handshake_timeout`]);
 //! * an idle connection, until the first byte of the next request or, in HTTP/2, while no stream is open (frames
-//!   that are not requests, PING for one, do not keep it alive) ([`Limits::idle_timeout`]);
+//!   that are not requests, PING for one, do not keep it alive) ([`Limits::idle_timeout`]). In HTTP/2 it begins once
+//!   all the connection framed has been handed to the system, and it ends as the connection's other ends do: GOAWAY,
+//!   then the end of what the server sends, after which the connection is read while the client gives credit (as it
+//!   reads what the systems' buffers still held) at least once each idle timeout, a megabyte at most (B-120);
 //! * a request head, in all, from its first byte (slowloris) ([`Limits::head_timeout`]);
 //! * a request body, as a rate: after [`Limits::body_grace`], at least [`Limits::body_min_rate`] bytes a second on average,
 //!   counted from when the handler first reads it (in HTTP/2, a handler waits at most [`Limits::body_wait`] for more of
@@ -969,7 +972,8 @@ impl Server {
     ///
     /// An HTTP/2 connection with nothing left (an idle one at once) ends what it sends, a GOAWAY, then close_notify and
     /// a FIN after the last byte, and is read until the client closes it, as the client may still be reading the tail
-    /// and answering it (B-120): so the wait is for its client, within the grace. Clients close on that end.
+    /// and answering it (B-120): so the wait is for its client, within the grace, and until it has gone an idle timeout
+    /// without giving credit (which it gives as it reads). Clients close on that end.
     pub fn shutdown(&self, grace: Duration) {
         stop(&self.inner, &self.addrs, grace);
         for t in self
