@@ -1201,3 +1201,187 @@ fn a_shutdown_stops_reading_a_connection_only_once_the_last_of_its_response_is_s
     drop(ctl);
     assert!(c.next().is_none(), "the connection closes");
 }
+
+// ------------------------------------------------------------------------------------------------ the engine alone
+
+/// An engine whose windows are the protocol's defaults, 65,535 for the connection and for each stream.
+fn engine_with_small_windows() -> super::h2::Engine {
+    let mut config = HttpConfig::default();
+    config.h2.connection_window = 65_535;
+    config.h2.stream_window = 65_535;
+    super::h2::Engine::new(&config)
+}
+
+/// What a client sends, beginning with its SETTINGS.
+struct ClientFrames {
+    enc: super::super::h2::hpack::Encoder,
+    out: Vec<u8>,
+}
+
+impl ClientFrames {
+    fn new() -> ClientFrames {
+        let mut out = Vec::new();
+        frame::write_settings(&mut out, &[]);
+        ClientFrames {
+            enc: super::super::h2::hpack::Encoder::new(),
+            out,
+        }
+    }
+
+    /// A POST's head, its body to come.
+    fn post(&mut self, id: u32) -> &mut ClientFrames {
+        use super::super::h2::hpack::FieldRef;
+        let fields = [
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/"),
+        ];
+        let refs: Vec<FieldRef<'_>> = fields
+            .iter()
+            .map(|(n, v)| FieldRef {
+                name: n.as_bytes(),
+                value: v.as_bytes(),
+                sensitive: false,
+            })
+            .collect();
+        let mut block = Vec::new();
+        self.enc.encode(&refs, &mut block);
+        frame::write_header_block(&mut self.out, id, false, &block, 16_384);
+        self
+    }
+
+    /// `n` bytes of body, in frames of 16 KiB.
+    fn data(&mut self, id: u32, n: usize, end: bool) -> &mut ClientFrames {
+        let body = vec![7u8; n];
+        let chunks: Vec<&[u8]> = body.chunks(16_384).collect();
+        for (i, c) in chunks.iter().enumerate() {
+            frame::write_data(&mut self.out, id, end && i == chunks.len() - 1, c);
+        }
+        self
+    }
+
+    fn take(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.out)
+    }
+}
+
+/// The frames of `out`: each header and payload.
+fn frames_in(mut out: &[u8]) -> Vec<(frame::Header, Vec<u8>)> {
+    let mut frames = Vec::new();
+    while out.len() >= frame::HEADER_LEN {
+        let h = frame::Header::parse(out[..frame::HEADER_LEN].try_into().unwrap());
+        let end = frame::HEADER_LEN + h.length as usize;
+        frames.push((h, out[frame::HEADER_LEN..end].to_vec()));
+        out = &out[end..];
+    }
+    frames
+}
+
+/// The credit the engine has given the client back on the connection: its WINDOW_UPDATEs on stream 0 in `out`, and
+/// what it owes and has not sent yet.
+fn connection_credit(e: &super::h2::Engine, out: &[u8]) -> (u64, u64) {
+    let sent = frames_in(out)
+        .iter()
+        .filter(|(h, _)| h.kind == kind::WINDOW_UPDATE && h.stream == 0)
+        .map(|(_, p)| u64::from(u32::from_be_bytes(p[..4].try_into().unwrap()) & 0x7fff_ffff))
+        .sum();
+    (sent, u64::from(e.connection_credit_owed()))
+}
+
+#[test]
+fn a_body_that_is_never_read_gives_the_connection_its_window_back() {
+    // B-119 (the review of round 4, probe A; so on main too): a stream whose request had ended was dropped with its
+    // unread body, and the connection never got that credit back. A handler that answers a POST without reading it (a
+    // 401, a 404, a 413) shrank the connection's window for good. Here 60,000 bytes of a window of 65,535.
+    let mut e = engine_with_small_windows();
+    let mut c = ClientFrames::new();
+    c.post(1).data(1, 60_000, true);
+    assert_eq!(e.receive(&c.take()).unwrap().len(), 1);
+    e.send_head(1, 404, &[], true).unwrap();
+    e.handler_returned(1);
+    let out = std::mem::take(&mut e.out);
+    assert_eq!(
+        connection_credit(&e, &out),
+        (60_000, 0),
+        "the connection's credit for a body nobody read (sent, owed)"
+    );
+    // a stream refused for want of a handler's place, whose body came in the same read as its head
+    c.post(3).data(3, 10_000, true);
+    assert_eq!(e.receive(&c.take()).unwrap().len(), 1);
+    e.refuse(3);
+    let out = std::mem::take(&mut e.out);
+    assert_eq!(connection_credit(&e, &out), (0, 10_000));
+}
+
+#[test]
+fn a_body_read_in_part_gives_the_connection_its_window_back_once_whatever_stops_its_stream() {
+    // B-119 (the review of round 4, probe B; so on main too): a reset or a stopped lingering stream gave the connection
+    // credit for what was unread and for what the handler had read, which reading had already given back. The client
+    // got more window than it had used, and over a long connection could be taken past 2^31 - 1. Here the handler reads
+    // 1,000 of 20,000 bytes, its stream is stopped (three ways), and then a second stream's 12,767 bytes are read: the
+    // connection must be given back 32,767 bytes, what was sent, no more and no less.
+    for stop in [
+        "the response is whole",
+        "the handler fails",
+        "the client resets",
+    ] {
+        let mut e = engine_with_small_windows();
+        let mut c = ClientFrames::new();
+        c.post(1).data(1, 20_000, false);
+        assert_eq!(e.receive(&c.take()).unwrap().len(), 1);
+        let mut buf = [0u8; 1_000];
+        assert_eq!(e.read_body(1, &mut buf).unwrap(), Some(1_000));
+        match stop {
+            "the response is whole" => {
+                e.send_head(1, 200, &[], true).unwrap();
+                e.handler_returned(1);
+            }
+            "the handler fails" => e.handler_returned(1),
+            _ => {
+                let mut rst = Vec::new();
+                frame::write_rst_stream(&mut rst, 1, ErrorCode::CANCEL);
+                e.receive(&rst).unwrap();
+                e.handler_returned(1);
+            }
+        }
+        c.post(3).data(3, 12_767, true);
+        assert_eq!(e.receive(&c.take()).unwrap().len(), 1, "{stop}");
+        let mut buf = [0u8; 16_384];
+        while e.read_body(3, &mut buf).unwrap() != Some(0) {}
+        let out = std::mem::take(&mut e.out);
+        let (sent, owed) = connection_credit(&e, &out);
+        assert_eq!(
+            (sent + owed, sent),
+            (32_767, 32_767),
+            "{stop}: the connection's credit (all, sent) for 32,767 bytes"
+        );
+    }
+}
+
+#[test]
+fn a_lingering_stream_that_gets_more_of_its_body_is_asked_to_stop() {
+    // B-119 (the review of round 4): the test of a stream answered before its request ends no longer waits before it
+    // sends more of the body, so whether the more comes before the handler has returned or after is up to the threads;
+    // this is the second case on the engine alone. The response is whole, the handler has returned, the stream
+    // lingers; more of the body comes, and the client is asked to stop (RST_STREAM, no error), with the connection given
+    // its credit back.
+    let mut e = engine_with_small_windows();
+    let mut c = ClientFrames::new();
+    c.post(1);
+    assert_eq!(e.receive(&c.take()).unwrap().len(), 1);
+    e.send_head(1, 200, &[], true).unwrap();
+    e.handler_returned(1);
+    e.out.clear();
+    c.data(1, 4, false);
+    e.receive(&c.take()).unwrap();
+    let out = std::mem::take(&mut e.out);
+    let resets: Vec<u32> = frames_in(&out)
+        .iter()
+        .filter(|(h, _)| h.kind == kind::RST_STREAM && h.stream == 1)
+        .map(|(_, p)| u32::from_be_bytes(p[..4].try_into().unwrap()))
+        .collect();
+    assert_eq!(resets, vec![ErrorCode::NO_ERROR.0], "{:?}", frames_in(&out));
+    let (sent, owed) = connection_credit(&e, &out);
+    assert_eq!(sent + owed, 4);
+}
