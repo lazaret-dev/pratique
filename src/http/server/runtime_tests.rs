@@ -950,9 +950,10 @@ fn a_client_that_gives_credit_and_reads_nothing_after_the_end_is_cut_at_sixteen_
     // gives, as it does when it reads the tail; a client that gave credit just inside each idle time, and read nothing,
     // held the connection until AFTER_END was used up (some 80,000 credits, 56 days at the default idle timeout). It is
     // now cut sixteen idle timeouts after the end, however often credit comes; and only credit on the connection counts:
-    // credit on a stream, a closed one as in the review's probe, keeps nothing. The client here gives credit every half
-    // idle timeout, from just after its response, for twenty-four idle timeouts; the connection's idle time runs out
-    // (credit before the end keeps nothing either) and it ends with a GOAWAY.
+    // credit on a stream, a closed one as in the review's probe, keeps nothing. The client here gives credit every
+    // quarter of an idle timeout (every half, as round 9 had it, left 140 ms for a stall of the client's thread: the
+    // review of round 9), from just after its response, for twenty-four idle timeouts; the connection's idle time runs
+    // out (credit before the end keeps nothing either) and it ends with a GOAWAY.
     const IDLE: Duration = Duration::from_millis(300);
     for stream in [0u32, 1] {
         let server = plain(Limits {
@@ -972,7 +973,7 @@ fn a_client_that_gives_credit_and_reads_nothing_after_the_end_is_cut_at_sixteen_
                     if s.write_all(&up).is_err() {
                         return;
                     }
-                    thread::sleep(IDLE / 2);
+                    thread::sleep(IDLE / 4);
                 }
             })
         };

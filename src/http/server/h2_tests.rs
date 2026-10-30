@@ -1048,6 +1048,8 @@ struct GateState {
     reader: Mutex<Option<thread::ThreadId>>,
     other_looks: AtomicUsize,
     allow_looks: AtomicUsize,
+    /// The thread of each look counted, in order.
+    look_threads: Mutex<Vec<thread::ThreadId>>,
 }
 
 impl GateState {
@@ -1100,6 +1102,7 @@ impl Outbound for Gate {
             && *s.reader.lock().unwrap() != Some(thread::current().id())
         {
             let n = s.other_looks.fetch_add(1, Ordering::SeqCst) + 1;
+            s.look_threads.lock().unwrap().push(thread::current().id());
             let give_up = Instant::now() + Duration::from_secs(10);
             while s.allow_looks.load(Ordering::SeqCst) < n && Instant::now() < give_up {
                 thread::sleep(Duration::from_millis(5));
@@ -1352,8 +1355,10 @@ fn the_idle_time_is_not_lost_to_a_change_made_while_another_thread_holds_the_rig
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let gate = Arc::new(GateState::default());
+    // stream 1's handler has returned (its last look comes just after)
+    let returned = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let server = {
-        let gate = gate.clone();
+        let (gate, returned) = (gate.clone(), returned.clone());
         thread::spawn(move || {
             let (sock, peer) = listener.accept().unwrap();
             *gate.reader.lock().unwrap() = Some(thread::current().id());
@@ -1368,13 +1373,12 @@ fn the_idle_time_is_not_lost_to_a_change_made_while_another_thread_holds_the_rig
             });
             let timer = ctl.timer.clone().unwrap();
             let reader = runtime::Timed::new(sock, timer, Duration::from_secs(30)).unwrap();
-            let handler: Arc<dyn Handler> = Arc::new(|req: Request| {
-                let body = if req.path() == "/empty" {
-                    Vec::new()
-                } else {
-                    vec![7; 1000]
-                };
-                Response::bytes(200, "application/octet-stream", body)
+            let handler: Arc<dyn Handler> = Arc::new(move |req: Request| {
+                if req.path() == "/empty" {
+                    return Response::bytes(200, "application/octet-stream", Vec::new());
+                }
+                returned.store(true, Ordering::SeqCst);
+                Response::bytes(200, "application/octet-stream", vec![7; 1000])
             });
             let info = ConnInfo {
                 peer: Some(peer),
@@ -1399,9 +1403,14 @@ fn the_idle_time_is_not_lost_to_a_change_made_while_another_thread_holds_the_rig
             .is_some_and(|f| f.fields.contains(&(":status".into(), "200".into()))),
         "{head:?}"
     );
+    let t = Instant::now();
+    while !returned.load(Ordering::SeqCst) {
+        assert!(t.elapsed() < Duration::from_secs(5), "stream 1's handler");
+        thread::sleep(Duration::from_millis(5));
+    }
     thread::sleep(Duration::from_millis(100));
     // stream 3's handler looks twice: once it has sent its head (which ends the stream), and once it has returned,
-    // the last; that one is held
+    // the last; that one is held (all three looks counted must be that handler's: the review of round 9, its LOW-3)
     gate.count_looks.store(true, Ordering::SeqCst);
     gate.allow_looks.store(1, Ordering::SeqCst);
     c.get(3, "/empty");
@@ -1425,6 +1434,11 @@ fn the_idle_time_is_not_lost_to_a_change_made_while_another_thread_holds_the_rig
         );
         thread::sleep(Duration::from_millis(5));
     }
+    let threads = gate.look_threads.lock().unwrap().clone();
+    assert!(
+        threads.len() >= 3 && threads[..3].iter().all(|t| *t == threads[0]),
+        "the looks counted were not all stream 3's handler's: {threads:?}"
+    );
     let frames = c.until(|f| f.is(kind::GOAWAY));
     assert!(
         frames.last().is_some_and(|f| f.is(kind::GOAWAY)),
