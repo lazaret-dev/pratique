@@ -700,6 +700,15 @@ impl Duplex for TunnelSocket {
     }
 }
 
+impl crate::tls::Linger for TunnelSocket {
+    fn linger(&mut self) {
+        if let Some(t) = &self.ctl.timer {
+            t.each(crate::tls::LINGER_QUIET);
+        }
+        crate::http::server::runtime::linger(self);
+    }
+}
+
 impl Socket for TunnelSocket {
     fn set_read_timeout(&self, _timeout: Option<Duration>) -> io::Result<()> {
         Ok(())

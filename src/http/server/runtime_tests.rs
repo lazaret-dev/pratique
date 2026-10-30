@@ -1134,6 +1134,32 @@ impl crate::tls::Duplex for CancelledOnce {
     }
 }
 
+impl crate::tls::Linger for CancelledOnce {
+    fn linger(&mut self) {}
+}
+
+#[test]
+fn a_socket_that_lingers_waits_for_quiet_and_not_for_the_deadline_on_its_timer() {
+    // after a fatal alert in the handshake (B-119) the connection lingers with the handshake's deadline still on its
+    // timer: its reads wait 200 ms for more, not until that deadline, and the client is told that nothing more comes
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (socket, _) = listener.accept().unwrap();
+    let timer = runtime::Timer::new();
+    timer.until(Instant::now() + Duration::from_secs(10));
+    let mut timed = runtime::Timed::new(socket, timer, Duration::from_secs(5)).unwrap();
+    let start = Instant::now();
+    crate::tls::Linger::linger(&mut timed);
+    let took = start.elapsed();
+    assert!(
+        took < Duration::from_secs(2),
+        "lingering took {took:?}, with a client that sends nothing and stays"
+    );
+    client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let mut buf = [0u8; 8];
+    assert_eq!((&client).read(&mut buf).map_err(|e| e.to_string()), Ok(0));
+}
+
 impl Socket for CancelledOnce {
     fn set_read_timeout(&self, _: Option<Duration>) -> std::io::Result<()> {
         Ok(())

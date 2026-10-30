@@ -47,7 +47,7 @@
 use super::{Handler, HttpConfig, Socket, Version};
 use crate::tls::certs::{CertStore, CertifiedKey};
 use crate::tls::server::{ServerConfig, ServerStream};
-use crate::tls::Duplex;
+use crate::tls::{discard, Duplex, Linger, LINGER_QUIET};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -283,6 +283,14 @@ impl<S: Socket> Duplex for Timed<S> {
             timer: self.timer.clone(),
             set: None,
         })
+    }
+}
+
+impl<S: Socket> Linger for Timed<S> {
+    fn linger(&mut self) {
+        // (its reads keep to the connection's timer, not to the socket's timeout: the handshake's deadline, say)
+        self.timer.each(LINGER_QUIET);
+        linger(self);
     }
 }
 
@@ -1257,14 +1265,6 @@ pub fn refresh_ocsp_staples(
 /// data makes the system reset the connection, which can destroy the answer before the client reads it).
 pub(crate) fn linger<S: Socket>(socket: &mut S) {
     socket.shutdown_write();
-    let _ = socket.set_read_timeout(Some(Duration::from_millis(200)));
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let mut buf = [0u8; 8192];
-    let mut total = 0;
-    while Instant::now() < deadline && total < 64 * 1024 {
-        match socket.read(&mut buf) {
-            Ok(0) | Err(_) => return,
-            Ok(n) => total += n,
-        }
-    }
+    let _ = socket.set_read_timeout(Some(LINGER_QUIET));
+    discard(socket);
 }

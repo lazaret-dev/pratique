@@ -1917,11 +1917,13 @@ fn client_certificates_are_required_optional_or_refused() {
     c.unwrap();
     assert_eq!(s.unwrap(), client_cert.chain().to_vec());
     // none, when one is required: certificate_required
+    // (the client's Finished and its "ping" come after the certificate, unread when the server refuses: B-119)
     let (c, s) = client_auth_exchange(required.clone(), &plain);
-    assert!(s.unwrap_err().contains("certificate_required"));
+    let (c, s) = (c.unwrap_err(), s.unwrap_err());
+    assert!(s.contains("certificate_required"), "the server says {s}");
     assert!(
-        c.unwrap_err().contains("116"),
-        "the client hears certificate_required"
+        c.contains("116"),
+        "the client hears certificate_required: it got {c} (the server: {s})"
     );
     // one under other roots: bad_certificate
     let (other, _) = client_ca();
@@ -1929,8 +1931,12 @@ fn client_certificates_are_required_optional_or_refused() {
         required.clone(),
         &plain.clone().with_client_certificate(other),
     );
-    assert!(s.unwrap_err().contains("bad_certificate"));
-    assert!(c.unwrap_err().contains("42"));
+    let (c, s) = (c.unwrap_err(), s.unwrap_err());
+    assert!(s.contains("bad_certificate"), "the server says {s}");
+    assert!(
+        c.contains("42"),
+        "the client hears bad_certificate: it got {c} (the server: {s})"
+    );
     // optional: in without one (nothing seen), and with one (seen)
     let (c, s) = client_auth_exchange(optional.clone(), &plain);
     c.unwrap();
@@ -1942,6 +1948,202 @@ fn client_certificates_are_required_optional_or_refused() {
     let (c, s) = client_auth_exchange(server.clone().without_resumption(), &with_cert);
     c.unwrap();
     assert!(s.unwrap().is_empty());
+}
+
+/// Reads until the end: what came, and how the reading ended (a clean end of the connection, or an error such as a reset).
+fn read_until_the_end(s: &mut impl Read) -> (Vec<u8>, io::Result<()>) {
+    let mut got = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match s.read(&mut buf) {
+            Ok(0) => return (got, Ok(())),
+            Ok(n) => got.extend_from_slice(&buf[..n]),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return (got, Err(e)),
+        }
+    }
+}
+
+/// How long the server waits before it reads, in the tests of what it leaves unread: long enough for the client's bytes
+/// to be all there.
+const ALL_THERE: Duration = Duration::from_millis(200);
+
+/// A record that the server cannot take (application data before any handshake, or one that does not decrypt), and 40 KiB
+/// behind it that the server has not read when it fails on the record. (It reads 32 KiB at a time, and the tests let it
+/// read only once all of it has come [`ALL_THERE`]: bytes that came after it closed would be answered with a reset that
+/// follows its end, and a reader that has had the end does not see that reset.)
+fn a_bad_record_and_more(record_len: u16) -> Vec<u8> {
+    let mut bytes = vec![RT_APPLICATION_DATA, 3, 3];
+    bytes.extend_from_slice(&record_len.to_be_bytes());
+    bytes.resize(bytes.len() + record_len as usize + 40 * 1024, 0);
+    bytes
+}
+
+#[test]
+fn a_fatal_alert_in_the_handshake_reaches_a_client_whose_bytes_the_server_had_not_read() {
+    // B-119: closed at once with the client's bytes unread, the connection would be reset, and Windows throws away what
+    // it has received and not yet handed out when a reset comes: the client would not read the alert (elsewhere it
+    // would, and then the reset). The server shuts its sending side and reads on a little before it closes: the client
+    // reads the alert and then a clean end, on every system.
+    let (server, _) = setup(&["server.test"]);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let config = Arc::new(server);
+    let handle = thread::spawn(move || {
+        let (socket, _) = listener.accept().unwrap();
+        socket.set_read_timeout(Some(TIMEOUT)).unwrap();
+        socket.set_write_timeout(Some(TIMEOUT)).unwrap();
+        thread::sleep(ALL_THERE);
+        ServerStream::accept(socket, &config)
+            .err()
+            .map(|e| e.to_string())
+    });
+    let mut s = dial(port);
+    s.write_all(&a_bad_record_and_more(1)).unwrap();
+    let (got, end) = read_until_the_end(&mut s);
+    let refused = handle.join().unwrap();
+    assert!(
+        got.len() == 7 && got[0] == RT_ALERT && got[3..6] == [0, 2, 2],
+        "the client reads a fatal alert: it read {got:?} and then {end:?} (the server: {refused:?})"
+    );
+    assert!(
+        end.is_ok(),
+        "the connection ends cleanly after the alert, not with {end:?} (the server: {refused:?})"
+    );
+    assert!(
+        refused.as_ref().is_some_and(|e| e.contains("unexpected_message")),
+        "the server refuses with unexpected_message: {refused:?}"
+    );
+}
+
+/// A socket that counts what is read from it, all its handles together: a server that lingers reads what the client
+/// still sends, one that closes at once does not.
+struct Counted {
+    io: TcpStream,
+    read: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Read for Counted {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.io.read(buf)?;
+        self.read.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+        Ok(n)
+    }
+}
+
+impl Write for Counted {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.io.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.io.flush()
+    }
+}
+
+impl Duplex for Counted {
+    fn duplicate(&self) -> io::Result<Self> {
+        Ok(Counted {
+            io: self.io.try_clone()?,
+            read: self.read.clone(),
+        })
+    }
+}
+
+impl Linger for Counted {
+    // (TcpStream's, reading through the count)
+    fn linger(&mut self) {
+        let _ = self.io.shutdown(std::net::Shutdown::Write);
+        let _ = self.io.set_read_timeout(Some(LINGER_QUIET));
+        discard(self);
+    }
+}
+
+/// What the client heard and saw, and what the server read, when it sends a record that does not decrypt and 40 KiB
+/// behind it after the handshake, and the server reads with the stream whole or split as an HTTP/2 connection is.
+struct AfterTheHandshake {
+    /// What the client's read gave.
+    heard: std::result::Result<usize, String>,
+    /// What came after it, and how the connection ended.
+    rest: Vec<u8>,
+    end: io::Result<()>,
+    /// What the client sent after the handshake, and how much of it the server read.
+    sent: usize,
+    read: usize,
+    /// What the server's read gave.
+    server: std::result::Result<usize, String>,
+}
+
+fn a_bad_record_after_the_handshake(split: bool) -> AfterTheHandshake {
+    let (server, client) = setup(&["server.test"]);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let config = Arc::new(server);
+    // (the client sends once the server has done the handshake, so that the handshake's last read takes none of it)
+    let (ready, is_ready) = std::sync::mpsc::channel();
+    let handle = thread::spawn(move || {
+        let (socket, _) = listener.accept().unwrap();
+        socket.set_read_timeout(Some(TIMEOUT)).unwrap();
+        socket.set_write_timeout(Some(TIMEOUT)).unwrap();
+        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let io = Counted {
+            io: socket,
+            read: count.clone(),
+        };
+        let s = ServerStream::accept(io, &config).map_err(|e| e.to_string())?;
+        let before = count.load(std::sync::atomic::Ordering::SeqCst);
+        let _ = ready.send(());
+        thread::sleep(ALL_THERE);
+        let mut buf = [0u8; 16];
+        let got = if split {
+            let (mut r, _w) = s.split().map_err(|e| e.to_string())?;
+            r.read(&mut buf).map_err(|e| e.to_string())
+        } else {
+            let mut s = s;
+            s.read(&mut buf).map_err(|e| e.to_string())
+        };
+        Ok::<_, String>((got, count.load(std::sync::atomic::Ordering::SeqCst) - before))
+    });
+    let mut c = connect(port, "server.test", &client).unwrap();
+    is_ready.recv_timeout(TIMEOUT).unwrap();
+    let bytes = a_bad_record_and_more(32);
+    c.get_mut().write_all(&bytes).unwrap();
+    let mut buf = [0u8; 16];
+    let heard = c.read(&mut buf).map_err(|e| e.to_string());
+    let (rest, end) = read_until_the_end(c.get_mut());
+    drop(c);
+    let (server, read) = handle.join().unwrap().unwrap();
+    AfterTheHandshake {
+        heard,
+        rest,
+        end,
+        sent: bytes.len(),
+        read,
+        server,
+    }
+}
+
+#[test]
+fn a_fatal_alert_after_the_handshake_reaches_a_client_whose_bytes_the_server_had_not_read() {
+    // (and the server read all that the client sent: what a reader sees after the end can depend on when bytes came)
+    for split in [false, true] {
+        let t = a_bad_record_after_the_handshake(split);
+        let server = &t.server;
+        assert!(
+            t.heard.as_ref().is_err_and(|e| e.contains("description 20")),
+            "split {split}: the client hears bad_record_mac: it read {:?} (the server: {server:?})",
+            t.heard
+        );
+        assert!(
+            t.rest.is_empty() && t.end.is_ok(),
+            "split {split}: the connection ends cleanly after the alert, not with {:?} and {:?} (the server: {server:?})",
+            t.rest,
+            t.end
+        );
+        assert_eq!(
+            t.read, t.sent,
+            "split {split}: the server read all that the client sent before it closed (the server: {server:?})"
+        );
+    }
 }
 
 #[test]

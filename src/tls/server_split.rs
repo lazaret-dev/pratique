@@ -7,10 +7,11 @@
 //! encrypts under the lock and sends the records under a second lock that also holds the writing handle, so records reach
 //! the transport in the order they were made. The reading half has things to send of its own (the answer to a KeyUpdate,
 //! an alert): it sends them only if nobody is sending, and otherwise leaves them to whoever is, who looks again before
-//! letting go. So the reading half never waits for a write that a slow client has blocked.
+//! letting go. So the reading half never waits for a write that a slow client has blocked. After a fatal alert it sends
+//! itself, it closes the connection gently ([`Linger`]), so that the client reads it.
 
 use super::server::{ServerConnection, ServerStream};
-use super::split::Duplex;
+use super::split::{Duplex, Linger};
 use super::suite::Suite;
 use crate::error::Error;
 use std::io::{self, Read, Write};
@@ -75,6 +76,33 @@ impl<S: Write> Shared<S> {
                 return Ok(());
             }
             wait = false;
+        }
+    }
+
+    /// After a fatal error that queued an alert: sends it and, still holding the right to send (so that nothing is written
+    /// after it), closes the connection gently through the reading handle `reader` ([`Linger`]), so that a client that was
+    /// still sending reads the alert (B-119). If somebody is sending, the alert is left to them as
+    /// [`send_queued`](Self::send_queued) leaves things, and the connection is closed as before: the reading half does not
+    /// wait for a write that a slow client has blocked.
+    fn send_alert_and_linger(&self, reader: &mut S)
+    where
+        S: Linger,
+    {
+        let mut guard = match self.out.try_lock() {
+            Ok(g) => g,
+            Err(TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(TryLockError::WouldBlock) => return,
+        };
+        let sender = &mut *guard;
+        {
+            let mut conn = self.conn();
+            sender.buf.clear();
+            sender.buf.extend_from_slice(conn.output());
+            let n = sender.buf.len();
+            conn.consume_output(n);
+        }
+        if sender.io.write_all(&sender.buf).and_then(|_| sender.io.flush()).is_ok() {
+            reader.linger();
         }
     }
 }
@@ -158,7 +186,7 @@ impl<S: Duplex> ServerReadHalf<S> {
     }
 }
 
-impl<S: Duplex> Read for ServerReadHalf<S> {
+impl<S: Duplex + Linger> Read for ServerReadHalf<S> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
@@ -174,8 +202,13 @@ impl<S: Duplex> Read for ServerReadHalf<S> {
                     return Ok(0);
                 }
                 if let Err(e) = conn.process() {
+                    let alerted = conn.alerted();
                     drop(conn);
-                    let _ = self.shared.send_queued(false);
+                    if alerted {
+                        self.shared.send_alert_and_linger(&mut self.io);
+                    } else {
+                        let _ = self.shared.send_queued(false);
+                    }
                     return Err(to_io(e));
                 }
                 if conn.has_plaintext() || conn.peer_closed() {

@@ -71,7 +71,7 @@ pub use runtime::{
 
 use crate::tls::server::ServerStream;
 use crate::tls::server_split::{ServerReadHalf, ServerWriteHalf};
-use crate::tls::Duplex;
+use crate::tls::{Duplex, Linger};
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -224,7 +224,7 @@ impl TlsInfo {
 }
 
 /// A socket the server can run a connection on: TCP, or a Unix socket.
-pub trait Socket: Duplex + Send + 'static {
+pub trait Socket: Duplex + Linger + Send + 'static {
     /// Sets the socket's read timeout.
     fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()>;
     /// Sets the socket's write timeout.

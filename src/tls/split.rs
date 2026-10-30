@@ -15,6 +15,7 @@ use super::{to_io, TlsVersion};
 use crate::error::Error;
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::time::{Duration, Instant};
 
 /// A transport that can hand out a second handle to itself (a duplicate of a socket), so that one handle reads while the
 /// other writes: what [`TlsStream::split`](super::TlsStream::split) needs. Implemented for `TcpStream` and, on Unix, for
@@ -34,6 +35,52 @@ impl Duplex for std::net::TcpStream {
 impl Duplex for std::os::unix::net::UnixStream {
     fn duplicate(&self) -> io::Result<Self> {
         self.try_clone()
+    }
+}
+
+/// A transport that can be closed gently: what a [`ServerStream`](super::server::ServerStream) does once it has sent a
+/// fatal alert, so that the client reads why it was refused. Closing a socket with bytes unread, or getting bytes after
+/// it was closed, makes the system reset the connection, and Windows throws away what it has received and not yet handed
+/// out when a reset comes: the alert, if the client had not read it yet (B-119). So the sending side is shut first and what
+/// the peer still sends is read and thrown away for a moment. Implemented for `TcpStream` and, on Unix, `UnixStream`; a
+/// transport that has nothing to wait for can do nothing.
+pub trait Linger {
+    /// Shuts the sending side, then reads and throws away what the peer still sends: until it closes, a read waits
+    /// 200 ms for nothing, a second has gone or 64 KiB have come, whichever is first.
+    fn linger(&mut self);
+}
+
+impl Linger for std::net::TcpStream {
+    fn linger(&mut self) {
+        let _ = self.shutdown(std::net::Shutdown::Write);
+        let _ = self.set_read_timeout(Some(LINGER_QUIET));
+        discard(self);
+    }
+}
+
+#[cfg(unix)]
+impl Linger for std::os::unix::net::UnixStream {
+    fn linger(&mut self) {
+        let _ = self.shutdown(std::net::Shutdown::Write);
+        let _ = self.set_read_timeout(Some(LINGER_QUIET));
+        discard(self);
+    }
+}
+
+/// How long a read waits for more while a transport lingers ([`Linger`]).
+pub(crate) const LINGER_QUIET: Duration = Duration::from_millis(200);
+
+/// What a transport that lingers does once its sending side is shut and its reads wait at most [`LINGER_QUIET`]: reads
+/// and throws away what comes, for a second or 64 KiB at most, until the end or an error (a read that waited for nothing).
+pub(crate) fn discard<R: Read + ?Sized>(r: &mut R) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut buf = [0u8; 8192];
+    let mut total = 0;
+    while Instant::now() < deadline && total < 64 * 1024 {
+        match r.read(&mut buf) {
+            Ok(0) | Err(_) => return,
+            Ok(n) => total += n,
+        }
     }
 }
 
