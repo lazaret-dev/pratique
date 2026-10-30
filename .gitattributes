@@ -1,0 +1,4 @@
+# Every file as it is committed, byte for byte, on every system: no line-ending conversion. The tests read their
+# fixtures as bytes (signed notes, checkpoints, tiles, keys, fuzz inputs), and a checkout that wrote CRLF, as Git for
+# Windows' core.autocrlf does, broke their signatures (B-119). Lazaret's take of the library says the same.
+* -text
