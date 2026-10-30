@@ -1417,11 +1417,14 @@ impl Wire {
                         e.kind(),
                         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                     ) => {}
-                // a server that closes with something of ours unread resets the connection
+                // a server that closes with something of ours unread resets the connection (which Windows may report
+                // as aborted, WSAECONNABORTED, when the reset comes while it still has ours to send: windows-latest,
+                // Oct 30)
                 Err(e)
                     if matches!(
                         e.kind(),
                         std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
                             | std::io::ErrorKind::BrokenPipe
                             | std::io::ErrorKind::UnexpectedEof
                     ) =>

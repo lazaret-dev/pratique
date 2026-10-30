@@ -553,7 +553,9 @@ pub(super) struct Shared {
     /// How many times callers, and the reader thread, took in what a read had left in the receive buffer.
     #[cfg(test)]
     leftovers: [AtomicUsize; 2],
-    /// How many times the writer thread was woken.
+    /// How many times the writer thread was woken: asked to send, asleep. (Counted where it is asked, not where its wait
+    /// returns: a condition variable may wake without being told, as one did on windows-11-arm, Oct 30, which the writer
+    /// sleeps through, and which no caller made.)
     #[cfg(test)]
     writer_wakes: AtomicUsize,
     /// How many times the reader thread came back of itself from staying out of the way and found a caller asleep that
@@ -1138,8 +1140,6 @@ impl Shared {
                     self.writer_asleep.store(true, Ordering::SeqCst);
                     g = self.to_writer.wait(g).unwrap_or_else(|e| e.into_inner());
                     self.writer_asleep.store(false, Ordering::SeqCst);
-                    #[cfg(test)]
-                    self.writer_wakes.fetch_add(1, Ordering::Relaxed);
                 }
             }
             let mut outbox = self.outbox.lock().unwrap_or_else(|e| e.into_inner());
@@ -1212,6 +1212,8 @@ impl Shared {
     /// so with `state` held) and is woken here.
     fn notify_writer(&self) {
         if self.writer_asleep.load(Ordering::SeqCst) {
+            #[cfg(test)]
+            self.writer_wakes.fetch_add(1, Ordering::Relaxed);
             self.to_writer.notify_all();
         }
     }
