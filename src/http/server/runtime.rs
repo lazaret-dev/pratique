@@ -936,9 +936,13 @@ fn stop(inner: &Inner, addrs: &[SocketAddr], grace: Duration) {
         }
         let _ = TcpStream::connect_timeout(&a, Duration::from_secs(1));
     }
-    let entries: Vec<Arc<ConnEntry>> = inner.conns().open.values().cloned().collect();
-    for e in &entries {
-        e.ctl.begin_close();
+    // (the entries are let go of before the wait: each holds a handle to its connection's socket, which would keep a
+    // connection that ends now, an idle one, open until the shutdown was over, its client told nothing: B-119)
+    {
+        let entries: Vec<Arc<ConnEntry>> = inner.conns().open.values().cloned().collect();
+        for e in &entries {
+            e.ctl.begin_close();
+        }
     }
     let deadline = Instant::now() + grace;
     let mut conns = inner.conns();
