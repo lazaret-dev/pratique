@@ -25,7 +25,7 @@ use super::{
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError, Weak};
 use std::time::{Duration, Instant};
 
 pub(super) const PREFACE: &[u8] = frame::PREFACE;
@@ -1520,8 +1520,11 @@ struct Shared {
     /// How long a handler waits for more of its body, and for room to send (none without the runtime).
     body_wait: Option<Duration>,
     write_wait: Option<Duration>,
-    /// The runtime's hold on the connection: how its reading is stopped.
-    ctl: Arc<Ctl>,
+    /// The runtime's hold on the connection: how its reading is stopped. Weak: `Shared` outlives the connection when a
+    /// handler keeps its request's body, and the hold has a handle to the socket, which a strong one would keep open,
+    /// the client told nothing, for as long as the body is kept (HTTP/1.1 guards against the same: `serve_with`'s
+    /// `Closer`).
+    ctl: Weak<Ctl>,
     /// The server is shutting down (we said GOAWAY): once no stream is left and everything is sent, the connection's
     /// reading is stopped by whoever sent the last of it, while it still holds the right to send (B-119).
     stop_when_sent: AtomicBool,
@@ -1613,7 +1616,10 @@ impl Shared {
                 }
             };
             if stop {
-                self.ctl.stop();
+                // (gone only once the connection is over, with nothing left to stop)
+                if let Some(ctl) = self.ctl.upgrade() {
+                    ctl.stop();
+                }
             }
             drop(guard);
             if self.engine().out.is_empty() {
@@ -1803,7 +1809,7 @@ pub(super) fn serve_after_preface(
         out: Mutex::new(Some(writer)),
         body_wait: runtime.then_some(ctl.limits.body_wait),
         write_wait: runtime.then_some(ctl.limits.write_timeout),
-        ctl: ctl.clone(),
+        ctl: Arc::downgrade(&ctl),
         stop_when_sent: AtomicBool::new(false),
     });
     shared.send(true)?;
