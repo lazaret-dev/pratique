@@ -1233,6 +1233,51 @@ fn an_alert_is_one_record_even_when_records_are_one_byte() {
 }
 
 #[test]
+fn a_key_update_that_asks_for_one_is_answered_unless_the_server_has_sent_close_notify() {
+    // RFC 8446 section 6.1: nothing is sent after close_notify. The server answered a KeyUpdate that asked it to update
+    // too whenever one came, and since B-120 an HTTP/2 connection is read on after the server's close_notify, so that
+    // answer would have been a record after it (the review of round 7 of B-119's branch, its LOW-3). The client does not
+    // answer once it has closed (B-39); nor does the server now.
+    let suite = Suite::Aes128GcmSha256;
+    for closed in [false, true] {
+        let (mut conn, flight) = first_flight(
+            default_config().with_suites(&[suite]).with_tickets(0),
+            &HelloBuilder::new(),
+        );
+        conn.receive(&flight.client_finished_record(None));
+        conn.process().unwrap();
+        let n = conn.output().len();
+        conn.consume_output(n);
+        if closed {
+            conn.send_close_notify();
+            let n = conn.output().len();
+            assert!(n > 0, "the close_notify");
+            conn.consume_output(n);
+        }
+        let (c_ap, s_ap) = flight.application_secrets();
+        let asks = handshake_message(HS_KEY_UPDATE, &[1]);
+        conn.receive(&RecordCipher::new(suite, &c_ap).encrypt(RT_HANDSHAKE, &asks));
+        conn.process().unwrap();
+        if closed {
+            assert!(
+                conn.output().is_empty() && !conn.wants_write(),
+                "{} bytes queued after close_notify",
+                conn.output().len()
+            );
+        } else {
+            let out = conn.output().to_vec();
+            let (t, plain) = RecordCipher::new(suite, &s_ap)
+                .decrypt(&out[..5].try_into().unwrap(), &out[5..])
+                .unwrap();
+            assert_eq!(
+                (t, plain),
+                (RT_HANDSHAKE, handshake_message(HS_KEY_UPDATE, &[0]))
+            );
+        }
+    }
+}
+
+#[test]
 fn a_wrong_client_finished_is_refused_with_decrypt_error_and_a_damaged_one_with_bad_record_mac() {
     // the right record, but a MAC over something else
     let (mut conn, flight) = first_flight(

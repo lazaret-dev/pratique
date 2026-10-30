@@ -1889,8 +1889,10 @@ impl ServerConnection {
                     }
                     let next = self.read_cipher.as_ref().map(|c| c.next_generation());
                     self.read_cipher = next;
-                    if msg[4] == 1 {
-                        // asked to update too: answer under the old keys, then rotate
+                    if msg[4] == 1 && !self.sent_close_notify {
+                        // asked to update too: answer under the old keys, then rotate (unless we have sent close_notify:
+                        // nothing is sent after that, RFC 8446 section 6.1, and our keys are not used again; as the
+                        // client does, B-39)
                         self.send_key_update(false)?;
                     }
                 }
