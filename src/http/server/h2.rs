@@ -20,7 +20,7 @@ use super::h1::valid_authority;
 use super::runtime::{Ctl, GoAway, Pending};
 use super::{
     call, response_head, Body, BodySink, BodySource, BodyWriter, ConnInfo, H2Config, Handler,
-    HttpConfig, Request, Response, ResponseBody, Upgraded, Version,
+    HttpConfig, Inbound, Request, Response, ResponseBody, Upgraded, Version,
 };
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read, Write};
@@ -1735,7 +1735,7 @@ impl Drop for TunnelOut {
 
 /// Serves an HTTP/2 connection whose preface has not been read yet.
 pub(super) fn serve(
-    mut reader: Box<dyn Read + Send>,
+    mut reader: Box<dyn Inbound>,
     writer: Box<dyn Write + Send>,
     info: Arc<ConnInfo>,
     handler: Arc<dyn Handler>,
@@ -1754,14 +1754,28 @@ pub(super) fn serve(
             b"the client did not begin with the connection preface",
         );
         let _ = writer.write_all(&out);
+        drop(writer);
+        linger_after_goaway(&mut *reader, &ctl);
         return Ok(());
     }
     serve_after_preface(reader, writer, info, handler, config, ctl)
 }
 
+/// After a GOAWAY that ends the connection with an error. The client may still be sending (a flood is), and closing with
+/// its bytes unread makes the system reset the connection, which can destroy the GOAWAY before the client reads it:
+/// Windows throws away what it has received and not yet handed out when a reset comes (B-119). So, as an HTTP/1.1
+/// refusal does, the sending side is closed and what still comes is read for a little while (a second or 64 KiB at
+/// most, and no more than 200 ms of silence) before the connection is closed.
+fn linger_after_goaway(reader: &mut dyn Inbound, ctl: &Ctl) {
+    if let Some(t) = &ctl.timer {
+        t.each(Duration::from_millis(200));
+    }
+    reader.linger();
+}
+
 /// Serves an HTTP/2 connection whose preface has been read.
 pub(super) fn serve_after_preface(
-    mut reader: Box<dyn Read + Send>,
+    mut reader: Box<dyn Inbound>,
     writer: Box<dyn Write + Send>,
     info: Arc<ConnInfo>,
     handler: Arc<dyn Handler>,
@@ -1783,6 +1797,8 @@ pub(super) fn serve_after_preface(
     let config = Arc::new(config.clone());
     // the handlers of this connection's streams that have not returned: the connection waits for them before it ends
     let running = Arc::new((Mutex::new(0usize), Condvar::new()));
+    // whether the connection ended with a GOAWAY of ours that says what the client did wrong
+    let mut lost_with_goaway = false;
     let result = (|| -> io::Result<()> {
         let mut buf = vec![0u8; 64 * 1024];
         let result = loop {
@@ -1841,6 +1857,7 @@ pub(super) fn serve_after_preface(
                 Ok(new) => new,
                 Err(lost) => {
                     let _ = shared.send(true);
+                    lost_with_goaway = true;
                     break Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!(
@@ -1900,6 +1917,9 @@ pub(super) fn serve_after_preface(
     let _ = shared.send(true);
     if let Some(mut w) = shared.out.lock().unwrap_or_else(|e| e.into_inner()).take() {
         let _ = w.flush();
+    }
+    if lost_with_goaway {
+        linger_after_goaway(&mut *reader, &ctl);
     }
     result
 }

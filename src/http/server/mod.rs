@@ -70,6 +70,7 @@ pub use runtime::{
 };
 
 use crate::tls::server::ServerStream;
+use crate::tls::server_split::ServerReadHalf;
 use crate::tls::Duplex;
 use std::fmt;
 use std::io::{self, Read, Write};
@@ -310,6 +311,27 @@ impl<S: Socket> Transport for Tls<S> {
     fn linger(&mut self) {
         let _ = self.0.close();
         runtime::linger(self.0.get_mut());
+    }
+}
+
+/// The reading side of an HTTP/2 connection, which can also, once a GOAWAY has ended the connection with an error, stop
+/// the sending side and read what the client is still sending, a little ([`runtime::linger`]).
+pub(crate) trait Inbound: Read + Send {
+    fn linger(&mut self);
+}
+
+impl<S: Socket> Inbound for S {
+    fn linger(&mut self) {
+        runtime::linger(self);
+    }
+}
+
+impl<S: Socket> Inbound for ServerReadHalf<S> {
+    fn linger(&mut self) {
+        // (the writing half, gone by now, has said close_notify: what the client still sends is read as bytes)
+        if let Ok(mut socket) = self.get_ref().duplicate() {
+            runtime::linger(&mut socket);
+        }
     }
 }
 
