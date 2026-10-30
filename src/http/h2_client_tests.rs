@@ -1809,7 +1809,10 @@ fn a_caller_who_reads_hands_the_socket_to_the_reader_thread_when_its_own_respons
 
 /// Starts requests on `conn` until one has been given the right to read the socket (when nothing is in flight the reader thread
 /// stays out of the way for a moment after the last request, see `PARK_WINDOW`; a loaded machine can make that moment pass, and
-/// then the request that was started is finished and another is tried).
+/// then the request that was started is finished and another is tried). A request that did not lead is read whole, whatever its
+/// size: with a limit of 1,000 bytes, as this had, the download of 4 MB that some tests start failed ("exceeds the configured
+/// size limit") whenever its first try did not lead, which is what made
+/// `what_a_full_buffer_leaves_undecrypted_is_taken_in_by_whoever_reads_next` fail on a busy machine (B-119).
 fn start_with_the_right_to_read(
     conn: &Arc<Shared>,
     request: &Request<'_>,
@@ -1820,7 +1823,8 @@ fn start_with_the_right_to_read(
         if s.leads() {
             return s;
         }
-        s.response(1000, waits).unwrap_or_else(|f| panic!("{f:?}"));
+        s.response(1 << 23, waits)
+            .unwrap_or_else(|f| panic!("{f:?}"));
         thread::sleep(Duration::from_millis(1));
     }
     panic!("no request was given the right to read the socket when it started");
@@ -2579,12 +2583,27 @@ fn a_whole_download_on_a_connection_that_was_left_alone_is_not_held_up_by_the_re
 
 #[test]
 fn an_upload_that_waits_for_window_credit_on_a_connection_that_was_left_alone_is_not_held_up() {
+    // 30 MB through a stream window of 1 MiB: the upload waits for the server's credit some thirty times, on a connection
+    // left alone (its reader thread out of the way, then reading again). If nobody read that credit when the upload
+    // waited, it would wait for a reader to come by, up to a second each time. The bound was 800 ms, which an
+    // unoptimized build on a busy machine does not keep for 30 MB (951 ms on Lazaret's runner, Oct 30, as often before
+    // B-119's branch as on it); it is now relative to a download of 12 MB on the same connection, timed just before, in
+    // which nobody waits for credit: the upload, two and a half times the bytes, may take four times as long, and half a
+    // second more.
     let server = H2Server::start(sizes_and_delays);
     let client = server.client();
+    // (the first big transfer of a server is slow, whoever reads: it is not what is looked at)
     assert_eq!(
         client.get(&server.url("/n/12000000")).unwrap().body.len(),
         12_000_000
     );
+    thread::sleep(Duration::from_millis(100));
+    let started = Instant::now();
+    assert_eq!(
+        client.get(&server.url("/n/12000000")).unwrap().body.len(),
+        12_000_000
+    );
+    let download = started.elapsed();
     thread::sleep(Duration::from_millis(100));
     let started = Instant::now();
     let r = client
@@ -2592,7 +2611,11 @@ fn an_upload_that_waits_for_window_credit_on_a_connection_that_was_left_alone_is
         .unwrap();
     let took = started.elapsed();
     assert_eq!(r.text(), "hello /up");
-    assert!(took < Duration::from_millis(800), "took {took:?}");
+    let bound = download * 4 + Duration::from_millis(500);
+    assert!(
+        took < bound,
+        "took {took:?}, against {bound:?} (the download of 12 MB took {download:?})"
+    );
 }
 
 #[test]
