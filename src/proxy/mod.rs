@@ -701,11 +701,15 @@ impl Duplex for TunnelSocket {
 }
 
 impl crate::tls::Linger for TunnelSocket {
+    /// The tunnel cannot shut its sending side, nor bound a read but by its connection's timer: without one (a proxy run
+    /// without the runtime) a read could wait until the client closes, so it does not linger.
     fn linger(&mut self) {
-        if let Some(t) = &self.ctl.timer {
-            t.each(crate::tls::LINGER_QUIET);
-        }
-        crate::http::server::runtime::linger(self);
+        let Some(timer) = self.ctl.timer.clone() else {
+            return;
+        };
+        let most = Instant::now() + crate::tls::LINGER_MOST;
+        let until = timer.deadline().map_or(most, |d| d.min(most));
+        crate::tls::discard(self, until, |_, wait| timer.each(wait));
     }
 }
 

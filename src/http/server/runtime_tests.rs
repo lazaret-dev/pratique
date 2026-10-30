@@ -1134,8 +1134,40 @@ impl crate::tls::Duplex for CancelledOnce {
     }
 }
 
-impl crate::tls::Linger for CancelledOnce {
-    fn linger(&mut self) {}
+impl crate::tls::Linger for CancelledOnce {}
+
+#[test]
+fn a_socket_that_lingers_stops_at_the_deadline_on_its_timer_if_that_comes_first() {
+    // a client that keeps sending a little, so that no read waits 200 ms for nothing: the linger ends at the deadline the
+    // timer had (300 ms away, the handshake's, say), not a second after it began
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (socket, _) = listener.accept().unwrap();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let trickle = {
+        let mut client = client.try_clone().unwrap();
+        let stop = stop.clone();
+        thread::spawn(move || {
+            while !stop.load(Ordering::SeqCst) {
+                if client.write_all(b"x").is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        })
+    };
+    let timer = runtime::Timer::new();
+    timer.until(Instant::now() + Duration::from_millis(300));
+    let mut timed = runtime::Timed::new(socket, timer, Duration::from_secs(5)).unwrap();
+    let start = Instant::now();
+    crate::tls::Linger::linger(&mut timed);
+    let took = start.elapsed();
+    stop.store(true, Ordering::SeqCst);
+    trickle.join().unwrap();
+    assert!(
+        took < Duration::from_millis(700),
+        "lingering took {took:?}, with the deadline on the timer 300 ms away and a client that sends a byte every 20 ms"
+    );
 }
 
 #[test]

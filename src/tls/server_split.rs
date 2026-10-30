@@ -202,7 +202,7 @@ impl<S: Duplex + Linger> Read for ServerReadHalf<S> {
                     return Ok(0);
                 }
                 if let Err(e) = conn.process() {
-                    let alerted = conn.alerted();
+                    let alerted = conn.take_alerted();
                     drop(conn);
                     if alerted {
                         self.shared.send_alert_and_linger(&mut self.io);

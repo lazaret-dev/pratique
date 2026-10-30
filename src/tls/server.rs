@@ -809,9 +809,10 @@ impl ServerConnection {
         self.failed
     }
 
-    /// True once a fatal error has queued a fatal alert (see [`Linger`](super::Linger)).
-    pub(crate) fn alerted(&self) -> bool {
-        self.alerted
+    /// True the first time it is asked after a fatal error has queued a fatal alert (see [`Linger`](super::Linger)): the
+    /// stream closes gently once, not again at each read that follows.
+    pub(crate) fn take_alerted(&mut self) -> bool {
+        std::mem::take(&mut self.alerted)
     }
 
     pub fn cipher_suite(&self) -> Option<Suite> {
@@ -2013,7 +2014,7 @@ impl<S: Read + Write> ServerStream<S> {
         S: super::Linger,
     {
         let sent = self.send_output().and_then(|_| self.io.flush()).is_ok();
-        if sent && self.conn.alerted() {
+        if self.conn.take_alerted() && sent {
             self.io.linger();
         }
     }

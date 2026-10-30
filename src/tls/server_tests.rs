@@ -2053,8 +2053,9 @@ impl Linger for Counted {
     // (TcpStream's, reading through the count)
     fn linger(&mut self) {
         let _ = self.io.shutdown(std::net::Shutdown::Write);
-        let _ = self.io.set_read_timeout(Some(LINGER_QUIET));
-        discard(self);
+        discard(self, std::time::Instant::now() + LINGER_MOST, |s, wait| {
+            let _ = s.io.set_read_timeout(Some(wait));
+        });
     }
 }
 
@@ -2142,6 +2143,52 @@ fn a_fatal_alert_after_the_handshake_reaches_a_client_whose_bytes_the_server_had
         assert_eq!(
             t.read, t.sent,
             "split {split}: the server read all that the client sent before it closed (the server: {server:?})"
+        );
+    }
+}
+
+#[test]
+fn a_read_after_a_fatal_alert_fails_at_once_and_does_not_linger_again() {
+    // the stream lingers once, after it sends the alert; a read after that fails at once, where lingering again would wait
+    // 200 ms for a client that stays and sends nothing (and the split reading half would hold the right to send meanwhile)
+    for split in [false, true] {
+        let (server, client) = setup(&["server.test"]);
+        let (port, handle) = serve_one(
+            server,
+            move |s| -> std::result::Result<(String, Duration), String> {
+                let mut buf = [0u8; 16];
+                if split {
+                    let (mut r, _w) = s.split().map_err(|e| e.to_string())?;
+                    let first = r.read(&mut buf).map_err(|e| e.to_string());
+                    let t = std::time::Instant::now();
+                    let second = r.read(&mut buf).map_err(|e| e.to_string());
+                    Ok((format!("{first:?} then {second:?}"), t.elapsed()))
+                } else {
+                    let mut s = s;
+                    let first = s.read(&mut buf).map_err(|e| e.to_string());
+                    let t = std::time::Instant::now();
+                    let second = s.read(&mut buf).map_err(|e| e.to_string());
+                    Ok((format!("{first:?} then {second:?}"), t.elapsed()))
+                }
+            },
+        );
+        let mut c = connect(port, "server.test", &client).unwrap();
+        let mut bad = vec![RT_APPLICATION_DATA, 3, 3, 0, 32];
+        bad.resize(5 + 32, 0);
+        c.get_mut().write_all(&bad).unwrap();
+        let mut buf = [0u8; 16];
+        let heard = c.read(&mut buf).map_err(|e| e.to_string());
+        let (_, end) = read_until_the_end(c.get_mut());
+        // (the client stays, sending nothing, until the server has read twice)
+        let (reads, second) = handle.join().unwrap().unwrap().unwrap();
+        drop(c);
+        assert!(
+            heard.as_ref().is_err_and(|e| e.contains("description 20")) && end.is_ok(),
+            "split {split}: the client hears bad_record_mac and then the end: {heard:?}, {end:?}"
+        );
+        assert!(
+            second < Duration::from_millis(150),
+            "split {split}: the read after the alert took {second:?} (the server's reads: {reads})"
         );
     }
 }

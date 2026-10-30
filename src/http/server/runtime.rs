@@ -47,7 +47,7 @@
 use super::{Handler, HttpConfig, Socket, Version};
 use crate::tls::certs::{CertStore, CertifiedKey};
 use crate::tls::server::{ServerConfig, ServerStream};
-use crate::tls::{discard, Duplex, Linger, LINGER_QUIET};
+use crate::tls::{discard, Duplex, Linger, LINGER_MOST};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -154,6 +154,20 @@ impl Timer {
     /// No deadline.
     pub(crate) fn none(&self) {
         *self.lock() = ReadLimit::None;
+    }
+
+    /// When reads end, if they end at a time: the phase's deadline, or where its minimum rate puts it now.
+    pub(crate) fn deadline(&self) -> Option<Instant> {
+        match *self.lock() {
+            ReadLimit::None | ReadLimit::Each(_) => None,
+            ReadLimit::Until(t) => Some(t),
+            ReadLimit::Rate {
+                start,
+                grace,
+                rate,
+                read,
+            } => Some(start + grace + Duration::from_secs_f64(read as f64 / rate as f64)),
+        }
     }
 
     /// How long the next read may wait (`None`: as long as it likes); an error if the time is up.
@@ -287,10 +301,14 @@ impl<S: Socket> Duplex for Timed<S> {
 }
 
 impl<S: Socket> Linger for Timed<S> {
+    /// As a socket lingers, but its reads keep to the connection's timer, not to the socket's timeout, and it lingers
+    /// no later than the deadline the timer had (the handshake's, say), which the timer's 200 ms a read replace.
     fn linger(&mut self) {
-        // (its reads keep to the connection's timer, not to the socket's timeout: the handshake's deadline, say)
-        self.timer.each(LINGER_QUIET);
-        linger(self);
+        let most = Instant::now() + LINGER_MOST;
+        let until = self.timer.deadline().map_or(most, |d| d.min(most));
+        self.shutdown_write();
+        let timer = self.timer.clone();
+        discard(self, until, |_, wait| timer.each(wait));
     }
 }
 
@@ -1265,6 +1283,7 @@ pub fn refresh_ocsp_staples(
 /// data makes the system reset the connection, which can destroy the answer before the client reads it).
 pub(crate) fn linger<S: Socket>(socket: &mut S) {
     socket.shutdown_write();
-    let _ = socket.set_read_timeout(Some(LINGER_QUIET));
-    discard(socket);
+    discard(socket, Instant::now() + LINGER_MOST, |s, wait| {
+        let _ = s.set_read_timeout(Some(wait));
+    });
 }

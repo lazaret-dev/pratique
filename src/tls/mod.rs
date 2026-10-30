@@ -61,7 +61,8 @@ pub mod tls12;
 pub use conn::ClientConnection;
 pub(crate) use conn::RecvBuf;
 pub use session::Resumption;
-pub(crate) use split::{discard, LINGER_QUIET};
+#[cfg(any(test, feature = "server"))]
+pub(crate) use split::{discard, LINGER_MOST};
 pub use split::{Duplex, Linger, TlsReadHalf, TlsWriteHalf};
 pub use suite::Suite;
 
