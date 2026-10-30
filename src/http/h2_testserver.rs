@@ -42,6 +42,8 @@ type Handler = Arc<dyn Fn(&Seen) -> Vec<Step> + Send + Sync>;
 pub(crate) struct H2Server {
     pub(crate) port: u16,
     connections: Arc<AtomicUsize>,
+    handshakes: Arc<AtomicUsize>,
+    peers: Arc<Mutex<Vec<String>>>,
     ended: Arc<AtomicUsize>,
     requests: Arc<Mutex<Vec<Seen>>>,
     complaints: Arc<Mutex<Vec<String>>>,
@@ -69,14 +71,18 @@ impl H2Server {
         let port = listener.local_addr().unwrap().port();
         listener.set_nonblocking(true).unwrap();
         let connections = Arc::new(AtomicUsize::new(0));
+        let handshakes = Arc::new(AtomicUsize::new(0));
+        let peers = Arc::new(Mutex::new(Vec::new()));
         let ended = Arc::new(AtomicUsize::new(0));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let complaints = Arc::new(Mutex::new(Vec::new()));
         let open = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
         {
-            let (connections, ended, requests, complaints, open, stop) = (
+            let (connections, handshakes, peers, ended, requests, complaints, open, stop) = (
                 connections.clone(),
+                handshakes.clone(),
+                peers.clone(),
                 ended.clone(),
                 requests.clone(),
                 complaints.clone(),
@@ -89,15 +95,21 @@ impl H2Server {
                         Ok((stream, _)) => {
                             stream.set_nonblocking(false).unwrap();
                             let conn = connections.fetch_add(1, Ordering::SeqCst);
+                            peers.lock().unwrap().push(
+                                stream
+                                    .peer_addr()
+                                    .map_or_else(|e| e.to_string(), |a| a.to_string()),
+                            );
                             let raw = stream.try_clone().unwrap();
                             open.lock().unwrap().push(stream.try_clone().unwrap());
-                            let (handler, requests, complaints, tls, settings, ended) = (
+                            let (handler, requests, complaints, tls, settings, ended, handshakes) = (
                                 handler.clone(),
                                 requests.clone(),
                                 complaints.clone(),
                                 tls.clone(),
                                 settings.clone(),
                                 ended.clone(),
+                                handshakes.clone(),
                             );
                             thread::spawn(move || {
                                 let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
@@ -105,6 +117,7 @@ impl H2Server {
                                     ended.fetch_add(1, Ordering::SeqCst);
                                     return;
                                 };
+                                handshakes.fetch_add(1, Ordering::SeqCst);
                                 let mut server = ServerConn::new(settings);
                                 let mut on_request = |r: &Request| {
                                     let seen = Seen {
@@ -141,6 +154,8 @@ impl H2Server {
         H2Server {
             port,
             connections,
+            handshakes,
+            peers,
             ended,
             requests,
             complaints,
@@ -163,6 +178,17 @@ impl H2Server {
 
     pub(crate) fn connections(&self) -> usize {
         self.connections.load(Ordering::SeqCst)
+    }
+
+    /// How many of the accepted connections finished the TLS handshake: those of a client that trusts this server's root,
+    /// which a stray connection from another test's client, or a socket that only connects, does not.
+    pub(crate) fn handshakes(&self) -> usize {
+        self.handshakes.load(Ordering::SeqCst)
+    }
+
+    /// Where each accepted connection came from, in the order they came.
+    pub(crate) fn peers(&self) -> Vec<String> {
+        self.peers.lock().unwrap().clone()
     }
 
     pub(crate) fn requests(&self) -> Vec<Seen> {

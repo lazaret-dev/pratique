@@ -1394,6 +1394,21 @@ impl Shared {
         }
     }
 
+    /// How the connection looks, in words (tests of the transport).
+    #[cfg(test)]
+    fn described(&self) -> String {
+        let g = self.lock();
+        format!(
+            "closing {}, lost {:?}, usable {}, {} streams, can open one {}, retired {}",
+            g.closing,
+            g.lost,
+            g.h2.usable(),
+            g.h2.active_streams(),
+            g.h2.can_open_stream(),
+            g.retired
+        )
+    }
+
     /// How many times the writer thread was woken (tests of the transport).
     #[cfg(test)]
     pub(super) fn writer_wakes(&self) -> usize {
@@ -2094,27 +2109,21 @@ impl Registry {
             // the least loaded of those that can take a stream (one look at each connection)
             let mut best: Option<(usize, &Arc<Shared>)> = None;
             let mut dead = false;
+            // (tests: how the connections that could not take the request looked, for the record of a dial; nothing is
+            // done for one that can, so a request on a connection that takes it pays nothing for the record)
             #[cfg(test)]
-            let looked: Vec<String> = origin
-                .conns
-                .iter()
-                .map(|c| {
-                    let g = c.lock();
-                    format!(
-                        "closing {}, lost {:?}, usable {}, {} streams, can open one {}, retired {}",
-                        g.closing,
-                        g.lost,
-                        g.h2.usable(),
-                        g.h2.active_streams(),
-                        g.h2.can_open_stream(),
-                        g.retired
-                    )
-                })
-                .collect();
+            let mut looked: Vec<String> = Vec::new();
             for c in &origin.conns {
                 match c.probe() {
-                    Probe::Dead => dead = true,
-                    Probe::Full => {}
+                    Probe::Dead => {
+                        dead = true;
+                        #[cfg(test)]
+                        looked.push(c.described());
+                    }
+                    Probe::Full => {
+                        #[cfg(test)]
+                        looked.push(c.described());
+                    }
                     Probe::Open(load) => {
                         if best.is_none_or(|(l, _)| load < l) {
                             best = Some((load, c));
@@ -2138,7 +2147,11 @@ impl Registry {
                 self.dials
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
-                    .push(format!("with {:?}", looked));
+                    .push(format!(
+                        "{} connections left alive; those that could not take the request: {:?}",
+                        origin.conns.len(),
+                        looked
+                    ));
                 origin.dialing = true;
                 return Ok(Acquired::Dial(Ticket {
                     registry: self.clone(),

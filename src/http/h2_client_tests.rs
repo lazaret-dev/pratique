@@ -2516,15 +2516,21 @@ fn a_download_that_starts_on_a_connection_left_alone_is_taken_over_by_its_caller
         callers >= 5 && callers > 3 * reader,
         "callers read {callers} times, the reader thread {reader}"
     );
-    // one connection: the client dialed once, and every request came on one connection. (The server counts the connections
-    // it accepts, whoever makes them: on windows-latest it once counted two here, GitHub run 41089735856.)
+    // one connection: the client dialed once, one connection finished the handshake, and every request came on it. The
+    // server counts every connection it accepts, whoever makes it (on windows-latest it once counted two here, GitHub run
+    // 41089735856); a stray one, from another test's client or a socket that only connects, cannot finish the handshake
+    // against this test's root, so it is told from a second connection of this client by the handshakes, and the
+    // addresses say where each came from.
     let dials = client.h2_dials();
     let used: std::collections::BTreeSet<usize> =
         server.requests().iter().map(|s| s.conn).collect();
     assert!(
-        dials.len() == 1 && used.len() == 1,
-        "the client dialed {dials:?}; requests came on the server's connections {used:?}, of {} it accepted ({} ended)",
+        dials.len() == 1 && server.handshakes() == 1 && used.len() == 1,
+        "the client dialed {} times ({dials:?}); {} connections finished the handshake, of {} accepted, from {:?} ({} ended); requests came on the server's connections {used:?}",
+        dials.len(),
+        server.handshakes(),
         server.connections(),
+        server.peers(),
         server.ended_connections()
     );
 }
@@ -2589,13 +2595,22 @@ fn a_whole_download_on_a_connection_that_was_left_alone_is_not_held_up_by_the_re
         client.get(&server.url("/n/12000000")).unwrap().body.len(),
         12_000_000
     );
-    thread::sleep(Duration::from_millis(100));
-    let started = Instant::now();
-    let r = client.get(&server.url("/n/12000000")).unwrap();
-    let took = started.elapsed();
-    assert_eq!(r.body.len(), 12_000_000);
-    // (a pause of the reader thread after each of its reads, which are of 256 KiB, would make it a second at least)
-    assert!(took < Duration::from_millis(800), "took {took:?}");
+    // A pause of the reader thread after each of its reads, which are of 256 KiB, would make every download a second at
+    // least: the quickest of three, each on a connection left alone, is held to 800 ms. (One download, timed alone, took
+    // 850 ms and 1.0 s now and then under the load of the module's other tests: the review of round 11's runs.)
+    let mut took = Vec::new();
+    for _ in 0..3 {
+        thread::sleep(Duration::from_millis(100));
+        let started = Instant::now();
+        let r = client.get(&server.url("/n/12000000")).unwrap();
+        took.push(started.elapsed());
+        assert_eq!(r.body.len(), 12_000_000);
+    }
+    let quickest = took.iter().min().copied().unwrap();
+    assert!(
+        quickest < Duration::from_millis(800),
+        "the quickest took {quickest:?} (all: {took:?})"
+    );
 }
 
 #[test]
