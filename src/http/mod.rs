@@ -958,6 +958,20 @@ impl Client {
         self.h2.as_ref().map_or((0, 0), |h2| h2.registry.reads())
     }
 
+    /// The HTTP/2 connections the client dialed: for each, how the connections it had to that origin looked then (tests
+    /// of the transport).
+    #[cfg(test)]
+    pub(crate) fn h2_dials(&self) -> Vec<String> {
+        self.h2.as_ref().map_or(Vec::new(), |h2| h2.registry.dials())
+    }
+
+    /// How many times the reader threads of the HTTP/2 connections came back of themselves, from staying out of the way, to
+    /// a caller who waited for the socket to be read and should have woken them (tests of the transport).
+    #[cfg(test)]
+    pub(crate) fn h2_late_wakes(&self) -> usize {
+        self.h2.as_ref().map_or(0, |h2| h2.registry.late_wakes())
+    }
+
     /// How many bytes of HTTP/2 bodies read in pieces went straight into the callers' buffers, and how many through the
     /// streams' buffers (tests of the transport).
     #[cfg(test)]

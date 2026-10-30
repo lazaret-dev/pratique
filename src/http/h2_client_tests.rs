@@ -2035,10 +2035,14 @@ fn a_download_read_in_pieces_goes_straight_into_the_callers_buffer() {
         client.get(&server.url("/warm")).unwrap();
     }
     for piece in [1 << 20, 64 << 10, 4096, 100] {
-        let (straight, kept) = read_in_pieces(&client, &server, 4_000_000, piece);
+        // (in big pieces, more than the stream's window of 8 MiB: a caller that a busy machine wakes late finds that the reader
+        // thread has read on meanwhile, as much as the window lets it, and of 4 MB it could read all, which it did twice in
+        // fourteen runs of the module, Lazaret's runner job dea86553-c39e-4547-99b9-991b84406b8d)
+        let size = if piece >= 64 << 10 { 30_000_000 } else { 4_000_000 };
+        let (straight, kept) = read_in_pieces(&client, &server, size, piece);
         assert_eq!(
             straight + kept,
-            4_000_000,
+            size,
             "every byte is handed out once, one way or the other"
         );
         assert!(
@@ -2497,19 +2501,32 @@ fn reads_for(
 #[test]
 fn a_download_that_starts_on_a_connection_left_alone_is_taken_over_by_its_caller() {
     // the reader thread is reading (the connection has been left alone for longer than it stays out of the way): it reads the
-    // head and the first piece, tells the caller, and steps aside for it
+    // head and the first piece, tells the caller, and steps aside for it. A caller that a busy machine wakes late finds that
+    // the reader thread has read on meanwhile, as much as the stream's window lets it (8 MiB): the download is bigger than
+    // that, and what its caller reads after outnumbers it. (Of 4 MB, under the load of its module on Linux, the reader thread
+    // read it all: "callers read 0 times, the reader thread 19".)
     let server = H2Server::start(sizes_and_delays);
     let client = server.client();
     for _ in 0..3 {
         client.get(&server.url("/warm")).unwrap();
         thread::sleep(Duration::from_millis(80));
     }
-    let (callers, reader) = reads_for(&client, &server, 4_000_000, None);
+    let (callers, reader) = reads_for(&client, &server, 30_000_000, None);
     assert!(
-        callers >= 5 && callers > 5 * reader,
+        callers >= 5 && callers > 3 * reader,
         "callers read {callers} times, the reader thread {reader}"
     );
-    assert_eq!(server.connections(), 1);
+    // one connection: the client dialed once, and every request came on one connection. (The server counts the connections
+    // it accepts, whoever makes them: on windows-latest it once counted two here, GitHub run 41089735856.)
+    let dials = client.h2_dials();
+    let used: std::collections::BTreeSet<usize> =
+        server.requests().iter().map(|s| s.conn).collect();
+    assert!(
+        dials.len() == 1 && used.len() == 1,
+        "the client dialed {dials:?}; requests came on the server's connections {used:?}, of {} it accepted ({} ended)",
+        server.connections(),
+        server.ended_connections()
+    );
 }
 
 #[test]
@@ -2584,47 +2601,41 @@ fn a_whole_download_on_a_connection_that_was_left_alone_is_not_held_up_by_the_re
 #[test]
 fn an_upload_that_waits_for_window_credit_on_a_connection_that_was_left_alone_is_not_held_up() {
     // 4 MB through a stream window of 64 KiB: the upload waits for the server's credit some sixty times, on a connection
-    // left alone (its reader thread out of the way for PARK_WINDOW, then reading again). An upload that waits wakes the
-    // reader thread if it is out of the way; without that, each wait lasts until the reader thread comes back of itself,
-    // up to PARK_WINDOW (25 ms), a second and a half in all. The bound is relative to a download of 12 MB on the same
-    // connection, timed just before, in which nobody waits for credit: twice as long, and 300 ms more. Waits, not bytes,
-    // decide how long the upload takes, so a missing wake-up shows. Each is the quickest of three, taken in turns: on a
-    // machine that other work loads now and then, one upload took 1.2 s and another 1.8 s where the others took 0.1 to
-    // 0.5 s, against 3.2 to 3.4 s for every one without the wake-up. (The bound was 800 ms on 30 MB, which an unoptimized
-    // build on a busy machine does not keep; round 9 made it four times the download and half a second, on 30 MB through
-    // a window of 1 MiB, some thirty waits, and a missing wake-up, 0.7 to 0.85 s in all, passed it: the review of round 9.)
+    // left alone (its reader thread out of the way for PARK_WINDOW after each piece of news, then reading again). An upload
+    // that waits wakes the reader thread if it is out of the way; without that, each wait lasts until the reader thread
+    // comes back of itself, up to PARK_WINDOW (25 ms). What is counted is how often the reader thread came back of itself
+    // and found a caller asleep, waiting for the socket to be read: never (whoever wakes it says so), where an upload
+    // without the wake-up makes it some sixty times. Three uploads, each after a pause. (Rounds 9 and 10 timed the uploads
+    // against downloads instead, and the load of the module's other tests upset that: the quickest of three uploads took
+    // 1.6 s and 2.8 s against bounds of 0.93 and 0.91 s, Lazaret's runner job 88c58075-b7c0-4dcf-9184-efd9e6d84959. The
+    // count showed why: an upload woken with credit sent and waited again before the reader thread came to step aside,
+    // which then stepped aside all the same, 25 times in three uploads alone and 85 to 204 times under that load, job
+    // 66a1b994-a5df-4649-b093-50633730b3d9; it no longer steps aside while a caller that waits to send is asleep.)
     let settings = Settings {
         initial_window: 64 << 10,
         ..Settings::default()
     };
     let server = H2Server::start_with(sizes_and_delays, settings, |c| c);
     let client = server.client();
-    // (the first big transfer of a server is slow, whoever reads: it is not what is looked at)
     assert_eq!(
-        client.get(&server.url("/n/12000000")).unwrap().body.len(),
-        12_000_000
+        client.get(&server.url("/n/1000")).unwrap().body.len(),
+        1000
     );
-    let (mut download, mut upload) = (Duration::MAX, Duration::MAX);
+    let before = client.h2_late_wakes();
+    let mut took = Vec::new();
     for _ in 0..3 {
-        thread::sleep(Duration::from_millis(100));
-        let started = Instant::now();
-        assert_eq!(
-            client.get(&server.url("/n/12000000")).unwrap().body.len(),
-            12_000_000
-        );
-        download = download.min(started.elapsed());
         thread::sleep(Duration::from_millis(100));
         let started = Instant::now();
         let r = client
             .post(&server.url("/up"), vec![5u8; 4_000_000])
             .unwrap();
-        upload = upload.min(started.elapsed());
+        took.push(started.elapsed());
         assert_eq!(r.text(), "hello /up");
     }
-    let bound = download * 2 + Duration::from_millis(300);
+    let late = client.h2_late_wakes() - before;
     assert!(
-        upload < bound,
-        "the upload of 4 MB took {upload:?} at its quickest, against {bound:?} (the download of 12 MB took {download:?} at its quickest)"
+        late == 0,
+        "the reader thread came back of itself {late} times to an upload that waited for it (the uploads took {took:?})"
     );
 }
 

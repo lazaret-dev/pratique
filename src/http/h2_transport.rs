@@ -190,6 +190,11 @@ struct Slot {
 }
 
 impl Slot {
+    /// Asleep waiting for news that only someone else's read of the socket can bring (with the state lock held).
+    fn stranded(&self) -> bool {
+        self.waiting.load(Ordering::Relaxed) && !self.can_lead.load(Ordering::Relaxed)
+    }
+
     fn new() -> Arc<Slot> {
         Arc::new(Slot {
             cv: Condvar::new(),
@@ -390,9 +395,14 @@ impl State {
 
     /// How much longer the reader thread is to stay out of the way, if it is to: after the last stream of the connection
     /// ended, and after it woke the caller of the one stream that is in flight with news for it (a response that is read
-    /// in pieces: that caller reads on, and reads the socket itself if nobody else does; see [`Reading`]).
+    /// in pieces: that caller reads on, and reads the socket itself if nobody else does; see [`Reading`]). Never while a
+    /// caller that cannot read the socket itself (one that waits to send, for window credit) is asleep waiting for news: it
+    /// went to sleep before this thread came to stay out of the way, so it could not wake it ([`Shared::wait_on`]). An
+    /// upload that waits for window credit is woken with the credit, sends, and waits again, often before this thread has
+    /// come back from waking it: it then waited for [`PARK_WINDOW`] each time. (A caller that can read the socket is
+    /// handed the right to by whoever has it, or takes it: see [`State::rest_baton`].)
     fn park_for(&self) -> Option<Duration> {
-        if self.closing {
+        if self.closing || self.slots.values().any(|s| s.stranded()) {
             return None;
         }
         let since = match self.h2.active_streams() {
@@ -546,6 +556,10 @@ pub(super) struct Shared {
     /// How many times the writer thread was woken.
     #[cfg(test)]
     writer_wakes: AtomicUsize,
+    /// How many times the reader thread came back of itself from staying out of the way and found a caller asleep that
+    /// cannot read the socket itself, waiting for it to be read: one who should have woken it (see [`Shared::wait_on`]).
+    #[cfg(test)]
+    late_wakes: AtomicUsize,
     /// A test can hold a caller that sends its own output at the moment it has found nothing more to send and is about to let
     /// go of the outbox (see [`Shared::send_now`]).
     #[cfg(test)]
@@ -633,6 +647,8 @@ pub(super) fn spawn(
         leftovers: [AtomicUsize::new(0), AtomicUsize::new(0)],
         #[cfg(test)]
         writer_wakes: AtomicUsize::new(0),
+        #[cfg(test)]
+        late_wakes: AtomicUsize::new(0),
         #[cfg(test)]
         pause: (Mutex::new(Pause::Off), Condvar::new()),
     });
@@ -774,6 +790,11 @@ impl Shared {
                     .park
                     .wait_timeout(g, d)
                     .unwrap_or_else(|e| e.into_inner());
+                // (whoever wakes this thread says so: still Idle, it came back of itself)
+                #[cfg(test)]
+                if g.parked == Parked::Idle && g.slots.values().any(|s| s.stranded()) {
+                    self.late_wakes.fetch_add(1, Ordering::Relaxed);
+                }
                 g.parked = Parked::No;
                 continue;
             }
@@ -2012,6 +2033,9 @@ struct Origin {
 pub(super) struct Registry {
     origins: Mutex<HashMap<Key, Origin>>,
     changed: Condvar,
+    /// Each dial, with how the connections to its origin looked then (tests of the transport).
+    #[cfg(test)]
+    dials: Mutex<Vec<String>>,
 }
 
 impl Registry {
@@ -2019,7 +2043,30 @@ impl Registry {
         Registry {
             origins: Mutex::new(HashMap::new()),
             changed: Condvar::new(),
+            #[cfg(test)]
+            dials: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Each dial, with how the connections to its origin looked when it was decided (tests of the transport).
+    #[cfg(test)]
+    pub(super) fn dials(&self) -> Vec<String> {
+        self.dials.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// How many times reader threads came back of themselves to a caller who waited for the socket to be read, on all the
+    /// connections (tests of the transport).
+    #[cfg(test)]
+    pub(super) fn late_wakes(&self) -> usize {
+        let conns: Vec<Arc<Shared>> = self
+            .lock()
+            .values()
+            .flat_map(|o| o.conns.iter().cloned())
+            .collect();
+        conns
+            .iter()
+            .map(|c| c.late_wakes.load(Ordering::Relaxed))
+            .sum()
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<Key, Origin>> {
@@ -2047,6 +2094,23 @@ impl Registry {
             // the least loaded of those that can take a stream (one look at each connection)
             let mut best: Option<(usize, &Arc<Shared>)> = None;
             let mut dead = false;
+            #[cfg(test)]
+            let looked: Vec<String> = origin
+                .conns
+                .iter()
+                .map(|c| {
+                    let g = c.lock();
+                    format!(
+                        "closing {}, lost {:?}, usable {}, {} streams, can open one {}, retired {}",
+                        g.closing,
+                        g.lost,
+                        g.h2.usable(),
+                        g.h2.active_streams(),
+                        g.h2.can_open_stream(),
+                        g.retired
+                    )
+                })
+                .collect();
             for c in &origin.conns {
                 match c.probe() {
                     Probe::Dead => dead = true,
@@ -2070,6 +2134,11 @@ impl Registry {
                 _ => origin.http1_since = None,
             }
             if !origin.dialing {
+                #[cfg(test)]
+                self.dials
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push(format!("with {:?}", looked));
                 origin.dialing = true;
                 return Ok(Acquired::Dial(Ticket {
                     registry: self.clone(),
@@ -2457,5 +2526,30 @@ mod tests {
         s.handover = Some(Instant::now());
         assert_eq!(s.park_for(), None);
         let _ = a;
+    }
+
+    #[test]
+    fn the_reader_thread_does_not_step_aside_while_a_caller_is_asleep_waiting_for_news() {
+        // an upload woken with credit sends and waits again before the reader thread, which woke it, comes to step aside
+        let mut s = state();
+        let a = open(&mut s);
+        s.idle_since = None;
+        s.handover = Some(Instant::now());
+        let slot = Slot::new();
+        s.slots.insert(a, slot.clone());
+        assert!(s.park_for().is_some());
+        slot.waiting.store(true, Ordering::Relaxed);
+        assert_eq!(s.park_for(), None);
+        // (one that could read the socket itself is handed the right to read, or takes it: the thread steps aside for it)
+        slot.can_lead.store(true, Ordering::Relaxed);
+        assert!(s.park_for().is_some());
+        slot.can_lead.store(false, Ordering::Relaxed);
+        // and after the last stream, the same
+        s.h2.release_stream(a);
+        s.handover = None;
+        s.idle_since = Some(Instant::now());
+        assert_eq!(s.park_for(), None);
+        slot.waiting.store(false, Ordering::Relaxed);
+        assert!(s.park_for().is_some());
     }
 }
