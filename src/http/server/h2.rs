@@ -39,8 +39,18 @@ const REMEMBER_CLOSED: usize = 512;
 /// bytes, about 40 over TLS, for each frame of the tail, which the systems' buffers hold a few megabytes of), a PING,
 /// its GOAWAY and close_notify. A megabyte is many times that, and bounds a client that sends anything else (B-120).
 /// Over TLS what is counted is the plaintext the TLS layer hands up: records with none (an empty record, a KeyUpdate)
-/// are not counted here, and the TLS layer's own limits bound those (so many in a row, and no more).
+/// are not counted here, and the TLS layer's own limits bound those (so many in a row, and no more). In time, the reading
+/// after the end is bounded by the idle timeout between credits and by `AFTER_END_IDLE_TIMES` idle timeouts in all, not
+/// by this (it no longer allows a hold of 56 days, at the default idle timeout, to a client that gives credit and reads
+/// nothing).
 const AFTER_END: usize = 1 << 20;
+
+/// How many idle timeouts a connection is read for after the end of our side, at most, however often its client gives
+/// credit: the idle time runs again from each credit (a client reading the tail gives it as it reads), but a client that
+/// gives credit and reads nothing would otherwise hold the connection until `AFTER_END` was used up, some 80,000 credits
+/// of 13 bytes, each just inside the idle time (56 days at the default of 60 s). Sixteen is 16 minutes at the default,
+/// many times what the systems' buffers take to drain to a client that reads at all (B-120, the review of round 8).
+const AFTER_END_IDLE_TIMES: u32 = 16;
 
 // ------------------------------------------------------------------------------------------------ floods
 
@@ -216,7 +226,8 @@ pub(super) struct Engine {
     /// end the connection, and again from each credit it gives (`credited`): it gives credit as it reads what the
     /// systems' buffers held at the end (B-120).
     ended: Option<Instant>,
-    /// When the client last gave credit (a WINDOW_UPDATE): it is reading.
+    /// When the client last gave credit on the connection (a WINDOW_UPDATE on stream 0): it is reading. Credit on a
+    /// stream does not count: once our side has ended, every stream is closed.
     credited: Option<Instant>,
     /// The idle time ran out and the connection said GOAWAY for it: when the idle time began.
     idle_end: Option<Instant>,
@@ -333,6 +344,12 @@ impl Engine {
         }
         let since = since.unwrap_or_else(Instant::now);
         Some(self.sent_at.map_or(since, |t| t.max(since)))
+    }
+
+    /// When our side of the connection ended, if it has: the reading after it is bounded from then, however often the
+    /// client gives credit (`AFTER_END_IDLE_TIMES`).
+    pub(super) fn ended(&self) -> Option<Instant> {
+        self.ended
     }
 
     /// Everything framed has been handed to the system (the sender, holding the right to send, found nothing more to
@@ -779,8 +796,8 @@ impl Engine {
                 if increment < 128 && !self.budgets.small_updates.take() {
                     return Err(self.calm("window updates of a few bytes"));
                 }
-                self.credited = Some(Instant::now());
                 if stream == 0 {
+                    self.credited = Some(Instant::now());
                     self.send_window += increment as i64;
                     if self.send_window > MAX_WINDOW as i64 {
                         return Err(self.lose(
@@ -1626,8 +1643,9 @@ struct Shared {
     /// Our side of the connection is over (B-120): the GOAWAY is sent, no stream is left, and the writer has finished
     /// (close_notify, then the sending side shut, so that the client reads the end after the last byte). The connection
     /// is still read, until the client ends it, so that what it sends while it reads the tail (WINDOW_UPDATEs) does not
-    /// make the system reset the connection and throw the tail away; at most `AFTER_END` bytes of it, and no longer
-    /// than the idle timeout from the end or from the client's last credit (`Engine::idle_since`).
+    /// make the system reset the connection and throw the tail away; at most `AFTER_END` bytes of it, no longer than
+    /// the idle timeout from the end or from the client's last credit (`Engine::idle_since`), and no longer than
+    /// `AFTER_END_IDLE_TIMES` idle timeouts from the end in all.
     over: AtomicBool,
 }
 
@@ -1943,12 +1961,22 @@ pub(super) fn serve_after_preface(
             // handlers' own waits bound them, and the reading only waits for the client
             // and while response data waits for a window, until the client has had the write timeout to open one
             if let Some(t) = &ctl.timer {
-                let (idle, stalled) = {
+                let (idle, stalled, ended) = {
                     let e = shared.engine();
-                    (e.idle_since(), e.stalled_since())
+                    (e.idle_since(), e.stalled_since(), e.ended())
                 };
                 match (idle, stalled) {
-                    (Some(since), _) => t.until(since + ctl.limits.idle_timeout),
+                    (Some(since), _) => {
+                        let mut until = since + ctl.limits.idle_timeout;
+                        // after our side's end, however often the client gives credit: AFTER_END_IDLE_TIMES in all
+                        if let Some(cap) = ended.and_then(|ended| {
+                            let d = ctl.limits.idle_timeout.checked_mul(AFTER_END_IDLE_TIMES)?;
+                            ended.checked_add(d)
+                        }) {
+                            until = until.min(cap);
+                        }
+                        t.until(until)
+                    }
                     (None, Some(since)) => t.until(since + ctl.limits.write_timeout),
                     (None, None) => t.none(),
                 }
@@ -1995,8 +2023,8 @@ pub(super) fn serve_after_preface(
             };
             if shared.over.load(Ordering::SeqCst) {
                 // our side has ended: what the client sends is read (it answers what it reads of the tail) until it ends
-                // the connection, it has given no credit for the idle time, a shutdown's grace runs out, or there is too
-                // much of it
+                // the connection, it has given no credit for the idle time, AFTER_END_IDLE_TIMES idle timeouts have gone
+                // by since the end, a shutdown's grace runs out, or there is too much of it
                 after_end += n;
                 if after_end > AFTER_END {
                     break Ok(());

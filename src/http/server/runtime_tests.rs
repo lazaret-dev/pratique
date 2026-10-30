@@ -806,11 +806,15 @@ fn a_client_that_goes_on_sending_after_the_end_is_cut_at_the_grace_or_past_a_meg
 /// is handed to the system; an idle connection ends as the others do (GOAWAY, then the end of what is sent); and once
 /// our side has ended the client has the idle time again from each credit it gives.
 ///
-/// Here a 4 MiB response, all of it within the client's windows from the start, to a client that reads 64 KiB at a time
-/// with 100 ms between (640 KB a second, six or seven seconds in all) and gives credit for each DATA frame it reads; the
-/// idle timeout is 300 ms. `close`: the handler says `Connection: close`, so the connection ends with the response.
+/// Here a 3 MiB response, all of it within the client's windows from the start, to a client that reads 64 KiB at a time
+/// with 100 ms between (640 KB a second, about five seconds in all) and gives credit for each DATA frame it reads; the
+/// idle timeout is 500 ms. `close`: the handler says `Connection: close`, so the connection ends with the response.
+/// After the end the connection is read for sixteen idle timeouts at most (the review of round 8, its LOW-2): 8 s, more
+/// than the whole response takes even where the systems' buffers take all of it at once (on Linux they take some 2 MB,
+/// and the client reads them in three and a half seconds after the end). Round 8 had 4 MiB and 300 ms, which 4.8 s
+/// would cut where the buffers take more than 3 MB.
 fn a_slow_reader_has_all_of_a_response_whatever_the_idle_timeout(close: bool) {
-    const N: usize = 4 << 20;
+    const N: usize = 3 << 20;
     let body: Arc<Vec<u8>> = Arc::new((0..N).map(|i| (i % 251) as u8).collect());
     let server = {
         let body = body.clone();
@@ -827,7 +831,7 @@ fn a_slow_reader_has_all_of_a_response_whatever_the_idle_timeout(close: bool) {
         .plain("127.0.0.1:0")
         .http_config(http)
         .limits(Limits {
-            idle_timeout: Duration::from_millis(300),
+            idle_timeout: Duration::from_millis(500),
             write_timeout: Duration::from_secs(30),
             ..Limits::default()
         })
