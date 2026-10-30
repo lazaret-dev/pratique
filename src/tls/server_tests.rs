@@ -2153,9 +2153,13 @@ fn a_read_after_a_fatal_alert_fails_at_once_and_does_not_linger_again() {
     // 200 ms for a client that stays and sends nothing (and the split reading half would hold the right to send meanwhile)
     for split in [false, true] {
         let (server, client) = setup(&["server.test"]);
+        // (the client sends once the server has done the handshake, so that the handshake's last read takes none of it:
+        // macOS's runner put the bad record in the read of the client's Finished, and the handshake failed, Oct 30)
+        let (ready, is_ready) = std::sync::mpsc::channel();
         let (port, handle) = serve_one(
             server,
             move |s| -> std::result::Result<(String, Duration), String> {
+                let _ = ready.send(());
                 let mut buf = [0u8; 16];
                 if split {
                     let (mut r, _w) = s.split().map_err(|e| e.to_string())?;
@@ -2173,6 +2177,7 @@ fn a_read_after_a_fatal_alert_fails_at_once_and_does_not_linger_again() {
             },
         );
         let mut c = connect(port, "server.test", &client).unwrap();
+        is_ready.recv_timeout(TIMEOUT).unwrap();
         let mut bad = vec![RT_APPLICATION_DATA, 3, 3, 0, 32];
         bad.resize(5 + 32, 0);
         c.get_mut().write_all(&bad).unwrap();
