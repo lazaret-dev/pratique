@@ -517,14 +517,13 @@ fn a_body_a_handler_keeps_does_not_hold_an_http2_connection_open_after_a_shutdow
 }
 
 #[test]
-#[ignore = "B-120: a client that sends as it reads loses the tail of a response at a graceful HTTP/2 end"]
 fn a_shutdown_lets_a_client_that_gives_window_credit_as_it_reads_have_all_of_a_response() {
-    // B-120, not fixed yet (the review of round 3's MEDIUM-2, there on main too, on every system): as the 12 MiB test
-    // above, but with frames of 16 KiB and a WINDOW_UPDATE for the connection after each DATA frame read, as a client
-    // does. Once the last of the response is in the server's send buffer, the server stops reading and closes; the
-    // WINDOW_UPDATEs that the client still sends then come to a closed socket, which answers with a reset, and the
-    // reset throws away the tail still in the send buffer (on Linux, about 10 of the 12 MiB arrive). Run it with
-    // `-- --ignored`.
+    // B-120 (the review of round 3's MEDIUM-2; so on main too, on every system): as the 12 MiB test above, but with
+    // frames of 16 KiB and a WINDOW_UPDATE for the connection after each DATA frame read, as a client does. Once the last
+    // of the response was in the server's send buffer, the server stopped reading and closed; the WINDOW_UPDATEs that
+    // the client still sent then came to a closed socket, which answered with a reset, and the reset threw away the
+    // tail still in the send buffer (on Linux about 10.3 of the 12.6 million bytes arrived). The server now ends only
+    // its sending side, and reads on until the client ends the connection.
     const N: usize = 12 << 20;
     let body: Arc<Vec<u8>> = Arc::new((0..N).map(|i| (i % 251) as u8).collect());
     let returned = Arc::new(AtomicUsize::new(0));
@@ -600,7 +599,182 @@ fn a_shutdown_lets_a_client_that_gives_window_credit_as_it_reads_have_all_of_a_r
         if ended { "ended" } else { "not ended" }
     );
     assert_eq!(goaway, Some(0), "GOAWAY with no error");
+    // the client ends the connection, which the server reads until it does (B-120)
+    drop(c);
     stopper.join().unwrap();
+}
+
+#[test]
+fn a_shutdown_lets_a_tls_client_that_reads_slowly_have_all_of_a_response() {
+    // B-120 over TLS, with the crate's own HTTP/2 client, which gives window credit as it reads: the server's end is a
+    // close_notify, then the FIN, after the tail, and it reads on (records it cannot decrypt for a close_notify of the
+    // client's, or its FIN) until the client ends the connection. The shutdown begins once the handler has returned and
+    // the client has read the first of 12 MiB, which it then reads slowly.
+    const N: usize = 12 << 20;
+    let body: Arc<Vec<u8>> = Arc::new((0..N).map(|i| (i % 251) as u8).collect());
+    let returned = Arc::new(AtomicUsize::new(0));
+    let pki = TestPki::new(&["127.0.0.1"]).unwrap();
+    let server = {
+        let (body, returned) = (body.clone(), returned.clone());
+        Arc::new(
+            ServerBuilder::new(move |_req: Request| {
+                let r = Response::bytes(200, "application/octet-stream", body.to_vec());
+                returned.fetch_add(1, Ordering::SeqCst);
+                r
+            })
+            .tls(
+                "127.0.0.1:0",
+                Arc::new(ServerConfig::from_pki(&pki).with_alpn(&["h2"])),
+            )
+            .limits(Limits {
+                idle_timeout: Duration::from_secs(30),
+                write_timeout: Duration::from_secs(30),
+                ..Limits::default()
+            })
+            .start()
+            .unwrap(),
+        )
+    };
+    let client =
+        crate::http::Client::with_tls_config(crate::tls::ClientConfig::new(pki.trust_store()))
+            .http2(true)
+            .timeout(Duration::from_secs(30));
+    let mut s = client
+        .get_stream(&format!(
+            "https://127.0.0.1:{}/big",
+            server.local_addrs()[0].port()
+        ))
+        .unwrap();
+    let mut got = Vec::with_capacity(N);
+    let mut buf = vec![0u8; 64 * 1024];
+    let n = s.read(&mut buf).unwrap();
+    got.extend_from_slice(&buf[..n]);
+    wait_for("the handler to return", || {
+        returned.load(Ordering::SeqCst) == 1
+    });
+    let t = Instant::now();
+    let stopper = {
+        let server = server.clone();
+        thread::spawn(move || server.shutdown(Duration::from_secs(20)))
+    };
+    loop {
+        match s.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => got.extend_from_slice(&buf[..n]),
+            Err(e) => panic!("after {} bytes of {N}: {e}", got.len()),
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert!(got[..] == body[..], "{} bytes of {N}", got.len());
+    drop(s);
+    drop(client);
+    stopper.join().unwrap();
+    assert!(
+        t.elapsed() < Duration::from_secs(10),
+        "the shutdown waited for its grace: {:?}",
+        t.elapsed()
+    );
+}
+
+#[test]
+fn a_client_that_goes_on_sending_after_the_end_is_cut_at_the_grace_or_past_a_megabyte() {
+    // B-120: once its side of an HTTP/2 connection has ended (GOAWAY, close_notify, FIN), the server reads what the
+    // client still sends until the client ends the connection: but no longer than a shutdown's grace, and no more than a
+    // megabyte of it.
+    let ping = {
+        let mut out = Vec::new();
+        frame::write_ping(&mut out, false, *b"stillup!");
+        out
+    };
+    let junk = {
+        let mut out = Vec::new();
+        frame::Header {
+            length: 16_384,
+            kind: 0x20,
+            flags: 0,
+            stream: 0,
+        }
+        .write(&mut out);
+        out.extend_from_slice(&[0u8; 16_384]);
+        out
+    };
+    for (what, frame, grace) in [
+        ("PINGs, ten a second", ping, Duration::from_secs(1)),
+        (
+            "frames of a kind nobody knows",
+            junk,
+            Duration::from_secs(10),
+        ),
+    ] {
+        let server = Arc::new(
+            ServerBuilder::new(app)
+                .plain("127.0.0.1:0")
+                .limits(Limits {
+                    idle_timeout: Duration::from_secs(30),
+                    ..quick()
+                })
+                .start()
+                .unwrap(),
+        );
+        let mut c = Raw::connect_to(server.local_addrs()[0], &[]);
+        c.get(1, "/");
+        assert_eq!(c.response(1).0, 200, "{what}");
+        let t = Instant::now();
+        let stopper = {
+            let server = server.clone();
+            thread::spawn(move || server.shutdown(grace))
+        };
+        // the end of what the server sends comes at once: GOAWAY, then its FIN
+        let frames = c.until(|f| f.is(kind::GOAWAY));
+        assert!(
+            frames.last().is_some_and(|f| f.is(kind::GOAWAY)),
+            "{what}: {frames:?}"
+        );
+        while let Some(f) = c.next() {
+            assert!(f.is(kind::PING), "{what}: {f:?}");
+        }
+        assert!(
+            t.elapsed() < Duration::from_secs(1),
+            "{what}: the server's end after {:?}",
+            t.elapsed()
+        );
+        // and the client goes on sending, until the server cuts the connection
+        let sender = {
+            let mut s = c.socket();
+            let pause = if frame.len() < 100 {
+                Duration::from_millis(100)
+            } else {
+                Duration::ZERO
+            };
+            thread::spawn(move || {
+                let give_up = Instant::now() + Duration::from_secs(20);
+                while Instant::now() < give_up {
+                    if s.write_all(&frame).is_err() {
+                        return true;
+                    }
+                    thread::sleep(pause);
+                }
+                false
+            })
+        };
+        stopper.join().unwrap();
+        let took = t.elapsed();
+        if grace == Duration::from_secs(1) {
+            assert!(
+                took >= Duration::from_millis(900) && took < Duration::from_secs(3),
+                "{what}: the shutdown took {took:?}, not its grace of {grace:?}"
+            );
+        } else {
+            assert!(
+                took < Duration::from_secs(5),
+                "{what}: the connection was not cut past a megabyte, the shutdown took {took:?}"
+            );
+        }
+        assert!(
+            sender.join().unwrap(),
+            "{what}: the client could still send after 20 s"
+        );
+    }
 }
 
 #[test]

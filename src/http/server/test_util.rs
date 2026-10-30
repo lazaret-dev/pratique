@@ -333,6 +333,11 @@ impl Raw {
         self.pace = pace;
     }
 
+    /// Another handle to the socket: to send from another thread while this one reads.
+    pub(super) fn socket(&self) -> TcpStream {
+        self.s.try_clone().unwrap()
+    }
+
     pub(super) fn headers(&mut self, id: u32, fields: &[(&str, &str)], end_stream: bool) {
         let block = self.block(fields);
         let mut out = Vec::new();
