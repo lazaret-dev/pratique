@@ -436,8 +436,11 @@ impl Engine {
         if !s.remote_ended {
             // a whole response before the whole request: the stream lingers, still checked, until the client ends it, or
             // sends more of a body nobody will read (then it is asked to stop: RFC 9113 section 8.1), or the connection
-            // goes away
-            if self.going_away {
+            // goes away. Body data already waiting unread is no different: the handler has returned without reading it
+            // (and a body the handler kept gets nothing that comes from now on). Left to linger, such a stream was not
+            // stopped until the client sent yet more, which a client whose window that data had used up could not (B-119).
+            let unread = !s.recv.is_empty();
+            if self.going_away || unread {
                 self.stop_lingering(id);
             } else if let Some(s) = self.streams.get_mut(&id) {
                 s.lingering_since.get_or_insert_with(Instant::now);
