@@ -586,7 +586,14 @@ impl Request {
         &mut self.body
     }
 
-    /// The body, for a handler that keeps it (to read on another thread, say).
+    /// The body, for a handler that keeps it: to read on another thread while the handler waits for it, say, or as the
+    /// body of the response ([`Response::reader`]).
+    ///
+    /// It is the request's body for as long as the request is being answered, and no longer. Once the handler has
+    /// returned and its response is whole, what was not read is dropped, data that had already come included, and
+    /// reads fail: on HTTP/2 with "the stream is over" (the client is asked to stop sending the rest), on HTTP/1.1 with
+    /// "the request this body belongs to is over" (the connection reads past a little of the rest, or closes). A body
+    /// kept past that is no use.
     pub fn into_body(self) -> Body {
         self.body
     }
