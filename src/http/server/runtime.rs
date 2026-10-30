@@ -955,6 +955,14 @@ impl Server {
 
     /// Stops accepting, asks every connection to finish (idle ones close at once), waits up to `grace` for them, and
     /// then cuts the rest. Returns once the listeners have stopped.
+    ///
+    /// A request under way is answered (HTTP/1.1: with `Connection: close`; HTTP/2: before the connection ends, after a
+    /// GOAWAY that lets the client open no stream after it). An HTTP/1.1 keep-alive connection that is idle closes at
+    /// once, and a request that reaches it just as it does is neither run nor answered: the close and the request
+    /// cross, the race every keep-alive connection has, which RFC 9112 section 9.3.1 leaves to the client (it may send
+    /// the request again on a new connection, an idempotent one at least). Before B-119 such a request was answered
+    /// with `Connection: close`; that is not safe, as on Windows the close cancels a send under way and would cut the
+    /// response short.
     pub fn shutdown(&self, grace: Duration) {
         stop(&self.inner, &self.addrs, grace);
         for t in self
