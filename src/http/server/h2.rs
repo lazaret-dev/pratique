@@ -24,6 +24,7 @@ use super::{
 };
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
@@ -1519,17 +1520,24 @@ struct Shared {
     /// How long a handler waits for more of its body, and for room to send (none without the runtime).
     body_wait: Option<Duration>,
     write_wait: Option<Duration>,
+    /// The runtime's hold on the connection: how its reading is stopped.
+    ctl: Arc<Ctl>,
+    /// The server is shutting down (we said GOAWAY): once no stream is left and everything is sent, the connection's
+    /// reading is stopped by whoever sent the last of it, while it still holds the right to send (B-119).
+    stop_when_sent: AtomicBool,
 }
 
 impl GoAway for Shared {
-    fn go_away(&self) -> bool {
-        let finished = {
+    fn go_away(&self) {
+        {
             let mut e = self.engine();
+            // (set under the engine's lock with the GOAWAY, so that whoever finds the GOAWAY sent finds this too)
+            self.stop_when_sent.store(true, Ordering::SeqCst);
             e.go_away();
-            e.is_finished()
-        };
+        }
+        // sent now if nobody is sending; otherwise whoever is sends it, and stops the reading once all is sent. Never
+        // stopped here while somebody sends: on Windows that would cancel the send, and cut a response short.
         let _ = self.send(false);
-        finished
     }
 }
 
@@ -1562,7 +1570,8 @@ impl Shared {
     }
 
     /// Sends what the engine has framed. With `wait`, waits for the right to send; without, sends only if nobody is
-    /// sending (whoever is sends this too).
+    /// sending (whoever is sends this too). Whoever sends the last of a connection the server is shutting down stops its
+    /// reading, holding the right to send: so nobody is sending when it stops, and no send is cancelled (B-119).
     fn send(&self, wait: bool) -> io::Result<()> {
         let mut wait = wait;
         let mut buf = Vec::new();
@@ -1576,12 +1585,14 @@ impl Shared {
                     Err(TryLockError::WouldBlock) => return Ok(()),
                 }
             };
-            loop {
+            let stop = loop {
                 {
                     let mut e = self.engine();
                     e.pump();
                     if e.out.is_empty() {
-                        break;
+                        // everything is sent: if no stream is left of a connection the server is shutting down, its
+                        // reading stops now (once)
+                        break e.is_finished() && self.stop_when_sent.swap(false, Ordering::SeqCst);
                     }
                     std::mem::swap(&mut buf, &mut e.out);
                     e.out.clear();
@@ -1600,6 +1611,9 @@ impl Shared {
                     self.changed.notify_all();
                     return Err(e);
                 }
+            };
+            if stop {
+                self.ctl.stop();
             }
             drop(guard);
             if self.engine().out.is_empty() {
@@ -1789,6 +1803,8 @@ pub(super) fn serve_after_preface(
         out: Mutex::new(Some(writer)),
         body_wait: runtime.then_some(ctl.limits.body_wait),
         write_wait: runtime.then_some(ctl.limits.write_timeout),
+        ctl: ctl.clone(),
+        stop_when_sent: AtomicBool::new(false),
     });
     shared.send(true)?;
     let weak: std::sync::Weak<dyn GoAway> = Arc::downgrade(&shared) as std::sync::Weak<dyn GoAway>;
@@ -1982,7 +1998,9 @@ fn run_stream(
     shared.changed.notify_all();
     let _ = shared.send(true);
     if finished {
-        // the GOAWAY has gone and nothing is left: end what we send (a TLS close_notify), and stop reading
+        // the GOAWAY has gone and nothing is left: end what we send (a TLS close_notify), and stop reading (the writer is
+        // taken with the right to send, once whoever was sending is done, and no frame is sent after it: the stop
+        // cancels none)
         if let Some(mut w) = shared.out.lock().unwrap_or_else(|e| e.into_inner()).take() {
             let _ = w.flush();
         }

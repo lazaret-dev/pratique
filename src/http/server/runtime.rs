@@ -314,8 +314,9 @@ pub(crate) struct Ctl {
 
 /// An HTTP/2 connection that can be asked to go away.
 pub(crate) trait GoAway: Send + Sync {
-    /// Says GOAWAY; true if nothing is left under way (the connection can be closed now).
-    fn go_away(&self) -> bool;
+    /// Says GOAWAY. The connection stops its own reading ([`Ctl::stop`]) once no stream is left and all it has to send is
+    /// sent: never while it is sending, which on Windows the stop would cancel (B-119).
+    fn go_away(&self);
 }
 
 impl Ctl {
@@ -364,9 +365,7 @@ impl Ctl {
         *self.h2.lock().unwrap_or_else(|e| e.into_inner()) = Some(h.clone());
         if self.is_closing() {
             if let Some(h) = h.upgrade() {
-                if h.go_away() {
-                    self.stop();
-                }
+                h.go_away();
             }
         }
     }
@@ -381,9 +380,7 @@ impl Ctl {
             .as_ref()
             .and_then(Weak::upgrade);
         if let Some(h) = h2 {
-            if h.go_away() {
-                self.stop();
-            }
+            h.go_away();
         }
         if self.idle.load(Ordering::SeqCst) {
             self.stop();
