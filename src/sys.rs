@@ -111,6 +111,14 @@ mod windows {
         // SAFETY: the handle is the socket's, open for as long as `tcp` is borrowed (a SOCKET of the system's provider is
         // a kernel handle, which is what CancelIoEx takes); a null OVERLAPPED asks for every request on it to be
         // cancelled, and the call writes nothing of ours. With nothing to cancel it fails, which changes nothing.
+        //
+        // Behind a layered service provider that is not an IFS one (a non-IFS LSP, which Windows has deprecated since
+        // Windows 8 and few machines have), the SOCKET is a handle Winsock made for the layer, and a blocking call waits
+        // inside the layer, not on a request made on that handle: CancelIoEx finds nothing to cancel and fails, and the
+        // call is not woken. That is the behaviour of before B-119, and safe: the call ends when the peer, or its own
+        // timeout (each of the server's reads has one), ends it. Cancelling on the base provider's socket (WSAIoctl
+        // with SIO_BASE_HANDLE) would wake it, but would cancel requests that the layer made and waits for itself,
+        // which not every layer survives; so it is not done.
         unsafe {
             CancelIoEx(
                 tcp.as_raw_socket() as usize as *mut c_void,
