@@ -2401,11 +2401,16 @@ fn a_download_that_pauses_does_not_hold_up_a_request_that_waits_for_the_reader_t
         headers: &[],
         secret: &[],
     };
+    // the other request's answer comes long after the download has paused, so that it is still in flight then (an answer
+    // after 100 ms, as this was, came in before the download's caller had read its first piece on macOS's runner, Oct 30:
+    // with one stream left in flight, that caller rightly kept the right to read)
+    let late_ms = 800;
+    let late_path = format!("/slow/{late_ms}");
     let slow = Request {
         method: "GET",
         scheme: "https",
         authority: &authority,
-        path: "/slow/100",
+        path: &late_path,
         headers: &[],
         secret: &[],
     };
@@ -2425,7 +2430,10 @@ fn a_download_that_pauses_does_not_hold_up_a_request_that_waits_for_the_reader_t
         assert_eq!((head.status, body.as_slice()), (200, &b"late"[..]));
         started.elapsed()
     });
-    thread::sleep(Duration::from_millis(20));
+    // (once that request's caller is asleep waiting for it: a thread that has not got there yet cannot be given the right)
+    wait_until("the other request's caller to wait", || {
+        conn.waits_to_lead(b_id)
+    });
     // the download has its head and a first piece, and its caller stops reading: with another request in flight, which
     // somebody has to read for, it does not keep the right, but gives it to the caller who waits for that one (B-89)
     a.head(waits).unwrap();
@@ -2441,7 +2449,7 @@ fn a_download_that_pauses_does_not_hold_up_a_request_that_waits_for_the_reader_t
     );
     let took = b.join().unwrap();
     assert!(
-        took < Duration::from_millis(600),
+        took < Duration::from_millis(late_ms + 500),
         "the other request took {took:?}"
     );
     assert_eq!(read_all(&mut a, waits), b"second");

@@ -274,17 +274,19 @@ fn a_cancel_stops_waiting_and_running_requests_and_fails_new_ones() {
     let client = server.client().scheduler(&sched);
     let batch = Batch::new();
     let in_batch = client.in_batch(&batch);
-    // one under way, waiting for a slow answer; one under way, reading a body; one waiting for a place
+    // one under way, waiting for a slow answer; one under way, reading a body; one waiting for a place. Each is started
+    // once the one before it has its place: two threads started one after the other take the places in whatever order
+    // the machine runs them, and the slow one could be left waiting.
     let (c, url) = (in_batch.clone(), server.url("/slow"));
     let slow = thread::spawn(move || c.get(&url).unwrap_err());
+    wait_until("the slow one to reach the server", || {
+        server.requests().iter().any(|s| s.path() == "/slow")
+    });
     let mut reading = in_batch.get_stream(&server.url("/big")).unwrap();
     reading.read_exact(&mut [0u8; 100]).unwrap();
     let (c, url) = (in_batch.clone(), server.url("/small"));
     let waiting = thread::spawn(move || c.get(&url).unwrap_err());
     wait_until("one to wait", || sched.waiting() == 1);
-    wait_until("the slow one to reach the server", || {
-        server.requests().iter().any(|s| s.path() == "/slow")
-    });
     let t = Instant::now();
     batch.cancel();
     assert!(matches!(slow.join().unwrap(), Error::Cancelled));

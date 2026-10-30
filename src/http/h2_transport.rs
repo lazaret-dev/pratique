@@ -1320,6 +1320,15 @@ impl Shared {
         }
     }
 
+    /// Whether the caller of `stream` is asleep waiting for its response, and would read the socket itself if it were given
+    /// the right to (tests of the transport).
+    #[cfg(test)]
+    pub(super) fn waits_to_lead(&self, stream: u32) -> bool {
+        self.lock().slots.get(&stream).is_some_and(|s| {
+            s.waiting.load(Ordering::Relaxed) && s.can_lead.load(Ordering::Relaxed)
+        })
+    }
+
     /// Whether the last read left records in the receive buffer for the next one (see [`Shared::ingest`]); `None` if somebody
     /// is reading (tests of the transport).
     #[cfg(test)]

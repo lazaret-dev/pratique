@@ -520,7 +520,16 @@ pub(crate) mod tests {
         codes.iter().map(|c| SocketAddr::new(v4(*c), 443)).collect()
     }
 
-    fn run(codes: &[u8], delay_ms: u64, limit_ms: u64) -> (io::Result<u8>, Duration, usize) {
+    /// Races `codes` with the fake attempts: the result, how long the race took, and how many attempts it started. An
+    /// attempt is counted by its own thread, which a busy machine may not have run yet when the race is over (it was
+    /// started all the same): the count is taken once it has reached `expected` (or after five seconds), and a little
+    /// later, so that one too many shows as well.
+    fn run(
+        codes: &[u8],
+        delay_ms: u64,
+        limit_ms: u64,
+        expected: usize,
+    ) -> (io::Result<u8>, Duration, usize) {
         let started = Arc::new(AtomicUsize::new(0));
         let t = Instant::now();
         let r = race(
@@ -529,37 +538,71 @@ pub(crate) mod tests {
             t + Duration::from_millis(limit_ms),
             fake(started.clone()),
         );
+        let took = t.elapsed();
         (
             r.map(|(s, a)| {
                 assert_eq!(a, SocketAddr::new(v4(s), 443));
                 s
             }),
-            t.elapsed(),
-            started.load(Ordering::SeqCst),
+            took,
+            settled(&started, expected),
         )
+    }
+
+    /// The count once it has reached `expected` (or after five seconds), and 50 ms later.
+    fn settled(count: &AtomicUsize, expected: usize) -> usize {
+        let give_up = Instant::now() + Duration::from_secs(5);
+        while count.load(Ordering::SeqCst) < expected && Instant::now() < give_up {
+            thread::sleep(Duration::from_millis(2));
+        }
+        thread::sleep(Duration::from_millis(50));
+        count.load(Ordering::SeqCst)
     }
 
     #[test]
     fn an_address_that_does_not_answer_costs_the_attempt_delay_not_the_timeout() {
         // the first hangs: the second is tried after 100 ms and connects at once
-        let (r, took, started) = run(&[30, 10], 100, 5000);
+        let (r, took, started) = run(&[30, 10], 100, 5000, 2);
         assert_eq!(r.unwrap(), 10);
         assert!(
             took >= Duration::from_millis(100) && took < Duration::from_millis(1000),
             "{took:?}"
         );
         assert_eq!(started, 2);
-        // the first is slow but quicker than the delay: nothing else is tried
-        let (r, _, started) = run(&[13, 10], 250, 5000);
+        // the first is slow but much quicker than the delay: nothing else is tried
+        let (r, _, started) = run(&[13, 10], 2000, 5000, 1);
         assert_eq!((r.unwrap(), started), (13, 1));
-        // the first is slower than the delay, but still connects before the second: the first wins
-        let (r, _, started) = run(&[15, 18], 20, 5000);
-        assert_eq!((r.unwrap(), started), (15, 2));
+        // the first is slower than the delay, but still connects before the second: the first wins. The first connects
+        // only once the second has started, and the second never does: the order is the test's, not the machine's
+        // (with a first that took 50 ms and a delay of 20, macOS's runner had the first in before the race woke to
+        // start the second, Oct 30)
+        let started = Arc::new(AtomicUsize::new(0));
+        let count = started.clone();
+        let (r, addr) = race(
+            &addrs(&[15, 18]),
+            Duration::from_millis(20),
+            Instant::now() + Duration::from_secs(5),
+            move |_: SocketAddr, t: Duration| -> io::Result<u8> {
+                if count.fetch_add(1, Ordering::SeqCst) == 0 {
+                    let give_up = Instant::now() + Duration::from_secs(5);
+                    while count.load(Ordering::SeqCst) < 2 && Instant::now() < give_up {
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    Ok(15)
+                } else {
+                    thread::sleep(t);
+                    Err(io::Error::new(io::ErrorKind::TimedOut, "timed out"))
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(addr, SocketAddr::new(v4(15), 443));
+        assert_eq!((r, settled(&started, 2)), (15, 2));
     }
 
     #[test]
     fn a_failure_starts_the_next_attempt_at_once() {
-        let (r, took, started) = run(&[20, 21, 10], 2000, 5000);
+        let (r, took, started) = run(&[20, 21, 10], 2000, 5000, 3);
         assert_eq!(r.unwrap(), 10);
         assert!(took < Duration::from_millis(1000), "{took:?}");
         assert_eq!(started, 3);
@@ -567,7 +610,7 @@ pub(crate) mod tests {
 
     #[test]
     fn when_all_fail_every_address_is_named_and_the_last_kind_is_kept() {
-        let (r, _, started) = run(&[20, 21], 50, 5000);
+        let (r, _, started) = run(&[20, 21], 50, 5000, 2);
         let e = r.unwrap_err();
         assert_eq!((e.kind(), started), (io::ErrorKind::ConnectionRefused, 2));
         assert!(
@@ -576,22 +619,24 @@ pub(crate) mod tests {
             "{e}"
         );
         // one address: its own error, as it was
-        let (r, _, _) = run(&[20], 50, 5000);
+        let (r, _, _) = run(&[20], 50, 5000, 1);
         assert_eq!(r.unwrap_err().to_string(), "refused");
     }
 
     #[test]
     fn the_limit_ends_the_race() {
-        let (r, took, started) = run(&[30, 31, 32], 50, 300);
+        // three that hang, started 20 ms apart, well inside the limit (50 ms apart in 300 ms, as this was, left the third
+        // uncounted on macOS's runner, Oct 30)
+        let (r, took, started) = run(&[30, 31, 32], 20, 600, 3);
         let e = r.unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::TimedOut);
         assert!(
-            took >= Duration::from_millis(300) && took < Duration::from_millis(1500),
+            took >= Duration::from_millis(600) && took < Duration::from_millis(1800),
             "{took:?}"
         );
         assert_eq!(started, 3);
         // no time at all: nothing is tried
-        let (r, _, started) = run(&[10, 11], 50, 0);
+        let (r, _, started) = run(&[10, 11], 50, 0, 0);
         assert_eq!(
             (r.unwrap_err().kind(), started),
             (io::ErrorKind::TimedOut, 0)
@@ -643,16 +688,25 @@ pub(crate) mod tests {
         let closed_addr = closed.local_addr().unwrap();
         drop(closed);
         let a = [closed_addr, open.local_addr().unwrap()];
+        // How long a refusal takes here. Linux and macOS refuse at once; Windows tries a refused SYN again for about
+        // 2 s (on windows-latest, Oct 30, this race took longer than a second with a delay of 2 s). The delay is made
+        // longer than that, so that what starts the second attempt can only be the failure of the first.
         let t = Instant::now();
-        let (_s, addr) = race(
-            &a,
-            Duration::from_secs(2),
-            t + Duration::from_secs(5),
-            |a, t| TcpStream::connect_timeout(&a, t),
-        )
+        let e = TcpStream::connect_timeout(&closed_addr, Duration::from_secs(10)).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::ConnectionRefused, "{e}");
+        let refusal = t.elapsed();
+        let delay = refusal + Duration::from_secs(2);
+        let t = Instant::now();
+        let (_s, addr) = race(&a, delay, t + delay + Duration::from_secs(5), |a, t| {
+            TcpStream::connect_timeout(&a, t)
+        })
         .unwrap();
         assert_eq!(addr, open.local_addr().unwrap());
-        assert!(t.elapsed() < Duration::from_secs(1));
+        assert!(
+            t.elapsed() < refusal + Duration::from_secs(1),
+            "{:?} with a refusal of {refusal:?}",
+            t.elapsed()
+        );
         // through the resolver, by name, and the address that answered is remembered
         let est = Establish::default();
         let port = open.local_addr().unwrap().port();
@@ -674,7 +728,7 @@ pub(crate) mod tests {
             &est,
             "127.0.0.1",
             closed_addr.port(),
-            Instant::now() + Duration::from_secs(5),
+            Instant::now() + refusal + Duration::from_secs(5),
         )
         .unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::ConnectionRefused);
@@ -733,7 +787,9 @@ pub(crate) mod tests {
         let t = Instant::now();
         connect(&est, "dual.test", port, t + Duration::from_secs(10)).unwrap();
         assert!(t.elapsed() < DEFAULT_ATTEMPT_DELAY, "{:?}", t.elapsed());
-        // the black hole alone: the connect timeout, and a TimedOut
+        // the black hole alone: the connect timeout, and a TimedOut. Not earlier than the timeout by more than a tick of
+        // the system's clock: the standard library's connect_timeout waits in select(), which on Windows can wake up to
+        // one tick (15.6 ms by default) early (windows-latest, Oct 30: 399.5 ms for 400)
         let t = Instant::now();
         let e = race(
             &[SocketAddr::new(
@@ -747,7 +803,7 @@ pub(crate) mod tests {
         .unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::TimedOut, "{e}");
         assert!(
-            t.elapsed() >= Duration::from_millis(400),
+            t.elapsed() >= Duration::from_millis(400 - 16),
             "{:?}",
             t.elapsed()
         );

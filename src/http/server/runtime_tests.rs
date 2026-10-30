@@ -11,7 +11,7 @@ use crate::tls::server::ServerConfig;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -257,10 +257,37 @@ fn connections_past_the_limits_are_closed_at_once() {
 
 #[test]
 fn shutdown_finishes_what_is_under_way_and_closes_the_rest() {
-    let server = Arc::new(plain(Limits {
-        idle_timeout: Duration::from_secs(30),
-        ..quick()
-    }));
+    // The requests under way are held until the idle connection has closed, so the shutdown is seen to close it while
+    // they still run, whatever the machine's speed. (With requests that took 300 ms and a bound of 300 ms on that close,
+    // as this was, the test passed on Linux though the idle connection closed only once they were over: 321 ms on macOS's
+    // runner, Oct 30, and the whole grace of 3 s on Windows, whose read the shutdown did not wake. B-119.)
+    let held = Arc::new((Mutex::new(true), Condvar::new()));
+    let under_way = Arc::new(AtomicUsize::new(0));
+    let server = {
+        let (held, under_way) = (held.clone(), under_way.clone());
+        Arc::new(
+            ServerBuilder::new(move |req: Request| {
+                if req.path() != "/slow" {
+                    return app(req);
+                }
+                under_way.fetch_add(1, Ordering::SeqCst);
+                let (lock, cv) = &*held;
+                let mut h = lock.lock().unwrap();
+                let give_up = Instant::now() + Duration::from_secs(10);
+                while *h && Instant::now() < give_up {
+                    h = cv.wait_timeout(h, Duration::from_millis(50)).unwrap().0;
+                }
+                Response::text(200, "slow\n")
+            })
+            .plain("127.0.0.1:0")
+            .limits(Limits {
+                idle_timeout: Duration::from_secs(30),
+                ..quick()
+            })
+            .start()
+            .unwrap(),
+        )
+    };
     let addr = server.local_addrs()[0];
     // idle after a request
     let mut idle = connect(addr);
@@ -275,17 +302,22 @@ fn shutdown_finishes_what_is_under_way_and_closes_the_rest() {
     // in the middle of a request, HTTP/2
     let mut h2 = Raw::connect_to(addr, &[]);
     h2.get(1, "/slow");
-    thread::sleep(Duration::from_millis(100));
+    wait_for("both requests under way", || {
+        under_way.load(Ordering::SeqCst) == 2
+    });
     let t = Instant::now();
     let stopper = {
         let server = server.clone();
         thread::spawn(move || server.shutdown(Duration::from_secs(3)))
     };
+    // at once: while the others are under way, and long before the grace of 3 s is over
     let (took, _) = until_closed(&mut idle);
     assert!(
-        took < Duration::from_millis(300),
+        took < Duration::from_millis(1000),
         "the idle connection closed at once: {took:?}"
     );
+    *held.0.lock().unwrap() = false;
+    held.1.notify_all();
     let (_, out) = until_closed(&mut busy);
     let r = &responses(&out, &[])[0];
     assert_eq!(

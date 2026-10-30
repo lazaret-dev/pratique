@@ -32,23 +32,67 @@ fn a_sleep_is_never_early_and_not_much_late() {
     assert!(t0.elapsed() < SLACK);
 }
 
+/// A waker that notes, as it is woken, which sleep it belongs to and when.
+struct Noted {
+    k: u64,
+    woken: Arc<Mutex<Vec<(u64, Instant)>>>,
+}
+
+impl Wake for Noted {
+    fn wake(self: Arc<Self>) {
+        self.woken.lock().unwrap().push((self.k, Instant::now()));
+    }
+}
+
 #[test]
 fn many_sleeps_at_once_fire_in_the_order_of_their_deadlines() {
-    let order = Arc::new(Mutex::new(Vec::new()));
+    // Each sleep has a waker of its own, which notes when the timer thread wakes it: the order is the timer's. (Awaited
+    // together under join_all, which polls what is ready in the order the futures were made, two sleeps that a late
+    // wake-up found due at once finished in that order, [.., 5, 4, ..], on macOS's runner, Oct 29.)
+    let woken = Arc::new(Mutex::new(Vec::new()));
     let t0 = Instant::now();
     // registered in an order unlike their deadlines
-    let futs: Vec<Pin<Box<dyn Future<Output = ()>>>> = [7u64, 2, 9, 0, 5, 1, 8, 3, 6, 4]
+    let mut sleeps: Vec<(u64, Pin<Box<super::Sleep>>, Waker)> = [7u64, 2, 9, 0, 5, 1, 8, 3, 6, 4]
         .into_iter()
         .map(|k| {
-            let order = order.clone();
-            Box::pin(async move {
-                sleep(Duration::from_millis(30 + 25 * k)).await;
-                order.lock().unwrap().push(k);
-            }) as Pin<Box<dyn Future<Output = ()>>>
+            let mut s = Box::pin(sleep(Duration::from_millis(30 + 25 * k)));
+            let w = Waker::from(Arc::new(Noted {
+                k,
+                woken: woken.clone(),
+            }));
+            assert!(s.as_mut().poll(&mut Context::from_waker(&w)).is_pending());
+            (k, s, w)
+        })
+        .collect();
+    let give_up = Instant::now() + Duration::from_secs(10);
+    while woken.lock().unwrap().len() < sleeps.len() {
+        assert!(Instant::now() < give_up, "{:?}", woken.lock().unwrap());
+        thread::sleep(Duration::from_millis(5));
+    }
+    let woken = woken.lock().unwrap().clone();
+    assert_eq!(
+        woken.iter().map(|(k, _)| *k).collect::<Vec<_>>(),
+        (0..10).collect::<Vec<_>>()
+    );
+    // none early, and each is over once woken
+    for (k, at) in &woken {
+        assert!(*at >= t0 + Duration::from_millis(30 + 25 * k), "{k}");
+    }
+    for (k, s, w) in &mut sleeps {
+        assert!(
+            s.as_mut().poll(&mut Context::from_waker(w)).is_ready(),
+            "{k}"
+        );
+    }
+    // and awaited together, they all finish, none before its time
+    let t0 = Instant::now();
+    let futs: Vec<Pin<Box<dyn Future<Output = ()>>>> = [7u64, 2, 9, 0, 5]
+        .into_iter()
+        .map(|k| {
+            Box::pin(sleep(Duration::from_millis(30 + 25 * k))) as Pin<Box<dyn Future<Output = ()>>>
         })
         .collect();
     block_on(join_all(futs));
-    assert_eq!(*order.lock().unwrap(), (0..10).collect::<Vec<_>>());
     assert!(t0.elapsed() >= Duration::from_millis(255));
 }
 
@@ -250,16 +294,21 @@ fn a_read_that_waits_too_long_times_out_and_one_that_keeps_moving_does_not() {
         t0.elapsed() >= Duration::from_millis(80)
             && t0.elapsed() < Duration::from_millis(80) + SLACK
     );
-    // a byte every 20 ms for 400 ms: each read waits far less than the limit, so the whole goes through
+    // twenty bytes, one every 20 ms: each read waits far less than the limit, so all go through, though together they
+    // take more than twice the limit (the limit is on each read, not on the stream). (Counting the reads made in 400 ms,
+    // as this did, counted the machine's timers: macOS's runner made fewer than ten, Oct 29.)
     let mut s = Timed::new(slow(20, false)).with_read_timeout(Duration::from_millis(150));
-    let mut got = Vec::new();
     let t0 = Instant::now();
-    while t0.elapsed() < Duration::from_millis(400) {
+    for _ in 0..20 {
         let mut b = [0u8; 1];
         assert_eq!(block_on(s.read(&mut b)).unwrap(), 1);
-        got.push(b[0]);
+        assert_eq!(b[0], b'x');
     }
-    assert!(got.len() >= 10);
+    assert!(
+        t0.elapsed() >= Duration::from_millis(300),
+        "{:?}",
+        t0.elapsed()
+    );
 }
 
 #[test]

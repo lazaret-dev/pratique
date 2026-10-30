@@ -891,7 +891,7 @@ for x86-64 kernels not built there), and under qemu-user for aarch64 and 32-bit 
 PMULL code runs on the M5: since B-85 it seals AES-128-GCM at about 13 GB/s there (1 MiB messages; BENCHMARKS.md, backlog
 B-85), against 0.24 GB/s for the portable code. One unit test fails if a CPU that has the instructions ends up on the
 portable path, which is what a broken hardware path looks like from outside, because the self-test then switches it off.
-The test suite has not run natively on Windows yet (the Windows store code has run under Wine; backlog B-58).
+The unit tests first ran natively on Windows, and on GitHub's macOS runner, in Lazaret's CI on 2026-10-29; what they found is backlog B-119, whose fixes wait for a run there. The Windows store code has also run under Wine (backlog B-58).
 
 ## Running the tests
 
