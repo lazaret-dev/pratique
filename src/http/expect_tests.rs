@@ -97,6 +97,25 @@ pub(super) fn upload() -> Vec<u8> {
 }
 
 #[test]
+fn headerless_informational_responses_cannot_bypass_the_clients_head_limit() {
+    let (port, _) = raw_server(move |_, mut s| {
+        read_head(&mut s);
+        let mut reply = b"HTTP/1.1 103 Early Hints\r\n\r\n".repeat(4_000);
+        reply.extend_from_slice(b"HTTP/1.1 204 No Content\r\n\r\n");
+        let _ = s.write_all(&reply); // the client may close as soon as its limit is crossed
+    });
+    let result = client().get(&format!("http://127.0.0.1:{port}/many-hints"));
+    let error = match result {
+        Err(error) => error.to_string(),
+        Ok(response) => panic!(
+            "the oversized response head was accepted as {}",
+            response.status
+        ),
+    };
+    assert!(error.contains("response headers too large"), "{error}");
+}
+
+#[test]
 fn the_body_waits_for_the_go_ahead() {
     let early = Arc::new(Mutex::new(None));
     let e = early.clone();

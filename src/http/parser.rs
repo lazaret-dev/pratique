@@ -359,6 +359,16 @@ impl ResponseParser {
         }
     }
 
+    /// Counts one response-head line and its CRLF against the one cumulative budget shared by
+    /// interim and final responses. Saturation makes an arithmetic overflow fail closed too.
+    fn count_head_line(&mut self, len: usize) -> Result<()> {
+        self.header_bytes = self.header_bytes.saturating_add(len.saturating_add(2));
+        if self.header_bytes > self.limits.max_header_bytes {
+            return http_err("response headers too large");
+        }
+        Ok(())
+    }
+
     /// Runs the current line state as far as the buffered bytes allow. Returns true if the state
     /// is now one that consumes bytes differently (so the caller should loop), false if more
     /// input is needed.
@@ -370,6 +380,7 @@ impl ResponseParser {
                     let Some(line) = self.take_line(limits.max_header_bytes)? else {
                         return Ok(false);
                     };
+                    self.count_head_line(line.len())?;
                     if line.is_empty() {
                         // tolerate a few leading blank lines
                         self.blank_lines += 1;
@@ -378,7 +389,6 @@ impl ResponseParser {
                         }
                         continue;
                     }
-                    self.header_bytes += line.len();
                     let text = String::from_utf8_lossy(&line).into_owned();
                     let mut parts = text.splitn(3, ' ');
                     let version = parts.next().unwrap_or("");
@@ -406,6 +416,7 @@ impl ResponseParser {
                     let Some(line) = self.take_line(limits.max_header_bytes)? else {
                         return Ok(false);
                     };
+                    self.count_head_line(line.len())?;
                     if line.is_empty() {
                         if (100..200).contains(&self.status) {
                             if self.status == 101 {
@@ -419,10 +430,6 @@ impl ResponseParser {
                         }
                         self.begin_body()?;
                         return Ok(true);
-                    }
-                    self.header_bytes += line.len() + 2;
-                    if self.header_bytes > limits.max_header_bytes {
-                        return http_err("response headers too large");
                     }
                     if line[0] == b' ' || line[0] == b'\t' {
                         return http_err("obsolete header line folding is not accepted");
@@ -733,18 +740,18 @@ mod tests {
     }
 
     #[test]
-    fn a_line_of_exactly_the_limit_is_accepted_however_it_is_read() {
-        // found by the fuzzer: the CR of a line of exactly `max` bytes counted against it while
-        // the line was incomplete, so reading byte by byte refused what reading at once accepted
-        let limits = Limits {
-            max_header_bytes: 64,
-            max_body_bytes: 100,
-        };
+    fn a_head_of_exactly_the_limit_is_accepted_however_it_is_read() {
+        // found by the fuzzer: the CR of a line at the limit counted against it while the line was
+        // incomplete, so reading byte by byte refused what reading at once accepted
         let status = format!("HTTP/1.1 204 {}", "x".repeat(64 - 13));
         assert_eq!(status.len(), 64);
         let raw = format!("{status}\r\n\r\n");
         let too_long = raw.replacen("xx", "xxx", 1);
-        for piece in [1, 2, 3, 63, 64, 65, 66, 1000] {
+        let limits = Limits {
+            max_header_bytes: raw.len(),
+            max_body_bytes: 100,
+        };
+        for piece in [1, 2, 3, 63, 64, 65, 66, 67, 68, 69, 1000] {
             let run = |text: &str| {
                 let mut p = Buffered::new("GET", limits);
                 text.as_bytes()
@@ -756,7 +763,34 @@ mod tests {
             assert_eq!(run(&raw).unwrap(), 204, "piece size {piece}");
             assert!(
                 run(&too_long).is_err(),
-                "a 65-byte line was accepted with piece size {piece}"
+                "an over-limit response head was accepted with piece size {piece}"
+            );
+        }
+    }
+
+    #[test]
+    fn headerless_informational_responses_share_the_final_heads_limit() {
+        let interim = "HTTP/1.1 103 Early Hints\r\n\r\n";
+        let final_head = "HTTP/1.1 204 No Content\r\n\r\n";
+        let accepted = format!("{interim}{final_head}");
+        let refused = format!("{interim}{interim}{final_head}");
+        let limits = Limits {
+            max_header_bytes: accepted.len(),
+            max_body_bytes: 0,
+        };
+        for piece in [1, 2, 3, 7, 31, 64, 1000] {
+            let run = |text: &str| {
+                let mut p = Buffered::new("GET", limits);
+                text.as_bytes()
+                    .chunks(piece)
+                    .try_for_each(|chunk| p.feed(chunk))
+                    .and_then(|_| p.finish_eof())
+                    .map(|_| p.into_response().status)
+            };
+            assert_eq!(run(&accepted).unwrap(), 204, "piece size {piece}");
+            assert!(
+                run(&refused).is_err(),
+                "an extra 103 was accepted with piece size {piece}"
             );
         }
     }

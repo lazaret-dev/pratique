@@ -11,7 +11,8 @@ use std::io::{self, Read};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
-    /// Maximum size of the status line plus all header lines.
+    /// Maximum wire size of the status lines, header lines and terminating blank lines across
+    /// all interim responses and the final response.
     pub max_header_bytes: usize,
     /// Maximum size of a response body.
     pub max_body_bytes: u64,
