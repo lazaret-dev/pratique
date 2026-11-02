@@ -3070,10 +3070,13 @@ mod tests {
     fn async_head_and_post_helpers() {
         let (port, log) = spawn_server(2, |head, body| {
             if head.starts_with("HEAD") {
-                b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n".to_vec()
+                b"HTTP/1.1 200 OK\r\nContent-Length: 99\r\nConnection: close\r\n\r\n".to_vec()
             } else {
-                let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len())
-                    .into_bytes();
+                let mut r = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .into_bytes();
                 r.extend_from_slice(body);
                 r
             }
@@ -3083,7 +3086,10 @@ mod tests {
         assert_eq!((h.status, h.body.len()), (200, 0));
         let p = block_on(c.post_async(&format!("http://127.0.0.1:{}/p", port), "echo me")).unwrap();
         assert_eq!(p.text(), "echo me");
-        assert!(log.lock().unwrap()[0].starts_with("HEAD /h"));
+        let log = log.lock().unwrap();
+        assert_eq!(log.len(), 2);
+        assert!(log[0].starts_with("HEAD /h"));
+        assert!(log[1].starts_with("POST /p"));
     }
 
     #[test]
