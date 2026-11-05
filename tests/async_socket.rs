@@ -177,7 +177,9 @@ fn refused_and_dropped_tcp_connect_return_capacity() {
     let address = listener.local_addr().unwrap();
     drop(listener);
     let budget = SocketBudget::new(1).unwrap();
-    let result = block_on(timeout(Duration::from_secs(1), budget.tcp_connect(address))).unwrap();
+    // Windows may retry a refused SYN for about two seconds before reporting the reset.
+    // This bound still distinguishes a refusal from a connect that never completes.
+    let result = block_on(timeout(Duration::from_secs(5), budget.tcp_connect(address))).unwrap();
     assert!(result.is_err());
     assert_eq!(budget.in_use(), 0);
     let listener = TcpListener::bind(addr("127.0.0.1")).unwrap();

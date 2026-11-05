@@ -4,8 +4,8 @@
 //! wakes a stalled operation after 2 ms; no worker, queue or detached socket operation
 //! survives dropping its owner. Every successful operation yields once before its next
 //! syscall, allowing enclosing deadlines to run even under continuous traffic.
-//! TCP connection initiation is supported on Linux and macOS; other targets return
-//! `Unsupported`. UDP and already-connected TCP wrapping use the standard library.
+//! TCP connection initiation is supported on Linux, macOS and Windows; other targets
+//! return `Unsupported`. UDP and already-connected TCP wrapping use the standard library.
 use super::{sleep, yield_now, AsyncRead, AsyncWrite, Sleep};
 use std::future::{poll_fn, Future};
 use std::io::{self, Read, Write};
