@@ -195,73 +195,51 @@ fn every_case_is_judged_as_expected_and_as_python_tuf_judged_it() {
 /// the client never gives other bytes than the case's target, and refuses every one of them but the removal of a root
 /// in the middle of a rotation that changed no key. (A changed bit of JSON white space is no longer white space, every
 /// signature these files carry is needed, and everything else is signed or is the target itself.)
-#[test]
-fn no_damaged_repository_gives_another_target() {
+fn no_damaged_repository_case_gives_another_target(case_index: usize) {
     let (now, cases) = cases();
-    let selected: Vec<_> = cases
+    let c = cases
         .iter()
         .filter(|c| c.expect == "ok" && c.local.is_empty())
-        .take(5)
-        .collect();
-    let results = std::thread::scope(|scope| {
-        selected
-            .into_iter()
-            .map(|c| {
-                scope.spawn(move || {
-                    let (mut changed, mut still_ok) = (0, 0);
-                    let mut survivors: BTreeMap<String, usize> = BTreeMap::new();
-                    let asked = std::cell::RefCell::new(Vec::new());
-                    run_recording(now, &c.bootstrap, &c.files, &c.local, &c.target, &asked)
-                        .unwrap();
-                    let fetched: Vec<String> = asked
-                        .into_inner()
-                        .into_iter()
-                        .filter(|p| c.files.contains_key(p))
-                        .collect();
-                    assert!(fetched.len() >= 4, "{}: {fetched:?}", c.name);
-                    for path in &fetched {
-                        let mut check = |files: &BTreeMap<String, Vec<u8>>, what: String| {
-                            if let Ok(got) = run(now, &c.bootstrap, files, &c.local, &c.target) {
-                                assert_eq!(got, c.content, "{}: {what} gave other bytes", c.name);
-                                still_ok += 1;
-                                *survivors.entry(what).or_default() += 1;
-                            }
-                            changed += 1;
-                        };
-                        let mut files = c.files.clone();
-                        let data = files.remove(path).unwrap();
-                        check(&files, format!("removing {path}"));
-                        files.insert(path.clone(), data);
-                        // every byte of the smaller files; every second or third of the larger ones, to stay within the time
-                        let len = files[path].len();
-                        for i in (0..len).step_by(len / 1200 + 1) {
-                            let original = files[path][i];
-                            files.get_mut(path).unwrap()[i] ^= 0x01;
-                            check(
-                                &files,
-                                format!("{}: {:?} at {i} of {path}", c.name, original as char),
-                            );
-                            files.get_mut(path).unwrap()[i] = original;
-                        }
-                    }
-                    (changed, still_ok, survivors)
-                })
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|worker| worker.join().unwrap())
-            .collect::<Vec<_>>()
-    });
+        .nth(case_index)
+        .unwrap();
     let (mut changed, mut still_ok) = (0, 0);
     let mut survivors: BTreeMap<String, usize> = BTreeMap::new();
-    for (case_changed, case_still_ok, case_survivors) in results {
-        changed += case_changed;
-        still_ok += case_still_ok;
-        for (what, count) in case_survivors {
-            *survivors.entry(what).or_default() += count;
+    let asked = std::cell::RefCell::new(Vec::new());
+    run_recording(now, &c.bootstrap, &c.files, &c.local, &c.target, &asked).unwrap();
+    let fetched: Vec<String> = asked
+        .into_inner()
+        .into_iter()
+        .filter(|p| c.files.contains_key(p))
+        .collect();
+    assert!(fetched.len() >= 4, "{}: {fetched:?}", c.name);
+    for path in &fetched {
+        let mut check = |files: &BTreeMap<String, Vec<u8>>, what: String| {
+            if let Ok(got) = run(now, &c.bootstrap, files, &c.local, &c.target) {
+                assert_eq!(got, c.content, "{}: {what} gave other bytes", c.name);
+                still_ok += 1;
+                *survivors.entry(what).or_default() += 1;
+            }
+            changed += 1;
+        };
+        let mut files = c.files.clone();
+        let data = files.remove(path).unwrap();
+        check(&files, format!("removing {path}"));
+        files.insert(path.clone(), data);
+        // every byte of the smaller files; every second or third of the larger ones, to stay within the time
+        let len = files[path].len();
+        for i in (0..len).step_by(len / 1200 + 1) {
+            let original = files[path][i];
+            files.get_mut(path).unwrap()[i] ^= 0x01;
+            check(
+                &files,
+                format!("{}: {:?} at {i} of {path}", c.name, original as char),
+            );
+            files.get_mut(path).unwrap()[i] = original;
         }
     }
-    assert!(changed > 10_000, "{changed}");
+    // Each of the five shards still makes enough changes to preserve the old test's
+    // aggregate lower bound of more than 10,000 damaged repositories.
+    assert!(changed > 2_000, "{changed}");
     // the one change that may go unnoticed: a root that is taken away ends the rotation before it, and the older root is
     // as good when the keys did not change (only the last root's expiry guards against holding a client back)
     survivors.retain(|what, _| {
@@ -271,8 +249,23 @@ fn no_damaged_repository_gives_another_target() {
         survivors.is_empty(),
         "changes that were not noticed: {survivors:?}"
     );
-    eprintln!("{changed} damaged repositories, {still_ok} not noticed (roots taken away), every other one refused");
+    eprintln!("case {case_index}: {changed} damaged repositories, {still_ok} not noticed (roots taken away), every other one refused");
 }
+
+macro_rules! damaged_repository_case {
+    ($name:ident, $index:expr) => {
+        #[test]
+        fn $name() {
+            no_damaged_repository_case_gives_another_target($index);
+        }
+    };
+}
+
+damaged_repository_case!(no_damaged_repository_case_0_gives_another_target, 0);
+damaged_repository_case!(no_damaged_repository_case_1_gives_another_target, 1);
+damaged_repository_case!(no_damaged_repository_case_2_gives_another_target, 2);
+damaged_repository_case!(no_damaged_repository_case_3_gives_another_target, 3);
+damaged_repository_case!(no_damaged_repository_case_4_gives_another_target, 4);
 
 /// The embedded root of Sigstore's repository is real: it signs itself with three of its five keys, and loses that when
 /// any signature or signed byte changes.
