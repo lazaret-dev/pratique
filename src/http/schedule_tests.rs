@@ -269,7 +269,17 @@ fn a_batch_deadline_ends_the_wait_and_the_requests_under_way() {
 
 #[test]
 fn a_cancel_stops_waiting_and_running_requests_and_fails_new_ones() {
-    let server = TestServer::start(shapes);
+    let server = TestServer::start(|seen| match seen.path() {
+        // Keep the request under way until cancellation closes its socket.  A
+        // fixed sleep can finish before the test reaches cancel on a slow
+        // runner, letting the request queued behind it run.
+        "/slow" => Reply::Run(Box::new(|wire| {
+            let mut byte = [0u8; 1];
+            let _ = wire.read(&mut byte);
+            false
+        })),
+        _ => shapes(seen),
+    });
     let sched = Scheduler::new().max_in_flight(2);
     let client = server.client().scheduler(&sched);
     let batch = Batch::new();
