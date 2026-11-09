@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import sys
 
 import audit_h
@@ -14,6 +15,52 @@ HERE = Path(__file__).resolve().parent
 OUT = Path(os.environ['PRATIQUE_H_BUILD_OUTPUT'])
 SOURCE_FILES = ['h_controls.rs', 'H_PROTOCOL.md', 'build_h.py', 'h_capture_rustc.py',
                 'audit_h.py', 'build_h_companion.py', 'run_h.py', 'analyze.py', 'replay.py', 'memory_env_probe.c']
+
+
+def elapsed_got_targets(binary):
+    """Resolve the actual ELF's PIE-relative GOT entries, without executing it."""
+    data = binary.read_bytes()
+    assert data[:6] == b'\x7fELF\x02\x01' and struct.unpack_from('<H', data, 18)[0] == 62
+    section_offset = struct.unpack_from('<Q', data, 40)[0]
+    section_size, section_count = struct.unpack_from('<HH', data, 58)
+    assert section_size == 64 and section_count > 0
+    sections = [struct.unpack_from('<IIQQQQIIQQ', data, section_offset + i * section_size)
+                for i in range(section_count)]
+    elapsed = {}
+    for section in sections:
+        if section[1] not in (2, 11):  # SHT_SYMTAB / SHT_DYNSYM
+            continue
+        strings = sections[section[6]]
+        names = data[strings[4]:strings[4] + strings[5]]
+        assert section[9] == 24
+        for offset in range(section[4], section[4] + section[5], section[9]):
+            name_offset, info, _, _, value, _ = struct.unpack_from('<IBBHQQ', data, offset)
+            name = names[name_offset:names.find(b'\0', name_offset)].decode()
+            if name.startswith('_ZN3std4time7Instant7elapsed') and info & 15 == 2:
+                elapsed[value] = name
+    assert len(elapsed) == 1, 'exact Rust1.87 elapsed function symbol required'
+    result = {}
+    for section in sections:
+        if section[1] != 4:  # SHT_RELA
+            continue
+        assert section[9] == 24
+        for offset in range(section[4], section[4] + section[5], section[9]):
+            address, info, addend = struct.unpack_from('<QQq', data, offset)
+            if info & 0xffffffff == 8 and addend in elapsed:  # R_X86_64_RELATIVE
+                result[address] = {'target': addend, 'symbol': elapsed[addend]}
+    assert result, 'elapsed GOT relocation required'
+    return result
+
+
+def resolved_elapsed_calls(text, targets):
+    result = []
+    for line in text.splitlines():
+        match = re.search(r'\bcallq?\s+\*[^#\n]+#\s*([0-9a-f]+)', line)
+        if match and int(match.group(1), 16) in targets:
+            slot = int(match.group(1), 16)
+            result.append({'call_address': line.strip().split(':')[0], 'GOT_address': hex(slot),
+                           'target_address': hex(targets[slot]['target']), 'symbol': targets[slot]['symbol']})
+    return result
 
 
 def main():
@@ -56,12 +103,13 @@ def main():
         (selected / (active + '.txt')).write_text(''.join(body))
     assert all((selected / (name + '.txt')).exists() for name in names)
     witnesses = {}
+    clock_targets = elapsed_got_targets(binary)
     for name in audit_h.TIMERS:
         text = (selected / (name + '.txt')).read_text()
         witnesses[name] = {'constructor_call_present': 'GhashKey::new' in text,
-                           'timestamp_symbol_present': 'std::time::Instant::elapsed' in text,
+                           'resolved_timestamp_calls': resolved_elapsed_calls(text, clock_targets),
                            'body_sha256': build_h.digest(selected / (name + '.txt'))}
-        assert witnesses[name]['constructor_call_present'] and witnesses[name]['timestamp_symbol_present'], witnesses[name]
+        assert witnesses[name]['constructor_call_present'] and len(witnesses[name]['resolved_timestamp_calls']) == 2, witnesses[name]
     for name in ['h_identical_original_history', 'h_equal_input']:
         text = (selected / (name + '.txt')).read_text()
         witnesses[name] = {'RNG_shifts_present': bool(re.search(r'\bshr[qwl]?\s+\$0xc,', text) and re.search(r'\bshl[qwl]?\s+\$0x19,', text)),
