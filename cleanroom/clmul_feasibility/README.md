@@ -133,9 +133,17 @@ value or intermediate low/high/mixed key array in this preparation path.
 The integration caller must retain and wipe its raw powers and running power,
 and wipe stored planes on key destruction. Compiler-created copies, register
 contents, and spills retain the existing best-effort zeroization limitation.
-The separate by-value transpose wrapper is for working-data operations, not
+The separate by-value transpose is for working-data operations, not
 key preparation. Historical benchmark artifacts predate this API repair;
 the current bench explicitly measures in-place preparation.
+
+Native x86 timing after the lifecycle repair flagged the 1,024-byte data row.
+That repair had also changed the working-data transpose into a wrapper around
+the new in-place function. The working-data function now retains its original
+six-step body verbatim so this unintended data-path code-generation change can
+be tested separately. Key preparation continues to call only the independent
+in-place function. This candidate still requires the unchanged timing gate
+and diagnostics; restoring code generation is not by itself a timing proof.
 
 ## Correctness and structural checks
 
