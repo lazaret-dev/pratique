@@ -112,3 +112,12 @@ raw/stored wipes; a separate reviewer checks the frozen repair. This removes
 source-owned preparation scratch copies without claiming erasure of every
 compiler-generated copy, register, or spill. Production sources remain
 unviewed by this author.
+
+During native x86 timing investigation, this author restored the original
+working-data transpose body from the earlier clean-only b33b45e1 version.
+The separate borrowed/in-place key-preparation graph remains in force. The
+transposition masks and steps, polynomial circuit, and AES S-box expressions
+are unchanged. This is a candidate to isolate an unintended working-data
+code-generation change; timing diagnostics remain required. Only this
+author's own prior clean source and source-free integration/CI summaries
+were consulted for this change.
