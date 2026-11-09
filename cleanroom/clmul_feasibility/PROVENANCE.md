@@ -101,3 +101,14 @@ were administrative sources, not cryptographic implementation sources.
 Production AES/GHASH bodies and all prohibited implementation sources remain
 unviewed by this author. The separate integrator reports validation outcomes
 and retains its own integration-phase provenance.
+
+Independent pre-merge review subsequently identified deliberate by-value
+preparation copies outside the caller's and retained-state wipes. This
+clean-room author replaced those preparation APIs with zero-only construction,
+borrowed raw input, direct destination filling, and in-place transposition.
+No polynomial identities, gate expressions, or S-box expressions changed.
+The integration author must wire the destination and retain existing volatile
+raw/stored wipes; a separate reviewer checks the frozen repair. This removes
+source-owned preparation scratch copies without claiming erasure of every
+compiler-generated copy, register, or spill. Production sources remain
+unviewed by this author.
