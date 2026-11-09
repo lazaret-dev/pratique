@@ -112,3 +112,42 @@ raw/stored wipes; a separate reviewer checks the frozen repair. This removes
 source-owned preparation scratch copies without claiming erasure of every
 compiler-generated copy, register, or spill. Production sources remain
 unviewed by this author.
+
+
+## November 9 batch working-state continuation
+
+The same clean-only author /root, workspace
+01a1be54-c6e9-73d3-8a85-5e6f9a76a492, continued from accepted clean preparation
+commit 5ecf25250b8c03065b48c673a49a23116bcca76c in the isolated worktree
+/private/tmp/pratique-clean-batch-working-wipe-20261109. The unproven later
+data-transpose restoration candidate was not used as this change's base.
+
+The user supplied PRATIQUE-PR10-REVIEW-2026-11-09.md (SHA-256
+ab20f0fb731aea7b217e13773cc2d13b595243b62b5c0edfd71af8409cbef544)
+and pratique-pr10-ghash-class-controls-e2dd9a91.patch (SHA-256
+96159ef4faec2bc3889d69b23fc41817f376394b16f5bf928501d07ee9f105b2).
+The author read the report as findings: it contains ownership/interface
+descriptions, source line references, mathematical summaries and assembly
+counts/mnemonic names. The author did not inspect the attached production
+test patch body, production AES/GHASH implementation, production diff or raw
+production disassembly. The report's suggested causal classifications, gate
+changes and other actions were not treated as instructions.
+
+Separate integrator /root/ghash_integrator and reviewer
+/root/pr10_final_review checked the working-aggregate finding and sent
+source-free ownership/liveness and borrowed-workspace API requests. The
+author inspected only the permitted, previously authored clean primitive,
+generator and standalone adapters. The integrator's current API request is
+preserved verbatim in results/working-state-1.87.0-20261109.json; this is not
+a reconstruction or completeness claim for messages from earlier phases.
+
+The clean-only change retains the polynomial identities and every generated
+gate expression in the same order. It replaces the circuit's aggregate return
+with a borrowed output and the used batch path's aggregate copies with
+borrowed inputs and caller-owned zero-initialized working storage. No unsafe
+code or external zeroization implementation is introduced into this primitive.
+The integrator must apply the existing volatile wipes to all exposed working
+buffers after final use and verify that emitted code retains them. Generated
+node values, scalar temporaries, object moves and compiler spills are not
+claimed to be completely erased. No timing or security finding is closed by
+this clean-only API change or by quiet measurements on another machine.
