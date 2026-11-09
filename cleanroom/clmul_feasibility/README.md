@@ -133,13 +133,52 @@ value or intermediate low/high/mixed key array in this preparation path.
 The integration caller must retain and wipe its raw powers and running power,
 and wipe stored planes on key destruction. Compiler-created copies, register
 contents, and spills retain the existing best-effort zeroization limitation.
-The separate by-value transpose wrapper is for working-data operations, not
-key preparation. Historical benchmark artifacts predate this API repair;
-the current bench explicitly measures in-place preparation.
+The separate by-value transpose wrapper is retained for independent,
+non-secret lane-product probes. The integration path uses in-place transpose
+for preparation and working data. Historical benchmark artifacts predate these
+API repairs; the current bench explicitly measures in-place preparation.
+
+## Batch working-state lifetime repair
+
+A later integration review identified a separate issue: wiping the caller's
+blocks does not wipe copies owned by value-taking batch helpers. The prepared
+product path now borrows the raw blocks and writes all large working arrays
+into one caller-owned BatchWorking128x64, initialized with empty() before
+secret-derived values enter it. The circuit writes into a borrowed output
+instead of returning a populated 128-plane array. Its Boolean gate expressions,
+evaluation order, and 729 AND / 3,864 XOR counts are unchanged.
+
+The workspace retains three 64-word coefficient/transposed buffers, a 128-word
+product-plane buffer, three scalar-product words, and the two-word unreduced
+result. output() borrows that result. There is no Clone/Copy implementation
+or populated workspace return. After its last use of the result, the caller
+must use its volatile zeroization on ALL slices returned by words64_mut()
+(320 u64 words) and words128_mut() (five u128 words), and must separately wipe
+its raw blocks. The primitive exposes these owners; it does not itself perform
+the caller's volatile wiping. Integration and emitted-code checks are required
+before claiming that lifecycle repair is closed.
+
+Scalar arithmetic temporaries, generated circuit-node values, compiler
+register/stack copies, object moves and spills retain the best-effort
+limitation. This API change is not whole-frame erasure, a timing fix, a
+constant-time proof, or a waiver of any earlier timing finding. The independent
+fixture benchmark excludes integration-owned last-use wipes and does not
+establish integrated performance. Historical result files predate this repair.
+
+The working-state revision passed 13 tests in both debug (with debug info) and
+optimized builds using Rust 1.87.0 on Apple ARM64. The generator reproduced
+its output exactly; all 4,593 gate statements and all 128 output expressions
+match clean parent 5ecf25250b8c03065b48c673a49a23116bcca76c. The standalone
+benchmark and timing adapters compiled but were not run. Optimized assembly
+was emitted locally for Apple ARM64, ARMv7 Linux, i686 Linux, x86-64 Linux,
+RISC-V Linux and WebAssembly; the existing multiplication/division scan
+found none. That scan is not a full branch/dataflow audit or a timing proof.
+Commands, source hashes, results and the exact current API request are in
+[the working-state validation record](results/working-state-1.87.0-20261109.json).
 
 ## Correctness and structural checks
 
-All ten tests pass with Rust 1.87.0 and 1.99.1. They include the four accepted
+The original ten-test study passed with Rust 1.87.0 and 1.99.1. It includes the four accepted
 PR #8 tests, every single-bit pair, mixed lanes, boundaries, 12,288 new
 deterministic 64-bit pairs, 8,192 128-bit pairs checked by a separate
 bit-polynomial oracle, and the NIST recurrence comparison. Every bit in

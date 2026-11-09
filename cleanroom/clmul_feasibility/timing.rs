@@ -1,5 +1,7 @@
 //! Independent, noisy timing screen; not the production GHASH timing suite.
-use clmul_feasibility::{PreparedPolynomial128x64, clmul128_batch_xor_prepared};
+use clmul_feasibility::{
+    BatchWorking128x64, PreparedPolynomial128x64, clmul128_batch_xor_prepared,
+};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -60,12 +62,15 @@ fn screen(label: &str, vary_b: bool, rounds: usize, repetitions: usize, seed: u6
             let a = black_box(a);
             let mut prepared = PreparedPolynomial128x64::empty();
             prepared.prepare(black_box(&b));
+            let mut working = BatchWorking128x64::empty();
             let start = Instant::now();
             for _ in 0..repetitions {
-                black_box(clmul128_batch_xor_prepared(
-                    black_box(a),
+                clmul128_batch_xor_prepared(
+                    black_box(&a),
                     black_box(&prepared),
-                ));
+                    black_box(&mut working),
+                );
+                black_box(working.output());
             }
             stats[class].add(start.elapsed().as_secs_f64() * 1e9 / repetitions as f64);
         }

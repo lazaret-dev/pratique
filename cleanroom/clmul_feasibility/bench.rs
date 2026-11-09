@@ -58,11 +58,18 @@ fn main() {
     measure("Boolean Karatsuba x64", 64, iterations, || {
         black_box(primitive::clmul64x64_portable(black_box(a), black_box(b)));
     });
+    let mut coefficients = [0; 64];
+    let mut product_planes = [0; 128];
+    let mut product = 0;
     measure("prepared x64 xor", 64, iterations, || {
-        black_box(primitive::clmul64_batch_xor_prepared(
-            black_box(a),
+        coefficients.copy_from_slice(black_box(&a));
+        primitive::clmul64_batch_xor_prepared(
+            black_box(&mut coefficients),
             black_box(&prepared),
-        ));
+            black_box(&mut product_planes),
+            black_box(&mut product),
+        );
+        black_box(&product);
     });
     let mut a128 = [0; 64];
     let mut b128 = [0; 64];
@@ -72,11 +79,14 @@ fn main() {
     }
     let mut prepared128 = primitive::PreparedPolynomial128x64::empty();
     prepared128.prepare(black_box(&b128));
+    let mut working = primitive::BatchWorking128x64::empty();
     measure("128-bit polynomial batch x64 xor", 192, iterations, || {
-        black_box(primitive::clmul128_batch_xor_prepared(
-            black_box(a128),
+        primitive::clmul128_batch_xor_prepared(
+            black_box(&a128),
             black_box(&prepared128),
-        ));
+            black_box(&mut working),
+        );
+        black_box(working.output());
     });
     let mut destination = primitive::Prepared64::empty();
     measure("prepare x64 operand in place", 64, iterations, || {
