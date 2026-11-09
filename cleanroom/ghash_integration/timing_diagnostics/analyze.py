@@ -51,6 +51,22 @@ def analyze(path):
             'mean_duration_by_timed_cacheline_offset': {
                 str(offset): statistics.mean(r['duration_ns'] for r in subset if r['timed_address'] % 64 == offset)
                 for offset in sorted(set(r['timed_address'] % 64 for r in subset))}}
+        # H-stage records add post-timer data/key positions and actual public
+        # test-fixture values. Zero key_address means unobserved temporary.
+        for field in ['data_address', 'key_address', 'h_address']:
+            if field in subset[0]:
+                observed = [r[field] for r in subset if r[field] != 0]
+                classes[str(c)][field] = {
+                    'observed_samples': len(observed),
+                    'unobserved_samples': len(subset) - len(observed),
+                    'unique_addresses': len(set(observed)),
+                    'cacheline_offset': dict(sorted(Counter(a % 64 for a in observed).items())),
+                    'page_offset': dict(sorted(Counter(a % 4096 for a in observed).items()))}
+        if 'h_value' in subset[0]:
+            classes[str(c)]['public_H_fixtures'] = {
+                'zero_H_samples': sum(r['h_value'] == 0 for r in subset),
+                'unique_H_values': len(set(r['h_value'] for r in subset)),
+                'matches_original_fixture_H': sum(r['h_value'] == r['fixture_h_value'] for r in subset)}
     return {'path': str(path), 'samples': len(rows), 'classes': classes, 'crops': crops}
 
 
