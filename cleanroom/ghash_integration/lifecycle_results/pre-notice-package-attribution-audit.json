@@ -1,0 +1,56 @@
+{
+  "archive": "/private/tmp/pratique-lifecycle-package/package/pratique-0.1.0.crate",
+  "archive_sha256": "87a3496034df055261234b638572fb888bf749bebbab30771b86d56f129a9165",
+  "code_head": "3db15f5495b6608094102bff87ec36970d1d36aa",
+  "source_entry_mismatches": [],
+  "removed_expression_hits": [],
+  "reference_files": {
+    "BACKLOG.md": [
+      "BearSSL",
+      "Boyar",
+      "Peralta",
+      "bmul64"
+    ],
+    "CLEAN_ROOM_AES_GHASH.md": [
+      "BearSSL"
+    ],
+    "NOTICE": [
+      "BearSSL",
+      "Boyar",
+      "Peralta",
+      "bmul64",
+      "ghash_ctmul64"
+    ],
+    "cleanroom/aes_tower/DERIVATION.md": [
+      "BearSSL"
+    ],
+    "cleanroom/clmul_feasibility/PROVENANCE.md": [
+      "BearSSL"
+    ],
+    "cleanroom/ghash_integration/PROVENANCE.md": [
+      "BearSSL"
+    ]
+  },
+  "entries": 909,
+  "regular_files": 909,
+  "src_files_compared": 193,
+  "src_inventory_matches_git": true,
+  "rust_files_scanned": 237,
+  "key_asset_hashes": {
+    "src/crypto/clmul_batch_clean.rs": "06862216dd4fd4467dc8d5efe19ccf2272e9e619364f53472153c77cb0683fdb",
+    "src/crypto/clmul_batch_circuit.rs": "d1c114b78ac65e4056d4c300c0de8d6c9a54317d19a25e942d8f489d3850d156",
+    "src/crypto/aes_sbox_tower_clean.rs": "7aa0d2e722af6f9ab5557262a5b2ac4f364efcec351500d5c9e8510b7f1d96c3",
+    "src/crypto/ghash.rs": "27b47ea60df3d68d3157473d8e9487f4b040b08f065e595bcd47450be6701605"
+  },
+  "original_manifest_identical": true,
+  "unchanged_license_hash": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+  "notice_still_unmodified": true,
+  "cargo_vcs_info": {
+    "git": {
+      "sha1": "3db15f5495b6608094102bff87ec36970d1d36aa",
+      "dirty": true
+    },
+    "path_in_vcs": ""
+  },
+  "status": "Pre-NOTICE package audit passes scoped expression-removal and reviewed-code identity. Documentation provides unique logical roles and correct current algorithms. NOTICE entry disposition supported within historical scope, pending final exact-SHA/package recheck."
+}

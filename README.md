@@ -409,9 +409,10 @@ AES used to be a byte-indexed S-box table, which is exposed to cache-timing atta
 x86-64 host (a zero or all-ones key against random keys, |t| 17 to 69). It is now either the CPU's own AES
 instructions (AES-NI, or the ARMv8 AES instructions; found at run time and self-tested) or, where there are none, a
 bitsliced circuit with no tables (B-20, B-41). Both pass the same harness: |t| stays under 3.5 on the key and data
-rows for AES-128 and AES-256 on x86-64. GHASH uses PCLMULQDQ / PMULL, or integer multiplications on spaced-out
-operands (`bmul64`) on other CPUs; that fallback assumes the CPU's integer multiplier takes the same time for any
-operands, which holds on mainstream desktop, server and phone cores but not on some small embedded ones.
+rows for AES-128 and AES-256 on x86-64. GHASH uses PCLMULQDQ / PMULL where available. Its portable path uses
+independently authored Boolean polynomial products: a fixed-work scalar product for short inputs and tails, and
+prepared powers with 64-block product aggregation for full batches. The portable product primitives use fixed
+AND, XOR, shift, transpose, and parity operations. Runtime platform timing guards remain active where supported.
 RSA, ECDSA and Ed25519 are verification only and handle public data (the Ed25519 code is variable time by design; the field arithmetic it shares with X25519 is the constant-time code, in `crypto/fe25519.rs`).
 
 ## Features
@@ -859,7 +860,7 @@ is chosen at run time:
 |--------|--------------------|----------|---------|
 | x86-64 (Intel Macs, Windows, Linux) | SSE2, four blocks per step; AVX2, eight, if the CPU has it; AVX-512, sixteen, on Intel since Ice Lake and AMD since Zen 4 | radix 2^64 (two 64-bit limbs); four blocks at a time in AVX2's lanes for 2 KiB and more, if the CPU has it (B-104) | AES-NI + PCLMULQDQ if the CPU has them |
 | aarch64 (Apple Silicon, ARM servers, Windows on ARM) | NEON, eight blocks per step (four for the end of a message), with Poly1305 run between its rounds | radix 2^64 | ARMv8 AES + PMULL if the CPU has them |
-| anything else, including 32-bit targets | portable one-block loop | radix 2^64 on 64-bit pointers, 5 x 26-bit limbs on 32-bit | bitsliced AES + `bmul64` GHASH |
+| anything else, including 32-bit targets | portable one-block loop | radix 2^64 on 64-bit pointers, 5 x 26-bit limbs on 32-bit | bitsliced AES + Boolean scalar/batched GHASH |
 
 On an x86-64 VM (Cascade Lake) B-57 took ChaCha20-Poly1305 from about 0.62 to 1.1 GB/s (`examples/bench.rs`, 1 MiB
 messages; 0.64 to 1.2 GB/s on 16 KiB records): the keystream from 1.1 to 2.3 GB/s with AVX2 (4.6 with AVX-512, which
@@ -873,9 +874,11 @@ The AES instructions are detected with `is_x86_feature_detected!` / `is_aarch64_
 key is made, and checked with a self-test (FIPS 197 answers, and the CTR and GHASH code against the portable code);
 if anything disagrees the process uses the portable path. `pratique::crypto::aes::hardware_accelerated()` says which
 one is in use, and `examples/bench.rs` prints it. The ClientHello offers AES-GCM first when it is hardware
-accelerated and ChaCha20-Poly1305 first when it is not (the bitsliced AES, with the 113-gate S-box of Boyar and Peralta
-since B-62, does AES-128-GCM at about 96 MB/s on an x86-64 VM where the AES instructions do over 3 GB/s and ChaCha20-Poly1305
-about 350 MB/s).
+accelerated and ChaCha20-Poly1305 first when it is not. Portable AES processes four blocks through the independently
+authored quadratic-field-tower S-box and FIPS 197 affine map in `aes_sbox_tower_clean.rs`; the key schedule uses the
+same S-box. Current bulk, short-record, and key-setup measurements are in
+[the integration evidence](cleanroom/ghash_integration/README.md), with performance follow-up in
+[issue #11](https://github.com/lazaret-dev/pratique/issues/11).
 `RUSTFLAGS="--cfg pratique_portable"` forces the portable cipher kernels on every target. The runtime-checked ARM data-independent timing guard remains active on CPUs that support it. On x86-64 CPUs with BMI2, the X25519
 ladder and ECDSA P-256's point operations also run from copies compiled for it (`mulx`), chosen at run time (B-104). The SIMD
 kernels (AES, GHASH, ChaCha20, Poly1305, SHA-2; in x86-64's AES-GCM kernel also an empty `asm!` that keeps the hash's products

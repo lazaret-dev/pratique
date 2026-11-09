@@ -18,9 +18,14 @@ compatibility change is included in this AES/GHASH work.
 wiping cost 8.44 microseconds for AES-128 and 8.89 microseconds for AES-256,
 compared with 1.50 and 1.90 microseconds in the baseline. The prepared operand
 holds 1,536 bytes of secret planes per key. Preparation is amortized by the key
-lifetime. The raw power array and running power are wiped after preparing the
-stored representation; all 192 stored words and cloned keys follow the
-existing key destruction lifecycle.
+lifetime. The lifecycle repair borrows the caller-owned raw powers and populates
+all 192 planes directly inside the retained key field, with in-place transpose.
+The raw power array and running scalar receive volatile wipes; retained stored
+words and cloned keys follow the existing destruction lifecycle. Final object
+moves and compiler-created register/stack copies remain best effort, as stated
+by `Zeroize`; this does not guarantee complete physical erasure. The initial
+value-taking preparation path's explicit scratch arrays were a real gap and
+were removed by the separately committed borrowed API and integration repair.
 
 The separate integrator started exactly at
 `2a1d85533505499bffe4b3990921321d2bb0658f`. Both accelerated AES kernels and
@@ -127,3 +132,10 @@ with repeated `--target` arguments to repeat the assembly checks.
 The logs retain every reported result and failure; terminal empty lines and trailing whitespace are
 normalized for repository whitespace checks. No merge, re-vendor, release,
 NOTICE removal, or legal attribution conclusion is included in this draft.
+
+The merge-readiness lifecycle continuation starts at public head `32615a80`,
+merges independent API commit `5ecf2525`, and wires it in `3db15f54`. Its unique
+integrator identity and logical workspace/session are reconciled in
+`CLEAN_ROOM_AES_GHASH.md` and the integration provenance. Source-owned preparation
+arrays are checked separately from retained-state wiping. Performance issue #11
+remains a nonblocking follow-up; this repair does not change its disposition.

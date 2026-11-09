@@ -1,0 +1,13 @@
+{
+  "artifact": "/private/tmp/pratique-lifecycle-package/package/pratique-0.1.0.crate",
+  "sha256": "87a3496034df055261234b638572fb888bf749bebbab30771b86d56f129a9165",
+  "phase": "Before scoped NOTICE amendment; source/provenance repair staged",
+  "basis_code_commit": "3db15f5495b6608094102bff87ec36970d1d36aa",
+  "crypto_files": {
+    "src/crypto/clmul_batch_clean.rs": "06862216dd4fd4467dc8d5efe19ccf2272e9e619364f53472153c77cb0683fdb",
+    "src/crypto/clmul_batch_circuit.rs": "d1c114b78ac65e4056d4c300c0de8d6c9a54317d19a25e942d8f489d3850d156",
+    "src/crypto/aes_sbox_tower_clean.rs": "7aa0d2e722af6f9ab5557262a5b2ac4f364efcec351500d5c9e8510b7f1d96c3",
+    "src/crypto/ghash.rs": "27b47ea60df3d68d3157473d8e9487f4b040b08f065e595bcd47450be6701605"
+  },
+  "file_count": 909
+}

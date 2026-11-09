@@ -1,7 +1,8 @@
 # Clean-room AES S-box and carry-less multiplication provenance
 
-This commit contains two new primitives written without viewing or copying the
-superseded implementations:
+This file began as the accepted PR #8 primitive provenance record. Its original
+implementation-agent sources and affirmation are preserved below. That commit
+introduced two primitives without viewing or copying the superseded implementations:
 
 - a bitsliced AES forward S-box over `[u64; 8]`; and
 - a fixed-work portable `u64` by `u64` carry-less multiplier.
@@ -18,9 +19,54 @@ superseded implementations:
   supplied to the implementation agent.  That review independently checked the
   S-box mathematics, the carry-less product, the tests, and the structural
   constant-time properties, and identified the integration gates below.
-- Integrator: not yet assigned.  The integrator must be a different person or
-  agent session, and must be named here before integration begins.  This commit
-  deliberately contains no caller integration or removal of superseded code.
+- Integrator at the original PR #8 handoff: unassigned in that historical
+  commit. The separate integration assignment is recorded below. This file was
+  not updated when integration began; this correction reconciles that stale
+  administrative record and does not backdate it.
+
+## Current integration assignment and closure record
+
+The current integrator is the separate Codex agent with canonical task identity
+`/root/ghash_integrator`, in supplied parent chat/workspace
+`01a1be54-c6e9-73d3-8a85-5e6f9a76a492`. Its unique logical integration session is
+`20261108-pratique-portable-batch-ghash-integration`. These are logical task and
+workspace identifiers; an opaque backend agent/session UUID was not exposed and
+is not asserted here.
+
+The independent continuation primitive author is `/root`, logical clean-room
+session `20261108-clmul-feasibility` in that parent workspace. The integrator's
+separate agent context was assigned before its production inspection. Production
+source and diffs were not sent to that primitive author. The original PR #8
+implementation-agent workspace above remains a separate historical identity.
+The final read-only review context is `/root/pr10_final_review`.
+
+The integrator's isolated workspaces are:
+
+- `/private/tmp/pratique-batch-ghash-integration-20261108`, original integration
+  evidence branch `codex/integrate-portable-batch-ghash`;
+- `/private/tmp/pratique-portable-crypto-publication-20261108`, publication branch
+  `codex/integrate-portable-batch-ghash`; and
+- `/private/tmp/pratique-pr10-lifecycle-fix-20261108`, lifecycle closure branch
+  `codex/pr10-prepared-secret-lifecycle`.
+
+The production basis is accepted PR #8 merge
+`55cfa19fb41bbfc503e7e5bf93de39e3189d1127`. The separately committed clean-only
+continuation is `2a1d8553 -> bede170a -> 5e5c9ab9 -> 781ffb62 -> b33b45e1`.
+The first published integration is `bc55bcbccb19921838b5b0bdd399d4c247cd26ea`;
+`32615a80b43280fb1fef3d36fa7d87261d5617f2` adds CI and evidence corrections.
+The borrowed in-place preparation API was committed independently as
+`5ecf25250b8c03065b48c673a49a23116bcca76c`, merged without rewriting it, and
+wired in integration commit `3db15f5495b6608094102bff87ec36970d1d36aa`.
+
+Git author and committer `John A Booth <johnabooth@gmail.com>` are the owner's
+requested contributor metadata. They do not identify John as the personal
+human author of agent-written expressions or replace the agent affirmations.
+
+Current integration evidence is in `cleanroom/ghash_integration/`; continuation
+math/source provenance is in `cleanroom/clmul_feasibility/PROVENANCE.md` and
+`cleanroom/aes_tower/DERIVATION.md`. The lifecycle closure and final scoped
+attribution audit are recorded separately there. Performance follow-up remains
+tracked in issue #11 and is not a blocker for this lifecycle/provenance repair.
 
 ## Sources consulted
 
@@ -81,7 +127,8 @@ standard-derived exhaustive and property tests.
   explicit owner acceptance for any portable regression over 25%.
 - Audit the final source and artifacts before changing NOTICE or license files.
 
-Integration with the existing AES and GHASH callers, removal of superseded
-code, attribution review, assembly review, cross-platform validation, and
-performance measurement are deliberately left to the separate reviewer and
-integrator required by the implementation brief.
+The preceding gates were the original PR #8 handoff to the separate integrator.
+Current integration, validation, lifecycle closure, and scoped attribution
+results are recorded under the identities and evidence paths above. Supported
+public AES key sizes remain 128 and 256 bits; AES-192 was not added to the
+repository's API. The original implementation-agent affirmation is unchanged.

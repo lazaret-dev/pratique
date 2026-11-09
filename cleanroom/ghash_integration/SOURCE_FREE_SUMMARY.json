@@ -1,7 +1,6 @@
 {
   "schema": 1,
   "source_commit": "9e16efed4b547a346c83d5725d4f533d74c35e8a",
-  "source_tree": "de20bdbd58b9815aeeeb11f6d169a9a6e5fbb161",
   "upstream_main": "55cfa19fb41bbfc503e7e5bf93de39e3189d1127",
   "clean_only_publication_parent": "b33b45e1",
   "portable_seal_MBps": {
@@ -88,5 +87,10 @@
       "Rust1.87 forced software debug/full/timing/assembly",
       "stable default full/hardware parity"
     ]
-  }
+  },
+  "snapshot_is_historical": true,
+  "source_subtree_path": "src",
+  "source_subtree_oid": "de20bdbd58b9815aeeeb11f6d169a9a6e5fbb161",
+  "crypto_subtree_path": "src/crypto",
+  "crypto_subtree_oid": "3307223af698d423ebddc6daaa8533d1c2a12b58"
 }

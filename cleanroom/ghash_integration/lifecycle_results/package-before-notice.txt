@@ -1,0 +1,2 @@
+   Packaging pratique v0.1.0 (/private/tmp/pratique-pr10-lifecycle-fix-20261108)
+    Packaged 909 files, 15.0MiB (4.1MiB compressed)

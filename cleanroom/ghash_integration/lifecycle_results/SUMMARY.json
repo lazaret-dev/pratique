@@ -1,0 +1,60 @@
+{
+  "basis_public_head": "32615a80b43280fb1fef3d36fa7d87261d5617f2",
+  "clean_API_commit": "5ecf25250b8c03065b48c673a49a23116bcca76c",
+  "integrated_code_commit": "3db15f5495b6608094102bff87ec36970d1d36aa",
+  "crypto_subtree_path": "src/crypto",
+  "crypto_subtree_oid": "37934660cc000b2b6a49e604833647b9576df626",
+  "source_subtree_path": "src",
+  "source_subtree_oid": "fa3ce3c8a2bf0ef543d28172fcda98091c463cdb",
+  "integrator_logical_identity": "/root/ghash_integrator",
+  "parent_workspace": "01a1be54-c6e9-73d3-8a85-5e6f9a76a492",
+  "backend_UUID_available": false,
+  "debug_MSRV_crypto_passed": 173,
+  "full_MSRV_software": {
+    "passed": 1858,
+    "failed": 0,
+    "ignored": 26
+  },
+  "timing_max_abs_t": {
+    "AES": 2.3,
+    "GHASH": 2.8
+  },
+  "profile": {
+    "AES128-GCM-seal-Portable:1048576": {
+      "ns": 4845194.444,
+      "MBps": 216.416
+    },
+    "AES128-GCM-seal-Portable:16384": {
+      "ns": 80690.795,
+      "MBps": 203.047
+    },
+    "AES128-GCM-key-Portable:0": {
+      "ns": 9162.919,
+      "MBps": 0.0
+    },
+    "AES256-GCM-seal-Portable:1048576": {
+      "ns": 6278523.857,
+      "MBps": 167.01
+    },
+    "AES256-GCM-seal-Portable:16384": {
+      "ns": 99578.347,
+      "MBps": 164.534
+    },
+    "AES256-GCM-key-Portable:0": {
+      "ns": 9623.371,
+      "MBps": 0.0
+    }
+  },
+  "AEAD_fuzz": {
+    "seconds": 60,
+    "executions": 557952,
+    "panics": 0,
+    "bloat": 0
+  },
+  "pre_NOTICE_archive_sha256": "87a3496034df055261234b638572fb888bf749bebbab30771b86d56f129a9165",
+  "pre_NOTICE_package_audit": "passed independent source/history/artifact review",
+  "preparation_ownership": "borrowed raw powers, retained destination, in-place transpose; no returning populated preparation aggregate",
+  "wiping_limit": "Explicit caller and retained buffers use existing volatile wipes; long-lived object moves/compiler register and stack copies remain best effort",
+  "performance_followup": "Issue11 unchanged and nonblocking",
+  "fresh_CI_and_final_package_review": "pending frozen follow-up"
+}
