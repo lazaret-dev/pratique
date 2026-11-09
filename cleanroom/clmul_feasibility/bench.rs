@@ -43,7 +43,8 @@ fn main() {
         .unwrap_or(100_000);
     let a = black_box(a);
     let b = black_box(b);
-    let prepared = primitive::Prepared64::new(black_box(b));
+    let mut prepared = primitive::Prepared64::empty();
+    prepared.prepare(black_box(&b));
     measure("accepted scalar x3", 3, iterations, || {
         black_box([
             primitive::clmul64_portable(black_box(a[0]), black_box(b[0])),
@@ -69,17 +70,27 @@ fn main() {
         a128[lane] = u128::from(next(&mut state)) ^ (u128::from(next(&mut state)) << 64);
         b128[lane] = u128::from(next(&mut state)) ^ (u128::from(next(&mut state)) << 64);
     }
-    let prepared128 = primitive::PreparedPolynomial128x64::new(black_box(b128));
+    let mut prepared128 = primitive::PreparedPolynomial128x64::empty();
+    prepared128.prepare(black_box(&b128));
     measure("128-bit polynomial batch x64 xor", 192, iterations, || {
         black_box(primitive::clmul128_batch_xor_prepared(
             black_box(a128),
             black_box(&prepared128),
         ));
     });
-    measure("prepare x64 operand", 64, iterations, || {
-        black_box(primitive::Prepared64::new(black_box(b)));
+    let mut destination = primitive::Prepared64::empty();
+    measure("prepare x64 operand in place", 64, iterations, || {
+        destination.prepare(black_box(&b));
+        black_box(&destination);
     });
-    measure("prepare 128-bit operand set", 192, iterations, || {
-        black_box(primitive::PreparedPolynomial128x64::new(black_box(b128)));
-    });
+    let mut destination128 = primitive::PreparedPolynomial128x64::empty();
+    measure(
+        "prepare 128-bit operand set in place",
+        192,
+        iterations,
+        || {
+            destination128.prepare(black_box(&b128));
+            black_box(&destination128);
+        },
+    );
 }

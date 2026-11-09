@@ -30,15 +30,21 @@ fn transpose_step<const SHIFT: usize>(q: &mut [u64; 64], mask: u64) {
     }
 }
 
-/// Involutory 64 by 64 bit-matrix transpose, with fixed addresses.
+/// Involutory 64 by 64 bit-matrix transpose in the caller's retained storage.
+#[inline(never)]
+pub fn transpose_in_place(q: &mut [u64; 64]) {
+    transpose_step::<1>(q, 0x5555_5555_5555_5555);
+    transpose_step::<2>(q, 0x3333_3333_3333_3333);
+    transpose_step::<4>(q, 0x0f0f_0f0f_0f0f_0f0f);
+    transpose_step::<8>(q, 0x00ff_00ff_00ff_00ff);
+    transpose_step::<16>(q, 0x0000_ffff_0000_ffff);
+    transpose_step::<32>(q, 0x0000_0000_ffff_ffff);
+}
+
+/// Value wrapper for working data; key preparation uses the in-place API.
 #[inline(never)]
 pub fn transpose(mut q: [u64; 64]) -> [u64; 64] {
-    transpose_step::<1>(&mut q, 0x5555_5555_5555_5555);
-    transpose_step::<2>(&mut q, 0x3333_3333_3333_3333);
-    transpose_step::<4>(&mut q, 0x0f0f_0f0f_0f0f_0f0f);
-    transpose_step::<8>(&mut q, 0x00ff_00ff_00ff_00ff);
-    transpose_step::<16>(&mut q, 0x0000_ffff_0000_ffff);
-    transpose_step::<32>(&mut q, 0x0000_0000_ffff_ffff);
+    transpose_in_place(&mut q);
     q
 }
 
@@ -64,8 +70,16 @@ pub fn clmul64x64_portable(a: [u64; 64], b: [u64; 64]) -> [u128; 64] {
 pub struct Prepared64([u64; 64]);
 
 impl Prepared64 {
-    pub fn new(b: [u64; 64]) -> Self {
-        Self(transpose(b))
+    /// Construct zero storage before any key material enters the destination.
+    pub const fn empty() -> Self {
+        Self([0; 64])
+    }
+
+    /// Populate retained storage from a caller-owned input, without scratch arrays.
+    /// The caller remains responsible for wiping the source when appropriate.
+    pub fn prepare(&mut self, b: &[u64; 64]) {
+        self.0.copy_from_slice(b);
+        transpose_in_place(&mut self.0);
     }
 }
 
@@ -93,20 +107,29 @@ pub struct PreparedPolynomial128x64 {
 }
 
 impl PreparedPolynomial128x64 {
-    pub fn new(b: [u128; 64]) -> Self {
-        let mut low = [0; 64];
-        let mut high = [0; 64];
-        let mut mixed = [0; 64];
-        for i in 0..64 {
-            low[i] = b[i] as u64;
-            high[i] = (b[i] >> 64) as u64;
-            mixed[i] = low[i] ^ high[i];
-        }
+    /// Return only zero state; retained key material is initialized in place.
+    pub const fn empty() -> Self {
         Self {
-            low: Prepared64::new(low),
-            high: Prepared64::new(high),
-            mixed: Prepared64::new(mixed),
+            low: Prepared64::empty(),
+            high: Prepared64::empty(),
+            mixed: Prepared64::empty(),
         }
+    }
+
+    /// Borrow the caller's raw powers and fill the destination's planes directly.
+    ///
+    /// No source-owned intermediate key arrays or populated return value are
+    /// created. Caller-owned raw powers still require the caller's zeroization.
+    /// This does not promise erasure of compiler-generated moves/register spills.
+    pub fn prepare(&mut self, b: &[u128; 64]) {
+        for i in 0..64 {
+            self.low.0[i] = b[i] as u64;
+            self.high.0[i] = (b[i] >> 64) as u64;
+            self.mixed.0[i] = self.low.0[i] ^ self.high.0[i];
+        }
+        transpose_in_place(&mut self.low.0);
+        transpose_in_place(&mut self.high.0);
+        transpose_in_place(&mut self.mixed.0);
     }
 
     /// Expose all prepared secret words to the caller's existing zeroization.
@@ -145,6 +168,20 @@ extern crate std;
 mod tests {
     use super::*;
 
+    // Non-secret test fixtures can return by value; production key preparation
+    // must initialize the final retained destination through a mutable borrow.
+    fn prepared64(b: &[u64; 64]) -> Prepared64 {
+        let mut p = Prepared64::empty();
+        p.prepare(b);
+        p
+    }
+
+    fn prepared128(b: &[u128; 64]) -> PreparedPolynomial128x64 {
+        let mut p = PreparedPolynomial128x64::empty();
+        p.prepare(b);
+        p
+    }
+
     fn oracle(a: u64, b: u64) -> u128 {
         let mut out = 0;
         for bit in 0..64 {
@@ -167,7 +204,7 @@ mod tests {
         let a = [0x1234_5678_9abc_def0_0123_4567_89ab_cdef; 64];
         let mut b = [0; 64];
         b[0] = 0x6a09_e667_f3bc_c909_bb67_ae85_84ca_a73b;
-        let original = PreparedPolynomial128x64::new(b);
+        let original = prepared128(&b);
         let before = clmul128_batch_xor_prepared(a, &original);
         assert_ne!(before, [0, 0]);
         let mut copy = original.clone();
@@ -177,6 +214,46 @@ mod tests {
         assert!(copy.words().into_iter().all(|w| w.iter().all(|v| *v == 0)));
         assert_eq!(clmul128_batch_xor_prepared(a, &copy), [0, 0]);
         assert_eq!(clmul128_batch_xor_prepared(a, &original), before);
+    }
+
+    #[test]
+    fn preparation_borrows_inputs_and_replaces_all_retained_planes() {
+        let mut raw = [0; 64];
+        raw[0] = u128::MAX;
+        raw[63] = 1 << 127;
+        let expected_raw = raw;
+        let mut destination = PreparedPolynomial128x64::empty();
+        assert!(
+            destination
+                .words()
+                .into_iter()
+                .all(|w| w.iter().all(|v| *v == 0))
+        );
+        let addresses = destination.words().map(|w| w.as_ptr());
+        destination.prepare(&raw);
+        assert_eq!(raw, expected_raw);
+        assert_eq!(addresses, destination.words().map(|w| w.as_ptr()));
+        assert!(
+            destination
+                .words()
+                .into_iter()
+                .any(|w| w.iter().any(|v| *v != 0))
+        );
+        destination.prepare(&[0; 64]);
+        assert_eq!(addresses, destination.words().map(|w| w.as_ptr()));
+        assert!(
+            destination
+                .words()
+                .into_iter()
+                .all(|w| w.iter().all(|v| *v == 0))
+        );
+
+        let raw64 = [0x6a09_e667_f3bc_c909; 64];
+        let mut narrow = Prepared64::empty();
+        narrow.prepare(&raw64);
+        assert_eq!(narrow.0, transpose(raw64));
+        narrow.prepare(&[0; 64]);
+        assert_eq!(narrow.0, [0; 64]);
     }
 
     #[test]
@@ -203,7 +280,7 @@ mod tests {
             assert_eq!(clmul64_portable(a[lane], b[lane]), expected);
             sum ^= expected;
         }
-        assert_eq!(clmul64_batch_xor_prepared(a, &Prepared64::new(b)), sum);
+        assert_eq!(clmul64_batch_xor_prepared(a, &prepared64(&b)), sum);
     }
 
     #[test]
@@ -286,17 +363,14 @@ mod tests {
                 expected[0] ^= p[0];
                 expected[1] ^= p[1];
             }
-            assert_eq!(
-                clmul128_batch_xor_prepared(a, &PreparedPolynomial128x64::new(b)),
-                expected
-            );
+            assert_eq!(clmul128_batch_xor_prepared(a, &prepared128(&b)), expected);
             for lane in [0, 31, 32, 63] {
                 let mut a = [0; 64];
                 let mut b = [0; 64];
                 a[lane] = 1 << iteration;
                 b[lane] = u128::MAX;
                 assert_eq!(
-                    clmul128_batch_xor_prepared(a, &PreparedPolynomial128x64::new(b)),
+                    clmul128_batch_xor_prepared(a, &prepared128(&b)),
                     oracle128(a[lane], b[lane])
                 );
             }
@@ -349,7 +423,7 @@ mod tests {
                 powers[index] = power.reverse_bits();
                 power = nist_multiply(power, h);
             }
-            let prepared = PreparedPolynomial128x64::new(powers);
+            let prepared = prepared128(&powers);
             let mut sequential = 0;
             let mut grouped = 0u128;
             for _ in 0..3 {

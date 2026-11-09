@@ -122,6 +122,21 @@ aggregation cost, the 1 MiB budgets leave approximately 72.71 ns per block
 for AES and everything else with AES-128, and 93.23 ns with AES-256.
 Whether the integrated implementation fits those budgets is unmeasured.
 
+## Preparation lifetime repair
+
+Independent pre-merge review found that the initial by-value preparation APIs
+made explicit source-owned copies that the caller's raw-power wipe and final
+retained-plane wipe could not reach. Preparation now starts with an `empty()`
+zero destination. `prepare(&mut self, &raw_powers)` fills retained planes
+directly and transposes them in place. There is no populated prepared return
+value or intermediate low/high/mixed key array in this preparation path.
+The integration caller must retain and wipe its raw powers and running power,
+and wipe stored planes on key destruction. Compiler-created copies, register
+contents, and spills retain the existing best-effort zeroization limitation.
+The separate by-value transpose wrapper is for working-data operations, not
+key preparation. Historical benchmark artifacts predate this API repair;
+the current bench explicitly measures in-place preparation.
+
 ## Correctness and structural checks
 
 All ten tests pass with Rust 1.87.0 and 1.99.1. They include the four accepted

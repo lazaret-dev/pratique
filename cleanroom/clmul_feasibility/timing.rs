@@ -58,10 +58,14 @@ fn screen(label: &str, vary_b: bool, rounds: usize, repetitions: usize, seed: u6
                 (varying, fixed)
             };
             let a = black_box(a);
-            let b = PreparedPolynomial128x64::new(black_box(b));
+            let mut prepared = PreparedPolynomial128x64::empty();
+            prepared.prepare(black_box(&b));
             let start = Instant::now();
             for _ in 0..repetitions {
-                black_box(clmul128_batch_xor_prepared(black_box(a), black_box(&b)));
+                black_box(clmul128_batch_xor_prepared(
+                    black_box(a),
+                    black_box(&prepared),
+                ));
             }
             stats[class].add(start.elapsed().as_secs_f64() * 1e9 / repetitions as f64);
         }
