@@ -246,7 +246,8 @@ def summarize_trial(number,plan):
     row_flags={name:flags.get(name+'_confirmed_failure') for name in frozen()['rows']}
     reasons=['original:'+name for name in original['confirmed_rows']]
     reasons+=['focused:'+name for name,value in row_flags.items() if name!='positive_matched' and value is True]
-    positive_miss=flags.get('positive_matched_detected') is False or row_flags.get('positive_matched') is False
+    detected=flags.get('positive_matched_detected');positive_confirmed=row_flags.get('positive_matched')
+    positive_miss=True if detected is False or positive_confirmed is False else False if detected is True and positive_confirmed is True else None
     if positive_miss:reasons.append('matched_positive_miss')
     if plan.get('vm') in QUIET_AUDIT and number==1:reasons.append('predeclared_audit_no_substitution')
     case=obj(focused.get('case',safe_json(output/'DATA-controls/case.json')))

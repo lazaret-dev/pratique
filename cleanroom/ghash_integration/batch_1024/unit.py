@@ -28,6 +28,8 @@ class BatchContract(unittest.TestCase):
         infinite=c.parse_original(original(c.NAMES[4]).replace('max 6.0','max inf').replace('max 7.0','max inf'),101)
         self.assertTrue(infinite['complete']);self.assertEqual(infinite['rows'][c.NAMES[4]][0]['printed_max_abs_t'],'+Infinity')
         json.dumps(infinite,allow_nan=False)
+        unknown=c.parse_original(original().replace('max 1.0','max NaN'),0)
+        self.assertIsNone(unknown['rows'][c.NAMES[0]][0]['printed_max_abs_t']);json.dumps(unknown,allow_nan=False)
         for text,exit_code in [(original(c.NAMES[2]),0),(original(),101),(original().replace(PASS,FAIL),101),(original(c.NAMES[4]).replace('timing depends on the input:','other panic:'),101),(original().replace(c.NAMES[-1],'unknown row'),0),(original(c.NAMES[4]).replace('above 4.5; measuring','unrelated'),101)]:
             with self.subTest(exit=exit_code):self.assertFalse(c.parse_original(text,exit_code)['complete'])
 
@@ -85,6 +87,11 @@ class BatchContract(unittest.TestCase):
             with self.assertRaises((AssertionError,KeyError)):c.validate_metadata({**good,**changes},plan)
 
     def test_missing_partial_aggregate_keeps_all40_slots_and_audits(self):
+        with tempfile.TemporaryDirectory() as tmp,mock.patch.object(c,'OUT',Path(tmp)):
+            missing=c.summarize_trial(1,{'vm':6})
+            self.assertEqual(missing['focused']['classification'],'incomplete');self.assertIsNone(missing['focused']['positive_miss'])
+            self.assertIsNone(missing['focused']['footer']);self.assertFalse(missing['original']['complete'])
+            self.assertEqual(missing['post_CI_full_focused_raw_priority_reasons'],['predeclared_audit_no_substitution'])
         supplied={'vm':1,'trials':[{'vm':1,'trial':1,'original':{'complete':True,'confirmed_rows':[c.NAMES[4]]},'focused':{'classification':'complete_unhealthy','row_confirmations':{'negative_identical_equal':True}}}]}
         result=c.aggregate({1:supplied})
         self.assertEqual(len(result['trials']),40);self.assertEqual(result['missing_trial_slots'],39)
