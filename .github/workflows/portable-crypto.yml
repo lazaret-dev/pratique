@@ -8,11 +8,12 @@ permissions:
   contents: read
 
 jobs:
-  native-x86-64:
+  msrv-portable-x86-64:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       RUSTUP_TOOLCHAIN: 1.87.0
+      RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
       PRATIQUE_TIMING_SECS: '3'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -23,26 +24,31 @@ jobs:
           lscpu
           openssl version
           go version
-      - name: Ordinary debug build and crypto tests
+      - name: MSRV software debug build and crypto tests
         run: |
           cargo test --lib crypto:: -- --skip crypto::timing --skip release_profile
-      - name: Full release suite and hardware parity
+      - name: Full MSRV software release suite
         run: cargo test --release --all-features
-      - name: Portable release crypto tests
-        env:
-          RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
-          CARGO_TARGET_DIR: target/portable-validation
-        run: |
-          cargo test --release --lib crypto:: -- --skip crypto::timing --skip release_profile
       - name: Portable AES release timing
-        env:
-          RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
-          CARGO_TARGET_DIR: target/portable-validation
-        run: cargo test --release --lib crypto::timing::aes_is_constant_time -- --ignored --nocapture --test-threads=1
+        run: cargo test --release --all-features --lib crypto::timing::aes_is_constant_time -- --ignored --nocapture --test-threads=1
       - name: Portable GHASH release timing
-        env:
-          RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
-          CARGO_TARGET_DIR: target/portable-validation
-        run: cargo test --release --lib crypto::timing::ghash_multiplication_is_constant_time -- --ignored --nocapture --test-threads=1
+        run: cargo test --release --all-features --lib crypto::timing::ghash_multiplication_is_constant_time -- --ignored --nocapture --test-threads=1
       - name: Production primitive assembly and source audit
         run: python3 cleanroom/ghash_integration/audit_primitives.py --toolchain 1.87.0
+
+  stable-native-x86-64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install stable and record native host
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustc -vV
+          lscpu
+          openssl version
+          go version
+      - name: Full default release suite and hardware parity
+        run: cargo test --release --all-features

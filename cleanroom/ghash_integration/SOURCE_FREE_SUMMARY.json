@@ -76,5 +76,17 @@
   "dependencies_added": false,
   "public_API_changed": false,
   "known_baseline_environment_issue": "OpenSSL4.1 session-ticket assertion reproduces on unchanged baseline; full suite passes with installed OpenSSL3.6.5",
-  "workflow": ".github/workflows/portable-crypto.yml"
+  "workflow": ".github/workflows/portable-crypto.yml",
+  "default_x86_msrv_baseline_limitation": {
+    "compiler": "Rust1.87.0",
+    "errors": 79,
+    "component": "unchanged ChaCha AVX512 intrinsics",
+    "baseline_commit": "2abbf3b2",
+    "baseline_log_sha256": "ab5a07453333eac991c35bff07a6487bf3f4c032bf52af556c8999682e0a065d",
+    "default_x86_msrv_pass_claimed": false,
+    "CI_lanes": [
+      "Rust1.87 forced software debug/full/timing/assembly",
+      "stable default full/hardware parity"
+    ]
+  }
 }

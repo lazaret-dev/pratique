@@ -7,6 +7,13 @@ same-process hardware comparison is within 1.51 percent of baseline. Public
 key sizes remain AES-128 and AES-256; this repository does not expose AES-192.
 No dependency, public API, NOTICE, or license change is included.
 
+**Existing default-x86 compiler limitation:** the unchanged ChaCha AVX512 path
+already fails with Rust 1.87 (79 errors, reproduced on the baseline). Native
+x86 CI therefore checks full software debug/release/timing/assembly with Rust
+1.87 and default hardware/full release behavior with stable Rust. A default
+x86 Rust 1.87 build is not claimed to pass. No ChaCha kernel or build-system
+compatibility change is included in this AES/GHASH work.
+
 **Key setup is deliberately more expensive:** eager portable preparation and
 wiping cost 8.44 microseconds for AES-128 and 8.89 microseconds for AES-256,
 compared with 1.50 and 1.90 microseconds in the baseline. The prepared operand
@@ -101,9 +108,9 @@ Validation completed before draft publication:
 
 Windows x64 emulation also passes 183 crypto and 161 TLS tests. Real native
 x86-64 CI is pending at initial draft publication. The local workflow
-`.github/workflows/portable-crypto.yml` uses native Ubuntu 24.04 x64 for ordinary
-MSRV crypto, full release/hardware parity, forced-software tests, unchanged
-release AES/GHASH timing screens, and production assembly checks. Its checkout
+`.github/workflows/portable-crypto.yml` uses native Ubuntu 24.04 x64 for MSRV software debug/full-release/timing/assembly
+and stable default full-release/hardware-parity checks. The release timing
+thresholds are unchanged. Its checkout
 pin was verified against the official actions/checkout v4 ref. Draft status
 is retained until those results and the remaining review are complete.
 
