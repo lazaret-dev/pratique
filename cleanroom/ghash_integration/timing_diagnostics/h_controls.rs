@@ -93,9 +93,7 @@ fn h_original_input(rng: &mut Rng, class: bool, data: &Vec<u8>) -> HInput {
 fn h_identical_original_history(rng: &mut Rng, class: bool, data: &Vec<u8>) -> HInput {
     let h = if class {
         let mask = black_box(0u8);
-        let bytes: Vec<u8> = (0..16)
-            .map(|_| (rng.next_u64() as u8) & black_box(mask))
-            .collect();
+        let bytes: Vec<u8> = (0..16).map(|_| (rng.next_u64() as u8) & mask).collect();
         bytes.try_into().unwrap()
     } else {
         [0; 16]
@@ -114,9 +112,7 @@ fn h_equal_input(fixture: &HFixture, data: &Vec<u8>, identical: bool) -> HInput 
     } else {
         0u8.wrapping_sub(fixture.class as u8)
     });
-    let bytes: Vec<u8> = (0..16)
-        .map(|_| (rng.next() as u8) & black_box(mask))
-        .collect();
+    let bytes: Vec<u8> = (0..16).map(|_| (rng.next() as u8) & mask).collect();
     (bytes.try_into().unwrap(), data.clone())
 }
 

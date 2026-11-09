@@ -1,4 +1,4 @@
-name: PR10 fixed-ELF timing investigation
+name: PR10 bounded H preparation investigation
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   actions: read
 
 jobs:
-  build-history-companion:
+  build-h-companion:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -23,73 +23,70 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Install exact supplemental-control compiler
+      - name: Install exact control compiler
         run: rustup toolchain install 1.87.0 --profile minimal
-      - name: Build history controls away from measured hosts
+      - name: Build owned-source H controls and actual linked evidence
         timeout-minutes: 12
         env:
-          PRATIQUE_HISTORY_OUTPUT: ${{ runner.temp }}/history-companion-build
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/build_history.py
-      - name: Preserve supplemental binaries and storage proof
+          PRATIQUE_H_BUILD_OUTPUT: ${{ runner.temp }}/h-companion-build
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/build_h_companion.py
+      - name: Preserve companion and actual runtime disassembly
         id: upload
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr10-history-companion
-          path: ${{ runner.temp }}/history-companion-build
+          name: pr10-h-preparation-companion
+          path: ${{ runner.temp }}/h-companion-build
           retention-days: 14
           compression-level: 6
           if-no-files-found: error
 
-  fresh-vm-replay:
-    needs: build-history-companion
+  bounded-default-h-protocol:
+    needs: build-h-companion
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         replica: [1, 2, 3]
     env:
-      PRATIQUE_REPLICA: ${{ matrix.replica }}
+      PRATIQUE_H_REPLICA: ${{ matrix.replica }}
       PRATIQUE_TIMING_SECS: '3'
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
-      - name: Download verify and prepare sealed ELFs without compilation
-        timeout-minutes: 5
+      - name: Download and verify sealed binaries and owned companion
+        timeout-minutes: 4
         env:
           GH_TOKEN: ${{ github.token }}
-          PRATIQUE_COMPANION_DIGEST: ${{ needs.build-history-companion.outputs.artifact_digest }}
-          PRATIQUE_COMPANION_ARTIFACT: ${{ needs.build-history-companion.outputs.artifact_id }}
+          PRATIQUE_H_COMPANION_DIGEST: ${{ needs.build-h-companion.outputs.artifact_digest }}
+          PRATIQUE_H_COMPANION_ARTIFACT: ${{ needs.build-h-companion.outputs.artifact_id }}
         run: |
-          mkdir -p "$RUNNER_TEMP/replay-output"
-          date -u > "$RUNNER_TEMP/replay-output/download-stage.txt"
+          mkdir -p "$RUNNER_TEMP/h-output"
           gh api repos/lazaret-dev/pratique/actions/artifacts/13657075157/zip > "$RUNNER_TEMP/phase1.zip"
-          gh api "repos/lazaret-dev/pratique/actions/artifacts/$PRATIQUE_COMPANION_ARTIFACT/zip" > "$RUNNER_TEMP/history.zip"
-          python3 cleanroom/ghash_integration/timing_diagnostics/replay.py prepare
-      - name: Unmodified true-default startup gates on all three ELFs
+          gh api "repos/lazaret-dev/pratique/actions/artifacts/$PRATIQUE_H_COMPANION_ARTIFACT/zip" > "$RUNNER_TEMP/h-companion.zip"
+          python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py prepare
+      - name: Preserve all three unpinned true-default normal gates
         timeout-minutes: 3
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py startup
-      - name: Primary reported core gates and all matched controls
-        timeout-minutes: 7
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py primary
-      - name: Secondary reported core gates and predeclared expansion
-        timeout-minutes: 7
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py secondary
-      - name: Verified sham and masked diagnostic counterfactual if supported
-        timeout-minutes: 6
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py dispatch
-      - name: Reconstruct all raw sample statistics without waiving outcomes
-        timeout-minutes: 7
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py analyze
-      - name: Preserve every complete or partial outcome and raw sample
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py startup
+      - name: Preserve all three pinned true-default normal gates
+        timeout-minutes: 3
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py pinned
+      - name: H reference rows one through seven and matched controls
+        timeout-minutes: 5
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py controls
+      - name: Reconstruct complete and partial recorded samples
+        if: always()
+        timeout-minutes: 5
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py report
+      - name: Preserve every host outcome and raw H sample
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr10-fixed-ELF-replay-${{ matrix.replica }}
-          path: ${{ runner.temp }}/replay-output
+          name: pr10-h-preparation-replica-${{ matrix.replica }}
+          path: ${{ runner.temp }}/h-output
           retention-days: 14
           compression-level: 6
           if-no-files-found: error

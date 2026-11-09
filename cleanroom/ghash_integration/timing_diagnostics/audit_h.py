@@ -93,12 +93,15 @@ def timer_states(text):
 
 
 def producer_witness(text):
-    masked = re.findall(r'^\s*(%[-a-zA-Z0-9_.$]+) = and i8 ', text, re.M)
-    output_stores = sum(bool(re.search(r'\bstore i8 ' + re.escape(value) + r', ptr ', text)) for value in masked)
+    masked = re.findall(r'^\s*(%[-a-zA-Z0-9_.$]+) = and <16 x i8> ', text, re.M)
+    output_stores = sum(bool(re.search(r'\bstore <16 x i8> ' + re.escape(value) + r', ptr ', text)) for value in masked)
     return {'RNG_shift12_operations': len(re.findall(r'lshr i64 [^\n]+, 12\b', text)),
             'RNG_shift25_operations': len(re.findall(r'shl i64 [^\n]+, 25\b', text)),
             'RNG_shift27_operations': len(re.findall(r'lshr i64 [^\n]+, 27\b', text)),
-            'masked_generated_bytes': len(masked), 'masked_byte_stores': output_stores,
+            'masked_vector_results': len(masked), 'masked_vector_output_stores': output_stores,
+            'vector_output_store_width_bits': 128,
+            'vector_output_stores': len(re.findall(r'\bstore <16 x i8> ', text)),
+            'scalar_byte_masks': len(re.findall(r' = and i8 ', text)),
             'literal_class_branch': bool(re.search(r'br i1 %class,', text)),
             'allocation_calls': sum('__rust_alloc(' in line and not line.lstrip().startswith(';') for line in text.splitlines()),
             'note': 'Narrow IR witnesses plus extracted machine code; not a general equivalence proof.'}
@@ -125,7 +128,15 @@ def main():
     for name in ['h_identical_original_history', 'h_equal_input']:
         witness = producers[name]
         assert all(witness[key] == 16 for key in ['RNG_shift12_operations', 'RNG_shift25_operations',
-                   'RNG_shift27_operations', 'masked_generated_bytes', 'masked_byte_stores']), witness
+                   'RNG_shift27_operations']), witness
+        assert witness['masked_vector_results'] == witness['masked_vector_output_stores'] == 1, witness
+        assert witness['scalar_byte_masks'] == 0, witness
+    assert all(producers[name]['vector_output_stores'] == 1 for name in PRODUCERS), producers
+    for name in PRODUCERS:
+        machine = (out / (name + '.s')).read_text()
+        producers[name]['machine_128_bit_vector_stores'] = len(re.findall(
+            r'\bmov(?:dqu|dqa|ups|aps)\s+%xmm\d+,[^\n]*\(', machine))
+        assert producers[name]['machine_128_bit_vector_stores'] == 1, producers[name]
     assert producers['h_original_input']['literal_class_branch']
     assert producers['h_identical_original_history']['literal_class_branch']
     assert not producers['h_equal_input']['literal_class_branch']
