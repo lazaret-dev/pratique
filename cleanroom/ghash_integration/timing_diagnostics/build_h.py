@@ -43,7 +43,15 @@ def main():
     assert run(['git', 'rev-parse', 'HEAD'], out / 'source-head.txt', cwd=tree).stdout.strip() == SOURCE
     timing = tree / 'src/crypto/timing.rs'
     original = run(['git', 'show', SOURCE + ':src/crypto/timing.rs'], out / 'original-timing-source.txt', cwd=ROOT).stdout
-    timing.write_text(original + '\ninclude!(' + json.dumps(str(HERE / 'h_controls.rs')) + ');\n')
+    injected = original + '\ninclude!(' + json.dumps(str(HERE / 'h_controls.rs')) + ');\n'
+    timing.write_text(injected)
+    paths = run(['git', 'diff', '--name-only', 'HEAD'], out / 'owned-source-difference-paths.txt', cwd=tree).stdout.splitlines()
+    assert paths == ['src/crypto/timing.rs'], paths
+    run(['git', 'diff', '--binary', 'HEAD'], out / 'owned-source-diff.patch', cwd=tree)
+    status = run(['git', 'status', '--short', '--untracked-files=all'], out / 'owned-source-status.txt', cwd=tree).stdout.splitlines()
+    assert status == [' M src/crypto/timing.rs'], status
+    inventory = {str(path.relative_to(tree)): digest(path) for path in sorted((tree / 'src').rglob('*.rs'))}
+    (out / 'owned-source-inventory.json').write_text(json.dumps(inventory, indent=2) + '\n')
     # The only source injection is into this disposable owned-source build.
     env = {**os.environ, 'RUSTUP_TOOLCHAIN': '1.87.0', 'RUSTFLAGS': FLAGS,
            'CARGO_TARGET_DIR': str(out / 'target'), 'RUSTC_WRAPPER': str(HERE / 'h_capture_rustc.py'),
@@ -57,10 +65,16 @@ def main():
     result = run(command, out / 'build.log', env=env, cwd=tree)
     capture = json.loads((out / 'compiler-call.json').read_text())
     assert capture['included_h_source_sha256'] == digest(HERE / 'h_controls.rs'), 'source changed during compilation'
+    assert timing.read_text() == injected
+    assert inventory == {str(path.relative_to(tree)): digest(path) for path in sorted((tree / 'src').rglob('*.rs'))}, 'owned build source changed during compilation'
     files = {'h_controls.rs': digest(HERE / 'h_controls.rs'),
              'h_capture_rustc.py': digest(HERE / 'h_capture_rustc.py')}
     manifest = {'production_source_commit': SOURCE, 'RUSTFLAGS': FLAGS, 'target': args.target,
                 'debug': args.debug, 'emit_only': args.emit_only, 'source_files': files,
+                'actual_owned_source_difference_paths': paths,
+                'actual_owned_source_difference_sha256': digest(out / 'owned-source-diff.patch'),
+                'actual_owned_source_inventory_sha256': digest(out / 'owned-source-inventory.json'),
+                'only_timing_include_difference': True,
                 'scope': 'Owned-source diagnostic build; sealed normal ELF remains runtime authority.'}
     if not args.emit_only:
         artifacts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]

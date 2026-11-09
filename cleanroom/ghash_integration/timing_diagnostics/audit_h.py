@@ -10,6 +10,10 @@ TIMERS = ['h_time_full', 'h_time_prepared_hash', 'h_time_constructor_drop',
           'h_time_constructor_only', 'h_time_wipe_only', 'h_time_known_leak']
 PRODUCERS = ['h_original_input', 'h_identical_original_history', 'h_equal_input']
 WANT = TIMERS + PRODUCERS
+EXTRA = {'production_ghash_constructor': 'ghash8GhashKey3new',
+         'production_ghash_wipe': 'ghash8GhashKey4wipe',
+         'production_preparation_transpose': 'clmul_batch_clean18transpose_in_place'}
+SYMBOLS = {**{name: name for name in WANT}, **EXTRA}
 LABEL = r'("[^"]+"|[-a-zA-Z0-9_.$]+)'
 
 
@@ -24,7 +28,7 @@ def extract(path, kind, out):
             if name is None:
                 start = line.startswith('define ') if kind == 'll' else line.startswith('_ZN') and line.rstrip().endswith(':')
                 if start:
-                    matches = [n for n in WANT if n in line]
+                    matches = [name for name, needle in SYMBOLS.items() if needle in line]
                     if matches:
                         name, buf = matches[0], [line]
             else:
@@ -33,7 +37,7 @@ def extract(path, kind, out):
                 if end:
                     (out / (name + '.' + kind)).write_text(''.join(buf))
                     name, buf = None, []
-    assert all((out / (name + '.' + kind)).exists() for name in WANT)
+    assert all((out / (name + '.' + kind)).exists() for name in SYMBOLS)
 
 
 def timer_states(text):
@@ -125,9 +129,17 @@ def main():
     assert producers['h_original_input']['literal_class_branch']
     assert producers['h_identical_original_history']['literal_class_branch']
     assert not producers['h_equal_input']['literal_class_branch']
+    constructor = (out / 'production_ghash_constructor.ll').read_text()
+    preparation = {'in_place_transpose_calls': sum('transpose_in_place' in line and
+                   not line.lstrip().startswith(';') for line in constructor.splitlines()),
+                   'volatile_i128_zero_stores': len(re.findall(r'store volatile i128 0,', constructor)),
+                   'note': 'Real shared constructor body remains callable by the opaque-reference timer wrappers; extracted body contains its preparation and raw-power wipes.'}
+    assert preparation['in_place_transpose_calls'] == 3, preparation
+    assert preparation['volatile_i128_zero_stores'] == 65, preparation
     report = {'boundary_states': states, 'state_legend': {'0': 'before start timestamp',
               '1': 'between start and stop timestamps', '2': 'after stop timestamp'},
               'all_normal_return_paths_have_two_timestamps': True, 'producers': producers,
+              'retained_production_preparation': preparation,
               'emission_hashes': {kind: digest(root / ('h-controls.' + kind)) for kind in ['ll', 's']},
               'selected_file_hashes': {p.name: digest(p) for p in sorted(out.iterdir())},
               'limits': 'Emission-only test build, no sealed-binary identity claim. Caller cannot establish libc exit upper-register state. Independent actual-CFG/machine-code review remains required.'}

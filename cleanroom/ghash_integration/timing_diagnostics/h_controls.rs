@@ -157,6 +157,10 @@ fn h_duration(start: u64, end: u64) -> u32 {
     (end - start).min(u32::MAX as u64) as u32
 }
 
+fn h_require_native_tick(tick: u64) {
+    assert_eq!(tick, 0, "H diagnostics reject forced clock quantization");
+}
+
 #[inline(always)]
 fn h_full_operation((h, data): &HInput) -> [u8; 16] {
     GhashKey::new(h, Backend::Portable).hash(b"aad", data)
@@ -335,6 +339,7 @@ fn h_measure(
     )
     .unwrap();
     let clock = Clock::new();
+    h_require_native_tick(clock.tick);
     let coarse = clock.coarse_tick();
     assert!(
         coarse.is_none(),
@@ -460,6 +465,10 @@ fn h_measure(
 
 #[test]
 fn pr10_h_fixture_and_cleanup_check() {
+    h_require_native_tick(0);
+    for tick in [1, 2, 42] {
+        assert!(std::panic::catch_unwind(|| h_require_native_tick(tick)).is_err());
+    }
     for seed in [0, 1] {
         let mut original = Rng::new(h_seed(seed));
         let mut fixture = HFixtureRng::new(h_seed(seed));
@@ -557,7 +566,9 @@ fn pr10_h_preparation_controls() {
         delay = ((delay as f64 * 0.02 * target / cost).round().max(1.0)) as usize;
     }
     let extra = h_cost(|| h_known_delay(delay));
-    println!("H_DIAGNOSTIC known_leak calibration target_ns={target:.9} delay_iterations={delay} extra_ns={extra:.9}");
+    let delay_ratio = extra / target;
+    let calibration_in_range = (0.015..=0.025).contains(&delay_ratio);
+    println!("H_DIAGNOSTIC known_leak calibration target_ns={target:.9} delay_iterations={delay} extra_ns={extra:.9} extra_ratio={delay_ratio:.9} in_range={calibration_in_range}");
     let rows = [
         (
             "h01_literal_original_full",
@@ -607,7 +618,7 @@ fn pr10_h_preparation_controls() {
     ];
     let mut statuses =
         std::io::BufWriter::new(std::fs::File::create(root.join("h-control-results.txt")).unwrap());
-    writeln!(statuses, "sensitivity={sensitivity}\nearly_exit={early_exit}\nknown_leak_target_ns={target}\nknown_leak_extra_ns={extra}\nknown_leak_iterations={delay}").unwrap();
+    writeln!(statuses, "sensitivity={sensitivity}\nearly_exit={early_exit}\nknown_leak_target_ns={target}\nknown_leak_extra_ns={extra}\nknown_leak_iterations={delay}\nknown_leak_extra_ratio={delay_ratio}\nknown_leak_calibration_in_range={calibration_in_range}").unwrap();
     for (name, generation, operation) in rows {
         let first = h_measure(name, 0, generation, operation, seconds);
         let again = h_measure(name, 1, generation, operation, seconds);
@@ -615,10 +626,12 @@ fn pr10_h_preparation_controls() {
         println!("H_DIAGNOSTIC outcome name={name} repeated_failure={failure:?}");
         writeln!(statuses, "{name}_repeated_failure={}", failure.is_some()).unwrap();
         if name == "h_positive_matched_cost_leak" {
+            let detected = first.max_t > LEAK_T && again.max_t > LEAK_T;
+            writeln!(statuses, "matched_cost_positive_detected={}", detected).unwrap();
             writeln!(
                 statuses,
-                "matched_cost_positive_detected={}",
-                first.max_t > LEAK_T && again.max_t > LEAK_T
+                "matched_cost_positive_healthy={}",
+                detected && calibration_in_range
             )
             .unwrap();
         }
