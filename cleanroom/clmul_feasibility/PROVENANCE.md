@@ -72,3 +72,21 @@ That identity is commit metadata selected by the owner. It is not a claim
 that John personally authored the expressions, generated the circuit, or
 made the agent's clean-room affirmation. The affirmation is made by the
 Codex agent.
+
+## Integration continuation
+
+On the user's request to continue toward a working implementation, a separate
+integration agent was assigned fresh context and a separate checkout. This
+clean-room author received interface requests and performance/test summaries
+only. The prepared-state accessors and Clone support were added so the
+integrator can apply existing key zeroization without exposing representation
+outside the crate. Rust 1.87 assembly compilation was extended to all six
+specified target families.
+
+Integrated profiling showed the accepted S-box itself prevented reaching the
+throughput gates. This author then consulted the permitted PR #8
+`src/crypto/aes_sbox_clean.rs` and its tests, and NIST FIPS 197 at
+https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197-upd1.pdf. A new independent
+field-tower S-box was derived in `cleanroom/aes_tower/`; its separate
+derivation records the identity, basis search, and validation. The prohibited
+implementation sources remain unviewed by this author.
