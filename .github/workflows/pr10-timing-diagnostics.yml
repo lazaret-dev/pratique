@@ -1,4 +1,4 @@
-name: PR10 bounded H preparation investigation
+name: PR10 bounded matched batch investigation
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   actions: read
 
 jobs:
-  build-h-companion:
+  build-batch-companion:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -24,35 +24,35 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Install exact control compiler
+      - name: Install exact compiler
         timeout-minutes: 2
         run: rustup toolchain install 1.87.0 --profile minimal
-      - name: Build owned-source H controls and actual linked evidence
+      - name: Build owned batch controls and actual linked evidence
         timeout-minutes: 12
         env:
-          PRATIQUE_H_BUILD_OUTPUT: ${{ runner.temp }}/h-companion-build
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/build_h_companion.py
+          PRATIQUE_BATCH_BUILD_OUTPUT: ${{ runner.temp }}/batch-companion-build
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/build_batch_companion.py
       - name: Preserve companion and actual runtime disassembly
         id: upload
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr10-h-preparation-companion
-          path: ${{ runner.temp }}/h-companion-build
+          name: pr10-matched-batch-companion
+          path: ${{ runner.temp }}/batch-companion-build
           retention-days: 14
           compression-level: 6
           if-no-files-found: error
 
-  bounded-default-h-protocol:
-    needs: build-h-companion
+  bounded-default-batch-protocol:
+    needs: build-batch-companion
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         replica: [1, 2, 3]
     env:
-      PRATIQUE_H_REPLICA: ${{ matrix.replica }}
+      PRATIQUE_BATCH_REPLICA: ${{ matrix.replica }}
       PRATIQUE_TIMING_SECS: '3'
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
@@ -60,36 +60,40 @@ jobs:
         timeout-minutes: 1
         with:
           persist-credentials: false
-      - name: Download and verify sealed binaries and owned companion
+      - name: Download and verify sealed normal and owned companion
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
-          PRATIQUE_H_COMPANION_DIGEST: ${{ needs.build-h-companion.outputs.artifact_digest }}
-          PRATIQUE_H_COMPANION_ARTIFACT: ${{ needs.build-h-companion.outputs.artifact_id }}
+          PRATIQUE_BATCH_COMPANION_DIGEST: ${{ needs.build-batch-companion.outputs.artifact_digest }}
+          PRATIQUE_BATCH_COMPANION_ARTIFACT: ${{ needs.build-batch-companion.outputs.artifact_id }}
         run: |
-          mkdir -p "$RUNNER_TEMP/h-output"
+          mkdir -p "$RUNNER_TEMP/batch-output"
           gh api repos/lazaret-dev/pratique/actions/artifacts/13657075157/zip > "$RUNNER_TEMP/phase1.zip"
-          gh api "repos/lazaret-dev/pratique/actions/artifacts/$PRATIQUE_H_COMPANION_ARTIFACT/zip" > "$RUNNER_TEMP/h-companion.zip"
-          python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py prepare
-      - name: Preserve all three unpinned true-default normal gates
+          gh api "repos/lazaret-dev/pratique/actions/artifacts/$PRATIQUE_BATCH_COMPANION_ARTIFACT/zip" > "$RUNNER_TEMP/batch-companion.zip"
+          python3 cleanroom/ghash_integration/timing_diagnostics/run_batch.py prepare
+      - name: One sealed e2dd preflight on selected live core
         timeout-minutes: 3
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py startup
-      - name: Preserve all three pinned true-default normal gates
-        timeout-minutes: 3
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py pinned
-      - name: H reference rows one through seven and matched controls
-        timeout-minutes: 5
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py controls
-      - name: Reconstruct complete and partial recorded samples
-        if: always()
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_batch.py preflight
+      - name: DATA triplet only after corresponding confirmed preflight failure
         timeout-minutes: 4
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_h.py report
-      - name: Preserve every host outcome and raw H sample
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_batch.py DATA
+      - name: Prepared H triplet only after corresponding confirmed preflight failure
+        timeout-minutes: 4
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_batch.py KEY
+      - name: One sealed post-window check with no retroactive controls
+        if: always()
+        timeout-minutes: 3
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_batch.py postflight
+      - name: Reconstruct complete and partial raw samples
+        if: always()
+        timeout-minutes: 5
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run_batch.py report
+      - name: Preserve every host, failure, skipped reason and raw sample
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr10-h-preparation-replica-${{ matrix.replica }}
-          path: ${{ runner.temp }}/h-output
+          name: pr10-matched-batch-replica-${{ matrix.replica }}
+          path: ${{ runner.temp }}/batch-output
           retention-days: 14
           compression-level: 6
           if-no-files-found: error
