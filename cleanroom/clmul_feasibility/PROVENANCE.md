@@ -90,3 +90,14 @@ https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197-upd1.pdf. A new independent
 field-tower S-box was derived in `cleanroom/aes_tower/`; its separate
 derivation records the identity, basis search, and validation. The prohibited
 implementation sources remain unviewed by this author.
+
+Administrative continuation sources included runner contract/liveness tools,
+Claude Desktop MCP configuration and the Lazaret runner's `config.toml` and
+`config.windows.toml` directory settings, and GitHub capability/authentication
+status metadata. Only non-secret exchange paths were selected from those
+settings. The newly prepared `portable-crypto.yml` CI workflow was reviewed
+for test commands, event triggers, and read-only token permissions. These
+were administrative sources, not cryptographic implementation sources.
+Production AES/GHASH bodies and all prohibited implementation sources remain
+unviewed by this author. The separate integrator reports validation outcomes
+and retains its own integration-phase provenance.
