@@ -13,9 +13,24 @@
 
 use super::aes::Backend;
 use super::aes_hw;
-use super::clmul_batch_clean::{clmul128_batch_xor_prepared, PreparedPolynomial128x64};
+use super::clmul_batch_clean::{
+    clmul128_batch_xor_prepared, BatchWorking128x64, PreparedPolynomial128x64,
+};
 use super::clmul_clean::clmul64_portable;
-use crate::zeroize::Zeroize;
+use crate::zeroize::{Zeroize, Zeroizing};
+
+// The clean primitive exposes its retained arrays without depending on the
+// production zeroization implementation. Every aggregate is covered here.
+impl Zeroize for BatchWorking128x64 {
+    fn zeroize(&mut self) {
+        for words in self.words64_mut() {
+            words.zeroize();
+        }
+        for words in self.words128_mut() {
+            words.zeroize();
+        }
+    }
+}
 
 /// 64 x 64 -> 128 bit carry-less product on the chosen implementation.
 #[inline(always)]
@@ -80,14 +95,20 @@ fn absorb_portable(
 ) -> u128 {
     let mut batches = data.chunks_exact(64 * 16);
     for batch in &mut batches {
-        let mut blocks = [0u128; 64];
+        let mut blocks = Zeroizing::new([0u128; 64]);
         for (block, bytes) in blocks.iter_mut().zip(batch.chunks_exact(16)) {
             *block = u128::from_be_bytes(bytes.try_into().unwrap()).reverse_bits();
         }
         blocks[0] ^= acc;
-        let [low, high] = clmul128_batch_xor_prepared(blocks, prepared);
-        acc = reduce(low, high);
-        blocks.zeroize();
+        {
+            // Only zero storage moves into the guard. The populated workspace is
+            // borrowed in place and wiped at this scope boundary after output use.
+            let mut working = Zeroizing::new(BatchWorking128x64::empty());
+            clmul128_batch_xor_prepared(&blocks, prepared, &mut working);
+            acc = reduce(working.output()[0], working.output()[1]);
+        }
+        // The raw block guard wipes its retained array at the iteration boundary.
+        // Scalar values and compiler-generated copies remain best effort.
     }
     absorb::<false>(h, acc, batches.remainder())
 }
@@ -217,6 +238,46 @@ impl GhashKey {
 mod tests {
     use super::*;
     use crate::util::{hex, unhex};
+
+    #[test]
+    fn batch_working_zeroize_covers_every_retained_word() {
+        let mut working = BatchWorking128x64::empty();
+        let before64 = working
+            .words64_mut()
+            .map(|words| (words.as_ptr(), words.len()));
+        let before128 = working
+            .words128_mut()
+            .map(|words| (words.as_ptr(), words.len()));
+        assert_eq!(before64.iter().map(|entry| entry.1).sum::<usize>(), 320);
+        assert_eq!(before128.iter().map(|entry| entry.1).sum::<usize>(), 5);
+        for words in working.words64_mut() {
+            words.fill(0xa5a5_a5a5_a5a5_a5a5);
+        }
+        for words in working.words128_mut() {
+            words.fill(u128::MAX);
+        }
+        working.zeroize();
+        assert!(working
+            .words64_mut()
+            .iter()
+            .all(|words| words.iter().all(|&x| x == 0)));
+        assert!(working
+            .words128_mut()
+            .iter()
+            .all(|words| words.iter().all(|&x| x == 0)));
+        assert_eq!(
+            working
+                .words64_mut()
+                .map(|words| (words.as_ptr(), words.len())),
+            before64
+        );
+        assert_eq!(
+            working
+                .words128_mut()
+                .map(|words| (words.as_ptr(), words.len())),
+            before128
+        );
+    }
 
     /// The bit-at-a-time multiplication this module replaced (NIST SP 800-38D algorithm 1):
     /// simple enough to check by eye, and the oracle for everything here.

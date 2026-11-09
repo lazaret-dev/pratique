@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 from preparation_lifecycle import audit_preparation_source
+from working_state_lifecycle import audit_working_source
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -55,6 +56,11 @@ def main():
         (ROOT / 'src/crypto/clmul_batch_clean.rs').read_text(),
         (ROOT / 'src/crypto/ghash.rs').read_text(),
         (ROOT / 'cleanroom/clmul_feasibility/lib.rs').read_text())
+    record['working_state_lifecycle'] = audit_working_source(
+        (ROOT / 'src/crypto/clmul_batch_clean.rs').read_text(),
+        (ROOT / 'src/crypto/ghash.rs').read_text(),
+        (ROOT / 'cleanroom/clmul_feasibility/lib.rs').read_text(),
+        (ROOT / 'src/crypto/clmul_batch_circuit.rs').read_text())
     for production, cleanroom in copies:
         actual, original = (ROOT / production).read_bytes(), (ROOT / cleanroom).read_bytes()
         assert actual == original, production + ' differs from committed clean-room source'
@@ -81,7 +87,11 @@ pub fn aes_sbox(q: &[u64; 8]) -> [u64; 8] { sbox::sbox(q) }
 pub fn clmul(a: u64, b: u64) -> u128 { scalar::clmul64_portable(a, b) }
 pub fn empty() -> batch::PreparedPolynomial128x64 { batch::PreparedPolynomial128x64::empty() }
 pub fn prepare(p: &mut batch::PreparedPolynomial128x64, b: &[u128; 64]) { p.prepare(b) }
-pub fn aggregate(a: [u128; 64], b: &batch::PreparedPolynomial128x64) -> [u128; 2] { batch::clmul128_batch_xor_prepared(a, b) }
+pub fn aggregate(a: &[u128; 64], b: &batch::PreparedPolynomial128x64, working: &mut batch::BatchWorking128x64) { batch::clmul128_batch_xor_prepared(a, b, working) }
+pub fn working_empty() -> batch::BatchWorking128x64 { batch::BatchWorking128x64::empty() }
+pub fn working_output(working: &batch::BatchWorking128x64) -> &[u128; 2] { working.output() }
+pub fn working_words64(working: &mut batch::BatchWorking128x64) -> [&mut [u64]; 4] { working.words64_mut() }
+pub fn working_words128(working: &mut batch::BatchWorking128x64) -> [&mut [u128]; 2] { working.words128_mut() }
 pub fn prepared_words(b: &mut batch::PreparedPolynomial128x64) -> [&mut [u64; 64]; 3] { b.words_mut() }
 ''')
     version = subprocess.check_output(['rustc', '+' + args.toolchain, '-vV'], text=True)

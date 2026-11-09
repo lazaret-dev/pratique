@@ -1,9 +1,10 @@
 //! Independently derived 64-lane Boolean polynomial products for portable GHASH.
 //!
-//! Primitive expressions and borrowed preparation come from the committed
-//! clean-only experiment (lifecycle API 5ecf2525). Only experiment-only APIs/tests
-//! were omitted and module placement changed. See the clean-room and integration
-//! provenance. Object moves and compiler spills remain a best-effort wiping limit.
+//! The borrowed preparation and working-state APIs are copied from committed
+//! clean-only lifecycle sources (27a1c8ac). The production caller owns all work
+//! arrays and applies its existing volatile zeroization after their final use.
+//! Object moves, scalar circuit nodes, registers and compiler spills remain a
+//! best-effort wiping limit. No populated aggregate returns on the used path.
 #![forbid(unsafe_code)]
 
 #[path = "clmul_batch_circuit.rs"]
@@ -33,13 +34,6 @@ pub fn transpose_in_place(q: &mut [u64; 64]) {
     transpose_step::<32>(q, 0x0000_0000_ffff_ffff);
 }
 
-/// Value wrapper for working data; key preparation uses the in-place API.
-#[inline(never)]
-pub fn transpose(mut q: [u64; 64]) -> [u64; 64] {
-    transpose_in_place(&mut q);
-    q
-}
-
 /// Retained transposed coefficients for a fixed 64-lane batch.
 #[derive(Clone)]
 pub struct Prepared64([u64; 64]);
@@ -52,28 +46,35 @@ impl Prepared64 {
 
     /// Populate retained storage from a caller-owned input, without scratch arrays.
     /// The caller remains responsible for wiping the source when appropriate.
-    #[allow(dead_code)] // Shared borrowed API; wide preparation writes its retained fields directly.
+    #[allow(dead_code)] // Shared narrow API; wide preparation fills retained fields directly.
     pub fn prepare(&mut self, b: &[u64; 64]) {
         self.0.copy_from_slice(b);
         transpose_in_place(&mut self.0);
     }
 }
 
-/// XOR of 64 unreduced products against one prepared operand set.
+/// XOR of 64 unreduced products, useful only if an integrator changes scheduling.
+/// Preparation is excluded from this call and must be measured separately.
 #[inline(never)]
-pub fn clmul64_batch_xor_prepared(a: [u64; 64], b: &Prepared64) -> u128 {
-    let p = circuit::planes_product(&transpose(a), &b.0);
+pub fn clmul64_batch_xor_prepared(
+    a: &mut [u64; 64],
+    b: &Prepared64,
+    product_planes: &mut [u64; 128],
+    result: &mut u128,
+) {
+    transpose_in_place(a);
+    circuit::planes_product(a, &b.0, product_planes);
     let mut low = 0u64;
     let mut high = 0u64;
     for bit in 0..64 {
-        low ^= u64::from(p[bit].count_ones() & 1) << bit;
-        high ^= u64::from(p[bit + 64].count_ones() & 1) << bit;
+        low ^= u64::from(product_planes[bit].count_ones() & 1) << bit;
+        high ^= u64::from(product_planes[bit + 64].count_ones() & 1) << bit;
     }
-    u128::from(low) ^ (u128::from(high) << 64)
+    *result = u128::from(low) ^ (u128::from(high) << 64);
 }
 
 /// Three prepared operand sets for 64 independent 128-bit polynomial products.
-/// The owning production key zeroizes all stored words on destruction.
+/// The production key owner zeroizes all retained words.
 #[derive(Clone)]
 pub struct PreparedPolynomial128x64 {
     low: Prepared64,
@@ -118,22 +119,90 @@ impl PreparedPolynomial128x64 {
     }
 }
 
-/// Return the XOR of 64 unreduced 128 by 128 polynomial products.
-/// The return value is [low 128 bits, high 128 bits], with no field reduction.
-#[inline(never)]
-pub fn clmul128_batch_xor_prepared(a: [u128; 64], b: &PreparedPolynomial128x64) -> [u128; 2] {
-    let mut low = [0; 64];
-    let mut high = [0; 64];
-    let mut mixed = [0; 64];
-    for i in 0..64 {
-        low[i] = a[i] as u64;
-        high[i] = (a[i] >> 64) as u64;
-        mixed[i] = low[i] ^ high[i];
+/// Caller-owned aggregates used by the prepared polynomial product.
+///
+/// Construct this zero state before processing secret-derived data. The caller
+/// must wipe every slice exposed by `words64_mut` and `words128_mut` after its
+/// final use of `output`. There is no populated workspace return or Clone/Copy
+/// implementation. The circuit's scalar temporaries and compiler-generated
+/// moves, registers and spills are outside this source-owned aggregate claim.
+pub struct BatchWorking128x64 {
+    low: [u64; 64],
+    high: [u64; 64],
+    mixed: [u64; 64],
+    product_planes: [u64; 128],
+    sums: [u128; 3],
+    output: [u128; 2],
+}
+
+impl BatchWorking128x64 {
+    /// Return only zero storage; populate the retained destination in place.
+    pub const fn empty() -> Self {
+        Self {
+            low: [0; 64],
+            high: [0; 64],
+            mixed: [0; 64],
+            product_planes: [0; 128],
+            sums: [0; 3],
+            output: [0; 2],
+        }
     }
-    let p0 = clmul64_batch_xor_prepared(low, &b.low);
-    let p1 = clmul64_batch_xor_prepared(high, &b.high);
-    let pm = clmul64_batch_xor_prepared(mixed, &b.mixed) ^ p0 ^ p1;
-    [p0 ^ (pm << 64), p1 ^ (pm >> 64)]
+
+    /// Borrow [low 128 bits, high 128 bits] of the unreduced product XOR.
+    pub fn output(&self) -> &[u128; 2] {
+        &self.output
+    }
+
+    /// Expose every 64-bit aggregate to the caller's volatile zeroization.
+    pub fn words64_mut(&mut self) -> [&mut [u64]; 4] {
+        [
+            &mut self.low,
+            &mut self.high,
+            &mut self.mixed,
+            &mut self.product_planes,
+        ]
+    }
+
+    /// Expose every 128-bit aggregate, including results, for caller wiping.
+    pub fn words128_mut(&mut self) -> [&mut [u128]; 2] {
+        [&mut self.sums, &mut self.output]
+    }
+}
+
+/// Write the XOR of 64 unreduced 128 by 128 products in caller-owned storage.
+/// The raw block input is borrowed and remains the caller's wiping obligation.
+#[inline(never)]
+pub fn clmul128_batch_xor_prepared(
+    a: &[u128; 64],
+    b: &PreparedPolynomial128x64,
+    working: &mut BatchWorking128x64,
+) {
+    for i in 0..64 {
+        working.low[i] = a[i] as u64;
+        working.high[i] = (a[i] >> 64) as u64;
+        working.mixed[i] = working.low[i] ^ working.high[i];
+    }
+    clmul64_batch_xor_prepared(
+        &mut working.low,
+        &b.low,
+        &mut working.product_planes,
+        &mut working.sums[0],
+    );
+    clmul64_batch_xor_prepared(
+        &mut working.high,
+        &b.high,
+        &mut working.product_planes,
+        &mut working.sums[1],
+    );
+    clmul64_batch_xor_prepared(
+        &mut working.mixed,
+        &b.mixed,
+        &mut working.product_planes,
+        &mut working.sums[2],
+    );
+    working.sums[2] ^= working.sums[0] ^ working.sums[1];
+    working.output[0] = working.sums[0] ^ (working.sums[2] << 64);
+    working.output[1] = working.sums[1] ^ (working.sums[2] >> 64);
 }
 
 #[cfg(test)]
@@ -183,7 +252,9 @@ mod lifecycle_tests {
         let prepare: fn(&mut Prepared64, &[u64; 64]) = Prepared64::prepare;
         prepare(&mut prepared, &input);
         assert_eq!(prepared.0.as_ptr(), address);
-        assert_eq!(prepared.0, transpose(input));
+        let mut expected = input;
+        transpose_in_place(&mut expected);
+        assert_eq!(prepared.0, expected);
         prepared.prepare(&[0; 64]);
         assert_eq!(prepared.0.as_ptr(), address);
         assert_eq!(prepared.0, [0; 64]);

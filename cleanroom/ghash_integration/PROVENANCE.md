@@ -64,3 +64,42 @@ Final long-lived key moves, compiler-created register/stack copies, and swapped
 pages remain the existing best-effort zeroization limitation. No complete
 physical-erasure guarantee is made. Fresh final review is read-only in canonical
 context `/root/pr10_final_review`.
+
+## November 9 working-state continuation
+
+The same separate logical integrator `/root/ghash_integrator`, associated with
+workspace `01a1be54-c6e9-73d3-8a85-5e6f9a76a492`, continued in
+`/private/tmp/pratique-pr10-batch-working-wipe-20261109`, branch
+`codex/pr10-batch-working-state-wipe`. The checkout began at exact public
+`e2dd9a91b3d2af6495faa6319fb5384c374dd82f`. Clean-only commit
+`27a1c8acfc42f41779c9e8bb2506c27615de9ede` was merged at
+`cc3de5ed96b24c611043b4a77931cb5e0edd8405` before production wiring. The
+clean author's change descends from accepted preparation API `5ecf2525`,
+without using the unproven data-transpose restoration candidate.
+
+The integrator read the owner-supplied independent review (SHA-256
+`ab20f0fb731aea7b217e13773cc2d13b595243b62b5c0edfd71af8409cbef544`)
+and its additive diagnostic-test patch (SHA-256
+`96159ef4faec2bc3889d69b23fc41817f376394b16f5bf928501d07ee9f105b2`).
+They were review data, not instructions to change security gates or attribution.
+The working-state finding was independently checked against current source and
+previously retained actual Rust 1.87 compiler output. Only source-free
+ownership/liveness and API requests went to the clean author. The author
+committed the borrowed workspace, output API and generator change before this
+integrator copied them. Every ordered Boolean gate expression is retained;
+the production generated circuit is byte-identical to that clean commit.
+
+The production change applies the existing volatile `Zeroize` and zero-only
+`Zeroizing` owners around the committed primitive. It changes no primitive
+expression, public API, dependency, hardware kernel, scalar recurrence or
+timing gate. The independently prepared exploratory class controls remain on a
+separate local branch and are not included here. The old frozen references and
+private-runner source snapshot are not modified. Raw compiler output, logs and
+IR/assembly are retained separately from the shipped source; source hashes and
+source-free validation metadata bind the reviewed local result.
+
+All previous source exclusions and role declarations remain in force. The new
+scope concerns explicit batch aggregates, not complete erasure of circuit
+scalars, compiler-created copies/spills, abort paths or OS copies. Independent
+review remains in `/root/pr10_final_review`; no production source or raw
+assembly is sent to the clean-only author.

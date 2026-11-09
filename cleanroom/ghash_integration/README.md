@@ -1,14 +1,24 @@
 # Portable AES/GHASH integration validation
 
 The independently authored quadratic-field AES S-box and prepared 64-block
-Boolean GHASH primitive are integrated. All four requested portable throughput
-gates pass. The accelerated kernels retain their existing source, and the
-same-process hardware comparison is within 1.51 percent of baseline. Public
+Boolean GHASH primitive are integrated. The earlier integration measurements
+passed all four requested portable throughput gates; its same-process hardware
+comparison was within 1.51 percent of baseline. These are historical results,
+not measurements of the later working-state cleanup described below. The
+accelerated kernels retain their existing source. Public
 key sizes remain AES-128 and AES-256; this repository does not expose AES-192.
 No dependency or public API change is included. The lifecycle follow-up amends
 the obsolete current-code NOTICE entry after the scoped source/history/package
 audit in [ATTRIBUTION_AUDIT.md](ATTRIBUTION_AUDIT.md); unrelated notices and
 LICENSE are retained.
+
+**Timing remains on HOLD.** Earlier confirmed native GHASH timing findings are
+unresolved. The November 9 [working-state repair](WORKING_STATE_REPAIR.md) closes
+a separate source-owned batch-buffer cleanup gap using committed clean-only
+API `27a1c8ac`. Its local correctness, lifecycle and code-generation checks do
+not close those timing findings. The original timing test, threshold, crops and
+CI gate are unchanged. No new throughput claim or performance campaign is made
+for this repair; the owner's performance follow-up remains issue #11.
 
 **Existing default-x86 compiler limitation:** the unchanged ChaCha AVX512 path
 already fails with Rust 1.87 (79 errors, reproduced on the baseline). Native
