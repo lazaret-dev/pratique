@@ -47,10 +47,20 @@ files are retained. The wrapper checks exact row/seed sets, complete 1024-sample
 batches/16-sample class balance, matching measured/warmup fixture records,
 original metadata, one successful Rust-test footer and exit0. The raw DATA
 `fixture_h_value` field is an unused zero sentinel; actual fixed H is the
-original nonzero fixture. Fixture validation is structural binding, not a new
+original nonzero fixture. Fixture validation is linear structural binding, not a new
 claim to observe memory history or privately reconstruct a generator state.
-The existing analyzer supplies descriptive signed random-minus-fixed statistics
-without changing the original Rust judge. Completion and control health are
+The native job does not sort or calculate seven-view/address statistics for
+these saved rows. Its count is validated pairs, not analyzed pairs. The unchanged
+existing analyzer can supply descriptive signed random-minus-fixed statistics
+after artifact retrieval using owned source, without changing the original Rust
+judge or occupying the native job's abbreviated budget:
+
+```
+python3 cleanroom/ghash_integration/focused_1024/focused.py analyze-raw /absolute/path/to/extracted-output
+```
+
+This post-CI action imports only the checked owned repository helpers and reads
+saved CSVs; it never executes archived code. Completion and control health are
 separate. Missing/malformed/incomplete data, a panic/timeout, failed sensitivity,
 or out-of-band final calibration cannot become passing evidence. Partial uploads
 are unconditional. No stage is a pure instruction-latency claim; prior cache,

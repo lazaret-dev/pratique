@@ -30,7 +30,7 @@ jobs:
       - name: One ungated existing DATA1024 selector and its built-in controls
         timeout-minutes: 3
         run: python3 cleanroom/ghash_integration/focused_1024/focused.py run
-      - name: Describe every raw pair and distinguish completion from health
+      - name: Validate raw pair completeness and original status and health
         if: always()
         timeout-minutes: 2
         run: python3 cleanroom/ghash_integration/focused_1024/focused.py report

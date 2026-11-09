@@ -162,18 +162,18 @@ def validate_pair(csv_path,fixture_path,name,seed,metadata):
     if metadata!=(batches+1,0):raise ValueError('original metadata batch/native-tick mismatch')
     return {'measured_samples':len(rows),'fixture_samples':len(fixtures),'measured_batches':batches,'fixture_H_field':'unused zero DATA sentinel; actual fixed H is original nonzero fixture'}
 
-def assess(case,text,analyses,errors,status):
+def assess(case,text,validated_pairs,errors,status):
     argv=case.get('argv',[])
     contract=(isinstance(argv,list) and case.get('kind')=='DATA' and case.get('execution_state')=='finished' and case.get('exit_code')==0
         and case.get('binary_sha256')==identity()['files']['batch-controls-test-binary'] and '--exact' in argv
         and len(argv)>argv.index('--exact')+1 and argv[argv.index('--exact')+1]==identity()['selector'] and footer(text))
-    complete=contract and len(analyses)==10 and not errors
+    complete=contract and len(validated_pairs)==10 and not errors
     b=status.get('booleans',{})
     healthy=all(b.get(k) is True for k in ['sensitivity','early_exit','calibration_final_in_range','positive_matched_detected','positive_matched_healthy']) and b.get('negative_identical_equal_confirmed_failure') is False
     return bool(complete),bool(healthy)
 
 def report():
-    old=modules();folder=OUT/'DATA-controls';errors={};analyses={};pairs={};case={};status={}
+    source_guards(identity());folder=OUT/'DATA-controls';errors={};pairs={};case={};status={}
     try:
         case=json.loads((folder/'case.json').read_text())
         if not isinstance(case,dict):raise ValueError('case must be an object')
@@ -187,7 +187,7 @@ def report():
         assert s['adapter_source_hashes']==adapter_inventory()
         expected_argv=['taskset','-c',str(s['selected_cpu']),str(STAGED/'batch-controls-test-binary'),'--exact',identity()['selector'],'--ignored','--nocapture','--test-threads=1']
         assert case.get('argv')==expected_argv and case.get('cpu')==s['selected_cpu']
-    except Exception as e:errors['settings_or_invocation']=repr(e)
+    except Exception as e:s={};errors['settings_or_invocation']=repr(e)
     text=(folder/'run.log').read_text() if (folder/'run.log').exists() else ''
     try:status=parse_status((folder/'batch-control-results.txt').read_text())
     except Exception as e:errors['status']=repr(e)
@@ -206,25 +206,43 @@ def report():
             stem=f'{name}-seed{seed}';path=folder/(stem+'.csv')
             try:
                 pairs[stem]=validate_pair(path,folder/(stem+'.fixtures.txt'),name,seed,metadata.get(stem))
-                analyses[stem]=old.analyze.analyze(path)
             except Exception as e:errors[stem]=repr(e)
     results=re.findall(r'^BATCH result kind=DATA row=(\w+) confirmed_failure=(None|Some\([^\n]*\))$',text,re.M)
     logged={name:value!='None' for name,value in results}
     if len(results)!=5 or set(logged)!=set(names):errors['result_set']='Missing/duplicate/unexpected original judge row'
     elif status and any(logged[name]!=status['booleans'][name+'_confirmed_failure'] for name in names):errors['result_status']='Original judge/status mismatch'
-    complete,healthy=assess(case,text,analyses,errors,status)
+    complete,healthy=assess(case,text,pairs,errors,status)
     b=status.get('booleans',{})
-    save(OUT/'sample-analysis.json',analyses)
+    save(OUT/'structural-pair-checks.json',pairs)
     outcome={'scope':'ONE UNGATED exploratory existing DATA1024 group, not original-gate validation','current_job_commit':s.get('current_job_commit'),
         'artifact_diagnostic_commit':identity()['artifact_diagnostic_commit'],'production_source_commit':identity()['production_source_commit'],
         'adapter_source_hashes':s.get('adapter_source_hashes'),
-        'case':case,'raw_CSV_count':len(csvs),'fixture_file_count':len(fixtures),'successfully_analyzed_pairs':len(analyses),'pair_checks':pairs,
+        'case':case,'raw_CSV_count':len(csvs),'fixture_file_count':len(fixtures),'successfully_validated_pairs':len(pairs),'pair_checks':pairs,
+        'descriptive_statistics_deferred_to_post_CI':True,'descriptive_analyzer_executed_in_native_job':False,
         'analysis_errors':errors,'successful_one_test_footer':footer(text),'collection_complete':complete,'control_health':healthy,
         'original_control_status':status,'literal_confirmed_signal':b.get('literal_confirmed_failure'),
         'sealed_original_co_reproduction':'UNMEASURED','causal_exclusion_or_security_closure':False,
         'warning':'Exact reviewed companion bytes reused; original sealed failure co-reproduction is absent. A quiet literal/control is inconclusive. Descriptive sample analysis does not replace the unchanged Rust judge/status. All prior failures/PR10 HOLD persist.'}
     save(OUT/'outcomes.json',outcome)
-    print(json.dumps({k:outcome[k] for k in ['collection_complete','control_health','raw_CSV_count','fixture_file_count','successfully_analyzed_pairs','literal_confirmed_signal','analysis_errors']}),flush=True)
+    print(json.dumps({k:outcome[k] for k in ['collection_complete','control_health','raw_CSV_count','fixture_file_count','successfully_validated_pairs','literal_confirmed_signal','analysis_errors']}),flush=True)
     if not complete or not healthy:raise SystemExit('Incomplete or unhealthy exploratory diagnostic; preserve all data without waiver.')
 
-if __name__=='__main__':{'prepare':prepare,'run':run,'report':report}[sys.argv[1]]()
+def analyze_raw():
+    """Optional owned-Python post-CI work; never executes an archived binary."""
+    old=modules();folder=OUT/'DATA-controls';rows={};errors={}
+    expected={f'{name}-seed{seed}' for name in identity()['rows'] for seed in [0,1]}
+    paths={p.stem:p for p in folder.glob('*.csv')}
+    if paths.keys()!=expected:errors['row_set']='Missing/unexpected raw CSV'
+    for name,path in sorted(paths.items()):
+        try:rows[name]=old.analyze.analyze(path)
+        except Exception as e:errors[name]=repr(e)
+    save(OUT/'sample-analysis.json',rows)
+    save(OUT/'post-CI-analysis-status.json',{'successfully_analyzed_pairs':len(rows),'errors':errors,
+        'all_ten_analyzed':len(rows)==10 and not errors,'native_code_executed':False,
+        'scope':'Descriptive only; unchanged original Rust judge/status and historical failures are retained.'})
+    if len(rows)!=10 or errors:raise SystemExit('Post-CI analysis incomplete; preserve all partial results.')
+
+if __name__=='__main__':
+    if sys.argv[1]=='analyze-raw':
+        OUT=Path(sys.argv[2]).resolve();STAGED=OUT/'immutable-input';analyze_raw()
+    else:{'prepare':prepare,'run':run,'report':report}[sys.argv[1]]()

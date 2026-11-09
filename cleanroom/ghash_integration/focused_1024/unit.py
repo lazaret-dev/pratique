@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Source-only schema/health/partial-evidence fixtures; no artifact execution."""
-import csv,json,tempfile,unittest
+import contextlib,csv,io,json,tempfile,unittest
 from pathlib import Path
+from unittest import mock
 import focused as f
 
 PASS='test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 30 filtered out; finished in 30.0s\n'
@@ -46,6 +47,18 @@ class FocusedContract(unittest.TestCase):
         for bad in [good.replace('sensitivity=true\n',''),good+'kind=DATA\n',good.replace('early_exit=true','early_exit=yes'),good.replace('calibration_final_in_range=true','calibration_final_in_range=false'),good+'unexpected=true\n',good.replace('calibration_round0_ratio=.02','calibration_round0_ratio=.03'),good.replace('positive_matched_confirmed_failure=true','positive_matched_confirmed_failure=false')]:
             with self.subTest(text=bad):
                 with self.assertRaises((ValueError,KeyError)):f.parse_status(bad)
+
+    def test_partial_native_report_preserves_outputs_without_descriptive_module(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);folder=root/'DATA-controls';folder.mkdir()
+            (folder/'case.json').write_text('[]');(root/'settings.json').write_text('[]')
+            with mock.patch.object(f,'OUT',root),mock.patch.object(f,'modules',side_effect=AssertionError('Native report must not load descriptive helpers')),contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit):f.report()
+            result=json.loads((root/'outcomes.json').read_text())
+            self.assertFalse(result['collection_complete']);self.assertFalse(result['control_health'])
+            self.assertTrue(result['descriptive_statistics_deferred_to_post_CI'])
+            self.assertFalse(result['descriptive_analyzer_executed_in_native_job'])
+            self.assertIn('settings_or_invocation',result['analysis_errors'])
 
     def test_pair_binding_full_batches_and_sentinel(self):
         with tempfile.TemporaryDirectory() as tmp:
