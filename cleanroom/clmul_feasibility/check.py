@@ -25,11 +25,11 @@ def assembly_summary(path):
             continue
         op, args = match.groups()
         instructions += 1
-        if re.match(r"(?:v?pclmul|pmull|[su]?mul|[su]?madd|imul|[isu]?div|i(?:32|64)\.(?:mul|div))", op):
+        if re.match(r"(?:v?(?:p?clmul|pmull|mul)|[su](?:mul|madd|msub|mlal)|madd|msub|mla|mls|imul|[isu]?div|i(?:32|64)\.(?:mul|div))", op):
             rejected.append(line.strip())
-        if re.match(r"(?:j\w*|b\.\w+|cbn?z|tbn?z|br_if|if)$", op):
+        if re.match(r"(?:j\w*|b\.\w+|b(?:eq|ne|lt|ge|gt|le)(?:z|u)?(?:\.[wn])?|cbn?z|tbn?z|br_if|if)$", op):
             branches.append(line.strip())
-        if op in ("bl", "blr", "call", "callq"):
+        if op in ("bl", "blx", "blr", "call", "callq", "calll", "jal", "jalr"):
             calls.append(line.strip())
     if rejected:
         raise RuntimeError(f"Prohibited multiplication/division instructions in {path}: {rejected}")

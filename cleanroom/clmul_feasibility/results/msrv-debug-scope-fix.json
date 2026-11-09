@@ -1,0 +1,18 @@
+{
+  "gate_count": 4593,
+  "ordered_gate_sha256": "2382f2dd23c3a9d5ee7a7c09c3b232b1b5f06086d4ed352bbfacd0566b180166",
+  "compared_to_commit": "2a1d85533505499bffe4b3990921321d2bb0658f",
+  "compile": [
+    "rustc",
+    "+1.87.0",
+    "--edition=2024",
+    "--test",
+    "-C",
+    "debuginfo=2",
+    "cleanroom/clmul_feasibility/lib.rs",
+    "-o",
+    "/private/tmp/pratique-clmul-debug-tests"
+  ],
+  "compile_exit": 0,
+  "test_output": "\nrunning 11 tests\ntest accepted::tests::differs_from_ordinary_integer_multiplication ... ok\ntest accepted::tests::zero_one_and_boundaries ... ok\ntest tests::prepared_clone_can_be_wiped_without_changing_original ... ok\ntest tests::weighted_batch_matches_nist_recurrence ... ok\ntest accepted::tests::every_pair_of_single_bits ... ok\ntest tests::edges_and_mixed_lanes ... ok\ntest tests::every_single_bit_pair ... ok\ntest tests::transpose_every_lane_and_bit ... ok\ntest accepted::tests::deterministic_random_pairs ... ok\ntest tests::deterministic_random_pairs ... ok\ntest tests::wide_polynomial_oracle_and_boundaries ... ok\n\ntest result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s\n\n"
+}

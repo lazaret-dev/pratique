@@ -35,6 +35,12 @@ Every operation computes 64 lanes simultaneously. The circuit is generated
 from blank files by `generate.py`; `circuit.rs` is the resulting Rust source.
 All array subscripts in the generated circuit are literal constants.
 
+Rust 1.87's LLVM crashes while generating full debug information for thousands
+of successive bindings in one scope. The generator now uses blocks of at most
+64 bindings, exporting only the intermediate values needed later. All 4,593
+ordered gate expressions and the result coefficients are unchanged. An MSRV
+build with full debug information and all 11 primitive tests now succeeds.
+
 Returning every product requires two output transposes. If the caller only
 needs their XOR, the parity of each output plane supplies its corresponding
 coefficient directly. Preparing the other operand also avoids repeating
