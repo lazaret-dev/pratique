@@ -7,6 +7,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
+from preparation_lifecycle import audit_preparation_source
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -45,10 +46,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--toolchain', default='1.87.0')
     parser.add_argument('--target', action='append', default=[])
+    parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     copies = [('src/crypto/aes_sbox_tower_clean.rs', 'cleanroom/aes_tower/sbox.rs'),
               ('src/crypto/clmul_batch_circuit.rs', 'cleanroom/clmul_feasibility/circuit.rs')]
     record = {'commands': [], 'copies': {}, 'assembly': {}}
+    record['preparation_lifecycle'] = audit_preparation_source(
+        (ROOT / 'src/crypto/clmul_batch_clean.rs').read_text(),
+        (ROOT / 'src/crypto/ghash.rs').read_text(),
+        (ROOT / 'cleanroom/clmul_feasibility/lib.rs').read_text())
     for production, cleanroom in copies:
         actual, original = (ROOT / production).read_bytes(), (ROOT / cleanroom).read_bytes()
         assert actual == original, production + ' differs from committed clean-room source'
@@ -73,7 +79,8 @@ def main():
 #[path = "''' + str(ROOT / 'src/crypto/clmul_batch_clean.rs') + '''"] mod batch;
 pub fn aes_sbox(q: &[u64; 8]) -> [u64; 8] { sbox::sbox(q) }
 pub fn clmul(a: u64, b: u64) -> u128 { scalar::clmul64_portable(a, b) }
-pub fn prepare(b: [u128; 64]) -> batch::PreparedPolynomial128x64 { batch::PreparedPolynomial128x64::new(b) }
+pub fn empty() -> batch::PreparedPolynomial128x64 { batch::PreparedPolynomial128x64::empty() }
+pub fn prepare(p: &mut batch::PreparedPolynomial128x64, b: &[u128; 64]) { p.prepare(b) }
 pub fn aggregate(a: [u128; 64], b: &batch::PreparedPolynomial128x64) -> [u128; 2] { batch::clmul128_batch_xor_prepared(a, b) }
 pub fn prepared_words(b: &mut batch::PreparedPolynomial128x64) -> [&mut [u64; 64]; 3] { b.words_mut() }
 ''')
@@ -95,7 +102,10 @@ pub fn prepared_words(b: &mut batch::PreparedPolynomial128x64) -> [&mut [u64; 64
         if result.returncode:
             raise RuntimeError(result.stdout)
         record['assembly'][target] = assembly_summary(output.read_text())
-    path = ROOT / 'cleanroom/ghash_integration/results' / ('production-assembly-' + args.toolchain + '.json')
+    path = args.output or ROOT / 'cleanroom/ghash_integration/results' / ('production-assembly-' + args.toolchain + '.json')
+    if not path.is_absolute():
+        path = ROOT / path
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(record, indent=2) + '\n')
     print(path)
 

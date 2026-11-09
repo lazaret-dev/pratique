@@ -93,17 +93,16 @@ fn absorb_portable(
 }
 
 /// Prepare H^64 ... H once per portable key, using the accepted scalar primitive.
-fn prepare_powers(h: u128) -> PreparedPolynomial128x64 {
+fn prepare_powers(h: u128, prepared: &mut PreparedPolynomial128x64) {
     let mut powers = [0u128; 64];
     let mut power = h;
     for slot in powers.iter_mut().rev() {
         *slot = power;
         power = mul::<false>(power, h);
     }
-    let prepared = PreparedPolynomial128x64::new(powers);
+    prepared.prepare(&powers);
     powers.zeroize();
     power.zeroize();
-    prepared
 }
 
 /// GHASH of `aad` and `ct` (each zero-padded to a block boundary, then the two bit lengths) under
@@ -146,16 +145,22 @@ impl GhashKey {
     pub(super) fn new(h: &[u8; 16], backend: Backend) -> GhashKey {
         let hw = backend == Backend::Hardware;
         let reflected = u128::from_be_bytes(*h).reverse_bits();
-        GhashKey {
+        let mut key = GhashKey {
             h: reflected,
             hw,
             powers: if hw { aes_hw::ghash_powers(h) } else { None },
             portable_powers: if hw {
                 None
             } else {
-                Some(prepare_powers(reflected))
+                Some(PreparedPolynomial128x64::empty())
             },
+        };
+        if let Some(prepared) = key.portable_powers.as_mut() {
+            prepare_powers(reflected, prepared);
         }
+        // The retained key object moves through the existing constructor API.
+        // Wiping is best effort for compiler-created copies and register spills.
+        key
     }
 
     /// H^1 ... H^8 for the one-pass hardware GCM, if there is one.
