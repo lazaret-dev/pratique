@@ -5,7 +5,10 @@ Boolean GHASH primitive are integrated. All four requested portable throughput
 gates pass. The accelerated kernels retain their existing source, and the
 same-process hardware comparison is within 1.51 percent of baseline. Public
 key sizes remain AES-128 and AES-256; this repository does not expose AES-192.
-No dependency, public API, NOTICE, or license change is included.
+No dependency or public API change is included. The lifecycle follow-up amends
+the obsolete current-code NOTICE entry after the scoped source/history/package
+audit in [ATTRIBUTION_AUDIT.md](ATTRIBUTION_AUDIT.md); unrelated notices and
+LICENSE are retained.
 
 **Existing default-x86 compiler limitation:** the unchanged ChaCha AVX512 path
 already fails with Rust 1.87 (79 errors, reproduced on the baseline). Native
@@ -43,7 +46,9 @@ identity with the reviewed integration tree. See [PROVENANCE.md](PROVENANCE.md),
 [the primitive provenance](../clmul_feasibility/PROVENANCE.md), and
 [the S-box derivation](../aes_tower/DERIVATION.md).
 
-The measurements below use decimal MB/s on Apple ARM64. Throughput is the
+The measurements and validation counts below record the initial draft. Current
+lifecycle follow-up results are in [lifecycle_results/SUMMARY.json](lifecycle_results/SUMMARY.json).
+The initial measurements use decimal MB/s on Apple ARM64. Throughput is the
 median of seven calibrated windows; keys are created outside the timed seal.
 The final software build explicitly uses `--cfg pratique_portable` and
 `-C target-feature=-aes`; its profile reports AES hardware unavailable and the
@@ -130,8 +135,9 @@ host with `--ignored --nocapture --test-threads=1`, using
 with repeated `--target` arguments to repeat the assembly checks.
 
 The logs retain every reported result and failure; terminal empty lines and trailing whitespace are
-normalized for repository whitespace checks. No merge, re-vendor, release,
-NOTICE removal, or legal attribution conclusion is included in this draft.
+normalized for repository whitespace checks. The initial draft preceded the scoped NOTICE amendment described above. This
+follow-up includes that audited amendment; no merge, re-vendor, release, or legal
+originality guarantee is included.
 
 The merge-readiness lifecycle continuation starts at public head `32615a80`,
 merges independent API commit `5ecf2525`, and wires it in `3db15f54`. Its unique
