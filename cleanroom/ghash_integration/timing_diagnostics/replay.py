@@ -53,8 +53,10 @@ def frequency():
     return result
 
 
-def probe(env):
-    r = command([str(COMPANION / 'memory-env-probe')], env=env)
+def probe(env, cpu=None):
+    args = [str(COMPANION / 'memory-env-probe')]
+    if cpu is not None: args = ['taskset', '-c', str(cpu)] + args
+    r = command(args, env=env)
     assert r['exit_code'] == 0, r
     return json.loads(r['output'])
 
@@ -152,7 +154,7 @@ def run_case(folder, kind, variant, env, cpu=None):
     args = [str(binary), '--exact', test, '--ignored', '--nocapture', '--test-threads=1']
     if cpu is not None: args = ['taskset', '-c', str(cpu)] + args
     record = {'kind': kind, 'variant': variant, 'cpu': cpu, 'argv': args, 'binary_sha256': sha(binary),
-              'env_shape': env_shape(child_env), 'frequency_before': frequency(), 'probe': probe(child_env)}
+              'env_shape': env_shape(child_env), 'frequency_before': frequency(), 'probe': probe(child_env, cpu)}
     record['execution_state'] = 'starting'
     save(folder / 'case.json', record)
     print(json.dumps({'begin': str(folder.relative_to(OUT)), 'kind': kind, 'variant': variant, 'cpu': cpu}), flush=True)
@@ -210,7 +212,8 @@ def core(index):
 def dispatch():
     s = settings()
     base = os.environ.copy()
-    default = probe(base)
+    cpu = s['selected_cores'][0]
+    default = probe(base, cpu)
     if base.get('GLIBC_TUNABLES') or 'PRATIQUE_MODE_PAD' in base or default['active_AVX512F'] != 1:
         save(OUT / 'dispatch' / 'scope.json', {'skipped': True, 'reason': 'active AVX512 unavailable, inherited tunable, or padding collision', 'default_probe': default})
         return
@@ -224,7 +227,7 @@ def dispatch():
         env['PRATIQUE_DIAGNOSTIC_SEED'] = '0'
         env['PRATIQUE_HISTORY_OFFSET'] = f'{s["offsets"][0]:02}'
         envs[mode] = env
-    probes = {mode: probe(env) for mode, env in envs.items()}
+    probes = {mode: probe(env, cpu) for mode, env in envs.items()}
     sham_matches = probes['sham__']['memory'] == default['memory']
     mask_verified = probes['mask__']['active_AVX512F'] == 0 and probes['mask__']['active_AVX512VL'] == 0
     changes = {name: probes['mask__']['memory'][name]['offset_hex'] != probes['sham__']['memory'][name]['offset_hex'] for name in ['memcpy', 'memmove', 'memset']}

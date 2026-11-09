@@ -46,6 +46,18 @@ fn history_calibrate<R>(target_ns: f64, mut rounds: usize, op: impl Fn(usize) ->
     (rounds, cost)
 }
 
+// Both classes store identical zero bytes through the normal PRNG/Vec loop.
+// Only class 0 retains the original generator's additional literal-zero clear.
+#[inline(never)]
+fn history_identical_zero_original_clear(rng: &mut Rng, class: bool) -> Vec<u8> {
+    let zero_mask = black_box(0u8);
+    let mut bytes: Vec<u8> = (0..1024)
+        .map(|_| (black_box(rng.next_u64()) as u8) & black_box(zero_mask))
+        .collect();
+    if !class { bytes.fill(0); }
+    bytes
+}
+
 #[test]
 fn pr10_history_control_storage_check() {
     let zero = [0u8; 1024];
@@ -68,6 +80,14 @@ fn pr10_history_control_storage_check() {
                 assert_eq!(&*buffer.bytes(), &final_bytes);
             }
         }
+    }
+    for seed in [0, 1, 0x9e37_79b9_7f4a_7c15] {
+        let (mut fixed_rng, mut random_rng) = (Rng::new(seed), Rng::new(seed));
+        let fixed = history_identical_zero_original_clear(&mut fixed_rng, false);
+        let random = history_identical_zero_original_clear(&mut random_rng, true);
+        assert_eq!(fixed, zero);
+        assert_eq!(random, zero);
+        assert_eq!(fixed_rng.next_u64(), random_rng.next_u64());
     }
 }
 
@@ -103,6 +123,11 @@ fn pr10_actual_buffer_history_controls() {
         |input| { buffer.copy(input, true); buffer.fill(0x5a, true); }, op, address);
     diagnostic_measure::<true, _>("history_actual_variable_timed_bytes", 0, diagnostic_equal_preparation,
         |input| buffer.copy(input, false), op, address);
+    // Varying input addresses are deliberate here; there is NO common overwrite
+    // before timing. This retains the original class-specific last-store route.
+    diagnostic_measure::<false, _>("history_original_extra_clear_identical_zero_bytes", 0,
+        history_identical_zero_original_clear, |_| {},
+        |input| key.hash(b"aad", black_box(input)), |input| input.as_ptr() as usize);
     let target = diagnostic_cost(|| key.hash(b"aad", black_box(&final_bytes)));
     let (copies, copy_cost) = history_calibrate(target, 1, |n| diagnostic_copy(black_box(&final_bytes), n));
     let (scans, scan_cost) = history_calibrate(target, 1, |n| diagnostic_scan(black_box(&final_bytes), n));

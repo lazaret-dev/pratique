@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -31,6 +32,18 @@ def main():
            'RUSTC_WRAPPER': str(HERE / 'capture_rustc.py'), 'CARGO_TARGET_DIR': str(OUT / 'build')}
     binary = original.build('history', TREE, 'diagnostic', env)
     shutil.copy2(binary, OUT / 'history-test-binary')
+    assembly = (OUT / 'history/diagnostic-disassembly.txt').read_text()
+    match = re.search(r'^[0-9a-f]+ <pratique::crypto::timing::history_identical_zero_original_clear[^>]*>:(.*?)(?=^[0-9a-f]+ <|\Z)', assembly, re.M | re.S)
+    assert match, 'focused generator symbol missing'
+    body = match.group(1)
+    (OUT / 'focused-generator-disassembly.txt').write_text(body)
+    audit = {'conditional_extra_clear_call': 'memset' in body,
+             'PRNG_work_retained': bool((re.search(r'\b(?:shr|shl|sal|sar)[bwlq]?\b', body) and re.search(r'\bxor[bwlq]?\b', body)) or 'Rng::next_u64' in body),
+             'normal_byte_store_retained': bool(re.search(r'\bmov[b]?\s+%(?:[abcd][lh]|sil|dil|bpl|spl|r\d+b),\s*[^\n#]*\(', body)),
+             'conditional_branch_retained': bool(re.search(r'\bj(?:e|ne|z|nz)\b', body)),
+             'note': 'Source review plus these narrow optimized-code witnesses; not a generic disassembly proof.'}
+    (OUT / 'focused-generator-assembly-audit.json').write_text(json.dumps(audit, indent=2) + '\n')
+    assert all(audit[k] for k in audit if k != 'note'), audit
     original.run([str(OUT / 'history-test-binary'), '--exact', 'crypto::timing::pr10_history_control_storage_check'], path=OUT / 'storage-proof-unit.log')
     manifest = {'production_source_commit': 'e2dd9a91b3d2af6495faa6319fb5384c374dd82f',
                 'workflow_commit': original.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT).stdout.strip(),
