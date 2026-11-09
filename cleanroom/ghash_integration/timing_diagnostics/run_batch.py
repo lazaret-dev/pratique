@@ -163,15 +163,28 @@ def report():
         c.get('execution_state') == 'finished' and (c['kind'] == 'normal' and c.get('exit_code') in [0, 101] or c['kind'] != 'normal' and c.get('exit_code') == 0)
         for c in cases.values())
     interpretation = {}
-    post = cases.get('sealed-post-window', {}).get('confirmed_1024_rows', {})
+    post_case = cases.get('sealed-post-window', {})
+    post = post_case.get('confirmed_1024_rows', {})
+    authoritative_post_complete = (post_case.get('execution_state') == 'finished'
+        and post_case.get('exit_code') == 101 and post_case.get('authoritative_normal_gate') is True)
     for kind in NAMES:
         case = cases.get(kind + '-controls', {})
+        expected_paths = {f'{kind}-controls/{name}-seed{seed}.csv'
+            for name in ['literal', 'identical_history', 'equal_variable', 'negative_identical_equal', 'positive_matched']
+            for seed in [0, 1]}
+        analyzed_paths = {path for path in rows if path.startswith(kind + '-controls/')}
+        group_collection_complete = (case.get('execution_state') == 'finished' and case.get('exit_code') == 0
+            and analyzed_paths == expected_paths and not any(path.startswith(kind + '-controls/') for path in errors))
         interpretation[kind] = {'preflight_triggered': triggers.get(kind), 'post_window_confirmed_same_row': post.get(kind),
+            'group_collection_complete': group_collection_complete,
+            'authoritative_postflight_complete': authoritative_post_complete,
             'literal_co_reproduced': case.get('literal_co_reproduced'),
             'matched_positive_healthy': case.get('positive_controls_all_healthy'),
             'identical_negative_passed': case.get('negative_identical_equal_passed'),
             'observer_layout_limitation': bool(triggers.get(kind) and not case.get('literal_co_reproduced')),
-            'counterfactual_comparison_prerequisites_met': bool(triggers.get(kind) and post.get(kind) and case.get('literal_co_reproduced') and case.get('positive_controls_all_healthy') and case.get('negative_identical_equal_passed'))}
+            'counterfactual_comparison_prerequisites_met': bool(triggers.get(kind) and authoritative_post_complete
+                and post.get(kind) and group_collection_complete and case.get('literal_co_reproduced')
+                and case.get('positive_controls_all_healthy') and case.get('negative_identical_equal_passed'))}
     replay.save(OUT / 'outcomes.json', {'replica': REPLICA, 'cases': cases, 'raw_rows': len(rows), 'analysis_errors': errors,
         'collection_complete': complete, 'expected_cases': expected_cases, 'expected_raw_rows': 10 * expected_groups,
         'interpretation_prerequisites': interpretation,
