@@ -60,6 +60,7 @@ pub fn clmul64x64_portable(a: [u64; 64], b: [u64; 64]) -> [u128; 64] {
 }
 
 /// Optional prepared operand with fixed layout; key lifecycle is not integrated.
+#[derive(Clone)]
 pub struct Prepared64([u64; 64]);
 
 impl Prepared64 {
@@ -84,6 +85,7 @@ pub fn clmul64_batch_xor_prepared(a: [u64; 64], b: &Prepared64) -> u128 {
 
 /// Three prepared operand sets for 64 independent 128-bit polynomial products.
 /// This experimental container has no production key lifecycle integration.
+#[derive(Clone)]
 pub struct PreparedPolynomial128x64 {
     low: Prepared64,
     high: Prepared64,
@@ -105,6 +107,16 @@ impl PreparedPolynomial128x64 {
             high: Prepared64::new(high),
             mixed: Prepared64::new(mixed),
         }
+    }
+
+    /// Expose all prepared secret words to the caller's existing zeroization.
+    pub(crate) fn words_mut(&mut self) -> [&mut [u64; 64]; 3] {
+        [&mut self.low.0, &mut self.high.0, &mut self.mixed.0]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn words(&self) -> [&[u64; 64]; 3] {
+        [&self.low.0, &self.high.0, &self.mixed.0]
     }
 }
 
@@ -148,6 +160,23 @@ mod tests {
         *state ^= *state >> 7;
         *state ^= *state << 17;
         *state
+    }
+
+    #[test]
+    fn prepared_clone_can_be_wiped_without_changing_original() {
+        let a = [0x1234_5678_9abc_def0_0123_4567_89ab_cdef; 64];
+        let mut b = [0; 64];
+        b[0] = 0x6a09_e667_f3bc_c909_bb67_ae85_84ca_a73b;
+        let original = PreparedPolynomial128x64::new(b);
+        let before = clmul128_batch_xor_prepared(a, &original);
+        assert_ne!(before, [0, 0]);
+        let mut copy = original.clone();
+        for words in copy.words_mut() {
+            words.fill(0);
+        }
+        assert!(copy.words().into_iter().all(|w| w.iter().all(|v| *v == 0)));
+        assert_eq!(clmul128_batch_xor_prepared(a, &copy), [0, 0]);
+        assert_eq!(clmul128_batch_xor_prepared(a, &original), before);
     }
 
     #[test]
