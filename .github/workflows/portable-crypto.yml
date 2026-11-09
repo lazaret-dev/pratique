@@ -24,14 +24,16 @@ jobs:
           openssl version
           go version
       - name: Ordinary debug build and crypto tests
-        run: cargo test --lib crypto:: -- --skip crypto::timing --skip release_profile
+        run: |
+          cargo test --lib crypto:: -- --skip crypto::timing --skip release_profile
       - name: Full release suite and hardware parity
         run: cargo test --release --all-features
       - name: Portable release crypto tests
         env:
           RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
           CARGO_TARGET_DIR: target/portable-validation
-        run: cargo test --release --lib crypto:: -- --skip crypto::timing --skip release_profile
+        run: |
+          cargo test --release --lib crypto:: -- --skip crypto::timing --skip release_profile
       - name: Portable AES release timing
         env:
           RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
