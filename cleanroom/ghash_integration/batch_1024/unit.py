@@ -25,6 +25,9 @@ class BatchContract(unittest.TestCase):
         self.assertEqual(len(failed['rows'][c.NAMES[0]]),1)
         unconfirmed=c.parse_original(original(unconfirmed=True),0)
         self.assertTrue(unconfirmed['complete']);self.assertFalse(unconfirmed['confirmed_rows']);self.assertEqual(unconfirmed['fresh_rechecks'],[c.NAMES[0]])
+        infinite=c.parse_original(original(c.NAMES[4]).replace('max 6.0','max inf').replace('max 7.0','max inf'),101)
+        self.assertTrue(infinite['complete']);self.assertEqual(infinite['rows'][c.NAMES[4]][0]['printed_max_abs_t'],'+Infinity')
+        json.dumps(infinite,allow_nan=False)
         for text,exit_code in [(original(c.NAMES[2]),0),(original(),101),(original().replace(PASS,FAIL),101),(original(c.NAMES[4]).replace('timing depends on the input:','other panic:'),101),(original().replace(c.NAMES[-1],'unknown row'),0),(original(c.NAMES[4]).replace('above 4.5; measuring','unrelated'),101)]:
             with self.subTest(exit=exit_code):self.assertFalse(c.parse_original(text,exit_code)['complete'])
 

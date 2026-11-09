@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Fixed20 VMs ×2 paired original/focused GHASH trials; no outcome stopping."""
-import hashlib,importlib,json,os,re,shutil,signal,subprocess,sys,time,zipfile
+import hashlib,importlib,json,math,os,re,shutil,signal,subprocess,sys,time,zipfile
 from pathlib import Path
 
 HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[2]
@@ -188,8 +188,10 @@ def parse_original(text,exit_code):
     for line in text.splitlines():
         for name in NAMES:
             # The initial row can share the Rust harness's 'test ...' line.
-            match=re.search(re.escape(name)+r'\s+n=\s*(\d+)\s+median\s+(\d+) ns\s+\|t\| uncropped\s+([0-9.]+)\s+max\s+([0-9.]+)',line)
-            if match:rows[name].append({'display':line,'samples':int(match[1]),'median_ns':int(match[2]),'printed_max_abs_t':float(match[4])})
+            match=re.search(re.escape(name)+r'\s+n=\s*(\d+)\s+median\s+(\d+) ns\s+\|t\| uncropped\s+([0-9.]+|inf|NaN)\s+max\s+([0-9.]+|inf|NaN)',line)
+            if match:
+                value=float(match[4]);value=value if math.isfinite(value) else ('+Infinity' if value>0 else None)
+                rows[name].append({'display':line,'samples':int(match[1]),'median_ns':int(match[2]),'printed_max_abs_t':value})
     marker='timing depends on the input:\n';summary=text.rsplit(marker,1)[1] if marker in text else ''
     confirmed=[];summary_lines=re.findall(r'^  (ghash[^\n]+)$',summary,re.M)
     for line in summary_lines:
