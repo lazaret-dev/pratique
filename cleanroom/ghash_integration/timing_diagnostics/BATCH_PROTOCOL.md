@@ -83,6 +83,12 @@ Warmup and every measured batch's class/RNG-before/H fixtures are retained for
 both seeds. Literal fixtures are reconstructed only after the entire timed
 batch; equal-work fixture precomputation is labeled a different allocation
 history. Unit checks compare both schedules and continuing RNG prefixes.
+The CSV `fixture_h_value` is meaningful for the original KEY fixture only;
+DATA uses an unused zero sentinel in that column. Actual DATA uses the original
+nonzero fixed H documented in its source fixture, not that sentinel. The KEY
+identical-history row transforms the original fixture H to zero before key
+construction; the column still records the original fixture, not an inspection
+of the retained prepared key.
 
 The actual input storage is `Vec<Vec<Vec<u8>>>` for DATA or
 `Vec<Vec<GhashKey>>` for prepared H (one input per group). Vec header size is

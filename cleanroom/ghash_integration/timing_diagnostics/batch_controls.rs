@@ -173,7 +173,10 @@ fn batch_equal_h(f: &BatchFixture, identical: bool) -> [u8; 16] {
 #[inline(never)]
 fn batch_time_data(clock: &Clock, key: &GhashKey, input: &Vec<u8>) -> u32 {
     let start = clock.now();
-    black_box(key.hash(b"aad", black_box(input)));
+    // Preserve the normal harness's opaque &Vec observation before slice
+    // coercion; a contextual &[u8] black_box can hoist header loads past start.
+    let input = black_box(input);
+    black_box(key.hash(b"aad", input));
     (clock.now() - start).min(u32::MAX as u64) as u32
 }
 #[inline(never)]
