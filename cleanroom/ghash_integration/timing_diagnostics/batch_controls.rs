@@ -202,7 +202,8 @@ fn batch_time_positive(
     delay: usize,
 ) -> u32 {
     let start = clock.now();
-    black_box(black_box(key).hash(b"aad", black_box(data)));
+    let data = black_box(data);
+    black_box(black_box(key).hash(b"aad", data));
     if black_box(class) {
         black_box(batch_delay(delay));
     }
