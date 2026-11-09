@@ -36,7 +36,12 @@ pub fn transpose_in_place(q: &mut [u64; 64]) {
 /// Value wrapper for working data; key preparation uses the in-place API.
 #[inline(never)]
 pub fn transpose(mut q: [u64; 64]) -> [u64; 64] {
-    transpose_in_place(&mut q);
+    transpose_step::<1>(&mut q, 0x5555_5555_5555_5555);
+    transpose_step::<2>(&mut q, 0x3333_3333_3333_3333);
+    transpose_step::<4>(&mut q, 0x0f0f_0f0f_0f0f_0f0f);
+    transpose_step::<8>(&mut q, 0x00ff_00ff_00ff_00ff);
+    transpose_step::<16>(&mut q, 0x0000_ffff_0000_ffff);
+    transpose_step::<32>(&mut q, 0x0000_0000_ffff_ffff);
     q
 }
 
