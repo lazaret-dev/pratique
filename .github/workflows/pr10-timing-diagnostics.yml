@@ -14,7 +14,6 @@ jobs:
     env:
       RUSTUP_TOOLCHAIN: 1.87.0
       RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
-      PRATIQUE_DIAGNOSTIC_OUTPUT: ${{ runner.temp }}/pratique-timing-evidence
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -23,6 +22,8 @@ jobs:
       - name: Install exact compiler
         run: rustup toolchain install 1.87.0 --profile minimal
       - name: Collect matched diagnostics (not a validation gate)
+        env:
+          PRATIQUE_DIAGNOSTIC_OUTPUT: ${{ runner.temp }}/pratique-timing-evidence
         run: python3 cleanroom/ghash_integration/timing_diagnostics/run.py
       - name: Retain every outcome and raw sample
         if: always()
