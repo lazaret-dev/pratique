@@ -1,0 +1,61 @@
+name: PR10 fixed paired original and focused GHASH batch
+on:
+  push:
+    branches: [codex/pr10-ghash-1024-batch]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  paired-ghash:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        vm: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PRATIQUE_REGRESSION_VM_ID: ${{ matrix.vm }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate owned source-only coordinator fixtures
+        timeout-minutes: 1
+        run: python3 cleanroom/ghash_integration/batch_1024/unit.py
+      - name: Download each pinned archive once and prepare both isolated trials
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/lazaret-dev/pratique/actions/artifacts/13657075157/zip > "$RUNNER_TEMP/phase1.zip"
+          gh api repos/lazaret-dev/pratique/actions/artifacts/13685577428/zip > "$RUNNER_TEMP/focused-binary.zip"
+          python3 cleanroom/ghash_integration/batch_1024/coordinate.py prepare
+      - name: Original1 then focused1 regardless original outcome
+        if: always()
+        timeout-minutes: 5
+        run: python3 cleanroom/ghash_integration/batch_1024/coordinate.py trial 1
+      - name: Original2 then focused2 regardless previous outcomes
+        if: always()
+        timeout-minutes: 5
+        run: python3 cleanroom/ghash_integration/batch_1024/coordinate.py trial 2
+      - name: Both linear reports after all native phases
+        if: always()
+        timeout-minutes: 2
+        run: python3 cleanroom/ghash_integration/batch_1024/coordinate.py reports
+      - name: Preserve every planned slot and explicit incomplete result
+        if: always()
+        timeout-minutes: 1
+        run: python3 cleanroom/ghash_integration/batch_1024/coordinate.py summarize
+      - name: Upload both trials and VM summary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: paired-ghash-vm-${{ matrix.vm }}
+          path: ${{ runner.temp }}/paired-ghash-output
+          retention-days: 14
+          compression-level: 6
+          if-no-files-found: error

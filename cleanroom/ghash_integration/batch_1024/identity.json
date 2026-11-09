@@ -1,0 +1,19 @@
+{
+  "base_commit": "f1dff4a57abcc9b14d9624ae99e4b84976356c43",
+  "focused_source_files": {
+    "cleanroom/ghash_integration/focused_1024/focused.py": "7022e72ab98a74ea1d489107a92a88980eed6952b6b630131a7a4739b6fcfa0d",
+    "cleanroom/ghash_integration/focused_1024/frozen_identity.json": "df6b1401c88e493bfeaf34704a87c04820d1fce49e253ac2c585f75f84f1d6ea",
+    "cleanroom/ghash_integration/focused_1024/unit.py": "ebbe0a2cf7018f607b3466c227d577610802ac600caabf6f4e9e342abe0f1f68",
+    "cleanroom/ghash_integration/focused_1024/PROTOCOL.md": "1b24fea6a2802b6aa213e845ca71359965d8cee4d942e8518dfe1fbea952f05e",
+    ".github/workflows/pr10-ghash-1024-focused.yml": "539e1908859fb0357ce96337e21f455cf3560a92cdb41bddf6fb7b133819b4d9"
+  },
+  "original": {
+    "artifact_id": 13657075157,
+    "archive_bytes": 481087129,
+    "archive_sha256": "08f96335668f5f4ab67b2fad10f5c9b275bd1558d9d976f3e99f8dabece6ab40",
+    "binary_member": "lifecycle_e2dd/unmodified-normal-test-binary",
+    "record_member": "lifecycle_e2dd/unmodified-build-record.json",
+    "binary_sha256": "15b3f3e3dba2ce5faa4137e8c8346280fa60e4ba55d06b9a0f90e7a538895256",
+    "selector": "crypto::timing::ghash_multiplication_is_constant_time"
+  }
+}
