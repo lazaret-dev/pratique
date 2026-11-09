@@ -1,0 +1,42 @@
+   Compiling pratique v0.1.0 (/private/tmp/pratique-batch-ghash-integration-20261108)
+    Finished `release` profile [optimized] target(s) in 40.55s
+     Running unittests src/lib.rs (/private/tmp/pratique-integration-target-hardware/release/deps/pratique-b97ad89c699631f9)
+
+running 1 test
+test crypto::integration_profile::release_profile ... hardware_available=true
+operation,bytes,ns_per_call,decimal_MB_per_second
+AES128-CTR-Portable,1048576,3529604.167,297.080
+GHASH-Portable,1048576,850087.848,1233.491
+AES128-GCM-seal-Portable,1048576,4419325.000,237.271
+AES128-GCM-open-copy-Portable,1048576,4445625.000,235.867
+AES128-CTR-Portable,16384,56694.269,288.989
+GHASH-Portable,16384,13858.867,1182.203
+AES128-GCM-seal-Portable,16384,69089.418,237.142
+AES128-GCM-open-copy-Portable,16384,72053.967,227.385
+AES128-GCM-key-Portable,0,1592.646,0.000
+AES256-CTR-Portable,1048576,4557574.111,230.073
+AES256-GCM-seal-Portable,1048576,5739593.750,182.692
+AES256-GCM-open-copy-Portable,1048576,5420739.625,193.438
+AES256-CTR-Portable,16384,72682.420,225.419
+AES256-GCM-seal-Portable,16384,85490.539,191.647
+AES256-GCM-open-copy-Portable,16384,94531.755,173.317
+AES256-GCM-key-Portable,0,1938.934,0.000
+AES128-CTR-Hardware,1048576,54118.284,19375.633
+GHASH-Hardware,1048576,399953.074,2621.748
+AES128-GCM-seal-Hardware,1048576,89947.160,11657.689
+AES128-GCM-open-copy-Hardware,1048576,96343.651,10883.706
+AES128-CTR-Hardware,16384,809.999,20227.188
+GHASH-Hardware,16384,6309.394,2596.763
+AES128-GCM-seal-Hardware,16384,1356.821,12075.281
+AES128-GCM-open-copy-Hardware,16384,1475.930,11100.796
+AES128-GCM-key-Hardware,0,1029.107,0.000
+AES256-CTR-Hardware,1048576,72735.161,14416.356
+AES256-GCM-seal-Hardware,1048576,109038.992,9616.523
+AES256-GCM-open-copy-Hardware,1048576,113294.948,9255.276
+AES256-CTR-Hardware,16384,1108.131,14785.255
+AES256-GCM-seal-Hardware,16384,1751.036,9356.748
+AES256-GCM-open-copy-Hardware,16384,1766.483,9274.928
+AES256-GCM-key-Hardware,0,1263.657,0.000
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1641 filtered out; finished in 10.41s

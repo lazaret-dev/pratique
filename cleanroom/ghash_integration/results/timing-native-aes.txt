@@ -1,0 +1,21 @@
+
+running 1 test
+test crypto::timing::aes_is_constant_time ... aes-128-gcm [Portable] key setup + seal 64 B: zero key vs random n= 310272      median    9458 ns  |t| uncropped    1.1  max    1.6  no leak detected
+aes-128-gcm [Portable] key setup + seal 64 B: all-ones key vs random n= 310272      median    9458 ns  |t| uncropped    0.1  max    1.1  no leak detected
+aes-256-gcm [Portable] key setup + seal 64 B: zero key vs random n= 265216      median   10083 ns  |t| uncropped    0.1  max    0.8  no leak detected
+aes-256-gcm [Portable] key setup + seal 64 B: all-ones key vs random n= 226304      median   10834 ns  |t| uncropped    0.3  max    0.9  no leak detected
+aes-128-gcm [Portable] key setup + seal 32 B: zero key vs random n= 258048      median    9708 ns  |t| uncropped    0.8  max    2.5  no leak detected
+aes-128-gcm [Portable] seal 32 B: zeros vs random          n=1751040 x2   median     666 ns  |t| uncropped    0.6  max    1.5  no leak detected
+aes-128-gcm [Portable] seal 1 KiB: zeros vs random         n= 378880      median    5875 ns  |t| uncropped    0.3  max    2.1  no leak detected
+aes-128-gcm [Portable] seal 1 KiB: all-ones vs random      n= 375808      median    5875 ns  |t| uncropped    0.3  max    1.4  no leak detected
+aes-128-gcm [Hardware] key setup + seal 64 B: zero key vs random n=2232320      median    1250 ns  |t| uncropped    0.7  max    1.2  no leak detected
+aes-128-gcm [Hardware] key setup + seal 64 B: all-ones key vs random n=2507776      median    1125 ns  |t| uncropped    0.0  max    1.2  no leak detected
+aes-256-gcm [Hardware] key setup + seal 64 B: zero key vs random n=1985536      median    1375 ns  |t| uncropped    0.7  max    1.4  no leak detected
+aes-256-gcm [Hardware] key setup + seal 64 B: all-ones key vs random n=1908736      median    1416 ns  |t| uncropped    0.2  max    1.6  no leak detected
+aes-128-gcm [Hardware] key setup + seal 32 B: zero key vs random n=2485248      median    1125 ns  |t| uncropped    0.2  max    0.5  no leak detected
+aes-128-gcm [Hardware] seal 32 B: zeros vs random          n=2068480 x9   median      78 ns  |t| uncropped    0.4  max    1.2  no leak detected
+aes-128-gcm [Hardware] seal 1 KiB: zeros vs random         n= 295936 x6   median     166 ns  |t| uncropped    1.5  max    1.5  no leak detected
+aes-128-gcm [Hardware] seal 1 KiB: all-ones vs random      n= 291840 x6   median     166 ns  |t| uncropped    1.7  max    1.8  no leak detected
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1653 filtered out; finished in 48.87s

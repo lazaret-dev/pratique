@@ -1,0 +1,7 @@
+fuzz[tls_flight]: 48 corpus files (0 from disk), 3578 edges so far
+fuzz[tls_flight]: #32384 edges 4055 corpus 641 exec/s 3223 crashes 0 bloat 0 (last new coverage 0 s ago)
+fuzz[tls_flight]: #67200 edges 4118 corpus 757 exec/s 3350 crashes 0 bloat 0 (last new coverage 0 s ago)
+fuzz[tls_flight]: #99456 edges 4162 corpus 812 exec/s 3308 crashes 0 bloat 0 (last new coverage 0 s ago)
+fuzz[tls_flight]: #136448 edges 4166 corpus 833 exec/s 3405 crashes 0 bloat 0 (last new coverage 0 s ago)
+fuzz[tls_flight]: #174464 edges 4176 corpus 865 exec/s 3483 crashes 0 bloat 0 (last new coverage 0 s ago)
+fuzz[tls_flight]: done. 210048 execs in 60 s (3500/s), 4185 edges, corpus 907, 0 distinct panics, 0 bloat inputs

@@ -876,7 +876,7 @@ one is in use, and `examples/bench.rs` prints it. The ClientHello offers AES-GCM
 accelerated and ChaCha20-Poly1305 first when it is not (the bitsliced AES, with the 113-gate S-box of Boyar and Peralta
 since B-62, does AES-128-GCM at about 96 MB/s on an x86-64 VM where the AES instructions do over 3 GB/s and ChaCha20-Poly1305
 about 350 MB/s).
-`RUSTFLAGS="--cfg pratique_portable"` forces the portable path on every target. On x86-64 CPUs with BMI2, the X25519
+`RUSTFLAGS="--cfg pratique_portable"` forces the portable cipher kernels on every target. The runtime-checked ARM data-independent timing guard remains active on CPUs that support it. On x86-64 CPUs with BMI2, the X25519
 ladder and ECDSA P-256's point operations also run from copies compiled for it (`mulx`), chosen at run time (B-104). The SIMD
 kernels (AES, GHASH, ChaCha20, Poly1305, SHA-2; in x86-64's AES-GCM kernel also an empty `asm!` that keeps the hash's products
 between the AES rounds, B-103, and in the AVX2 ChaCha20 and Poly1305 empty ones that keep the compiler from rewriting their

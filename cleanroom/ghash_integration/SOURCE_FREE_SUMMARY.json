@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "source_commit": "9e16efed4b547a346c83d5725d4f533d74c35e8a",
+  "source_tree": "de20bdbd58b9815aeeeb11f6d169a9a6e5fbb161",
+  "upstream_main": "55cfa19fb41bbfc503e7e5bf93de39e3189d1127",
+  "clean_only_publication_parent": "b33b45e1",
+  "portable_seal_MBps": {
+    "AES128-GCM-seal-Portable:1048576": 219.736,
+    "AES128-GCM-seal-Portable:16384": 223.542,
+    "AES256-GCM-seal-Portable:1048576": 182.847,
+    "AES256-GCM-seal-Portable:16384": 182.831
+  },
+  "portable_gates_MBps": {
+    "AES128_1MiB": 179.33,
+    "AES128_16KiB": 177.9,
+    "AES256_1MiB": 145.8,
+    "AES256_16KiB": 144.98
+  },
+  "hardware_paired_change_percent": {
+    "AES128_1MiB": -0.221,
+    "AES128_16KiB": -1.503,
+    "AES256_1MiB": 1.125,
+    "AES256_16KiB": 0.418
+  },
+  "portable_key_setup_us": {
+    "baseline_AES128": 1.501,
+    "integrated_AES128": 8.441,
+    "baseline_AES256": 1.9,
+    "integrated_AES256": 8.89
+  },
+  "default_debug_msrv_crypto": {
+    "passed": 172,
+    "failed": 0
+  },
+  "all_features_msrv_native": {
+    "passed": 1856,
+    "failed": 0,
+    "ignored": 26
+  },
+  "all_features_msrv_forced_software": {
+    "passed": 1856,
+    "failed": 0,
+    "ignored": 26
+  },
+  "timing_peak_absolute_t": {
+    "native_AES": 2.5,
+    "native_GHASH": 2.8,
+    "forced_software_AES": 2.1,
+    "forced_software_GHASH": 2.0
+  },
+  "fuzz_executions": {
+    "aead": 791168,
+    "tls_post": 1149440,
+    "tls_flight": 210048
+  },
+  "fuzz_panics": 0,
+  "fuzz_bloat": 0,
+  "private_platforms": {
+    "linux_arm64": {
+      "passed": 356,
+      "failed": 0
+    },
+    "windows_arm64": {
+      "passed": 343,
+      "failed": 0
+    },
+    "windows_x64_emulated": {
+      "passed": 344,
+      "failed": 0
+    }
+  },
+  "pending_at_initial_draft": [
+    "GitHub native Ubuntu x64 release timing and CI"
+  ],
+  "notice_or_license_changed": false,
+  "dependencies_added": false,
+  "public_API_changed": false,
+  "known_baseline_environment_issue": "OpenSSL4.1 session-ticket assertion reproduces on unchanged baseline; full suite passes with installed OpenSSL3.6.5",
+  "workflow": ".github/workflows/portable-crypto.yml"
+}

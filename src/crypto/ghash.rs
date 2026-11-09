@@ -6,47 +6,16 @@
 //! carry-less multiplication followed by a reduction modulo x^128 + x^7 + x^2 + x + 1. The hash
 //! runs entirely in that reflected form and reverses the result at the end.
 //!
-//! The carry-less 64 x 64 -> 128 bit product (`clmul64`) is the only primitive that differs:
-//! PCLMULQDQ or PMULL where the CPU has them ([`super::aes_hw`]), otherwise `bmul64`, which gets
-//! it from integer multiplications on operands with holes in them so that the carries never
-//! collide (the technique of BearSSL's `ghash_ctmul64`). Neither has a secret-dependent branch or
-//! address, and `bmul64` relies on the CPU's integer multiplier taking the same time for any
-//! operands, as it does on every mainstream desktop, server and phone core.
+//! Portable products use the independently derived Boolean primitives in
+//! `clmul_clean` and `clmul_batch_clean`. Full groups of 64 blocks use prepared
+//! H^64 ... H powers, aggregate unreduced products, and reduce once. Tails keep
+//! the scalar recurrence. PCLMULQDQ/PMULL retain their existing hardware path.
 
 use super::aes::Backend;
 use super::aes_hw;
+use super::clmul_batch_clean::{clmul128_batch_xor_prepared, PreparedPolynomial128x64};
+use super::clmul_clean::clmul64_portable;
 use crate::zeroize::Zeroize;
-
-/// Low 64 bits of the carry-less product of `x` and `y`.
-///
-/// The operands are split into four classes of every fourth bit. A product of two such classes
-/// has at most 16 ones landing on any position, so the integer sums cannot carry into the next
-/// position that is kept; masking the right positions out of the XOR of the integer products
-/// leaves exactly the carry-less sums.
-#[inline(always)]
-fn bmul64(x: u64, y: u64) -> u64 {
-    const M0: u64 = 0x1111_1111_1111_1111;
-    const M1: u64 = 0x2222_2222_2222_2222;
-    const M2: u64 = 0x4444_4444_4444_4444;
-    const M3: u64 = 0x8888_8888_8888_8888;
-    let (x0, x1, x2, x3) = (x & M0, x & M1, x & M2, x & M3);
-    let (y0, y1, y2, y3) = (y & M0, y & M1, y & M2, y & M3);
-    let z0 = x0.wrapping_mul(y0) ^ x1.wrapping_mul(y3) ^ x2.wrapping_mul(y2) ^ x3.wrapping_mul(y1);
-    let z1 = x0.wrapping_mul(y1) ^ x1.wrapping_mul(y0) ^ x2.wrapping_mul(y3) ^ x3.wrapping_mul(y2);
-    let z2 = x0.wrapping_mul(y2) ^ x1.wrapping_mul(y1) ^ x2.wrapping_mul(y0) ^ x3.wrapping_mul(y3);
-    let z3 = x0.wrapping_mul(y3) ^ x1.wrapping_mul(y2) ^ x2.wrapping_mul(y1) ^ x3.wrapping_mul(y0);
-    (z0 & M0) | (z1 & M1) | (z2 & M2) | (z3 & M3)
-}
-
-/// The full 128-bit carry-less product from [`bmul64`]. The high half is the bit-reversed low
-/// half of the product of the bit-reversed operands (reversing maps product bit m to 126 - m),
-/// shifted by one because the product has only 127 bits.
-#[inline(always)]
-fn clmul64_portable(a: u64, b: u64) -> u128 {
-    let lo = bmul64(a, b);
-    let hi = bmul64(a.reverse_bits(), b.reverse_bits()).reverse_bits() >> 1;
-    ((hi as u128) << 64) | lo as u128
-}
 
 /// 64 x 64 -> 128 bit carry-less product on the chosen implementation.
 #[inline(always)]
@@ -101,6 +70,42 @@ fn absorb<const HW: bool>(h: u128, mut acc: u128, data: &[u8]) -> u128 {
     acc
 }
 
+/// Absorb full public-length batches, then preserve scalar zero-padding of the tail.
+/// Each batch expands the same recurrence with its incoming state in block one.
+fn absorb_portable(
+    h: u128,
+    prepared: &PreparedPolynomial128x64,
+    mut acc: u128,
+    data: &[u8],
+) -> u128 {
+    let mut batches = data.chunks_exact(64 * 16);
+    for batch in &mut batches {
+        let mut blocks = [0u128; 64];
+        for (block, bytes) in blocks.iter_mut().zip(batch.chunks_exact(16)) {
+            *block = u128::from_be_bytes(bytes.try_into().unwrap()).reverse_bits();
+        }
+        blocks[0] ^= acc;
+        let [low, high] = clmul128_batch_xor_prepared(blocks, prepared);
+        acc = reduce(low, high);
+        blocks.zeroize();
+    }
+    absorb::<false>(h, acc, batches.remainder())
+}
+
+/// Prepare H^64 ... H once per portable key, using the accepted scalar primitive.
+fn prepare_powers(h: u128) -> PreparedPolynomial128x64 {
+    let mut powers = [0u128; 64];
+    let mut power = h;
+    for slot in powers.iter_mut().rev() {
+        *slot = power;
+        power = mul::<false>(power, h);
+    }
+    let prepared = PreparedPolynomial128x64::new(powers);
+    powers.zeroize();
+    power.zeroize();
+    prepared
+}
+
 /// GHASH of `aad` and `ct` (each zero-padded to a block boundary, then the two bit lengths) under
 /// the reflected hash key `h`. Returns the big-endian block value `S`.
 ///
@@ -125,6 +130,8 @@ pub(super) struct GhashKey {
     hw: bool,
     /// H^1 ... H^8 in the form of the one-pass hardware GCM, where this CPU has one (see [`aes_hw::Keys::gcm_seal`]).
     powers: Option<aes_hw::Powers>,
+    /// Portable H^64 ... H in 64-lane Boolean planes, prepared for the key lifetime.
+    portable_powers: Option<PreparedPolynomial128x64>,
 }
 
 impl Drop for GhashKey {
@@ -138,10 +145,16 @@ impl GhashKey {
     /// the key that produced it; the hardware multiplier is used with the hardware AES.
     pub(super) fn new(h: &[u8; 16], backend: Backend) -> GhashKey {
         let hw = backend == Backend::Hardware;
+        let reflected = u128::from_be_bytes(*h).reverse_bits();
         GhashKey {
-            h: u128::from_be_bytes(*h).reverse_bits(),
+            h: reflected,
             hw,
             powers: if hw { aes_hw::ghash_powers(h) } else { None },
+            portable_powers: if hw {
+                None
+            } else {
+                Some(prepare_powers(reflected))
+            },
         }
     }
 
@@ -155,19 +168,41 @@ impl GhashKey {
         if let Some(p) = self.powers.as_mut() {
             p.zeroize();
         }
+        if let Some(p) = self.portable_powers.as_mut() {
+            for words in p.words_mut() {
+                words.zeroize();
+            }
+        }
     }
 
     #[cfg(test)]
     pub(super) fn is_wiped(&self) -> bool {
-        self.h == 0 && self.powers.iter().all(|p| p.iter().all(|&x| x == 0))
+        self.h == 0
+            && self.powers.iter().all(|p| p.iter().all(|&x| x == 0))
+            && self
+                .portable_powers
+                .iter()
+                .all(|p| p.words().iter().all(|words| words.iter().all(|&x| x == 0)))
     }
 
     /// GHASH of `aad` and `ct` as a 16-byte block.
     pub(super) fn hash(&self, aad: &[u8], ct: &[u8]) -> [u8; 16] {
         let s = if self.hw {
             aes_hw::ghash_hw(self.h, aad, ct)
-        } else {
+        } else if aad.len() < 64 * 16 && ct.len() < 64 * 16 {
             hash_with::<false>(self.h, aad, ct)
+        } else {
+            let prepared = self
+                .portable_powers
+                .as_ref()
+                .expect("portable GHASH powers");
+            let mut acc = absorb_portable(self.h, prepared, 0, aad);
+            acc = absorb_portable(self.h, prepared, acc, ct);
+            let lens = ((aad.len() as u128 * 8) << 64) | (ct.len() as u128 * 8);
+            acc = mul::<false>(acc ^ lens.reverse_bits(), self.h);
+            let s = acc.reverse_bits();
+            acc.zeroize();
+            s
         };
         s.to_be_bytes()
     }
@@ -341,6 +376,68 @@ mod tests {
                         "hardware aad {aad_len} ct {ct_len}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn batches_preserve_nonzero_incoming_state_and_partial_tails() {
+        let mut rng = Lcg(0x8a5c_27b1_6d09_4e3f);
+        for h in [0, 1, 1 << 127, u128::MAX, rng.u128()] {
+            let key = GhashKey::new(&h.to_be_bytes(), Backend::Portable);
+            let prepared = key.portable_powers.as_ref().unwrap();
+            for len in [
+                0, 1, 15, 16, 1008, 1023, 1024, 1025, 1040, 2047, 2048, 2049, 3089,
+            ] {
+                let initial = rng.u128();
+                let data = rng.bytes(len);
+                let mut expected = initial;
+                for chunk in data.chunks(16) {
+                    let mut block = [0u8; 16];
+                    block[..chunk.len()].copy_from_slice(chunk);
+                    expected = gf_mul(expected ^ u128::from_be_bytes(block), h);
+                }
+                let actual = absorb_portable(key.h, prepared, initial.reverse_bits(), &data);
+                assert_eq!(actual.reverse_bits(), expected, "len {len}, h {h:#x}");
+            }
+        }
+    }
+
+    #[test]
+    fn batches_keep_aad_and_ciphertext_padding_independent() {
+        let mut rng = Lcg(0x49e0_b7a2_8c36_15df);
+        for (aad_len, ct_len) in [
+            (0, 1024),
+            (1, 1023),
+            (15, 1024),
+            (17, 1025),
+            (1023, 1024),
+            (1024, 1023),
+            (1024, 1024),
+            (1025, 1025),
+            (2047, 2048),
+            (2048, 2049),
+            (2049, 16385),
+        ] {
+            let h = rng.u128();
+            let aad = rng.bytes(aad_len);
+            let ct = rng.bytes(ct_len);
+            let expected = reference_ghash(h, &aad, &ct).to_be_bytes();
+            let portable = GhashKey::new(&h.to_be_bytes(), Backend::Portable);
+            assert_eq!(
+                portable.hash(&aad, &ct),
+                expected,
+                "aad {aad_len} ct {ct_len}"
+            );
+            let cloned = portable.clone();
+            let mut wiped = portable;
+            wiped.wipe();
+            assert!(wiped.is_wiped());
+            assert!(!cloned.is_wiped());
+            assert_eq!(cloned.hash(&aad, &ct), expected);
+            if aes_hw::available() {
+                let hardware = GhashKey::new(&h.to_be_bytes(), Backend::Hardware);
+                assert_eq!(hardware.hash(&aad, &ct), expected);
             }
         }
     }

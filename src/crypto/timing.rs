@@ -1048,6 +1048,22 @@ fn ghash_multiplication_is_constant_time() {
             |rng, c| (key(rng, c, 0xff), data.clone()),
             by_data,
         );
+        // Prepared batch inputs: key preparation happens before the timed operation.
+        // Exercise a full batch and a batch followed by scalar/partial tails.
+        for len in [1024, 2049] {
+            let prepared = GhashKey::new(&fixed_h, backend);
+            expect_constant_time(
+                &format!("ghash [{backend:?}] batch {len} data: 0 vs random"),
+                |rng, c| fixed_or_random(rng, c, len, 0),
+                |data: &Vec<u8>| prepared.hash(b"aad", data),
+            );
+            let data = vec![0x5au8; len];
+            expect_constant_time(
+                &format!("ghash [{backend:?}] batch {len} prepared H: 0 vs random"),
+                |rng, c| GhashKey::new(&key(rng, c, 0), backend),
+                |prepared: &GhashKey| prepared.hash(b"aad", &data),
+            );
+        }
     }
     finish();
 }

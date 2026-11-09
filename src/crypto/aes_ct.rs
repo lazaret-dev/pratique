@@ -7,8 +7,8 @@
 //! `16 r + 4 b + c` of a plane (bit of the `u64`): a row of all four blocks is one 16-bit field, so
 //! that turning the rows of every column (in `MixColumns`) is a rotation of the whole word. In this form
 //!
-//! * `SubBytes` is the 113-gate circuit of Boyar and Peralta (the GF(2^8) inversion and the affine map, as `AND`, `XOR`
-//!   and `NOT` on whole planes), so all 64 bytes are substituted by the same fixed circuit;
+//! * `SubBytes` uses the independently derived quadratic field tower and FIPS 197 affine map
+//!   in `aes_sbox_tower_clean`, using Boolean operations on all 64 bytes at once;
 //! * `ShiftRows` and `MixColumns` are lane permutations (masks and shifts);
 //! * `AddRoundKey` is an `XOR` with the round key spread over the planes the same way.
 //!
@@ -16,6 +16,7 @@
 //! it) but it is not a table either. The key schedule uses the same circuit for `SubWord`, so
 //! the key never indexes memory.
 
+use super::aes_sbox_tower_clean::sbox;
 use crate::zeroize::Zeroize;
 
 type Planes = [u64; 8];
@@ -125,141 +126,6 @@ fn gf_sq(a: &Planes) -> Planes {
         t[2 * i] = a[i];
     }
     reduce(t)
-}
-
-/// The AES S-box on every lane, as the circuit of Boyar and Peralta ("A new combinational logic minimization technique
-/// with applications to cryptology", 2010; "A depth-16 circuit for the AES S-box", 2011): a linear layer, a non-linear middle
-/// of 32 ANDs and a linear layer, 113 gates in all, against some 800 for the inversion by multiplications that it replaced.
-/// The gates are in the order of the paper as BearSSL's `aes_ct` writes them; `x0` is the high bit, so `x0` is plane 7. The
-/// test below checks it against the table on all 256 inputs.
-#[inline(always)]
-fn sbox(q: &Planes) -> Planes {
-    let (x0, x1, x2, x3, x4, x5, x6, x7) = (q[7], q[6], q[5], q[4], q[3], q[2], q[1], q[0]);
-
-    // top linear transformation
-    let y14 = x3 ^ x5;
-    let y13 = x0 ^ x6;
-    let y9 = x0 ^ x3;
-    let y8 = x0 ^ x5;
-    let t0 = x1 ^ x2;
-    let y1 = t0 ^ x7;
-    let y4 = y1 ^ x3;
-    let y12 = y13 ^ y14;
-    let y2 = y1 ^ x0;
-    let y5 = y1 ^ x6;
-    let y3 = y5 ^ y8;
-    let t1 = x4 ^ y12;
-    let y15 = t1 ^ x5;
-    let y20 = t1 ^ x1;
-    let y6 = y15 ^ x7;
-    let y10 = y15 ^ t0;
-    let y11 = y20 ^ y9;
-    let y7 = x7 ^ y11;
-    let y17 = y10 ^ y11;
-    let y19 = y10 ^ y8;
-    let y16 = t0 ^ y11;
-    let y21 = y13 ^ y16;
-    let y18 = x0 ^ y16;
-
-    // non-linear section
-    let t2 = y12 & y15;
-    let t3 = y3 & y6;
-    let t4 = t3 ^ t2;
-    let t5 = y4 & x7;
-    let t6 = t5 ^ t2;
-    let t7 = y13 & y16;
-    let t8 = y5 & y1;
-    let t9 = t8 ^ t7;
-    let t10 = y2 & y7;
-    let t11 = t10 ^ t7;
-    let t12 = y9 & y11;
-    let t13 = y14 & y17;
-    let t14 = t13 ^ t12;
-    let t15 = y8 & y10;
-    let t16 = t15 ^ t12;
-    let t17 = t4 ^ t14;
-    let t18 = t6 ^ t16;
-    let t19 = t9 ^ t14;
-    let t20 = t11 ^ t16;
-    let t21 = t17 ^ y20;
-    let t22 = t18 ^ y19;
-    let t23 = t19 ^ y21;
-    let t24 = t20 ^ y18;
-
-    let t25 = t21 ^ t22;
-    let t26 = t21 & t23;
-    let t27 = t24 ^ t26;
-    let t28 = t25 & t27;
-    let t29 = t28 ^ t22;
-    let t30 = t23 ^ t24;
-    let t31 = t22 ^ t26;
-    let t32 = t31 & t30;
-    let t33 = t32 ^ t24;
-    let t34 = t23 ^ t33;
-    let t35 = t27 ^ t33;
-    let t36 = t24 & t35;
-    let t37 = t36 ^ t34;
-    let t38 = t27 ^ t36;
-    let t39 = t29 & t38;
-    let t40 = t25 ^ t39;
-
-    let t41 = t40 ^ t37;
-    let t42 = t29 ^ t33;
-    let t43 = t29 ^ t40;
-    let t44 = t33 ^ t37;
-    let t45 = t42 ^ t41;
-    let z0 = t44 & y15;
-    let z1 = t37 & y6;
-    let z2 = t33 & x7;
-    let z3 = t43 & y16;
-    let z4 = t40 & y1;
-    let z5 = t29 & y7;
-    let z6 = t42 & y11;
-    let z7 = t45 & y17;
-    let z8 = t41 & y10;
-    let z9 = t44 & y12;
-    let z10 = t37 & y3;
-    let z11 = t33 & y4;
-    let z12 = t43 & y13;
-    let z13 = t40 & y5;
-    let z14 = t29 & y2;
-    let z15 = t42 & y9;
-    let z16 = t45 & y14;
-    let z17 = t41 & y8;
-
-    // bottom linear transformation
-    let t46 = z15 ^ z16;
-    let t47 = z10 ^ z11;
-    let t48 = z5 ^ z13;
-    let t49 = z9 ^ z10;
-    let t50 = z2 ^ z12;
-    let t51 = z2 ^ z5;
-    let t52 = z7 ^ z8;
-    let t53 = z0 ^ z3;
-    let t54 = z6 ^ z7;
-    let t55 = z16 ^ z17;
-    let t56 = z12 ^ t48;
-    let t57 = t50 ^ t53;
-    let t58 = z4 ^ t46;
-    let t59 = z3 ^ t54;
-    let t60 = t46 ^ t57;
-    let t61 = z14 ^ t57;
-    let t62 = t52 ^ t58;
-    let t63 = t49 ^ t58;
-    let t64 = z4 ^ t59;
-    let t65 = t61 ^ t62;
-    let t66 = z1 ^ t63;
-    let s0 = t59 ^ t63;
-    let s6 = t56 ^ !t62;
-    let s7 = t48 ^ !t60;
-    let t67 = t64 ^ t65;
-    let s3 = t53 ^ t66;
-    let s4 = t51 ^ t66;
-    let s5 = t47 ^ t65;
-    let s1 = t64 ^ !s3;
-    let s2 = t55 ^ !t67;
-
-    [s7, s6, s5, s4, s3, s2, s1, s0]
 }
 
 // ---- ShiftRows and MixColumns as lane permutations -----------------------------------------
@@ -520,6 +386,47 @@ mod tests {
             let out = unpack(&sbox(&pack(&b)));
             for j in 0..64 {
                 assert_eq!(out[j], table[base + j], "S-box of {:#04x}", base + j);
+            }
+        }
+    }
+
+    #[test]
+    fn clean_tower_sbox_every_byte_in_every_lane() {
+        let table = crate::crypto::aes::reference::sbox_table();
+        for byte in 0..256usize {
+            for lane in 0..64 {
+                let q = core::array::from_fn(|plane| (((byte >> plane) & 1) as u64) << lane);
+                let actual = sbox(&q);
+                for out_lane in 0..64 {
+                    let value = actual.iter().enumerate().fold(0u8, |value, (plane, bits)| {
+                        value | (((bits >> out_lane) & 1) as u8) << plane
+                    });
+                    assert_eq!(value, table[if out_lane == lane { byte } else { 0 }]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clean_tower_sbox_ten_thousand_mixed_plane_inputs() {
+        let table = crate::crypto::aes::reference::sbox_table();
+        let mut state = 0x6a09_e667_f3bc_c909u64;
+        for _ in 0..10_000 {
+            let q = core::array::from_fn(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state
+            });
+            let actual = sbox(&q);
+            for lane in 0..64 {
+                let byte = q.iter().enumerate().fold(0usize, |byte, (plane, bits)| {
+                    byte | (((bits >> lane) & 1) as usize) << plane
+                });
+                let value = actual.iter().enumerate().fold(0u8, |value, (plane, bits)| {
+                    value | (((bits >> lane) & 1) as u8) << plane
+                });
+                assert_eq!(value, table[byte]);
             }
         }
     }

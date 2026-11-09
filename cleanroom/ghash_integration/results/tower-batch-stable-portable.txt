@@ -1,0 +1,35 @@
+   Compiling pratique v0.1.0 (/private/tmp/pratique-batch-ghash-integration-20261108)
+warning: function `hash_with` is never used
+   --> src/crypto/ghash.rs:115:15
+    |
+115 | pub(super) fn hash_with<const HW: bool>(h: u128, aad: &[u8], ct: &[u8]) -> u128 {
+    |               ^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `pratique` (lib test) generated 1 warning
+    Finished `release` profile [optimized] target(s) in 40.15s
+     Running unittests src/lib.rs (/private/tmp/pratique-integration-target-portable/release/deps/pratique-12b23c6676bed72c)
+
+running 1 test
+test crypto::integration_profile::release_profile ... hardware_available=false
+operation,bytes,ns_per_call,decimal_MB_per_second
+AES128-CTR-Portable,1048576,3573652.778,293.419
+GHASH-Portable,1048576,1026847.231,1021.161
+AES128-GCM-seal-Portable,1048576,4570078.667,229.444
+AES128-GCM-open-copy-Portable,1048576,4585421.333,228.676
+AES128-CTR-Portable,16384,55537.344,295.009
+GHASH-Portable,16384,16043.792,1021.205
+AES128-GCM-seal-Portable,16384,71586.705,228.869
+AES128-GCM-open-copy-Portable,16384,71722.621,228.436
+AES128-GCM-key-Portable,0,8247.923,0.000
+AES256-CTR-Portable,1048576,4582944.444,228.800
+AES256-GCM-seal-Portable,1048576,5614578.125,186.760
+AES256-GCM-open-copy-Portable,1048576,5630671.875,186.226
+AES256-CTR-Portable,16384,71672.373,228.596
+AES256-GCM-seal-Portable,16384,87963.393,186.259
+AES256-GCM-open-copy-Portable,16384,87874.908,186.447
+AES256-GCM-key-Portable,0,8649.893,0.000
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1650 filtered out; finished in 5.29s

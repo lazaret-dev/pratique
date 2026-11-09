@@ -116,7 +116,7 @@ pub fn all() -> Vec<Target> {
         Target { name: "inflate", run: crate::inflate_targets::inflate, seeds: crate::inflate_targets::seeds_inflate, dict: crate::inflate_targets::INFLATE_DICT, max_len: 4096, alloc_base: 1 << 23, alloc_per_byte: 2048 },
         Target { name: "url", run: url, seeds: seeds_url, dict: URL_DICT, max_len: 512, alloc_base: 1 << 16, alloc_per_byte: 64 },
         Target { name: "egress", run: egress, seeds: seeds_egress, dict: EGRESS_DICT, max_len: 700, alloc_base: 1 << 20, alloc_per_byte: 2048 },
-        Target { name: "aead", run: aead, seeds: seeds_aead, dict: &[], max_len: 1200, alloc_base: 1 << 20, alloc_per_byte: 64 },
+        Target { name: "aead", run: aead, seeds: seeds_aead, dict: &[], max_len: 2400, alloc_base: 1 << 20, alloc_per_byte: 64 },
         Target { name: "tls_records", run: tls_records, seeds: seeds_tls_records, dict: TLS_DICT, max_len: 4096, alloc_base: 1 << 21, alloc_per_byte: 256 },
         Target { name: "tls_flight", run: tls_flight, seeds: seeds_tls_flight, dict: TLS_DICT, max_len: 8192, alloc_base: 1 << 22, alloc_per_byte: 256 },
         Target { name: "tls_post", run: tls_post, seeds: seeds_tls_post, dict: TLS_DICT, max_len: 2048, alloc_base: 1 << 21, alloc_per_byte: 256 },

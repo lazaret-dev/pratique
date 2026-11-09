@@ -13,8 +13,9 @@
 //!
 //! Not covered: plain `sha2` and the rest of the pure part (no `unsafe` there, and it hashes and verifies public data: a
 //! caller that hashes a secret with `Sha256` directly on such a CPU sets the mode itself); RSA and ECDSA verification
-//! (public data). On other targets, on a CPU without the feature and in a `pratique_portable` build, [`Dit::on`] does
-//! nothing.
+//! (public data). On other targets or a CPU without the feature, [`Dit::on`] does nothing.
+//! `pratique_portable` disables accelerated cipher kernels but retains this timing guard on
+//! supporting ARM CPUs: selecting software arithmetic must not disable its timing protection.
 
 use std::marker::PhantomData;
 
@@ -101,7 +102,7 @@ pub(crate) fn held_off<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
-#[cfg(all(target_arch = "aarch64", not(pratique_portable)))]
+#[cfg(target_arch = "aarch64")]
 mod imp {
     use core::arch::asm;
 
@@ -128,7 +129,7 @@ mod imp {
     }
 }
 
-#[cfg(not(all(target_arch = "aarch64", not(pratique_portable))))]
+#[cfg(not(target_arch = "aarch64"))]
 mod imp {
     pub(super) fn available() -> bool {
         false
@@ -144,6 +145,16 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::Dit;
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn timing_guard_detection_is_independent_of_cipher_backend() {
+        assert_eq!(
+            Dit::available(),
+            std::arch::is_aarch64_feature_detected!("dit"),
+            "forcing portable cipher kernels must preserve the platform timing guard"
+        );
+    }
 
     #[test]
     fn the_guard_sets_the_bit_and_puts_back_what_was_there() {

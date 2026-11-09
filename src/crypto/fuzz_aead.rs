@@ -114,7 +114,8 @@ pub fn aead(input: &[u8]) {
 pub fn example_inputs() -> Vec<Vec<u8>> {
     let make = |flags: u8, aad: usize, len: usize| {
         let mut v = vec![flags];
-        v.extend((0..32u8).map(|i| i.wrapping_mul(7).wrapping_add(1)));
+        let key_len = if flags & 1 != 0 { 32u8 } else { 16u8 };
+        v.extend((0..key_len).map(|i| i.wrapping_mul(7).wrapping_add(1)));
         v.extend((0..12u8).map(|i| i.wrapping_mul(11).wrapping_add(3)));
         v.push(aad as u8);
         v.extend((0..aad).map(|i| (i * 13 + 5) as u8));
@@ -136,6 +137,12 @@ pub fn example_inputs() -> Vec<Vec<u8>> {
         (0, 130, 257),
         (1, 20, 511),
         (0, 5, 1000),
+        (1, 17, 1023),
+        (0, 0, 1024),
+        (1, 5, 1025),
+        (0, 16, 2047),
+        (1, 17, 2048),
+        (0, 29, 2049),
     ] {
         out.push(make(flags, aad, len));
     }

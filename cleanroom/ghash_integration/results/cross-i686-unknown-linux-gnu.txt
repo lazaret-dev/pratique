@@ -1,0 +1,2 @@
+    Checking pratique v0.1.0 (/private/tmp/pratique-batch-ghash-integration-20261108)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.52s

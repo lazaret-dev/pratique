@@ -1,0 +1,26 @@
+   Compiling pratique v0.1.0 (/private/tmp/pratique-batch-ghash-integration-20261108)
+    Finished `release` profile [optimized] target(s) in 43.69s
+     Running unittests src/lib.rs (/private/tmp/pratique-integration-target-portable/release/deps/pratique-12b23c6676bed72c)
+
+running 1 test
+test crypto::integration_profile::release_profile ... hardware_available=false
+operation,bytes,ns_per_call,decimal_MB_per_second
+AES128-CTR-Portable,1048576,3480569.500,301.266
+GHASH-Portable,1048576,852725.170,1229.676
+AES128-GCM-seal-Portable,1048576,4333141.600,241.990
+AES128-GCM-open-copy-Portable,1048576,4347525.000,241.189
+AES128-CTR-Portable,16384,54201.153,302.281
+GHASH-Portable,16384,13321.635,1229.879
+AES128-GCM-seal-Portable,16384,68547.042,239.018
+AES128-GCM-open-copy-Portable,16384,68550.331,239.007
+AES128-GCM-key-Portable,0,1500.519,0.000
+AES256-CTR-Portable,1048576,4449087.500,235.683
+AES256-GCM-seal-Portable,1048576,5317802.000,197.182
+AES256-GCM-open-copy-Portable,1048576,5359682.250,195.641
+AES256-CTR-Portable,16384,69691.695,235.093
+AES256-GCM-seal-Portable,16384,83467.406,196.292
+AES256-GCM-open-copy-Portable,16384,83894.251,195.293
+AES256-GCM-key-Portable,0,1900.085,0.000
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1640 filtered out; finished in 5.35s

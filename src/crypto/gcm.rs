@@ -445,6 +445,12 @@ mod tests {
                 255,
                 256,
                 1000,
+                1023,
+                1024,
+                1025,
+                2047,
+                2048,
+                2049,
                 4096,
                 16384 + 1,
             ] {
@@ -510,7 +516,7 @@ mod tests {
     fn in_place_failure_leaves_buffer_untouched() {
         for g in gcms(&[5u8; 32]) {
             let nonce = [2u8; 12];
-            for len in [0usize, 1, 16, 17, 300, 16384] {
+            for len in [0usize, 1, 16, 17, 300, 1023, 1024, 1025, 2048, 2049, 16384] {
                 let pt: Vec<u8> = (0..len).map(|i| (i * 3) as u8).collect();
                 let mut buf = pt.clone();
                 buf.resize(len + TAG_LEN, 0xaa);

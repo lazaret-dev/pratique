@@ -1,0 +1,7 @@
+fuzz[tls_post]: 59 corpus files (0 from disk), 960 edges so far
+fuzz[tls_post]: #210816 edges 1073 corpus 382 exec/s 21061 crashes 0 bloat 0 (last new coverage 0 s ago)
+fuzz[tls_post]: #423680 edges 1073 corpus 431 exec/s 21173 crashes 0 bloat 0 (last new coverage 0 s ago)
+fuzz[tls_post]: #615680 edges 1073 corpus 460 exec/s 20511 crashes 0 bloat 0 (last new coverage 0 s ago)
+fuzz[tls_post]: #792320 edges 1073 corpus 461 exec/s 19799 crashes 0 bloat 0 (last new coverage 4 s ago)
+fuzz[tls_post]: #962176 edges 1075 corpus 463 exec/s 19234 crashes 0 bloat 0 (last new coverage 3 s ago)
+fuzz[tls_post]: done. 1149440 execs in 60 s (19155/s), 1077 edges, corpus 476, 0 distinct panics, 0 bloat inputs
