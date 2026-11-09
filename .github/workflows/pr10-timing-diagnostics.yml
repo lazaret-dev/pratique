@@ -1,0 +1,35 @@
+name: PR10 timing investigation
+
+on:
+  push:
+    branches: [codex/pr10-ghash-timing-diagnostics]
+
+permissions:
+  contents: read
+
+jobs:
+  matched-native-x86-investigation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      RUSTUP_TOOLCHAIN: 1.87.0
+      RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
+      PRATIQUE_DIAGNOSTIC_OUTPUT: ${{ runner.temp }}/pratique-timing-evidence
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install exact compiler
+        run: rustup toolchain install 1.87.0 --profile minimal
+      - name: Collect matched diagnostics (not a validation gate)
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/run.py
+      - name: Retain every outcome and raw sample
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # official v4 tag verified
+        with:
+          name: pr10-native-x86-timing-investigation
+          path: ${{ runner.temp }}/pratique-timing-evidence
+          retention-days: 14
+          compression-level: 9
+          if-no-files-found: error
