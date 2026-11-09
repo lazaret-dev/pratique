@@ -1,0 +1,42 @@
+{
+  "artifact_id": 13685577428,
+  "workflow_run_id": 42641304983,
+  "archive_bytes": 115643042,
+  "archive_sha256": "316b529d8fbcdcaa358b091ffe352ea8fd81aee99385db2fbd8e6fb725c1a144",
+  "manifest_sha256": "c216629cf9761a720838c29c5d2e77f2ab4d40395373d10996e8044a3f99d709",
+  "production_source_commit": "e2dd9a91b3d2af6495faa6319fb5384c374dd82f",
+  "artifact_diagnostic_commit": "664ea2ce0d0ef61ada9f7704580d50f46738de53",
+  "RUSTFLAGS": "--cfg pratique_portable -C target-feature=-aes,-pclmulqdq",
+  "source_files": {
+    "batch_controls.rs": "c9205f3db430993cdb7df9e54f1b126dc989d7b45ca6f7e9adf7250df236a6a5",
+    "BATCH_PROTOCOL.md": "60a7d878ef3b0cfcd3116c0c929f1beb78b2adda186dd84af8f769e003c0d42c",
+    "build_batch.py": "edb8e5ac8b1b42679b96c6dc4818d0b7ffc8a3ee2f8a9280a5927f5cd92497e0",
+    "batch_capture_rustc.py": "e768a82b31efaccd53c6480ba41c297c774a8be750476beee50d9582e420b0b5",
+    "audit_batch.py": "62c49fa857aef7bc699ca1d26e8cacd5c21aee36b5bf5ad4ce92033ea4d3fa83",
+    "build_batch_companion.py": "dbc20099d69c09cbde9ce542e3635909b630fa882e4d0849ba8dc43fa349a06e",
+    "run_batch.py": "b6fdd6539c5e93b8fe3bd9a6c64905cc77c2940139da4409391efedc0de8539f",
+    "analyze.py": "72dd95b3e0eebafc5b58f433004995ed52d62425ba4f5fdadf599d0a85f3751a",
+    "replay.py": "dbb53bc73ce8e352d89d70f5847375e7a597482b63190f09c5e49c32a65c3b79",
+    "memory_env_probe.c": "f93621b5a0954c6677f1d755d3cba9dd10490e3051dd5b2aa529dcfd11f5930f",
+    "build_h.py": "9b66e21bda61e87d85c089aebe31be9c75801083c4b2962a1ee9af92b9886578",
+    "audit_h.py": "e95c4e281ecf561742b31d31f92f3747eb2ea95c9eb1c53fc68803b87900ca64",
+    "build_h_companion.py": "6b20aee2e88c670737e0f769eb17dcb3e90471d25b02fc83d95c93325376c7d2"
+  },
+  "files": {
+    "batch-controls-test-binary": "d8a2f88724e6c535d81cb0f43832694ed6d92c8243e8904b805a29b2d7e50d97",
+    "memory-env-probe": "0ec7429c0d44c19f8a8a2fdec1f6c98fe27c235fafd56c3b1653608b1fba830c"
+  },
+  "selector": "crypto::timing::pr10_batch_data_controls",
+  "seconds_per_row_seed": 3,
+  "seeds": [
+    0,
+    1
+  ],
+  "rows": [
+    "literal",
+    "identical_history",
+    "equal_variable",
+    "negative_identical_equal",
+    "positive_matched"
+  ]
+}

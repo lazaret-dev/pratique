@@ -1,0 +1,45 @@
+name: PR10 focused frozen 1024-byte GHASH diagnostic
+on:
+  push:
+    branches: [codex/pr10-ghash-1024-focused]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  one-frozen-data1024:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify source-only adapter fixtures
+        timeout-minutes: 1
+        run: python3 cleanroom/ghash_integration/focused_1024/unit.py
+      - name: Retrieve immutable reviewed binaries and record one pinned core
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/lazaret-dev/pratique/actions/artifacts/13685577428/zip > "$RUNNER_TEMP/focused-binary.zip"
+          python3 cleanroom/ghash_integration/focused_1024/focused.py prepare
+      - name: One ungated existing DATA1024 selector and its built-in controls
+        timeout-minutes: 3
+        run: python3 cleanroom/ghash_integration/focused_1024/focused.py run
+      - name: Describe every raw pair and distinguish completion from health
+        if: always()
+        timeout-minutes: 2
+        run: python3 cleanroom/ghash_integration/focused_1024/focused.py report
+      - name: Preserve complete partial and failed evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr10-focused-frozen-data1024
+          path: ${{ runner.temp }}/focused-1024-output
+          retention-days: 14
+          compression-level: 6
+          if-no-files-found: error
