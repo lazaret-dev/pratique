@@ -1,4 +1,4 @@
-name: PR10 timing investigation
+name: PR10 fixed-ELF timing investigation
 
 on:
   push:
@@ -6,31 +6,90 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  matched-native-x86-investigation:
+  build-history-companion:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 20
     env:
       RUSTUP_TOOLCHAIN: 1.87.0
-      RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
+      PYTHONDONTWRITEBYTECODE: '1'
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Install exact compiler
+      - name: Install exact supplemental-control compiler
         run: rustup toolchain install 1.87.0 --profile minimal
-      - name: Collect matched diagnostics (not a validation gate)
+      - name: Build history controls away from measured hosts
+        timeout-minutes: 12
         env:
-          PRATIQUE_DIAGNOSTIC_OUTPUT: ${{ runner.temp }}/pratique-timing-evidence
-        run: python3 cleanroom/ghash_integration/timing_diagnostics/run.py
-      - name: Retain every outcome and raw sample
+          PRATIQUE_HISTORY_OUTPUT: ${{ runner.temp }}/history-companion-build
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/build_history.py
+      - name: Preserve supplemental binaries and storage proof
+        id: upload
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # official v4 tag verified
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr10-native-x86-timing-investigation
-          path: ${{ runner.temp }}/pratique-timing-evidence
+          name: pr10-history-companion
+          path: ${{ runner.temp }}/history-companion-build
           retention-days: 14
-          compression-level: 9
+          compression-level: 6
+          if-no-files-found: error
+
+  fresh-vm-replay:
+    needs: build-history-companion
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2, 3]
+    env:
+      PRATIQUE_REPLICA: ${{ matrix.replica }}
+      PRATIQUE_TIMING_SECS: '3'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Download verify and prepare sealed ELFs without compilation
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRATIQUE_COMPANION_DIGEST: ${{ needs.build-history-companion.outputs.artifact_digest }}
+          PRATIQUE_COMPANION_ARTIFACT: ${{ needs.build-history-companion.outputs.artifact_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/replay-output"
+          date -u > "$RUNNER_TEMP/replay-output/download-stage.txt"
+          gh api repos/lazaret-dev/pratique/actions/artifacts/13657075157/zip > "$RUNNER_TEMP/phase1.zip"
+          gh api "repos/lazaret-dev/pratique/actions/artifacts/$PRATIQUE_COMPANION_ARTIFACT/zip" > "$RUNNER_TEMP/history.zip"
+          python3 cleanroom/ghash_integration/timing_diagnostics/replay.py prepare
+      - name: Unmodified true-default startup gates on all three ELFs
+        timeout-minutes: 3
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py startup
+      - name: Primary reported core gates and all matched controls
+        timeout-minutes: 7
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py primary
+      - name: Secondary reported core gates and predeclared expansion
+        timeout-minutes: 7
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py secondary
+      - name: Verified sham and masked diagnostic counterfactual if supported
+        timeout-minutes: 6
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py dispatch
+      - name: Reconstruct all raw sample statistics without waiving outcomes
+        timeout-minutes: 7
+        run: python3 cleanroom/ghash_integration/timing_diagnostics/replay.py analyze
+      - name: Preserve every complete or partial outcome and raw sample
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr10-fixed-ELF-replay-${{ matrix.replica }}
+          path: ${{ runner.temp }}/replay-output
+          retention-days: 14
+          compression-level: 6
           if-no-files-found: error
