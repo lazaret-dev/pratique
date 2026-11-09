@@ -75,6 +75,9 @@ These are intentional counterfactuals. Added mask arithmetic/opaque observation,
 changed random-class initial values, fixture metadata work and changed code
 layout can perturb preparation state. Matching RNG advances, original store
 width and unrolling does not establish identical complete prior state.
+The prepared-H completed-Vec observation also forces metadata reload/checks
+and can add conversion/copy bookkeeping on the random branch. Those operations
+are part of the counterfactual perturbation, not exact original state matching.
 
 The original reference names determine the RNG seed (including name length):
 `ghash [Portable] batch 1024 data: 0 vs random` and
