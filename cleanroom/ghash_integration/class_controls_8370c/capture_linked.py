@@ -29,7 +29,8 @@ def symbol_names(text):
         fields = line.split(maxsplit=2)
         if len(fields) == 3 and fields[1].lower() in ['t', 'w'] and relevant(fields[2]):
             names.append(fields[2])
-    return sorted(set(names), key=lambda n: (0 if 'ghash_batch_intermediate_controls' in n else
+    return sorted(set(names), key=lambda n: (-1 if 'ghash_batch_hot_key_swap_controls' in n else
+        0 if 'ghash_batch_intermediate_controls' in n else
         1 if 'control_row' in n else 2 if 'measure_seeded' in n else 3, n))
 
 

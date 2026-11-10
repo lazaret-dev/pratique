@@ -1228,6 +1228,60 @@ fn ghash_batch_intermediate_controls() {
     );
 }
 
+/// A key on its own page, so that two of them sit at the same offset within a page and a cache line.
+#[repr(align(4096))]
+struct PageAligned(GhashKey);
+
+/// Third diagnostic for the x86 findings on the batched portable GHASH. In the hot-key rows of the second one
+/// the class is also the key's address, and two nonzero keys at the two addresses were themselves flagged. Here
+/// each pair is measured twice in the same two page-aligned slots, with the contents exchanged in between. With
+/// d = class 1 minus class 0 (slot 1 minus slot 0), for a pair (X, Y) and then (Y, X):
+///   effect of the value (Y minus X) = (d_first - d_second) / 2
+///   effect of the slot (slot 1 minus slot 0) = (d_first + d_second) / 2
+/// It prints and never fails; the gate is `ghash_multiplication_is_constant_time`, unchanged.
+#[test]
+#[ignore = "diagnostic timing run; prints signed statistics and never fails"]
+fn ghash_batch_hot_key_swap_controls() {
+    let _dit = Dit::on();
+    let backend = Backend::Portable;
+    let fixed_h = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128.to_be_bytes();
+    let other_h = 0x9e37_79b9_7f4a_7c15_f39c_c060_5ced_c834_u128.to_be_bytes();
+    let fixed_data = vec![0x5au8; 1024];
+    println!("clock: coarse_tick() = {:?}", Clock::new().coarse_tick());
+    let mut pair = [
+        PageAligned(GhashKey::new(&[0; 16], backend)),
+        PageAligned(GhashKey::new(&other_h, backend)),
+    ];
+    println!("slots: {:p} and {:p}", &pair[0], &pair[1]);
+    control_row(
+        "swap: aligned hot keys: H 0 in slot 0, nonzero in slot 1",
+        |_, c| usize::from(c),
+        |i: &usize| pair[*i].0.hash(b"aad", &fixed_data),
+    );
+    pair.swap(0, 1);
+    control_row(
+        "swap: aligned hot keys: H nonzero in slot 0, 0 in slot 1",
+        |_, c| usize::from(c),
+        |i: &usize| pair[*i].0.hash(b"aad", &fixed_data),
+    );
+    let mut both = [
+        PageAligned(GhashKey::new(&fixed_h, backend)),
+        PageAligned(GhashKey::new(&other_h, backend)),
+    ];
+    println!("slots: {:p} and {:p}", &both[0], &both[1]);
+    control_row(
+        "swap: aligned hot keys: nonzero A in slot 0, B in slot 1",
+        |_, c| usize::from(c),
+        |i: &usize| both[*i].0.hash(b"aad", &fixed_data),
+    );
+    both.swap(0, 1);
+    control_row(
+        "swap: aligned hot keys: nonzero B in slot 0, A in slot 1",
+        |_, c| usize::from(c),
+        |i: &usize| both[*i].0.hash(b"aad", &fixed_data),
+    );
+}
+
 #[test]
 #[ignore = "statistical timing run; see the module documentation"]
 fn poly1305_is_constant_time() {

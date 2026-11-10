@@ -1,64 +1,64 @@
-# Two exact GHASH diagnostic patches on the first selected 8370C
+# Exact hot-key-swap diagnostic: six fixed calls
 
-This branch is an exploratory follow-up to run42733158775. It starts at exact diagnostic9ba854cf5b793f5ff9525964d58519018ed9f275 (production base4848bea7c7e39b34ed1c74435823197dfd945cc4 plus the exact first user patch). It adds the exact second user patch and changes only diagnostic administration beyond it. No production expression, public API, threshold, crop, original judge or original measurement loop is changed. No sampler trace, masking, MSR operation or DOITM intervention is added. PR10 remains on hold.
+This campaign applies the exact third user patch on exact d9a8983b69cadde904f07ba5289562a61bfdcacd, which already retains the first two exact patches and production base4848bea7c7e39b34ed1c74435823197dfd945cc4. Third patch SHA256:8b8a5be70d99ef7f32ac3ddf7d24e151288bf1abbd5faca0033b2d516252ccd3. It adds54 lines, removes none, only in src/crypto/timing.rs. The resulting timing hash is11f3d7da0bdfc636443f3b569836f879cb9fc267fed54ad344e5fafbff9b20a4. No existing production code, API, timing loop, threshold, crop or judge is changed. No sampler trace, masking or MSR/DOITM operation is added. PR10 remains on hold.
 
-## Source and manual registration
+## Registered manual workflow and bounds
 
-The first raw patch SHA256 remains96159ef4faec2bc3889d69b23fc41817f376394b16f5bf928501d07ee9f105b2; its timing module hash is27eb52a9346b994a9c4fdfb59c7a74eef3eea16f57203fb145514a5e79956ffd. The second raw patch SHA256 isf9c4e6c4aba2e6d249ba8865dc9264847847be2e41a7ac7de6b64c78546e9b4e. It adds63 lines and removes none, only in src/crypto/timing.rs. The combined timing module hash ise87ac2fab8366e8977f981f645c51c798c9454d4dae105a362074b425117fe43. Both raw inputs are retained unchanged here. Removing each exact insertion recovers its exact preceding timing module.
+Reuse registered workflow412738401 at .github/workflows/pr10-ghash-8370c-class-controls.yml, already on default main6f129ec9f92ae0de32654d9eb078af5e16ee435d. The separate workflow branch is based on that exact main and modifies only this existing YAML. Dispatch ref is codex/pr10-ghash-8370c-hot-key-swap-workflow; its exact branch guard and immutable reviewed source commit are fixed, with no configurable inputs or commands. Workflow HEAD and source checkout HEAD are separately recorded; GITHUB_SHA is never replaced. No default-main or PR10 mutation is needed. Source workflows have no push trigger; the new YAML remains workflow_dispatch only.
 
-The existing workflow path .github/workflows/pr10-ghash-8370c-class-controls.yml is already registered on default main6f129ec9f92ae0de32654d9eb078af5e16ee435d as workflow412738401. A separate workflow-only branch based on that exact main commit changes this existing YAML to the fixed nine-call contract and hardcodes the reviewed new diagnostic source commit. It is manually dispatched with ref codex/pr10-ghash-8370c-intermediate-workflow. The job guard accepts only that exact ref. No new main merge or PR10 source change is required. There are no configurable refs, commands, selectors or budgets in the workflow. Workflow-branch HEAD and checked-out diagnostic HEAD are different recorded identities; GITHUB_SHA is never impersonated.
+The parent owns at most20 sequential CPU assignments, records all skips and stops at the FIRST reported Xeon8370C regardless of checkout/build/measurement outcome. No outcome-based retries, replacements or alternate model are allowed. Each job records lscpu text/JSON, proc/cpuinfo, uname and selection metadata before checkout/compiler. Other models upload metadata with six unattempted slots and run no tests. No affinity, governor, feature mask or processor mode is changed.
 
-The parent owns publication and the CPU-only dispatch controller. The campaign is capped at20 sequential assignments, stops after the FIRST reported Xeon8370C, and retains every skipped assignment. The first matching assignment ends selection even if checkout, build, capture or measurement fails or is incomplete. There are no outcome-selected retries, replacements, alternate models or repeat campaigns under this plan. Each assignment captures lscpu text/JSON, proc/cpuinfo, uname and selection metadata in the SAME job before checkout or compilation. Nonmatching models skip checkout/compiler/tests and upload those records plus nine unattempted slot declarations. No CPU affinity, governor or feature mask is changed.
-
-## One build and nine fixed calls
-
-On the selected host, verify binds the immutable diagnostic commit, both raw patches, combined timing hash, all source inputs and flags. All pre-existing production/base files and modes other than the two additive timing insertions remain unchanged. Build once with Rust1.87.0 and:
+On the selected host build once under Rust1.87.0, RUSTFLAGS exactly --cfg pratique_portable -C target-feature=-aes,-pclmulqdq, PRATIQUE_TIMING_SECS exactly3, and no forced tick/reps or encoded-rustflags overrides:
 
     cargo test --release --all-features --lib --no-run --message-format=json
 
-RUSTFLAGS is exactly --cfg pratique_portable -C target-feature=-aes,-pclmulqdq. PRATIQUE_TIMING_SECS is exactly3. Forced reps/tick overrides and CARGO_ENCODED_RUSTFLAGS are absent. rustc-vV, cargo version, source hashes, compile output and selected ELF path/size/SHA256 are retained.
+Record compiler/cargo identity, source hashes, build stdout/stderr and the selected ELF path/size/SHA256. The proven capture helper retains the actual same-built ELF, nm maps and bounded relevant disassembly BEFORE native timing. The only selection change prioritizes the new swap entry. ELF copy/hash/payload safety is mandatory; optional missing/failing nm/objdump is honestly partial/unavailable and does not suppress the fixed calls if ELF is retained. Limits remain ELF60MB, each listing5MB, disassembly16MB, total pre-timing payload90MB, optional capture90s, collector100MB. Never execute retained artifacts locally.
 
-Before any native timing, capture_linked.py copies the SAME compiled ELF as inert artifact data and captures tool versions, raw/demangled symbols and bounded relevant timing/GHASH/clock disassembly. It never executes the retained copy. ELF is capped60MB, each symbol listing5MB, selected disassembly16MB and the pre-timing output payload90MB, below the100MB collector limit. Omitted symbols and label/coverage limits are explicit; the complete ELF permits later read-only inspection. The capture helper does NOT certify that hashes remain inside timers. An independent actual-linked loop/ctor/drop review must establish that before interpreting the hot-key stages. Optional nm/objdump failures, unavailable tools and bounded90-second capture exhaustion are recorded as partial/unavailable and do not suppress the nine calls when the complete ELF is safely retained. ELF copy/hash or payload-safety failures remain hard failures. This fixed compiler/capture observer work finishes before the native window; none runs concurrently or between calls.
+The same original compiled ELF is directly invoked in exactly this order:
 
-The same original compiled ELF is directly invoked in this predetermined order:
+1. crypto::timing::ghash_multiplication_is_constant_time
+2. crypto::timing::ghash_batch_hot_key_swap_controls
+3. original gate
+4. swap controls
+5. original gate
+6. swap controls
 
-1. original gate, iteration1
-2. first-patch controls, iteration1
-3. intermediate controls, iteration1
-4. original gate, iteration2
-5. first-patch controls, iteration2
-6. intermediate controls, iteration2
-7. original gate, iteration3
-8. first-patch controls, iteration3
-9. intermediate controls, iteration3
+Each command appends --exact --ignored --nocapture --test-threads=1. The three-second budget, original eight comparisons and automatic fresh rechecks remain unchanged. Each swap row always measures seeds0 and1 through the exact existing control_row helper. Only these two selectors run; earlier diagnostic tests remain compiled reference source, not additional invocations.
 
-The exact selectors are crypto::timing::ghash_multiplication_is_constant_time, crypto::timing::ghash_batch_class_controls and crypto::timing::ghash_batch_intermediate_controls. Every call appends --exact --ignored --nocapture --test-threads=1. The original keeps all eight GHASH rows and its conditional fresh rechecks; each print-only test always measures seeds0 and1 in its original control_row helper. A confirmed diagnostic row normally still exits0. Original exit101 with a complete unchanged final summary is an expected timing finding, not a collector failure.
+All six calls continue after original0/101, printed findings or collector errors while staging/cleanup is safe. Each child has a55s outer safety cap. Owned process groups are terminated/reaped before the next call; unsafe cleanup/cancellation leaves explicit unattempted slots rather than overlap. Full merged stdout/stderr, commands, timestamps, exits and partials are retained. No parsing, arithmetic export, capture or checksum occurs between native calls. ELF digest is compared before/after the whole window.
 
-All nine calls are attempted regardless of earlier0/101 findings or collector errors while immutable staging remains valid and process cleanup is safe. Each child has a55-second safety cap, preserving the existing three-second statistical budget. Each owned process group is terminated/reaped before the next; unsafe cleanup or cancellation leaves later slots explicitly unattempted rather than overlapping them. Full merged stdout/stderr, exact commands, timestamps, per-case exits and every partial output are retained. No parsing, CSV export, disassembly or ELF checksum occurs between native calls. The reviewed runner compares the ELF digest before and after the whole window.
+Job cap25min. Step caps: CPU1, checkout1, install2, build/capture6, native6, report1, upload2 =19min, leaving6min additional overhead. Nominal statistical duration is144s without original rechecks, up to216s if all eight gate rows recheck each time, before warmup/probes/overshoot. A timeout is incomplete evidence, never a quiet result. Job success means collection only.
 
-Nominal statistical time is270seconds for three original sets without rechecks plus both print-only sets, up to342seconds if all eight original rows recheck each time, before existing warmup/probe/overshoot costs. This is not a hard runtime promise. The job cap is25minutes; step caps are CPU1, checkout1, install2, build/capture6, native9, report1 and upload2minutes:22total with3minutes additional overhead. The nine55-second child caps plus bounded cleanup fit the nine-minute native phase. Every stage and artifact remain visible on failures. Job success is collection status, never a timing-gate pass.
+## Four rows, actual storage and direction
 
-## Four new rows and their limitations
+PageAligned uses4096-byte virtual alignment. Each pair's source array is measured forward, mutated by pair.swap(0,1) or both.swap(0,1), then measured in reverse. Values are moved outside the timed measurement calls. Keys/data are prepared outside; dynamic index/key selection, hash and internal workspace cleanup remain timed. Key-object drop is outside the measured operation. The exact source contains no explicit move to a different pair object between forward/reverse rows, but compiler layout/rematerialization is not established by typecheck.
 
-All differences are class1 minus class0 per call in nanoseconds. The actual class meanings are stored per report and CSV row, rather than calling every comparison random versus fixed:
+| Pair/row | Class0: slot0 | Class1: slot1 | Raw signed d |
+|---|---|---|---|
+| Zero/nonzero forward | zero H | fixed other nonzero H | nonzero-at1 minus zero-at0 |
+| Zero/nonzero reverse | fixed other nonzero H | zero H | zero-at1 minus nonzero-at0 |
+| A/B forward | fixed nonzero A | fixed nonzero B | B-at1 minus A-at0 |
+| A/B reverse | fixed nonzero B | fixed nonzero A | A-at1 minus B-at0 |
 
-| New row | Class0 | Class1 | Timed operation and limits |
-| --- | --- | --- | --- |
-| Hot H0 versus nonzero | index0 selecting retained zero-H key | index1 selecting retained fixed other nonzero-H key | Index/bounds/address selection and hash are inside the timer. Keys and shared DATA are constructed outside. Prepared once does not guarantee every cache line is hot. |
-| Two hot nonzero keys | index0 selecting retained fixed-H key | index1 selecting retained fixed other-H key | A separate two-key array/base, different row name and RNG schedule. This is a useful comparison, not an exact address/value crossover or a proof that addresses never contribute. |
-| Repeated word DATA | one random8-byte word repeated128times | full random1024-byte DATA | Both initially generate1024 RNG bytes. Class0 then adds128 copy stores. Equal halves/lane patterns and prior write history both change; a flag alone does not localize an arithmetic cause. |
-| Zero DATA with varied H | prepared fixed other nonzero-H key | prepared random-H key | Shared1024 zero DATA in both classes, with nonempty AAD and length processing. Per-sample preparation and key Drop/deallocation are outside the timer; random-H RNG/heap history remains asymmetric. Internal hash workspace cleanup stays timed. |
+The parser binds exactly two printed slot-address lines before the two forward rows (after0 and4 report records). These observe outer-wrapper virtual addresses BEFORE each pair; no address is printed after swap or per sample. Page/line offset equality is recorded, not physical page/cache-set/TLB equality. The full actual ELF must later verify same base/stride and key-content exchange after each swap, matching timed-code shape and one actual hash per repetition. Work/slot reuse is an interpretation prerequisite; collection completeness never asserts it.
 
-The second patch prints one fresh Clock::new().coarse_tick() call before its rows. The parser retains that exact None or Some(tick) display as one observation. It is NOT the actual branch choice of any earlier or later measure_seeded call. A repetition count1 or fine-grained median does not reconstruct those unobserved branches. There are no new live draws, private RNG getters, fixture fitting or raw-sample hooks.
+All four raw names are ASCII length56 and index generation consumes no RNG. This supports a common schedule prefix per seed when actual probe behavior matches; it is not observed sample pairing, equal sample counts, equal timing state or proof of matching probe branches. One newly printed coarse_tick call observes only itself. No branch identity or fixture is reconstructed from reps1/medians; raw durations and actual per-sample addresses remain unavailable.
 
-The exact first patch's seven logical names and generators remain unchanged, including its35/41-character repro names versus the original45/51-character names. Name-length-derived RNG initialization therefore differs from the original reference, even when generator expressions match. New row names and operations have their own fixture/probe contexts. Fixed-pattern copying versus zero/ones filling, prepared-key class histories, static arrays, generic code placement, frame/heap layout and retained object lifetimes remain observer differences. A quiet comparison is non-confirmation at this budget, not an equivalence bound, proof of no realistic-key effect, harmless CPU classification or merge waiver. H0 remains in the original gate. No masking design or informational-row reclassification is implemented.
+## Required means, contrasts and uncertainty
 
-## Complete and partial result contract
+Retain all seven signed t displays and four mean/SE views at keep1.0,0.95,0.75,0.5 with the patch's original1/3 decimal precision. The printed unchanged pair judge remains authoritative; the print-only test normally exits0 even on CONFIRMED. Original exit101 is a complete timing finding only with all rows/rechecks, appropriate footer and unchanged final summary. Rounded maxima never select another crop or rewrite the original first-peak rule.
 
-The parser consumes full logs, including expected assertion text before buffered stdout. It requires all eight original row names, matching announced rechecks, one appropriate single-test footer and the unchanged final summary; rounded maxima never select a new crop or reconstruct its judge. It retains all first/repeat reports and final reasons, including unconfirmed rechecks.
+Join forward/reverse only within the SAME iteration, seed, pair and keep level. Let F be forward slot1-minus-slot0 and R reverse slot1-minus-slot0. Report:
 
-For first-patch controls, each call requires seven names/two reports each, and for intermediate controls four names/two reports each. Both require all seven signed t displays, four mean/SE displays, one printed unchanged judge per pair and one successful single-test footer. Intermediate controls additionally require exactly one printed fresh coarse_tick observation, irrespective of its value. All prints retain original rounding: one decimal for t, three for means/SE at keep1.0,0.95,0.75,0.5. No other means, raw durations, RNG states, per-sample addresses or CPU IDs are invented. Nonfinite displays remain strings with null numeric values in strict JSON.
+    V = (F - R) / 2
+    S = (F + R) / 2
 
-A complete artifact has nine canonical case slots, three original invocations,42 first-patch reports and24 intermediate reports:66 control reports,33 pair-judge decisions,264 mean/SE CSV rows and462 signed-t CSV rows. CSV group and per-row class descriptions prevent sign/selector ambiguity. Completeness also requires exact source/binary/window bindings; missing, malformed, reordered, duplicate or mismatched records are incomplete. All available partials remain retained. SHA256SUMS binds output files. Print-only tests add no calibrated positive/identical negative health set, so no generic health pass is claimed.
+For zero/nonzero, V points nonzero minus zero; for A/B, V points B minus A. S points slot1 minus slot0 within its OWN pair, never between different arrays. These always define algebraic antisymmetric/symmetric contrasts. With stable comparable four cell means they are marginal value/slot contrasts even with interaction; interaction itself is not identified. They are not unique physical or causal components. Each row uses its OWN pooled crop cutoff, so these compare separately cropped estimators, not jointly paired raw samples. Time/order/history/probe differences remain.
 
-Every numerical outcome stays exploratory until the exact same-built ELF and relevant timed loops are independently reviewed. No native result here erases earlier public/private failures, establishes an instruction-level mechanism, or changes PR10's HOLD status.
+If covariance is unknown, report only the explicitly conditional approximation:
+
+    SE_Cov0(V) = SE_Cov0(S) = sqrt(SE_F^2 + SE_R^2) / 2
+
+This assumes zero cross-row covariance, which the data do not establish; do not call the rows independent. General variances include minus2Cov for V and plus2Cov for S before division by4. No raw joint samples are available to estimate Cov. Inputs are rounded printed means/SEs; derived4-decimal displays preserve algebra on those rounded inputs, not extra measurement precision. No derived t, confidence interval, confirmation judge or gate is introduced. Do not pool seeds/iterations or borrow second-patch rows/different arrays. Nonfinite/missing inputs produce unavailable contrasts, not zeros.
+
+A complete campaign retains six canonical slots, three original gates and24 swap seed reports/12 original pair judges. Raw all-view exports contain96 mean/SE rows and168 signed-t rows. Derived all-view exports contain48 records, each with V/S plus conditional SE; required95/75 export contains24 such records (48 underlying reported mean/SE inputs). All source/binary/window/retained-ELF bindings and slot-print positions must be valid for collection completeness. Keep every partial and checksum. No calibrated positive/identical negative health set is added. Quiet rows are non-confirmation at this budget, not equivalence bounds or security closure; all earlier failures and PR10HOLD remain.

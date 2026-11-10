@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixed nine-call exploratory GHASH job; no production or statistical changes."""
+"""Fixed six-call hot-key-swap GHASH job; no production or statistical changes."""
 import csv
 import hashlib
 import json
@@ -12,6 +12,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from decimal import Decimal
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
@@ -19,13 +20,17 @@ BASE = '4848bea7c7e39b34ed1c74435823197dfd945cc4'
 PRIOR_DIAGNOSTIC = '9ba854cf5b793f5ff9525964d58519018ed9f275'
 PATCH_SHA = '96159ef4faec2bc3889d69b23fc41817f376394b16f5bf928501d07ee9f105b2'
 SECOND_PATCH_SHA = 'f9c4e6c4aba2e6d249ba8865dc9264847847be2e41a7ac7de6b64c78546e9b4e'
+THIRD_PATCH_SHA = '8b8a5be70d99ef7f32ac3ddf7d24e151288bf1abbd5faca0033b2d516252ccd3'
+SECOND_DIAGNOSTIC = 'd9a8983b69cadde904f07ba5289562a61bfdcacd'
 FIRST_TIMING_SHA = '27eb52a9346b994a9c4fdfb59c7a74eef3eea16f57203fb145514a5e79956ffd'
-TIMING_SHA = 'e87ac2fab8366e8977f981f645c51c798c9454d4dae105a362074b425117fe43'
+SECOND_TIMING_SHA = 'e87ac2fab8366e8977f981f645c51c798c9454d4dae105a362074b425117fe43'
+TIMING_SHA = '11f3d7da0bdfc636443f3b569836f879cb9fc267fed54ad344e5fafbff9b20a4'
 FLAGS = '--cfg pratique_portable -C target-feature=-aes,-pclmulqdq'
 GATE = 'crypto::timing::ghash_multiplication_is_constant_time'
 CONTROL = 'crypto::timing::ghash_batch_class_controls'
 INTERMEDIATE = 'crypto::timing::ghash_batch_intermediate_controls'
-GROUPS = [('gate', GATE), ('control', CONTROL), ('intermediate', INTERMEDIATE)]
+SWAP = 'crypto::timing::ghash_batch_hot_key_swap_controls'
+GROUPS = [('gate', GATE), ('swap', SWAP)]
 SECONDS = 55
 LABELS = ['uncropped', 'p99.9', 'p99.0', 'p95.0', 'p90.0', 'p75.0', 'p50.0']
 KEEPS = [1.0, 0.95, 0.75, 0.5]
@@ -54,6 +59,14 @@ INTERMEDIATE_NAMES = [
     'control: batch 1024 data: repeated word vs random',
     'control: batch 1024 zero data: H fixed nonzero vs random',
 ]
+SWAP_NAMES = [
+    'swap: aligned hot keys: H 0 in slot 0, nonzero in slot 1',
+    'swap: aligned hot keys: H nonzero in slot 0, 0 in slot 1',
+    'swap: aligned hot keys: nonzero A in slot 0, B in slot 1',
+    'swap: aligned hot keys: nonzero B in slot 0, A in slot 1',
+]
+SWAP_PAIRS = [('zero_nonzero', SWAP_NAMES[0], SWAP_NAMES[1], 'nonzero H minus zero H'),
+              ('nonzero_A_B', SWAP_NAMES[2], SWAP_NAMES[3], 'nonzero B minus nonzero A')]
 # Descriptions are metadata only; they do not alter the exact attached generators.
 CLASS_DESCRIPTIONS = {
     CONTROL_NAMES[0]: ('all-zero DATA', 'random DATA'),
@@ -67,6 +80,10 @@ CLASS_DESCRIPTIONS = {
     INTERMEDIATE_NAMES[1]: ('retained key index 0: fixed H', 'retained key index 1: fixed other nonzero H'),
     INTERMEDIATE_NAMES[2]: ('one random 8-byte word repeated 128 times', 'full random 1024-byte DATA'),
     INTERMEDIATE_NAMES[3]: ('prepared fixed other nonzero H on zero DATA', 'prepared random H on zero DATA'),
+    SWAP_NAMES[0]: ('slot 0: zero H', 'slot 1: fixed other nonzero H'),
+    SWAP_NAMES[1]: ('slot 0: fixed other nonzero H', 'slot 1: zero H'),
+    SWAP_NAMES[2]: ('slot 0: fixed nonzero A', 'slot 1: fixed nonzero B'),
+    SWAP_NAMES[3]: ('slot 0: fixed nonzero B', 'slot 1: fixed nonzero A'),
 }
 NUMBER = r'[+-]?(?:\d+(?:\.\d+)?|inf|NaN)'
 
@@ -168,10 +185,13 @@ def parse_original(text, exit_code):
 
 
 def parse_controls(text, exit_code, group='control'):
-    names = {'control': CONTROL_NAMES, 'intermediate': INTERMEDIATE_NAMES}[group]
+    names = {'control': CONTROL_NAMES, 'intermediate': INTERMEDIATE_NAMES, 'swap': SWAP_NAMES}[group]
     reports, judges, errors = [], [], []
     current = None
+    slot_marks = []
     for line in text.splitlines():
+        for match in re.finditer(r'slots: (0x[0-9a-f]+) and (0x[0-9a-f]+)', line):
+            slot_marks.append((match[1], match[2], len(reports)))
         r = header(line, names)
         if r:
             reports.append(r)
@@ -209,19 +229,30 @@ def parse_controls(text, exit_code, group='control'):
         r['class0_description'], r['class1_description'] = CLASS_DESCRIPTIONS[r['name']]
         r['signed_difference_direction'] = 'class1 minus class0 per call in ns'
     observations = re.findall(r'clock: coarse_tick\(\) = (None|Some\(\d+\))', text)
-    clock_complete = len(observations) == (1 if group == 'intermediate' else 0)
+    clock_complete = len(observations) == (0 if group == 'control' else 1)
+    slot_records = [{'pair': i, 'slot0_display': a, 'slot1_display': b,
+                     'after_report': at,
+                     'virtual_page_offset_equal': int(a, 16) % 4096 == int(b, 16) % 4096,
+                     'wrapper_page_aligned': int(a, 16) % 4096 == int(b, 16) % 4096 == 0,
+                     'printed_stride_bytes': int(b, 16) - int(a, 16)}
+                    for i, (a, b, at) in enumerate(slot_marks)]
+    slot_prints_valid = (len(slot_records) == (2 if group == 'swap' else 0)
+        and [s['after_report'] for s in slot_records] == ([0, 4] if group == 'swap' else [])
+        and all(s['wrapper_page_aligned'] and s['printed_stride_bytes'] > 0 for s in slot_records))
     complete = (exit_code == 0 and footer(text) == {'status': 'ok', 'passed': 1, 'failed': 0}
         and [r['name'] for r in reports] == expected
         and all('signed_t' in r and 'per_call' in r for r in reports)
         and [j['name'] for j in judges] == names
         and [j['after_report'] for j in judges] == list(range(2, len(expected) + 1, 2))
-        and clock_complete and not errors)
+        and clock_complete and slot_prints_valid and not errors)
     return {'complete': complete, 'child_exit': exit_code, 'footer': footer(text),
             'reports': reports, 'judges': judges, 'errors': errors,
             'group': group, 'signed_difference_direction': 'class1 minus class0; use the per-row descriptions, not a blanket random/fixed label',
             'fresh_clock_observation': observations[0] if len(observations) == 1 else None,
             'fresh_clock_observation_limit': 'Only that printed independent coarse_tick call; no earlier/later measurement probe branch is observed.',
             'fresh_clock_observation_count': len(observations),
+            'printed_slot_records': slot_records,
+            'printed_slot_scope': 'One observation before each pair, not after swap or per sample; actual same-base reuse and content exchange need linked-code review. No physical-page/cache/TLB identity inferred.',
             'precision': 'Seven t views at one decimal; four mean/SE views at three decimals. No raw samples.',
             'health_controls': 'Not measured by the exact attached patch; no positive/negative health set is added.',
             'authority': 'Each unchanged judge line is authoritative; test exit0 does not mean unconfirmed.'}
@@ -239,6 +270,7 @@ def verify():
     assert not git('status', '--porcelain', '--untracked-files=no').strip()
     assert sha(HERE / 'raw-user.patch') == PATCH_SHA
     assert sha(HERE / 'raw-second-user.patch') == SECOND_PATCH_SHA
+    assert sha(HERE / 'raw-third-user.patch') == THIRD_PATCH_SHA
     assert sha(ROOT / 'src/crypto/timing.rs') == TIMING_SHA
     changed = git('diff', '--name-only', BASE, 'HEAD').decode().splitlines()
     assert 'src/crypto/timing.rs' in changed
@@ -255,14 +287,16 @@ def verify():
     inventory = {}
     for path in git('ls-files', 'src', 'Cargo.toml', 'Cargo.lock', str(HERE.relative_to(ROOT))).decode().splitlines():
         inventory[path] = sha(ROOT / path)
-    record = {'schema': 'raw-intermediate-controls-source-v2', 'checked_at': stamp(),
+    record = {'schema': 'raw-hot-key-swap-source-v3', 'checked_at': stamp(),
               'base_production_commit': BASE, 'diagnostic_source_commit': expected,
               'prior_diagnostic_commit': PRIOR_DIAGNOSTIC,
+              'second_diagnostic_commit': SECOND_DIAGNOSTIC,
               'workflow_head': os.environ.get('GITHUB_SHA'),
               'workflow_ref': os.environ.get('GITHUB_WORKFLOW_REF'),
               'workflow_sha': os.environ.get('GITHUB_WORKFLOW_SHA'),
               'run_id': os.environ.get('GITHUB_RUN_ID'), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
               'patch_sha256': PATCH_SHA, 'second_patch_sha256': SECOND_PATCH_SHA,
+              'third_patch_sha256': THIRD_PATCH_SHA, 'second_patch_timing_sha256': SECOND_TIMING_SHA,
               'first_patch_timing_sha256': FIRST_TIMING_SHA, 'patched_timing_sha256': TIMING_SHA,
               'changed_paths_from_base': changed, 'file_sha256': inventory,
               'toolchain': '1.87.0', 'RUSTFLAGS': FLAGS, 'PRATIQUE_TIMING_SECS': '3'}
@@ -291,7 +325,7 @@ def bind_binary():
 
 
 def planned():
-    return [{'slot': 3 * (i - 1) + offset, 'iteration': i, 'kind': kind,
+    return [{'slot': 2 * (i - 1) + offset, 'iteration': i, 'kind': kind,
              'selector': selector, 'execution': 'not_attempted'}
             for i in range(1, 4) for offset, (kind, selector) in enumerate(GROUPS, 1)]
 
@@ -351,27 +385,70 @@ def run_all(executor=execute_case):
     assert info['source_commit'] == os.environ['PRATIQUE_EXPECTED_SOURCE_COMMIT']
     assert sha(binary) == info['sha256']
     slots = planned()
-    save(out() / 'nine-slots.json', slots)
+    save(out() / 'six-slots.json', slots)
     for i, record in enumerate(slots):
         record['binary_sha256_before_window'] = info['sha256']
         record['source_commit'] = info.get('source_commit')
         directory = out() / ('%02d-%s-%d' % (record['slot'], record['kind'], record['iteration']))
         slots[i] = executor(record, binary, directory)
-        save(out() / 'nine-slots.json', slots)
+        save(out() / 'six-slots.json', slots)
         print(json.dumps({'slot': record['slot'], 'kind': record['kind'], 'exit_code': slots[i].get('exit_code')}, allow_nan=False), flush=True)
         if slots[i].get('cleanup_incomplete') or slots[i].get('interrupted'):
             for later in slots[i + 1:]:
                 later['reason'] = 'prior process cleanup unsafe or job interrupted'
-            save(out() / 'nine-slots.json', slots)
+            save(out() / 'six-slots.json', slots)
             break
     final = {'before_sha256': info['sha256'], 'after_sha256': sha(binary)}
     final['identity_unchanged'] = final['before_sha256'] == final['after_sha256']
     save(out() / 'binary-window-identity.json', final)
 
 
+def derive_swap_effects(results):
+    """Algebraic contrasts only; no new judge and no inferred covariance or causality."""
+    derived = []
+    for item in results:
+        if item['case']['kind'] != 'swap' or item['parsed']['complete'] is not True:
+            continue
+        reports = {(r['name'], r['seed']): r for r in item['parsed']['reports']}
+        judges = {j['name']: j['display'] for j in item['parsed']['judges']}
+        for pair, forward, reverse, orientation in SWAP_PAIRS:
+            for seed in [0, 1]:
+                f, r = reports[(forward, seed)], reports[(reverse, seed)]
+                fp, rp = {p['keep']: p for p in f['per_call']}, {p['keep']: p for p in r['per_call']}
+                for keep in KEEPS:
+                    a, b = fp[keep], rp[keep]
+                    record = {'iteration': item['case']['iteration'], 'seed': seed, 'pair': pair, 'keep': keep,
+                        'forward_row': forward, 'reverse_row': reverse,
+                        'forward_delta_ns_display': a['difference_ns']['display'],
+                        'reverse_delta_ns_display': b['difference_ns']['display'],
+                        'forward_SE_ns_display': a['standard_error_ns']['display'],
+                        'reverse_SE_ns_display': b['standard_error_ns']['display'],
+                        'value_orientation': orientation, 'slot_orientation': 'slot 1 minus slot 0 within this pair',
+                        'forward_reps': f['reps'], 'reverse_reps': r['reps'],
+                        'forward_unchanged_row_judge': judges[forward], 'reverse_unchanged_row_judge': judges[reverse],
+                        'derived_judge': None, 'cross_row_covariance': 'unavailable; zero covariance is an approximation, not established independence',
+                        'model_limit': 'V/S are marginal value/slot contrasts only for stable comparable cells; interaction is not identified, and no unique causal component is established. Each row has its own pooled crop cutoff, not raw paired samples.',
+                        'rounding_limit': 'Calculated from printed3-decimal means/SEs;4-decimal derived displays do not add measurement precision.'}
+                    valid = all(p['value'] is not None for p in [a['difference_ns'], b['difference_ns'], a['standard_error_ns'], b['standard_error_ns']])
+                    valid = bool(valid and a['standard_error_ns']['value'] >= 0 and b['standard_error_ns']['value'] >= 0)
+                    record['derived_available'] = valid
+                    if valid:
+                        df, dr = Decimal(a['difference_ns']['display']), Decimal(b['difference_ns']['display'])
+                        sf, sr = Decimal(a['standard_error_ns']['display']), Decimal(b['standard_error_ns']['display'])
+                        record['value_effect_ns_from_printed_means'] = format((df - dr) / 2, '+.4f')
+                        record['slot_effect_ns_from_printed_means'] = format((df + dr) / 2, '+.4f')
+                        record['SE_if_zero_cross_row_covariance_ns'] = format((sf * sf + sr * sr).sqrt() / 2, '.4f')
+                    else:
+                        record['value_effect_ns_from_printed_means'] = None
+                        record['slot_effect_ns_from_printed_means'] = None
+                        record['SE_if_zero_cross_row_covariance_ns'] = None
+                    derived.append(record)
+    return derived
+
+
 def summarize():
     results = []
-    slots_path = out() / 'nine-slots.json'
+    slots_path = out() / 'six-slots.json'
     slots = read(slots_path) if slots_path.exists() else planned()
     fields = ['slot', 'iteration', 'kind', 'selector']
     slot_schema_valid = (isinstance(slots, list) and all(isinstance(r, dict) for r in slots)
@@ -387,6 +464,9 @@ def summarize():
         and source_binding.get('base_production_commit') == BASE
         and source_binding.get('patch_sha256') == PATCH_SHA
         and source_binding.get('second_patch_sha256') == SECOND_PATCH_SHA
+        and source_binding.get('third_patch_sha256') == THIRD_PATCH_SHA
+        and source_binding.get('second_diagnostic_commit') == SECOND_DIAGNOSTIC
+        and source_binding.get('second_patch_timing_sha256') == SECOND_TIMING_SHA
         and source_binding.get('prior_diagnostic_commit') == PRIOR_DIAGNOSTIC
         and source_binding.get('first_patch_timing_sha256') == FIRST_TIMING_SHA
         and source_binding.get('patched_timing_sha256') == TIMING_SHA
@@ -407,21 +487,32 @@ def summarize():
         parsed = parse_original(text, r.get('exit_code')) if r['kind'] == 'gate' else parse_controls(text, r.get('exit_code'), r['kind'])
         parsed['complete'] = bool(parsed['complete'] and r.get('execution') == 'finished' and not r.get('cleanup_incomplete'))
         results.append({'case': r, 'parsed': parsed})
-    result = {'schema': 'exact-two-patch-controls-nine-v2', 'cases': results,
-              'collection_complete': bool(slot_schema_valid and len(results) == 9 and all(r['parsed']['complete'] for r in results)
+    result = {'schema': 'exact-three-patch-swap-six-v3', 'cases': results,
+              'collection_complete': bool(slot_schema_valid and len(results) == 6 and all(r['parsed']['complete'] for r in results)
                                          and identity_valid and linked_integrity_valid),
               'slot_schema_valid': slot_schema_valid,
               'source_and_binary_identity_valid': identity_valid,
               'retained_ELF_integrity_valid': linked_integrity_valid,
-              'actual_linked_work_retention_review': 'Pending independent review. Collection completeness does not establish one hot hash per timed repetition or causal closure.',
+              'actual_linked_work_retention_review': 'Pending independent review. Completeness does not establish same-base post-swap reuse/content exchange, timed-code identity, one hot hash per repetition or causal closure.',
               'binary_window_identity': binary_identity,
               'original_confirmed_rows_by_iteration': {str(r['case']['iteration']): r['parsed']['confirmed_rows'] for r in results if r['case']['kind'] == 'gate'},
-              'control_confirmed_rows_by_iteration': {str(r['case']['iteration']): [j['name'] for j in r['parsed']['judges'] if j['confirmed']] for r in results if r['case']['kind'] == 'control'},
-              'intermediate_confirmed_rows_by_iteration': {str(r['case']['iteration']): [j['name'] for j in r['parsed']['judges'] if j['confirmed']] for r in results if r['case']['kind'] == 'intermediate'},
+              'swap_confirmed_rows_by_iteration': {str(r['case']['iteration']): [j['name'] for j in r['parsed']['judges'] if j['confirmed']] for r in results if r['case']['kind'] == 'swap'},
               'authority_limit': 'Same patched binary, different selectors/row names/probe contexts. No sealed pre-patch binary or sampler trace.',
               'control_health': None, 'causal_or_security_closure': False,
               'source_binding': source_binding, 'binary': binary_binding}
+    result['derived_swap_effects'] = derive_swap_effects(results)
+    result['derived_effects_scope'] = 'Point contrasts joined only by exact iteration/seed/pair/keep. V=(forward−reverse)/2; S=(forward+reverse)/2. SE=sqrt(SEf²+SEr²)/2 only assuming zero cross-row covariance; no new judge, CI, raw pairing or causal components.'
     save(out() / 'results.json', result)
+    save(out() / 'derived-swap-effects.json', result['derived_swap_effects'])
+    derived_fields = ['iteration', 'seed', 'pair', 'keep', 'value_orientation', 'slot_orientation',
+        'forward_delta_ns_display', 'reverse_delta_ns_display', 'forward_SE_ns_display', 'reverse_SE_ns_display',
+        'value_effect_ns_from_printed_means', 'slot_effect_ns_from_printed_means', 'SE_if_zero_cross_row_covariance_ns',
+        'derived_available', 'cross_row_covariance', 'rounding_limit', 'model_limit']
+    for name, keeps in [('derived-swap-effects.csv', KEEPS), ('derived-swap-effects-95-75.csv', [0.95, 0.75])]:
+        with (out() / name).open('w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=derived_fields, extrasaction='ignore')
+            writer.writeheader()
+            writer.writerows(r for r in result['derived_swap_effects'] if r['keep'] in keeps)
     with (out() / 'control-per-call.csv').open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=['group', 'iteration', 'row', 'class0_description', 'class1_description', 'seed', 'reps', 'keep', 'difference_ns_display', 'standard_error_ns_display', 'unchanged_judge_confirmed'])
         writer.writeheader()

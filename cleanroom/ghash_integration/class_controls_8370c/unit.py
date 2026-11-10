@@ -39,12 +39,14 @@ def original(failed=None, unconfirmed=None):
 
 
 def controls(confirmed=(), reps=1, group='control'):
-    names = c.CONTROL_NAMES if group == 'control' else c.INTERMEDIATE_NAMES
-    selector = c.CONTROL if group == 'control' else c.INTERMEDIATE
+    names = {'control': c.CONTROL_NAMES, 'intermediate': c.INTERMEDIATE_NAMES, 'swap': c.SWAP_NAMES}[group]
+    selector = {'control': c.CONTROL, 'intermediate': c.INTERMEDIATE, 'swap': c.SWAP}[group]
     lines = ['running 1 test\ntest ' + selector + ' ... ']
-    if group == 'intermediate':
+    if group != 'control':
         lines.append('clock: coarse_tick() = None\n')
-    for name in names:
+    for index, name in enumerate(names):
+        if group == 'swap' and index in [0, 2]:
+            lines.append('slots: 0x1000 and 0x2000\n' if index == 0 else 'slots: 0x5000 and 0x6000\n')
         for seed in [0, 1]:
             values = [0.1, -0.8, 10.9, 10.2, 9.1, 5.5, 1.6] if seed == 0 else [0.0, 0.5, 0.3, 9.0, 8.8, 7.2, 4.0]
             lines.append(report(name, values, reps))
@@ -56,6 +58,23 @@ def controls(confirmed=(), reps=1, group='control'):
 
 
 class TextAndSchema(unittest.TestCase):
+    def test_swap_names_slot_order_alignment_and_class_directions(self):
+        text = controls([c.SWAP_NAMES[0]], group='swap')
+        r = c.parse_controls(text, 0, 'swap')
+        self.assertTrue(r['complete'])
+        self.assertEqual(len(r['reports']), 8)
+        self.assertEqual([v['after_report'] for v in r['printed_slot_records']], [0, 4])
+        self.assertTrue(all(v['wrapper_page_aligned'] for v in r['printed_slot_records']))
+        self.assertEqual([v['printed_stride_bytes'] for v in r['printed_slot_records']], [4096, 4096])
+        self.assertIn('zero H', r['reports'][0]['class0_description'])
+        self.assertIn('zero H', r['reports'][2]['class1_description'])
+        self.assertEqual({len(n) for n in c.SWAP_NAMES}, {56})
+        for bad in [text.replace('slots: 0x1000 and 0x2000\n', ''),
+                    text.replace('0x1000 and', '0x1100 and', 1),
+                    text.replace('slots: 0x1000 and 0x2000\n', '') + 'slots: 0x1000 and 0x2000\n',
+                    text + 'slots: 0x9000 and 0xa000\n']:
+            self.assertFalse(c.parse_controls(bad, 0, 'swap')['complete'])
+
     def test_intermediate_rows_use_actual_classes_and_only_observe_fresh_clock(self):
         text = controls([c.INTERMEDIATE_NAMES[0]], group='intermediate')
         r = c.parse_controls(text, 0, 'intermediate')
@@ -138,17 +157,17 @@ class Sequencing(unittest.TestCase):
         c.save(root / 'binary.json', {'path': str(binary), 'sha256': c.sha(binary), 'source_commit': 'a' * 40})
         return root
 
-    def test_all_nine_attempts_continue_after_101_and_collector_error(self):
+    def test_all_six_attempts_continue_after_101_and_collector_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self.setup_root(tmp)
             calls = []
             def fake(record, binary, directory):
                 calls.append((record['kind'], record['iteration']))
-                return {**record, 'execution': 'finished', 'exit_code': [101, 'collector_error', 0, 0, 101, 0, 0, 0, 0][len(calls)-1]}
+                return {**record, 'execution': 'finished', 'exit_code': [101, 'collector_error', 0, 0, 101, 0][len(calls)-1]}
             with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root), 'PRATIQUE_EXPECTED_SOURCE_COMMIT': 'a' * 40}), patch.object(c, 'verify'):
                 c.run_all(fake)
-            self.assertEqual(calls, [('gate', 1), ('control', 1), ('intermediate', 1), ('gate', 2), ('control', 2), ('intermediate', 2), ('gate', 3), ('control', 3), ('intermediate', 3)])
-            self.assertEqual(len(c.read(root / 'nine-slots.json')), 9)
+            self.assertEqual(calls, [('gate', 1), ('swap', 1), ('gate', 2), ('swap', 2), ('gate', 3), ('swap', 3)])
+            self.assertEqual(len(c.read(root / 'six-slots.json')), 6)
 
     def test_unsafe_cleanup_retains_all_slots_without_overlap(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -160,7 +179,7 @@ class Sequencing(unittest.TestCase):
             with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root), 'PRATIQUE_EXPECTED_SOURCE_COMMIT': 'a' * 40}), patch.object(c, 'verify'):
                 c.run_all(fake)
             self.assertEqual(calls, [1])
-            slots = c.read(root / 'nine-slots.json')
+            slots = c.read(root / 'six-slots.json')
             self.assertTrue(all(r['execution'] == 'not_attempted' and 'reason' in r for r in slots[1:]))
 
     def test_timeout_kills_owned_process_group(self):
@@ -185,9 +204,9 @@ class Sequencing(unittest.TestCase):
                 r.update(execution='finished', exit_code=101 if r['kind'] == 'gate' else 0)
                 directory = root / ('%02d-%s-%d' % (r['slot'], r['kind'], r['iteration']))
                 directory.mkdir()
-                text = original(failed=c.NAMES[6]) if r['kind'] == 'gate' else controls([c.CONTROL_NAMES[0]] if r['kind'] == 'control' else [c.INTERMEDIATE_NAMES[0]], group=r['kind'])
+                text = original(failed=c.NAMES[6]) if r['kind'] == 'gate' else controls([c.SWAP_NAMES[0]], group='swap')
                 (directory / 'stdout-stderr.log').write_text(text)
-            c.save(root / 'nine-slots.json', slots)
+            c.save(root / 'six-slots.json', slots)
             retained = root/'linked-evidence/compiled-test.elf'
             retained.parent.mkdir();retained.write_bytes(b'inert ELF fixture, never executable')
             digest = c.sha(retained)
@@ -196,7 +215,8 @@ class Sequencing(unittest.TestCase):
             source = {'diagnostic_source_commit': 'a' * 40, 'base_production_commit': c.BASE,
                 'patch_sha256': c.PATCH_SHA, 'second_patch_sha256': c.SECOND_PATCH_SHA,
                 'prior_diagnostic_commit': c.PRIOR_DIAGNOSTIC, 'first_patch_timing_sha256': c.FIRST_TIMING_SHA,
-                'patched_timing_sha256': c.TIMING_SHA,
+                'third_patch_sha256': c.THIRD_PATCH_SHA, 'second_diagnostic_commit': c.SECOND_DIAGNOSTIC,
+                'second_patch_timing_sha256': c.SECOND_TIMING_SHA, 'patched_timing_sha256': c.TIMING_SHA,
                 'toolchain': '1.87.0', 'RUSTFLAGS': c.FLAGS, 'PRATIQUE_TIMING_SECS': '3'}
             binary = {'source_commit': 'a' * 40, 'sha256': digest}
             c.save(root / 'binary-window-identity.json', window)
@@ -210,25 +230,29 @@ class Sequencing(unittest.TestCase):
             self.assertFalse(result['causal_or_security_closure'])
             self.assertIsNone(result['control_health'])
             self.assertTrue(result['retained_ELF_integrity_valid'])
-            self.assertIn('does not establish one hot hash', result['actual_linked_work_retention_review'])
+            self.assertIn('one hot hash per repetition', result['actual_linked_work_retention_review'])
+            self.assertIn('same-base post-swap', result['actual_linked_work_retention_review'])
             with (root / 'control-per-call.csv').open() as f:
-                self.assertEqual(len(list(csv.DictReader(f))), 264)
+                self.assertEqual(len(list(csv.DictReader(f))), 96)
             with (root / 'control-signed-t.csv').open() as f:
-                self.assertEqual(len(list(csv.DictReader(f))), 462)
+                self.assertEqual(len(list(csv.DictReader(f))), 168)
+            self.assertEqual(len(result['derived_swap_effects']), 48)
+            with (root / 'derived-swap-effects-95-75.csv').open() as f:
+                self.assertEqual(len(list(csv.DictReader(f))), 24)
             json.dumps(result, allow_nan=False)
             # A duplicated complete gate cannot impersonate the missing control slot.
             duplicated = [dict(r) for r in slots]
             duplicated[1] = dict(duplicated[0])
-            c.save(root / 'nine-slots.json', duplicated)
+            c.save(root / 'six-slots.json', duplicated)
             with patch.dict(c.os.environ, env):
                 self.assertEqual(c.summarize(), 1)
             self.assertFalse(c.read(root / 'results.json')['slot_schema_valid'])
             # Nor can complete records silently change the declared native order.
-            c.save(root / 'nine-slots.json', slots[::-1])
+            c.save(root / 'six-slots.json', slots[::-1])
             with patch.dict(c.os.environ, env):
                 self.assertEqual(c.summarize(), 1)
             self.assertFalse(c.read(root / 'results.json')['slot_schema_valid'])
-            c.save(root / 'nine-slots.json', slots)
+            c.save(root / 'six-slots.json', slots)
             for name, bad in [('source-binding.json', None),
                               ('source-binding.json', {**source, 'diagnostic_source_commit': 'c' * 40}),
                               ('binary.json', {**binary, 'source_commit': 'c' * 40}),
@@ -297,6 +321,58 @@ class LinkedCaptureMocks(unittest.TestCase):
             self.assertTrue(result['omitted'])
             self.assertFalse(result['timed_work_retention_verified_by_this_script'])
             self.assertTrue(all(argv[0] in ['nm', 'objdump'] for argv in commands))
+
+
+class DerivedContrasts(unittest.TestCase):
+    def fixture(self, forward='+6.000', reverse='-2.000'):
+        parsed = c.parse_controls(controls(group='swap'), 0, 'swap')
+        for report in parsed['reports']:
+            is_forward = report['name'] in [c.SWAP_NAMES[0], c.SWAP_NAMES[2]]
+            for point in report['per_call']:
+                point['difference_ns'] = c.token(forward if is_forward else reverse)
+                point['standard_error_ns'] = c.token('0.300' if is_forward else '0.400')
+        return [{'case': {'kind': 'swap', 'iteration': 1}, 'parsed': parsed}]
+
+    def test_exact_pair_seed_crop_signs_Cov0_SE_and_no_new_judge(self):
+        records = c.derive_swap_effects(self.fixture())
+        self.assertEqual(len(records), 16)
+        self.assertEqual(len({(v['pair'], v['seed'], v['keep']) for v in records}), 16)
+        for value in records:
+            self.assertEqual(value['value_effect_ns_from_printed_means'], '+4.0000')
+            self.assertEqual(value['slot_effect_ns_from_printed_means'], '+2.0000')
+            self.assertEqual(value['SE_if_zero_cross_row_covariance_ns'], '0.2500')
+            self.assertIsNone(value['derived_judge'])
+            self.assertIn('zero covariance is an approximation', value['cross_row_covariance'])
+            self.assertIn('own pooled crop cutoff', value['model_limit'])
+        reversed_values = c.derive_swap_effects(self.fixture('-2.000', '+6.000'))
+        self.assertTrue(all(v['value_effect_ns_from_printed_means'] == '-4.0000' and v['slot_effect_ns_from_printed_means'] == '+2.0000' for v in reversed_values))
+        # Distinct values in every join dimension catch seed/crop/pair/iteration reuse.
+        crossed = self.fixture() + self.fixture()
+        for iteration, item in enumerate(crossed, 1):
+            item['case']['iteration'] = iteration
+            for report in item['parsed']['reports']:
+                row = c.SWAP_NAMES.index(report['name']);pair, reverse = divmod(row, 2)
+                base = 100 * iteration + 10 * pair
+                for crop, point in enumerate(report['per_call']):
+                    delta = base - 1 + report['seed'] - crop if reverse else base + 3 + 2 * report['seed'] + 2 * crop
+                    point['difference_ns'] = c.token(f'{delta:+.3f}')
+        result = c.derive_swap_effects(crossed)
+        self.assertEqual(len(result), 32)
+        for value in result:
+            crop = c.KEEPS.index(value['keep']);pair = 0 if value['pair'] == 'zero_nonzero' else 1
+            expected_value = 2 + .5 * value['seed'] + 1.5 * crop
+            expected_slot = 100 * value['iteration'] + 10 * pair + 1 + 1.5 * value['seed'] + .5 * crop
+            self.assertEqual(value['value_effect_ns_from_printed_means'], f'{expected_value:+.4f}')
+            self.assertEqual(value['slot_effect_ns_from_printed_means'], f'{expected_slot:+.4f}')
+
+    def test_nonfinite_or_incomplete_pairs_are_not_fabricated(self):
+        records = self.fixture()
+        records[0]['parsed']['reports'][0]['per_call'][0]['difference_ns'] = c.token('NaN')
+        result = c.derive_swap_effects(records)
+        self.assertFalse(result[0]['derived_available'])
+        self.assertIsNone(result[0]['value_effect_ns_from_printed_means'])
+        records[0]['parsed']['complete'] = False
+        self.assertEqual(c.derive_swap_effects(records), [])
 
 
 if __name__ == '__main__':
