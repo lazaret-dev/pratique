@@ -24,7 +24,10 @@ arithmetic/dispatch remain unchanged.
 Raw powers, the running scalar, raw blocks, all 320 `u64` plus 5 `u128` workspace
 words and the retained 192 prepared words use the existing volatile cleanup
 machinery. Raw power/scalar preparation uses zero-initialized retained guards
-on normal and unwind paths. Output reduction finishes before workspace cleanup.
+on normal and unwind paths. Source-level output reduction precedes scope exit.
+In optimized code the two borrowed output reads precede wiping, while reduction
+arithmetic can finish afterward using the loaded scalar/register values. This
+is not a promise that every arithmetic instruction finishes before the wipe.
 Clone constructs an empty prepared field inside the retained destination key,
 then copies from the borrowed source; no source-owned populated transient
 prepared array is returned. The copy preserves deliberately wiped state.
