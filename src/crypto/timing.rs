@@ -1165,6 +1165,69 @@ fn ghash_batch_class_controls() {
     );
 }
 
+/// Second diagnostic for the x86 findings on the batched portable GHASH. The first one showed the finding for
+/// all-zero and all-ones data and for a zero key, and not for a fixed pattern or a fixed nonzero key. These rows
+/// ask what the trigger is and whether the key matters once it is present:
+/// - "hot keys": two keys prepared once and chosen by index, so no key is built, allocated or read cold for a
+///   sample. With a zero key at one index it tells the values inside the kernel from the history and placement
+///   of the per-sample key; with two nonzero keys it is the control for the two addresses.
+/// - "repeated word": each sample's data is one random 8-byte word 128 times. The bytes are not uniform and
+///   differ from sample to sample, but the lanes are equal and the two halves of each block are equal, so the
+///   kernel's operands are degenerate as they are for all-zero and all-ones data.
+/// - "zero data: H fixed nonzero vs random": the degenerate public input in both classes, only the key differs.
+/// It prints and never fails; the gate is `ghash_multiplication_is_constant_time`, unchanged.
+#[test]
+#[ignore = "diagnostic timing run; prints signed statistics and never fails"]
+fn ghash_batch_intermediate_controls() {
+    let _dit = Dit::on();
+    let backend = Backend::Portable;
+    let fixed_h = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128.to_be_bytes();
+    let other_h = 0x9e37_79b9_7f4a_7c15_f39c_c060_5ced_c834_u128.to_be_bytes();
+    let len = 1024;
+    let fixed_data = vec![0x5au8; len];
+    let zero_data = vec![0u8; len];
+    println!("clock: coarse_tick() = {:?}", Clock::new().coarse_tick());
+    let prepared = GhashKey::new(&fixed_h, backend);
+    let zero_and_nonzero = [GhashKey::new(&[0; 16], backend), GhashKey::new(&other_h, backend)];
+    let two_nonzero = [GhashKey::new(&fixed_h, backend), GhashKey::new(&other_h, backend)];
+    control_row(
+        "control: batch 1024 hot keys: H 0 vs fixed nonzero",
+        |_, c| usize::from(c),
+        |i: &usize| zero_and_nonzero[*i].hash(b"aad", &fixed_data),
+    );
+    control_row(
+        "control: batch 1024 hot keys: two fixed nonzero H",
+        |_, c| usize::from(c),
+        |i: &usize| two_nonzero[*i].hash(b"aad", &fixed_data),
+    );
+    control_row(
+        "control: batch 1024 data: repeated word vs random",
+        |rng, c| {
+            let mut v = rng.bytes(len);
+            if !c {
+                let word: [u8; 8] = v[..8].try_into().unwrap();
+                for chunk in v.chunks_exact_mut(8) {
+                    chunk.copy_from_slice(&word);
+                }
+            }
+            v
+        },
+        |data: &Vec<u8>| prepared.hash(b"aad", data),
+    );
+    control_row(
+        "control: batch 1024 zero data: H fixed nonzero vs random",
+        |rng, c| {
+            let h: [u8; 16] = if c {
+                rng.bytes(16).try_into().unwrap()
+            } else {
+                other_h
+            };
+            GhashKey::new(&h, backend)
+        },
+        |k: &GhashKey| k.hash(b"aad", &zero_data),
+    );
+}
+
 #[test]
 #[ignore = "statistical timing run; see the module documentation"]
 fn poly1305_is_constant_time() {

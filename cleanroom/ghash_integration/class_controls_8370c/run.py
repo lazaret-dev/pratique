@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixed six-call exploratory GHASH job; no production or statistical changes."""
+"""Fixed nine-call exploratory GHASH job; no production or statistical changes."""
 import csv
 import hashlib
 import json
@@ -16,11 +16,16 @@ from datetime import datetime, timezone
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 BASE = '4848bea7c7e39b34ed1c74435823197dfd945cc4'
+PRIOR_DIAGNOSTIC = '9ba854cf5b793f5ff9525964d58519018ed9f275'
 PATCH_SHA = '96159ef4faec2bc3889d69b23fc41817f376394b16f5bf928501d07ee9f105b2'
-TIMING_SHA = '27eb52a9346b994a9c4fdfb59c7a74eef3eea16f57203fb145514a5e79956ffd'
+SECOND_PATCH_SHA = 'f9c4e6c4aba2e6d249ba8865dc9264847847be2e41a7ac7de6b64c78546e9b4e'
+FIRST_TIMING_SHA = '27eb52a9346b994a9c4fdfb59c7a74eef3eea16f57203fb145514a5e79956ffd'
+TIMING_SHA = 'e87ac2fab8366e8977f981f645c51c798c9454d4dae105a362074b425117fe43'
 FLAGS = '--cfg pratique_portable -C target-feature=-aes,-pclmulqdq'
 GATE = 'crypto::timing::ghash_multiplication_is_constant_time'
 CONTROL = 'crypto::timing::ghash_batch_class_controls'
+INTERMEDIATE = 'crypto::timing::ghash_batch_intermediate_controls'
+GROUPS = [('gate', GATE), ('control', CONTROL), ('intermediate', INTERMEDIATE)]
 SECONDS = 55
 LABELS = ['uncropped', 'p99.9', 'p99.0', 'p95.0', 'p90.0', 'p75.0', 'p50.0']
 KEEPS = [1.0, 0.95, 0.75, 0.5]
@@ -43,6 +48,26 @@ CONTROL_NAMES = [
     'control: scalar 1024 data: 0 vs random',
     'control: scalar 1024 H: 0 vs random',
 ]
+INTERMEDIATE_NAMES = [
+    'control: batch 1024 hot keys: H 0 vs fixed nonzero',
+    'control: batch 1024 hot keys: two fixed nonzero H',
+    'control: batch 1024 data: repeated word vs random',
+    'control: batch 1024 zero data: H fixed nonzero vs random',
+]
+# Descriptions are metadata only; they do not alter the exact attached generators.
+CLASS_DESCRIPTIONS = {
+    CONTROL_NAMES[0]: ('all-zero DATA', 'random DATA'),
+    CONTROL_NAMES[1]: ('prepared zero H', 'prepared random H'),
+    CONTROL_NAMES[2]: ('all-ones DATA', 'random DATA'),
+    CONTROL_NAMES[3]: ('fixed-pattern DATA', 'random DATA'),
+    CONTROL_NAMES[4]: ('prepared fixed nonzero H', 'prepared random H'),
+    CONTROL_NAMES[5]: ('all-zero DATA through scalar path', 'random DATA through scalar path'),
+    CONTROL_NAMES[6]: ('reflected zero H through scalar path', 'reflected random H through scalar path'),
+    INTERMEDIATE_NAMES[0]: ('retained key index 0: zero H', 'retained key index 1: fixed other nonzero H'),
+    INTERMEDIATE_NAMES[1]: ('retained key index 0: fixed H', 'retained key index 1: fixed other nonzero H'),
+    INTERMEDIATE_NAMES[2]: ('one random 8-byte word repeated 128 times', 'full random 1024-byte DATA'),
+    INTERMEDIATE_NAMES[3]: ('prepared fixed other nonzero H on zero DATA', 'prepared random H on zero DATA'),
+}
 NUMBER = r'[+-]?(?:\d+(?:\.\d+)?|inf|NaN)'
 
 
@@ -142,11 +167,12 @@ def parse_original(text, exit_code):
             'authority': 'Unchanged final Rust summary; rounded output cannot reconstruct the exact judge.'}
 
 
-def parse_controls(text, exit_code):
+def parse_controls(text, exit_code, group='control'):
+    names = {'control': CONTROL_NAMES, 'intermediate': INTERMEDIATE_NAMES}[group]
     reports, judges, errors = [], [], []
     current = None
     for line in text.splitlines():
-        r = header(line, CONTROL_NAMES)
+        r = header(line, names)
         if r:
             reports.append(r)
             current = r
@@ -174,27 +200,35 @@ def parse_controls(text, exit_code):
                 continue
             judges.append({'name': current['name'] if current else None,
                            'confirmed': confirmed, 'display': value, 'after_report': len(reports)})
-    expected = [n for n in CONTROL_NAMES for _ in range(2)]
-    counts = {n: 0 for n in CONTROL_NAMES}
+    expected = [n for n in names for _ in range(2)]
+    counts = {n: 0 for n in names}
     for r in reports:
         r['seed'] = counts[r['name']] if counts[r['name']] < 2 else None
         counts[r['name']] += 1
         r['seed_basis'] = 'Fixed raw-patch call order, not an additional runtime observation.'
+        r['class0_description'], r['class1_description'] = CLASS_DESCRIPTIONS[r['name']]
+        r['signed_difference_direction'] = 'class1 minus class0 per call in ns'
+    observations = re.findall(r'clock: coarse_tick\(\) = (None|Some\(\d+\))', text)
+    clock_complete = len(observations) == (1 if group == 'intermediate' else 0)
     complete = (exit_code == 0 and footer(text) == {'status': 'ok', 'passed': 1, 'failed': 0}
         and [r['name'] for r in reports] == expected
         and all('signed_t' in r and 'per_call' in r for r in reports)
-        and [j['name'] for j in judges] == CONTROL_NAMES
-        and [j['after_report'] for j in judges] == list(range(2, 15, 2)) and not errors)
+        and [j['name'] for j in judges] == names
+        and [j['after_report'] for j in judges] == list(range(2, len(expected) + 1, 2))
+        and clock_complete and not errors)
     return {'complete': complete, 'child_exit': exit_code, 'footer': footer(text),
             'reports': reports, 'judges': judges, 'errors': errors,
-            'signed_difference_direction': 'class 1 minus class 0; random minus the specified fixed class',
+            'group': group, 'signed_difference_direction': 'class1 minus class0; use the per-row descriptions, not a blanket random/fixed label',
+            'fresh_clock_observation': observations[0] if len(observations) == 1 else None,
+            'fresh_clock_observation_limit': 'Only that printed independent coarse_tick call; no earlier/later measurement probe branch is observed.',
+            'fresh_clock_observation_count': len(observations),
             'precision': 'Seven t views at one decimal; four mean/SE views at three decimals. No raw samples.',
             'health_controls': 'Not measured by the exact attached patch; no positive/negative health set is added.',
             'authority': 'Each unchanged judge line is authoritative; test exit0 does not mean unconfirmed.'}
 
 
 def verify():
-    """Bind exact reviewed source A separately from the default-branch workflow head."""
+    """Bind exact reviewed source separately from the branch-ref workflow head."""
     assert os.environ['RUSTUP_TOOLCHAIN'] == '1.87.0'
     assert os.environ['RUSTFLAGS'] == FLAGS
     assert os.environ['PRATIQUE_TIMING_SECS'] == '3'
@@ -204,6 +238,7 @@ def verify():
     assert git('rev-parse', 'HEAD').decode().strip() == expected
     assert not git('status', '--porcelain', '--untracked-files=no').strip()
     assert sha(HERE / 'raw-user.patch') == PATCH_SHA
+    assert sha(HERE / 'raw-second-user.patch') == SECOND_PATCH_SHA
     assert sha(ROOT / 'src/crypto/timing.rs') == TIMING_SHA
     changed = git('diff', '--name-only', BASE, 'HEAD').decode().splitlines()
     assert 'src/crypto/timing.rs' in changed
@@ -220,13 +255,15 @@ def verify():
     inventory = {}
     for path in git('ls-files', 'src', 'Cargo.toml', 'Cargo.lock', str(HERE.relative_to(ROOT))).decode().splitlines():
         inventory[path] = sha(ROOT / path)
-    record = {'schema': 'raw-class-controls-source-v1', 'checked_at': stamp(),
+    record = {'schema': 'raw-intermediate-controls-source-v2', 'checked_at': stamp(),
               'base_production_commit': BASE, 'diagnostic_source_commit': expected,
+              'prior_diagnostic_commit': PRIOR_DIAGNOSTIC,
               'workflow_head': os.environ.get('GITHUB_SHA'),
               'workflow_ref': os.environ.get('GITHUB_WORKFLOW_REF'),
               'workflow_sha': os.environ.get('GITHUB_WORKFLOW_SHA'),
               'run_id': os.environ.get('GITHUB_RUN_ID'), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
-              'patch_sha256': PATCH_SHA, 'patched_timing_sha256': TIMING_SHA,
+              'patch_sha256': PATCH_SHA, 'second_patch_sha256': SECOND_PATCH_SHA,
+              'first_patch_timing_sha256': FIRST_TIMING_SHA, 'patched_timing_sha256': TIMING_SHA,
               'changed_paths_from_base': changed, 'file_sha256': inventory,
               'toolchain': '1.87.0', 'RUSTFLAGS': FLAGS, 'PRATIQUE_TIMING_SECS': '3'}
     save(out() / 'source-binding.json', record)
@@ -247,12 +284,16 @@ def bind_binary():
          'bytes': binary.stat().st_size, 'source_commit': os.environ['PRATIQUE_EXPECTED_SOURCE_COMMIT'],
          'build_argv': ['cargo', 'test', '--release', '--all-features', '--lib', '--no-run', '--message-format=json'],
          'bound_at': stamp()})
+    # Same-built bytes let the reviewer verify hot-index/hash boundaries after collection.
+    # This fixed capture is finished before run_all starts the native window.
+    from capture_linked import capture
+    capture(binary, out())
 
 
 def planned():
-    return [{'slot': 2 * (i - 1) + (1 if kind == 'gate' else 2), 'iteration': i, 'kind': kind,
-             'selector': GATE if kind == 'gate' else CONTROL, 'execution': 'not_attempted'}
-            for i in range(1, 4) for kind in ['gate', 'control']]
+    return [{'slot': 3 * (i - 1) + offset, 'iteration': i, 'kind': kind,
+             'selector': selector, 'execution': 'not_attempted'}
+            for i in range(1, 4) for offset, (kind, selector) in enumerate(GROUPS, 1)]
 
 
 def execute_case(record, binary, directory, timeout=SECONDS):
@@ -310,18 +351,18 @@ def run_all(executor=execute_case):
     assert info['source_commit'] == os.environ['PRATIQUE_EXPECTED_SOURCE_COMMIT']
     assert sha(binary) == info['sha256']
     slots = planned()
-    save(out() / 'six-slots.json', slots)
+    save(out() / 'nine-slots.json', slots)
     for i, record in enumerate(slots):
         record['binary_sha256_before_window'] = info['sha256']
         record['source_commit'] = info.get('source_commit')
         directory = out() / ('%02d-%s-%d' % (record['slot'], record['kind'], record['iteration']))
         slots[i] = executor(record, binary, directory)
-        save(out() / 'six-slots.json', slots)
+        save(out() / 'nine-slots.json', slots)
         print(json.dumps({'slot': record['slot'], 'kind': record['kind'], 'exit_code': slots[i].get('exit_code')}, allow_nan=False), flush=True)
         if slots[i].get('cleanup_incomplete') or slots[i].get('interrupted'):
             for later in slots[i + 1:]:
                 later['reason'] = 'prior process cleanup unsafe or job interrupted'
-            save(out() / 'six-slots.json', slots)
+            save(out() / 'nine-slots.json', slots)
             break
     final = {'before_sha256': info['sha256'], 'after_sha256': sha(binary)}
     final['identity_unchanged'] = final['before_sha256'] == final['after_sha256']
@@ -330,7 +371,7 @@ def run_all(executor=execute_case):
 
 def summarize():
     results = []
-    slots_path = out() / 'six-slots.json'
+    slots_path = out() / 'nine-slots.json'
     slots = read(slots_path) if slots_path.exists() else planned()
     fields = ['slot', 'iteration', 'kind', 'selector']
     slot_schema_valid = (isinstance(slots, list) and all(isinstance(r, dict) for r in slots)
@@ -338,12 +379,16 @@ def summarize():
     binary_identity = optional_record(out() / 'binary-window-identity.json')
     source_binding = optional_record(out() / 'source-binding.json')
     binary_binding = optional_record(out() / 'binary.json')
+    linked = optional_record(out() / 'linked-evidence/linked-evidence.json')
     expected = os.environ.get('PRATIQUE_EXPECTED_SOURCE_COMMIT', '')
     digest = binary_binding.get('sha256')
     identity_valid = bool(re.fullmatch('[0-9a-f]{40}', expected)
         and source_binding.get('diagnostic_source_commit') == expected
         and source_binding.get('base_production_commit') == BASE
         and source_binding.get('patch_sha256') == PATCH_SHA
+        and source_binding.get('second_patch_sha256') == SECOND_PATCH_SHA
+        and source_binding.get('prior_diagnostic_commit') == PRIOR_DIAGNOSTIC
+        and source_binding.get('first_patch_timing_sha256') == FIRST_TIMING_SHA
         and source_binding.get('patched_timing_sha256') == TIMING_SHA
         and source_binding.get('toolchain') == '1.87.0'
         and source_binding.get('RUSTFLAGS') == FLAGS
@@ -352,45 +397,54 @@ def summarize():
         and isinstance(digest, str) and re.fullmatch('[0-9a-f]{64}', digest)
         and binary_identity.get('identity_unchanged') is True
         and binary_identity.get('before_sha256') == digest == binary_identity.get('after_sha256'))
+    retained = out() / 'linked-evidence/compiled-test.elf'
+    linked_integrity_valid = bool(identity_valid and retained.is_file()
+        and linked.get('actual_ELF_sha256') == digest and sha(retained) == digest)
     for r in slots:
         directory = out() / ('%02d-%s-%d' % (r['slot'], r['kind'], r['iteration']))
         path = directory / 'stdout-stderr.log'
         text = path.read_text() if path.exists() else ''
-        parsed = parse_original(text, r.get('exit_code')) if r['kind'] == 'gate' else parse_controls(text, r.get('exit_code'))
+        parsed = parse_original(text, r.get('exit_code')) if r['kind'] == 'gate' else parse_controls(text, r.get('exit_code'), r['kind'])
         parsed['complete'] = bool(parsed['complete'] and r.get('execution') == 'finished' and not r.get('cleanup_incomplete'))
         results.append({'case': r, 'parsed': parsed})
-    result = {'schema': 'exact-raw-class-controls-six-v1', 'cases': results,
-              'collection_complete': bool(slot_schema_valid and len(results) == 6 and all(r['parsed']['complete'] for r in results)
-                                         and identity_valid),
+    result = {'schema': 'exact-two-patch-controls-nine-v2', 'cases': results,
+              'collection_complete': bool(slot_schema_valid and len(results) == 9 and all(r['parsed']['complete'] for r in results)
+                                         and identity_valid and linked_integrity_valid),
               'slot_schema_valid': slot_schema_valid,
               'source_and_binary_identity_valid': identity_valid,
+              'retained_ELF_integrity_valid': linked_integrity_valid,
+              'actual_linked_work_retention_review': 'Pending independent review. Collection completeness does not establish one hot hash per timed repetition or causal closure.',
               'binary_window_identity': binary_identity,
               'original_confirmed_rows_by_iteration': {str(r['case']['iteration']): r['parsed']['confirmed_rows'] for r in results if r['case']['kind'] == 'gate'},
               'control_confirmed_rows_by_iteration': {str(r['case']['iteration']): [j['name'] for j in r['parsed']['judges'] if j['confirmed']] for r in results if r['case']['kind'] == 'control'},
+              'intermediate_confirmed_rows_by_iteration': {str(r['case']['iteration']): [j['name'] for j in r['parsed']['judges'] if j['confirmed']] for r in results if r['case']['kind'] == 'intermediate'},
               'authority_limit': 'Same patched binary, different selectors/row names/probe contexts. No sealed pre-patch binary or sampler trace.',
               'control_health': None, 'causal_or_security_closure': False,
               'source_binding': source_binding, 'binary': binary_binding}
     save(out() / 'results.json', result)
     with (out() / 'control-per-call.csv').open('w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['iteration', 'row', 'seed', 'reps', 'keep', 'difference_ns_display', 'standard_error_ns_display', 'unchanged_judge_confirmed'])
+        writer = csv.DictWriter(f, fieldnames=['group', 'iteration', 'row', 'class0_description', 'class1_description', 'seed', 'reps', 'keep', 'difference_ns_display', 'standard_error_ns_display', 'unchanged_judge_confirmed'])
         writer.writeheader()
         for item in results:
-            if item['case']['kind'] != 'control':
+            if item['case']['kind'] == 'gate':
                 continue
             judges = {j['name']: j['confirmed'] for j in item['parsed']['judges']}
             for r in item['parsed']['reports']:
                 for p in r.get('per_call', []):
-                    writer.writerow({'iteration': item['case']['iteration'], 'row': r['name'], 'seed': r['seed'], 'reps': r['reps'],
+                    writer.writerow({'group': item['case']['kind'], 'iteration': item['case']['iteration'], 'row': r['name'],
+                        'class0_description': r['class0_description'], 'class1_description': r['class1_description'], 'seed': r['seed'], 'reps': r['reps'],
                         'keep': p['keep'], 'difference_ns_display': p['difference_ns']['display'], 'standard_error_ns_display': p['standard_error_ns']['display'],
                         'unchanged_judge_confirmed': judges.get(r['name'])})
     with (out() / 'control-signed-t.csv').open('w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['iteration', 'row', 'seed', 'reps', 'statistic', 'signed_t_display'])
+        writer = csv.DictWriter(f, fieldnames=['group', 'iteration', 'row', 'class0_description', 'class1_description', 'seed', 'reps', 'statistic', 'signed_t_display'])
         writer.writeheader()
         for item in results:
-            if item['case']['kind'] == 'control':
+            if item['case']['kind'] != 'gate':
                 for r in item['parsed']['reports']:
                     for t in r.get('signed_t', []):
-                        writer.writerow({'iteration': item['case']['iteration'], 'row': r['name'], 'seed': r['seed'], 'reps': r['reps'], 'statistic': t['label'], 'signed_t_display': t['display']})
+                        writer.writerow({'group': item['case']['kind'], 'iteration': item['case']['iteration'], 'row': r['name'],
+                            'class0_description': r['class0_description'], 'class1_description': r['class1_description'],
+                            'seed': r['seed'], 'reps': r['reps'], 'statistic': t['label'], 'signed_t_display': t['display']})
     files = {str(p.relative_to(out())): {'bytes': p.stat().st_size, 'sha256': sha(p)} for p in sorted(out().rglob('*')) if p.is_file() and p.name != 'SHA256SUMS.json'}
     save(out() / 'SHA256SUMS.json', files)
     return 0 if result['collection_complete'] else 1

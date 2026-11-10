@@ -5,9 +5,11 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import run as c
+import capture_linked as linked
 
 
 def report(name, values=None, reps=1):
@@ -36,9 +38,13 @@ def original(failed=None, unconfirmed=None):
     return ''.join(lines)
 
 
-def controls(confirmed=(), reps=1):
-    lines = ['running 1 test\ntest ' + c.CONTROL + ' ... ']
-    for name in c.CONTROL_NAMES:
+def controls(confirmed=(), reps=1, group='control'):
+    names = c.CONTROL_NAMES if group == 'control' else c.INTERMEDIATE_NAMES
+    selector = c.CONTROL if group == 'control' else c.INTERMEDIATE
+    lines = ['running 1 test\ntest ' + selector + ' ... ']
+    if group == 'intermediate':
+        lines.append('clock: coarse_tick() = None\n')
+    for name in names:
         for seed in [0, 1]:
             values = [0.1, -0.8, 10.9, 10.2, 9.1, 5.5, 1.6] if seed == 0 else [0.0, 0.5, 0.3, 9.0, 8.8, 7.2, 4.0]
             lines.append(report(name, values, reps))
@@ -50,6 +56,26 @@ def controls(confirmed=(), reps=1):
 
 
 class TextAndSchema(unittest.TestCase):
+    def test_intermediate_rows_use_actual_classes_and_only_observe_fresh_clock(self):
+        text = controls([c.INTERMEDIATE_NAMES[0]], group='intermediate')
+        r = c.parse_controls(text, 0, 'intermediate')
+        self.assertTrue(r['complete'])
+        self.assertEqual(len(r['reports']), 8)
+        self.assertEqual(r['fresh_clock_observation'], 'None')
+        self.assertIn('Only that printed independent', r['fresh_clock_observation_limit'])
+        self.assertIn('index 0: zero H', r['reports'][0]['class0_description'])
+        self.assertIn('index 1: fixed other nonzero H', r['reports'][0]['class1_description'])
+        self.assertNotIn('random', r['reports'][0]['class1_description'])
+        self.assertIn('repeated 128 times', r['reports'][4]['class0_description'])
+        self.assertIn('random H on zero DATA', r['reports'][6]['class1_description'])
+        for bad in [text.replace('clock: coarse_tick() = None\n', ''),
+                    text + 'clock: coarse_tick() = None\n',
+                    text.replace(c.INTERMEDIATE_NAMES[1], c.INTERMEDIATE_NAMES[0], 1)]:
+            self.assertFalse(c.parse_controls(bad, 0, 'intermediate')['complete'])
+        some = c.parse_controls(text.replace('coarse_tick() = None', 'coarse_tick() = Some(42)'), 0, 'intermediate')
+        self.assertTrue(some['complete'])
+        self.assertEqual(some['fresh_clock_observation'], 'Some(42)')
+
     def test_original_summary_is_authority_not_maximum_pair(self):
         r = c.parse_original(original(unconfirmed=c.NAMES[4]), 0)
         self.assertTrue(r['complete'])
@@ -112,17 +138,17 @@ class Sequencing(unittest.TestCase):
         c.save(root / 'binary.json', {'path': str(binary), 'sha256': c.sha(binary), 'source_commit': 'a' * 40})
         return root
 
-    def test_all_six_attempts_continue_after_101_and_collector_error(self):
+    def test_all_nine_attempts_continue_after_101_and_collector_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self.setup_root(tmp)
             calls = []
             def fake(record, binary, directory):
                 calls.append((record['kind'], record['iteration']))
-                return {**record, 'execution': 'finished', 'exit_code': [101, 'collector_error', 0, 0, 101, 0][len(calls)-1]}
+                return {**record, 'execution': 'finished', 'exit_code': [101, 'collector_error', 0, 0, 101, 0, 0, 0, 0][len(calls)-1]}
             with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root), 'PRATIQUE_EXPECTED_SOURCE_COMMIT': 'a' * 40}), patch.object(c, 'verify'):
                 c.run_all(fake)
-            self.assertEqual(calls, [('gate', 1), ('control', 1), ('gate', 2), ('control', 2), ('gate', 3), ('control', 3)])
-            self.assertEqual(len(c.read(root / 'six-slots.json')), 6)
+            self.assertEqual(calls, [('gate', 1), ('control', 1), ('intermediate', 1), ('gate', 2), ('control', 2), ('intermediate', 2), ('gate', 3), ('control', 3), ('intermediate', 3)])
+            self.assertEqual(len(c.read(root / 'nine-slots.json')), 9)
 
     def test_unsafe_cleanup_retains_all_slots_without_overlap(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -134,7 +160,7 @@ class Sequencing(unittest.TestCase):
             with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root), 'PRATIQUE_EXPECTED_SOURCE_COMMIT': 'a' * 40}), patch.object(c, 'verify'):
                 c.run_all(fake)
             self.assertEqual(calls, [1])
-            slots = c.read(root / 'six-slots.json')
+            slots = c.read(root / 'nine-slots.json')
             self.assertTrue(all(r['execution'] == 'not_attempted' and 'reason' in r for r in slots[1:]))
 
     def test_timeout_kills_owned_process_group(self):
@@ -159,14 +185,20 @@ class Sequencing(unittest.TestCase):
                 r.update(execution='finished', exit_code=101 if r['kind'] == 'gate' else 0)
                 directory = root / ('%02d-%s-%d' % (r['slot'], r['kind'], r['iteration']))
                 directory.mkdir()
-                text = original(failed=c.NAMES[6]) if r['kind'] == 'gate' else controls([c.CONTROL_NAMES[0]])
+                text = original(failed=c.NAMES[6]) if r['kind'] == 'gate' else controls([c.CONTROL_NAMES[0]] if r['kind'] == 'control' else [c.INTERMEDIATE_NAMES[0]], group=r['kind'])
                 (directory / 'stdout-stderr.log').write_text(text)
-            c.save(root / 'six-slots.json', slots)
-            window = {'identity_unchanged': True, 'before_sha256': 'b' * 64, 'after_sha256': 'b' * 64}
+            c.save(root / 'nine-slots.json', slots)
+            retained = root/'linked-evidence/compiled-test.elf'
+            retained.parent.mkdir();retained.write_bytes(b'inert ELF fixture, never executable')
+            digest = c.sha(retained)
+            c.save(root/'linked-evidence/linked-evidence.json', {'actual_ELF_sha256': digest})
+            window = {'identity_unchanged': True, 'before_sha256': digest, 'after_sha256': digest}
             source = {'diagnostic_source_commit': 'a' * 40, 'base_production_commit': c.BASE,
-                'patch_sha256': c.PATCH_SHA, 'patched_timing_sha256': c.TIMING_SHA,
+                'patch_sha256': c.PATCH_SHA, 'second_patch_sha256': c.SECOND_PATCH_SHA,
+                'prior_diagnostic_commit': c.PRIOR_DIAGNOSTIC, 'first_patch_timing_sha256': c.FIRST_TIMING_SHA,
+                'patched_timing_sha256': c.TIMING_SHA,
                 'toolchain': '1.87.0', 'RUSTFLAGS': c.FLAGS, 'PRATIQUE_TIMING_SECS': '3'}
-            binary = {'source_commit': 'a' * 40, 'sha256': 'b' * 64}
+            binary = {'source_commit': 'a' * 40, 'sha256': digest}
             c.save(root / 'binary-window-identity.json', window)
             c.save(root / 'source-binding.json', source)
             c.save(root / 'binary.json', binary)
@@ -177,24 +209,26 @@ class Sequencing(unittest.TestCase):
             self.assertTrue(result['collection_complete'])
             self.assertFalse(result['causal_or_security_closure'])
             self.assertIsNone(result['control_health'])
+            self.assertTrue(result['retained_ELF_integrity_valid'])
+            self.assertIn('does not establish one hot hash', result['actual_linked_work_retention_review'])
             with (root / 'control-per-call.csv').open() as f:
-                self.assertEqual(len(list(csv.DictReader(f))), 168)
+                self.assertEqual(len(list(csv.DictReader(f))), 264)
             with (root / 'control-signed-t.csv').open() as f:
-                self.assertEqual(len(list(csv.DictReader(f))), 294)
+                self.assertEqual(len(list(csv.DictReader(f))), 462)
             json.dumps(result, allow_nan=False)
             # A duplicated complete gate cannot impersonate the missing control slot.
             duplicated = [dict(r) for r in slots]
             duplicated[1] = dict(duplicated[0])
-            c.save(root / 'six-slots.json', duplicated)
+            c.save(root / 'nine-slots.json', duplicated)
             with patch.dict(c.os.environ, env):
                 self.assertEqual(c.summarize(), 1)
             self.assertFalse(c.read(root / 'results.json')['slot_schema_valid'])
             # Nor can complete records silently change the declared native order.
-            c.save(root / 'six-slots.json', slots[::-1])
+            c.save(root / 'nine-slots.json', slots[::-1])
             with patch.dict(c.os.environ, env):
                 self.assertEqual(c.summarize(), 1)
             self.assertFalse(c.read(root / 'results.json')['slot_schema_valid'])
-            c.save(root / 'six-slots.json', slots)
+            c.save(root / 'nine-slots.json', slots)
             for name, bad in [('source-binding.json', None),
                               ('source-binding.json', {**source, 'diagnostic_source_commit': 'c' * 40}),
                               ('binary.json', {**binary, 'source_commit': 'c' * 40}),
@@ -214,6 +248,40 @@ class Sequencing(unittest.TestCase):
             with patch.dict(c.os.environ, env):
                 self.assertEqual(c.summarize(), 1)
             self.assertFalse(c.read(root / 'results.json')['source_and_binary_identity_valid'])
+
+
+class LinkedCaptureMocks(unittest.TestCase):
+    def test_relevant_symbols_bounded_capture_and_ELF_identity_without_execution(self):
+        names = ['_ZN8pratique6crypto6timing33ghash_batch_intermediate_controls17h111E',
+                 '_ZN8pratique6crypto6timing14measure_seeded17h222E',
+                 '_ZN8pratique6crypto5ghash8GhashKey4hash17h333E',
+                 '_ZN8pratique6crypto3aes6unused17h444E']
+        text = ''.join(f'{i:016x} t {n}\n' for i, n in enumerate(names))
+        self.assertEqual(linked.symbol_names(text)[0], names[0])
+        self.assertNotIn(names[-1], linked.symbol_names(text))
+        self.assertIn(names[2], linked.symbol_names(text))
+        commands = []
+        def fake_run(argv, **kwargs):
+            commands.append(argv)
+            if argv[0] == 'nm':
+                kwargs['stdout'].write(text.encode())
+                return SimpleNamespace(returncode=0)
+            self.assertEqual(argv[0], 'objdump')
+            name = argv[2].split('=', 1)[1]
+            return SimpleNamespace(stdout=(f'0000 <{name}>:\n 00: 90 nop\n').encode(), stderr=b'', returncode=0)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp);binary = root/'inert-input';binary.write_bytes(b'ELF fixture, never executable')
+            output = root/'output';output.mkdir()
+            with patch.object(linked.subprocess, 'run', side_effect=fake_run), \
+                 patch.object(linked.subprocess, 'check_output', return_value='mock tool version\n'), \
+                 patch.object(linked, 'DISASSEMBLY_LIMIT', 130):
+                result = linked.capture(binary, output)
+            self.assertEqual(result['actual_ELF_sha256'], c.sha(binary))
+            self.assertEqual(c.sha(output/'linked-evidence/compiled-test.elf'), c.sha(binary))
+            self.assertLessEqual(result['disassembly_bytes'], 130)
+            self.assertTrue(result['omitted'])
+            self.assertFalse(result['timed_work_retention_verified_by_this_script'])
+            self.assertTrue(all(argv[0] in ['nm', 'objdump'] for argv in commands))
 
 
 if __name__ == '__main__':
