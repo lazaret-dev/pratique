@@ -49,6 +49,12 @@ impl PreparedPolynomial128x50 {
     pub fn words_mut(&mut self) -> [&mut [u64; 64]; 3] {
         self.planes.words_mut()
     }
+
+    /// Borrow the retained words for lifecycle assertions without secret copies.
+    #[cfg(test)]
+    pub fn words(&self) -> [&[u64; 64]; 3] {
+        self.planes.words()
+    }
 }
 
 #[inline(never)]
@@ -224,7 +230,7 @@ mod tests {
         assert_eq!(before, after);
         assert_eq!(p.words_mut().iter().map(|x| x.len()).sum::<usize>(), 192);
         for words in p.words_mut() { words.fill(0); }
-        assert!(p.words_mut().iter().all(|x| x.iter().all(|&w| w == 0)));
+        assert!(p.words().iter().all(|x| x.iter().all(|&w| w == 0)));
         assert_eq!(b, [u128::MAX; PAYLOAD_LANES]);
     }
 

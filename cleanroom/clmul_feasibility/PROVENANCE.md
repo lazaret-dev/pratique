@@ -182,3 +182,9 @@ continuation does not integrate GHASH or change its timing tests/thresholds.
 Optimized-code review and unchanged whole-path8370C measurements remain
 mandatory before recommending the candidate. It does not establish that the
 observed effect is a CPU erratum or grant any timing/security waiver.
+
+The separate integrator then requested a test-only borrowed read observer for
+existing post-wipe and clone lifecycle assertions. The author added
+`words(&self)` returning references to the same retained arrays, matching the
+earlier API's test-only observer. It makes no populated copy and adds no
+production operation or timing-path change.
