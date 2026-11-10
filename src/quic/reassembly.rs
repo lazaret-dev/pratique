@@ -7,12 +7,14 @@
 //! What it checks: data that is already there (not yet read) must be the same bytes each time it is sent (a peer that changes
 //! what it sent for an offset is broken or an attacker, and RFC 9000 section 2.2 allows closing the connection for it); nothing is
 //! held beyond a window ahead of what has been read (the flow-control limit for a stream, at least 4096 bytes for handshake data,
-//! RFC 9000 section 7.5); and the number of separate pieces is bounded, so that many one-byte ranges with a hole between each
-//! cannot make the buffer cost much more than the bytes it holds.
+//! RFC 9000 section 7.5); and the number of separate received ranges is bounded, so that many one-byte ranges with a hole between
+//! each cannot make the buffer cost much more than the bytes it holds. Bytes live in fixed pages rather than being copied when
+//! two received ranges meet: a stream sent in reverse order therefore copies each byte into storage once.
 
+use super::rangeset::RangeSet;
 use std::collections::BTreeMap;
 
-/// The most separate pieces held (holes in what has come, plus one).
+/// The most separate received ranges held (holes in what has come, plus one).
 pub const MAX_PIECES: usize = 4096;
 
 /// Why a range could not be taken.
@@ -25,28 +27,25 @@ pub enum Error {
     Inconsistent,
 }
 
-/// A piece: bytes from `pos` on are the data, and its offset is the key it is stored under.
-struct Piece {
-    bytes: Vec<u8>,
-    pos: usize,
-}
-
-impl Piece {
-    fn data(&self) -> &[u8] {
-        &self.bytes[self.pos..]
-    }
-}
+/// Storage is sparse by this much: a distant range allocates only the pages it touches, while adjacent small frames share a page.
+const PAGE: usize = 4096;
+const PAGE_U64: u64 = PAGE as u64;
 
 /// The receive buffer of one stream.
 #[derive(Default)]
 pub struct Reassembler {
     /// How much has been read: the offset of the next byte to read.
     read: u64,
-    /// Pieces that have not been read, by the offset of their first byte. They do not overlap, and none touches the next (they
-    /// are merged), so every gap between two is a hole.
-    pieces: BTreeMap<u64, Piece>,
-    /// The bytes in `pieces`.
+    /// The ranges that have arrived and have not been read. Touching ranges are one, so every gap is a hole.
+    received: RangeSet,
+    /// Fixed pages that hold the bytes in `received`, by their aligned stream offset. A page can include holes; `received` says
+    /// which bytes in it are meaningful.
+    pages: BTreeMap<u64, Box<[u8; PAGE]>>,
+    /// The bytes in `received`.
     held: usize,
+    /// Bytes copied into storage, for the cost invariant in tests and the buffer fuzz model.
+    #[cfg(any(test, pratique_fuzzing))]
+    copied: usize,
 }
 
 impl Reassembler {
@@ -66,18 +65,17 @@ impl Reassembler {
 
     /// The offset just after the last byte that has come (the highest end of a range that is held, or what was read).
     pub fn end_offset(&self) -> u64 {
-        self.pieces
-            .iter()
-            .next_back()
-            .map(|(&at, p)| at + p.data().len() as u64)
+        self.received
+            .max()
+            .map(|last| last + 1)
             .unwrap_or(self.read)
             .max(self.read)
     }
 
     /// How many bytes can be read now: those from the read offset to the first hole.
     pub fn readable(&self) -> usize {
-        match self.pieces.iter().next() {
-            Some((&at, p)) if at == self.read => p.data().len(),
+        match self.received.first() {
+            Some(range) if range.start == self.read => (range.end - range.start) as usize,
             _ => 0,
         }
     }
@@ -95,146 +93,134 @@ impl Reassembler {
         if end <= self.read {
             return Ok(());
         }
-        let (mut start, mut data) = if offset < self.read {
+        let (start, data) = if offset < self.read {
             (self.read, &data[(self.read - offset) as usize..])
         } else {
             (offset, data)
         };
-        // the piece that begins before `start`, if it reaches it: what it has of the new range has to be the same, and then the new
-        // range begins where it ends
-        if let Some((&at, piece)) = self.pieces.range(..=start).next_back() {
-            let have = piece.data();
-            let piece_end = at + have.len() as u64;
-            if piece_end > start {
-                let overlap = ((piece_end - start) as usize).min(data.len());
-                let from = (start - at) as usize;
-                if have[from..from + overlap] != data[..overlap] {
-                    return Err(Error::Inconsistent);
-                }
-                data = &data[overlap..];
-                start += overlap as u64;
-            }
-        }
-        // the pieces that begin inside what is left of the range: the same check, and the gaps between them are what is new
-        let mut new: Vec<(u64, &[u8])> = Vec::new();
-        let mut cursor = start;
-        let mut rest = data;
-        let inside: Vec<(u64, usize)> = self
-            .pieces
-            .range(start..start + rest.len() as u64)
-            .map(|(&at, p)| (at, p.data().len()))
-            .collect();
-        for (at, len) in inside {
-            if at > cursor {
-                new.push((cursor, &rest[..(at - cursor) as usize]));
-            }
-            let take = ((at + len as u64).min(start + data.len() as u64) - at) as usize;
-            let skip = (at - start) as usize;
-            if self.pieces[&at].data()[..take] != data[skip..skip + take] {
+        let end = start + data.len() as u64;
+        let overlaps = self.received.within(start..end);
+        for range in &overlaps {
+            let from = (range.start - start) as usize;
+            let len = (range.end - range.start) as usize;
+            if !self.equals(range.start, &data[from..from + len]) {
                 return Err(Error::Inconsistent);
             }
-            cursor = at + take as u64;
-            rest = &data[(cursor - start) as usize..];
         }
-        if !rest.is_empty() {
-            new.push((cursor, rest));
-        }
-        // each new piece joins the pieces it touches, so it makes a piece of its own only if it touches none, and makes one less if
-        // it touches both
-        let mut pieces = self.pieces.len() as isize;
-        for (at, bytes) in &new {
-            let left = self
-                .pieces
-                .range(..*at)
-                .next_back()
-                .is_some_and(|(&b, p)| b + p.data().len() as u64 == *at);
-            let right = self.pieces.contains_key(&(*at + bytes.len() as u64));
-            pieces += if left && right {
-                -1
-            } else if left || right {
-                0
-            } else {
-                1
-            };
-        }
-        if pieces > MAX_PIECES as isize {
+        let mut received = self.received.clone();
+        received.insert(start..end);
+        if received.range_count() > MAX_PIECES {
             return Err(Error::Exceeded);
         }
-        for (at, bytes) in new {
-            self.add(at, bytes);
+        let mut cursor = start;
+        for range in overlaps {
+            if cursor < range.start {
+                let from = (cursor - start) as usize;
+                let to = (range.start - start) as usize;
+                self.store(cursor, &data[from..to]);
+                self.held += to - from;
+            }
+            cursor = range.end;
         }
+        if cursor < end {
+            let from = (cursor - start) as usize;
+            self.store(cursor, &data[from..]);
+            self.held += data.len() - from;
+        }
+        self.received = received;
         Ok(())
     }
 
-    /// Adds bytes that overlap nothing held, joining the pieces they touch.
-    fn add(&mut self, at: u64, bytes: &[u8]) {
-        self.held += bytes.len();
-        let end = at + bytes.len() as u64;
-        let before = self
-            .pieces
-            .range(..at)
-            .next_back()
-            .filter(|(&b, p)| b + p.data().len() as u64 == at)
-            .map(|(&b, _)| b);
-        let (key, mut joined) = match before.and_then(|b| self.pieces.remove(&b).map(|p| (b, p))) {
-            Some(found) => found,
-            None => (
-                at,
-                Piece {
-                    bytes: Vec::with_capacity(bytes.len()),
-                    pos: 0,
-                },
-            ),
-        };
-        // what was read from the front of a piece that goes on growing is given back once it is as much as what is left
-        if joined.pos > 0 && joined.pos >= joined.data().len() {
-            joined.bytes.drain(..joined.pos);
-            joined.pos = 0;
+    fn page(offset: u64) -> u64 {
+        offset / PAGE_U64 * PAGE_U64
+    }
+
+    /// Whether storage already has these bytes at `at`.
+    fn equals(&self, mut at: u64, mut bytes: &[u8]) -> bool {
+        while !bytes.is_empty() {
+            let page_at = Self::page(at);
+            let Some(page) = self.pages.get(&page_at) else {
+                return false;
+            };
+            let within = (at - page_at) as usize;
+            let n = bytes.len().min(PAGE - within);
+            if page[within..within + n] != bytes[..n] {
+                return false;
+            }
+            bytes = &bytes[n..];
+            at += n as u64;
         }
-        joined.bytes.extend_from_slice(bytes);
-        if let Some(next) = self.pieces.remove(&end) {
-            joined.bytes.extend_from_slice(next.data());
+        true
+    }
+
+    /// Copies new bytes into their pages. No received byte is moved when later ranges touch it.
+    fn store(&mut self, mut at: u64, mut bytes: &[u8]) {
+        #[cfg(any(test, pratique_fuzzing))]
+        {
+            self.copied += bytes.len();
         }
-        self.pieces.insert(key, joined);
+        while !bytes.is_empty() {
+            let page_at = Self::page(at);
+            let within = (at - page_at) as usize;
+            let n = bytes.len().min(PAGE - within);
+            let page = self
+                .pages
+                .entry(page_at)
+                .or_insert_with(|| Box::new([0; PAGE]));
+            page[within..within + n].copy_from_slice(&bytes[..n]);
+            bytes = &bytes[n..];
+            at += n as u64;
+        }
+    }
+
+    fn copy_out(&self, mut at: u64, mut out: &mut [u8]) {
+        while !out.is_empty() {
+            let page_at = Self::page(at);
+            let page = self.pages.get(&page_at).expect("received bytes have storage");
+            let within = (at - page_at) as usize;
+            let n = out.len().min(PAGE - within);
+            out[..n].copy_from_slice(&page[within..within + n]);
+            out = &mut out[n..];
+            at += n as u64;
+        }
+    }
+
+    fn free_read_pages(&mut self) {
+        while self
+            .pages
+            .keys()
+            .next()
+            .is_some_and(|at| at.saturating_add(PAGE_U64) <= self.read)
+        {
+            self.pages.pop_first();
+        }
+    }
+
+    /// Bytes copied into storage, for deterministic complexity checks.
+    #[cfg(any(test, pratique_fuzzing))]
+    #[doc(hidden)]
+    pub fn copy_work(&self) -> usize {
+        self.copied
     }
 
     /// Reads bytes from the front into `buf`; returns how many (nothing if there is a hole at the read offset).
     pub fn read(&mut self, buf: &mut [u8]) -> usize {
-        let Some(mut entry) = self.pieces.first_entry() else {
-            return 0;
-        };
-        if *entry.key() != self.read {
-            return 0;
-        }
-        let piece = entry.get_mut();
-        let n = piece.data().len().min(buf.len());
-        buf[..n].copy_from_slice(&piece.data()[..n]);
-        piece.pos += n;
-        let emptied = piece.data().is_empty();
-        let at = *entry.key();
-        if emptied {
-            entry.remove();
-        } else {
-            let piece = entry.remove();
-            self.pieces.insert(at + n as u64, piece);
-        }
+        let n = self.readable().min(buf.len());
+        self.copy_out(self.read, &mut buf[..n]);
+        self.received.remove(self.read..self.read + n as u64);
         self.read += n as u64;
         self.held -= n;
+        self.free_read_pages();
         n
     }
 
     /// Throws away what can be read now, without copying it out (a stream that nobody wants any more); returns how many bytes.
     pub fn discard(&mut self) -> usize {
-        let Some(entry) = self.pieces.first_entry() else {
-            return 0;
-        };
-        if *entry.key() != self.read {
-            return 0;
-        }
-        let n = entry.get().data().len();
-        entry.remove();
+        let n = self.readable();
+        self.received.remove(self.read..self.read + n as u64);
         self.read += n as u64;
         self.held -= n;
+        self.free_read_pages();
         n
     }
 
@@ -277,6 +263,18 @@ mod tests {
         r.insert(20, &bytes(20, 30), 100).unwrap();
         assert_eq!(r.take(), bytes(20, 40));
         assert_eq!(r.buffered(), 0);
+    }
+
+    #[test]
+    fn data_in_reverse_order_is_stored_with_linear_copy_work() {
+        const N: u64 = 64 * 1024;
+        let mut r = Reassembler::new();
+        for at in (0..N).rev() {
+            r.insert(at, &bytes(at, at + 1), N).unwrap();
+        }
+        assert_eq!(r.copy_work(), N as usize, "a received byte was copied again");
+        assert_eq!((r.buffered(), r.readable()), (N as usize, N as usize));
+        assert_eq!(r.take(), bytes(0, N));
     }
 
     #[test]

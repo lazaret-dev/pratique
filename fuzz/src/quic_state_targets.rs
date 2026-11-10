@@ -473,6 +473,15 @@ fn sendbuf_to_reassembler(data: &[u8]) {
 fn reassembler_against_a_model(data: &[u8]) {
     const DOMAIN: u64 = 600;
     let mut c = Cursor(data);
+    // A touching range delivered from high offsets to low must not repeatedly copy what was already held. Keep this in
+    // the model target as well as the unit tests, so corpus entries exercise both the result and the cost invariant.
+    let reverse_len = 1 + u64::from(c.u8()) % 128;
+    let mut reverse = Reassembler::new();
+    for at in (0..reverse_len).rev() {
+        reverse.insert(at, &[byte(at)], reverse_len).unwrap();
+    }
+    assert_eq!(reverse.copy_work(), reverse_len as usize);
+    assert_eq!(reverse.take(), (0..reverse_len).map(byte).collect::<Vec<_>>());
     let mut r = Reassembler::new();
     // the bytes held (by offset), and where the reading is
     let mut held: BTreeMap<u64, u8> = BTreeMap::new();
