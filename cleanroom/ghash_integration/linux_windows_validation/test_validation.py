@@ -47,6 +47,7 @@ class ValidationContracts(unittest.TestCase):
         for key, value in [("PRATIQUE_TIMING_SECS", "30"), ("PRATIQUE_TIMING_REPS", "1"),
                            ("PRATIQUE_TIMING_TICKS", "0"), ("PRATIQUE_TIMING_TICK_NS", "0"),
                            ("PRATIQUE_NULL_PAIRS", ""), ("CARGO_ENCODED_RUSTFLAGS", "x"),
+                           ("CARGO_ENCODED_RUSTFLAGS", ""),
                            ("CARGO_BUILD_TARGET", "aarch64"), ("CARGO_TARGET_DIR", "/other"),
                            ("RUSTFLAGS", "")]:
             with self.subTest(key=key), self.assertRaises(ValueError):

@@ -103,7 +103,7 @@ def footer_summary(stdout, stderr, exact_hrr=False):
 
 
 def validate_environment(lane, env):
-    if env.get("CARGO_ENCODED_RUSTFLAGS") or env.get("CARGO_BUILD_TARGET") or env.get("CARGO_TARGET_DIR"):
+    if "CARGO_ENCODED_RUSTFLAGS" in env or env.get("CARGO_BUILD_TARGET") or env.get("CARGO_TARGET_DIR"):
         raise ValueError("unexpected inherited target/flags override")
     if env.get("RUSTFLAGS", "") != (PORTABLE if lane == "linux-msrv" else ""):
         raise ValueError("wrong fixed Rust flags")
