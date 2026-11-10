@@ -395,11 +395,14 @@ responders answer from responses signed in advance (RFC 5019), and what stops an
 ## Constant-time status
 
 **Portable GHASH is an experimental candidate; timing remains on HOLD.** Earlier
-confirmed native timing findings remain unresolved. The guarded representation
-below is awaiting the fixed paired Xeon 8370C experiment; neither its finite
-circuit witness nor functional checks establish whole-path timing independence.
+confirmed native timing findings remain evidence. The fixed paired Xeon 8370C
+experiment is complete: the baseline failed all five original gates and the
+guarded candidate passed all five, with no confirmed candidate swap-row finding
+in twenty judgments. This bounded result does not establish whole-path timing
+independence. Full final-candidate Linux and Windows validation remains pending.
 Historical timing observations in this section are not acceptance of this
-candidate. See [the guarded candidate record](cleanroom/ghash_integration/GUARDED_COMPARISON.md).
+candidate. See [the guarded candidate record](cleanroom/ghash_integration/GUARDED_COMPARISON.md)
+and [the completed comparison and performance cost](cleanroom/ghash_integration/GUARDED_NATIVE_8370C_RESULT.md).
 
 X25519, the P-256/P-384 key exchange (`src/crypto/ecdh.rs`), GHASH, Poly1305, ChaCha20 and AES contain no
 secret-dependent branches or table lookups (X25519 key generation, and since B-115 P-256/P-384 key pairs and ECDSA's nonce

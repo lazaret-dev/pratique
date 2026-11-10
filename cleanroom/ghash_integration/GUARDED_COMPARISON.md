@@ -50,6 +50,8 @@ four swap rows invoke the actual candidate hash on retained runtime-selected
 cases and expected calculations. A zero-key clone/wipe unit checks retained
 copying.
 
+## Pre-experiment checkpoint (historical, before 2026-11-10 run 42839794046)
+
 The clean witness establishes abstract nonconstant circuit-wire guard coverage.
 The integrated whole-crate Rust 1.87 generic-x86 circuit trace is separately
 bound and reviewed. A later actual Linux test ELF requires its own identity and
@@ -61,3 +63,16 @@ security closure. Local integrated performance is recorded separately and is not
 a Xeon 8370C measurement. Fixed paired 8370C validation is pending; no result or
 readiness is predeclared. The administrative audit continuation is documented in
 [LIFECYCLE_AUDIT.md](LIFECYCLE_AUDIT.md).
+
+## Completed bounded comparison (2026-11-10)
+
+The previously pending fixed experiment is complete. The A3 baseline failed all
+five original gate invocations; the guarded candidate passed all five, and none
+of its twenty swap-row judgments confirmed. The actual Linux ELF's guard inputs,
+correction, hot circuit, timed hash work, exchanges and cleanup were separately
+bound and reviewed. These results update the pending checkpoint above without
+discarding earlier findings or claiming universal timing independence. See the
+[public run, artifact, independent receipt and measured performance cost](GUARDED_NATIVE_8370C_RESULT.md).
+Full Linux release/all-feature and Windows validation of the final documented
+candidate is still pending; no release, merge or broader gate acceptance is
+implied by this record.
