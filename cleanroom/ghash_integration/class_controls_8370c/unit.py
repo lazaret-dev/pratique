@@ -109,7 +109,7 @@ class Sequencing(unittest.TestCase):
         c.save(root / 'host/selection.json', {'matched_8370C': True})
         binary = root / 'inert-file'
         binary.write_text('not an executable')
-        c.save(root / 'binary.json', {'path': str(binary), 'sha256': c.sha(binary)})
+        c.save(root / 'binary.json', {'path': str(binary), 'sha256': c.sha(binary), 'source_commit': 'a' * 40})
         return root
 
     def test_all_six_attempts_continue_after_101_and_collector_error(self):
@@ -119,7 +119,7 @@ class Sequencing(unittest.TestCase):
             def fake(record, binary, directory):
                 calls.append((record['kind'], record['iteration']))
                 return {**record, 'execution': 'finished', 'exit_code': [101, 'collector_error', 0, 0, 101, 0][len(calls)-1]}
-            with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root)}), patch.object(c, 'verify'):
+            with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root), 'PRATIQUE_EXPECTED_SOURCE_COMMIT': 'a' * 40}), patch.object(c, 'verify'):
                 c.run_all(fake)
             self.assertEqual(calls, [('gate', 1), ('control', 1), ('gate', 2), ('control', 2), ('gate', 3), ('control', 3)])
             self.assertEqual(len(c.read(root / 'six-slots.json')), 6)
@@ -131,7 +131,7 @@ class Sequencing(unittest.TestCase):
             def fake(record, binary, directory):
                 calls.append(record['slot'])
                 return {**record, 'execution': 'finished', 'exit_code': 'timeout', 'cleanup_incomplete': True}
-            with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root)}), patch.object(c, 'verify'):
+            with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root), 'PRATIQUE_EXPECTED_SOURCE_COMMIT': 'a' * 40}), patch.object(c, 'verify'):
                 c.run_all(fake)
             self.assertEqual(calls, [1])
             slots = c.read(root / 'six-slots.json')
@@ -162,8 +162,16 @@ class Sequencing(unittest.TestCase):
                 text = original(failed=c.NAMES[6]) if r['kind'] == 'gate' else controls([c.CONTROL_NAMES[0]])
                 (directory / 'stdout-stderr.log').write_text(text)
             c.save(root / 'six-slots.json', slots)
-            c.save(root / 'binary-window-identity.json', {'identity_unchanged': True})
-            with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root)}):
+            window = {'identity_unchanged': True, 'before_sha256': 'b' * 64, 'after_sha256': 'b' * 64}
+            source = {'diagnostic_source_commit': 'a' * 40, 'base_production_commit': c.BASE,
+                'patch_sha256': c.PATCH_SHA, 'patched_timing_sha256': c.TIMING_SHA,
+                'toolchain': '1.87.0', 'RUSTFLAGS': c.FLAGS, 'PRATIQUE_TIMING_SECS': '3'}
+            binary = {'source_commit': 'a' * 40, 'sha256': 'b' * 64}
+            c.save(root / 'binary-window-identity.json', window)
+            c.save(root / 'source-binding.json', source)
+            c.save(root / 'binary.json', binary)
+            env = {'PRATIQUE_CLASS_OUTPUT': str(root), 'PRATIQUE_EXPECTED_SOURCE_COMMIT': 'a' * 40}
+            with patch.dict(c.os.environ, env):
                 self.assertEqual(c.summarize(), 0)
             result = c.read(root / 'results.json')
             self.assertTrue(result['collection_complete'])
@@ -178,14 +186,34 @@ class Sequencing(unittest.TestCase):
             duplicated = [dict(r) for r in slots]
             duplicated[1] = dict(duplicated[0])
             c.save(root / 'six-slots.json', duplicated)
-            with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root)}):
+            with patch.dict(c.os.environ, env):
                 self.assertEqual(c.summarize(), 1)
             self.assertFalse(c.read(root / 'results.json')['slot_schema_valid'])
             # Nor can complete records silently change the declared native order.
             c.save(root / 'six-slots.json', slots[::-1])
-            with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root)}):
+            with patch.dict(c.os.environ, env):
                 self.assertEqual(c.summarize(), 1)
             self.assertFalse(c.read(root / 'results.json')['slot_schema_valid'])
+            c.save(root / 'six-slots.json', slots)
+            for name, bad in [('source-binding.json', None),
+                              ('source-binding.json', {**source, 'diagnostic_source_commit': 'c' * 40}),
+                              ('binary.json', {**binary, 'source_commit': 'c' * 40}),
+                              ('binary.json', {**binary, 'sha256': 'bad hash'}),
+                              ('binary-window-identity.json', {**window, 'after_sha256': 'c' * 64})]:
+                if bad is None:
+                    (root / name).unlink()
+                else:
+                    c.save(root / name, bad)
+                with patch.dict(c.os.environ, env):
+                    self.assertEqual(c.summarize(), 1)
+                self.assertFalse(c.read(root / 'results.json')['source_and_binary_identity_valid'])
+                c.save(root / 'source-binding.json', source)
+                c.save(root / 'binary.json', binary)
+                c.save(root / 'binary-window-identity.json', window)
+            (root / 'source-binding.json').write_text('{malformed')
+            with patch.dict(c.os.environ, env):
+                self.assertEqual(c.summarize(), 1)
+            self.assertFalse(c.read(root / 'results.json')['source_and_binary_identity_valid'])
 
 
 if __name__ == '__main__':

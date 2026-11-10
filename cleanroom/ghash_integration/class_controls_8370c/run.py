@@ -71,6 +71,14 @@ def read(path):
     return json.loads(path.read_text())
 
 
+def optional_record(path):
+    try:
+        value = read(path)
+        return value if isinstance(value, dict) else {'load_error': 'not an object'}
+    except Exception as e:
+        return {'load_error': repr(e)}
+
+
 def git(*args):
     return subprocess.check_output(['git', '-C', str(ROOT), *args])
 
@@ -299,6 +307,7 @@ def run_all(executor=execute_case):
     assert host.get('matched_8370C') is True, 'No native work on another model.'
     info = read(out() / 'binary.json')
     binary = Path(info['path'])
+    assert info['source_commit'] == os.environ['PRATIQUE_EXPECTED_SOURCE_COMMIT']
     assert sha(binary) == info['sha256']
     slots = planned()
     save(out() / 'six-slots.json', slots)
@@ -326,7 +335,23 @@ def summarize():
     fields = ['slot', 'iteration', 'kind', 'selector']
     slot_schema_valid = (isinstance(slots, list) and all(isinstance(r, dict) for r in slots)
         and [[r.get(k) for k in fields] for r in slots] == [[r[k] for k in fields] for r in planned()])
-    binary_identity = read(out() / 'binary-window-identity.json') if (out() / 'binary-window-identity.json').exists() else None
+    binary_identity = optional_record(out() / 'binary-window-identity.json')
+    source_binding = optional_record(out() / 'source-binding.json')
+    binary_binding = optional_record(out() / 'binary.json')
+    expected = os.environ.get('PRATIQUE_EXPECTED_SOURCE_COMMIT', '')
+    digest = binary_binding.get('sha256')
+    identity_valid = bool(re.fullmatch('[0-9a-f]{40}', expected)
+        and source_binding.get('diagnostic_source_commit') == expected
+        and source_binding.get('base_production_commit') == BASE
+        and source_binding.get('patch_sha256') == PATCH_SHA
+        and source_binding.get('patched_timing_sha256') == TIMING_SHA
+        and source_binding.get('toolchain') == '1.87.0'
+        and source_binding.get('RUSTFLAGS') == FLAGS
+        and source_binding.get('PRATIQUE_TIMING_SECS') == '3'
+        and binary_binding.get('source_commit') == expected
+        and isinstance(digest, str) and re.fullmatch('[0-9a-f]{64}', digest)
+        and binary_identity.get('identity_unchanged') is True
+        and binary_identity.get('before_sha256') == digest == binary_identity.get('after_sha256'))
     for r in slots:
         directory = out() / ('%02d-%s-%d' % (r['slot'], r['kind'], r['iteration']))
         path = directory / 'stdout-stderr.log'
@@ -336,15 +361,15 @@ def summarize():
         results.append({'case': r, 'parsed': parsed})
     result = {'schema': 'exact-raw-class-controls-six-v1', 'cases': results,
               'collection_complete': bool(slot_schema_valid and len(results) == 6 and all(r['parsed']['complete'] for r in results)
-                                         and binary_identity and binary_identity.get('identity_unchanged') is True),
+                                         and identity_valid),
               'slot_schema_valid': slot_schema_valid,
+              'source_and_binary_identity_valid': identity_valid,
               'binary_window_identity': binary_identity,
               'original_confirmed_rows_by_iteration': {str(r['case']['iteration']): r['parsed']['confirmed_rows'] for r in results if r['case']['kind'] == 'gate'},
               'control_confirmed_rows_by_iteration': {str(r['case']['iteration']): [j['name'] for j in r['parsed']['judges'] if j['confirmed']] for r in results if r['case']['kind'] == 'control'},
               'authority_limit': 'Same patched binary, different selectors/row names/probe contexts. No sealed pre-patch binary or sampler trace.',
               'control_health': None, 'causal_or_security_closure': False,
-              'source_binding': read(out() / 'source-binding.json') if (out() / 'source-binding.json').exists() else None,
-              'binary': read(out() / 'binary.json') if (out() / 'binary.json').exists() else None}
+              'source_binding': source_binding, 'binary': binary_binding}
     save(out() / 'results.json', result)
     with (out() / 'control-per-call.csv').open('w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=['iteration', 'row', 'seed', 'reps', 'keep', 'difference_ns_display', 'standard_error_ns_display', 'unchanged_judge_confirmed'])
