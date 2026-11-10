@@ -18,10 +18,10 @@ import sys
 import tarfile
 import time
 
-BRANCH = "refs/heads/codex/pr10-validation-followup"
+BRANCH = "refs/heads/codex/pr10-windows-main-interop-pair"
 CANDIDATE = "100dd05739eecbe7695d7a495e5197e447239f28"
-INTEROP_CANDIDATE = "c6377a42e8e30131692e305ca8e016d78def19f0"
-BASELINE = "a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf"
+INTEROP_CANDIDATE = "850be15094c6717cfd525c61f60a63f51b16caa2"
+BASELINE = "6f129ec9f92ae0de32654d9eb078af5e16ee435d"
 HRR = "a_server_that_accepts_only_nist_groups_makes_the_client_retry"
 PORTABLE = "--cfg pratique_portable -C target-feature=-aes,-pclmulqdq"
 TIMING_SELECTORS = {"aes-timing": "crypto::timing::aes_is_constant_time",

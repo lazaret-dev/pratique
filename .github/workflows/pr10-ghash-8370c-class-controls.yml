@@ -1,4 +1,4 @@
-name: Manual bounded validation follow-up
+name: Manual Windows main and prospective interop pair
 
 on:
   workflow_dispatch:
@@ -7,78 +7,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: pr10-validation-followup
+  group: pr10-windows-main-interop-pair
   cancel-in-progress: false
 
 jobs:
-  linux-audit-package:
-    if: github.ref == 'refs/heads/codex/pr10-validation-followup'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RUSTUP_TOOLCHAIN: 1.87.0
-      RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
-      PRATIQUE_TIMING_SECS: '3'
-      PYTHONDONTWRITEBYTECODE: '1'
-    steps:
-      - name: Initialize retained invocation metadata
-        timeout-minutes: 1
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/pratique-release-validation"
-          python3 -B - <<'PYTHON'
-          import json, os, pathlib
-          fields = ['GITHUB_SHA', 'GITHUB_REF', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'RUNNER_OS', 'RUNNER_ARCH', 'ImageOS', 'ImageVersion']
-          p = pathlib.Path(os.environ['RUNNER_TEMP']) / 'pratique-release-validation/bootstrap.json'
-          p.write_text(json.dumps({k: os.environ.get(k) for k in fields}, indent=2) + '\n')
-          PYTHON
-      - name: Checkout reviewed administrative branch head
-        id: admin
-        timeout-minutes: 1
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          ref: ${{ github.sha }}
-          path: admin
-          persist-credentials: false
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !/fuzz/corpus/
-      - name: Checkout immutable release auxiliary source
-        id: candidate
-        timeout-minutes: 1
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-        with:
-          ref: 100dd05739eecbe7695d7a495e5197e447239f28
-          path: candidate
-          persist-credentials: false
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /*
-            !/fuzz/corpus/
-      - name: Install exact MSRV
-        id: install
-        timeout-minutes: 2
-        shell: bash
-        run: |
-          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal > "$RUNNER_TEMP/pratique-release-validation/toolchain-install.stdout.log" 2> "$RUNNER_TEMP/pratique-release-validation/toolchain-install.stderr.log"
-      - name: Audit and verify native source package without runtime reruns
-        if: always() && steps.admin.outcome == 'success' && steps.candidate.outcome == 'success' && steps.install.outcome == 'success'
-        timeout-minutes: 12
-        shell: bash
-        run: python3 -B admin/cleanroom/ghash_integration/linux_windows_validation/run_validation.py linux-followup
-      - name: Upload complete or partial audit source package and identities
-        if: always()
-        timeout-minutes: 2
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: pr10-followup-linux-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/pratique-release-validation
-          if-no-files-found: error
-          retention-days: 14
-
   windows-x64-interop-pair:
-    if: github.ref == 'refs/heads/codex/pr10-validation-followup'
+    if: github.ref == 'refs/heads/codex/pr10-windows-main-interop-pair'
     runs-on: windows-2025
     timeout-minutes: 50
     env:
@@ -109,24 +43,24 @@ jobs:
           sparse-checkout: |
             /*
             !/fuzz/corpus/
-      - name: Checkout immutable c637 candidate
+      - name: Checkout immutable binary-file-mode and failure-observer candidate
         id: candidate
         timeout-minutes: 1
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: c6377a42e8e30131692e305ca8e016d78def19f0
+          ref: 850be15094c6717cfd525c61f60a63f51b16caa2
           path: candidate
           persist-credentials: false
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
             !/fuzz/corpus/
-      - name: Checkout immutable A3 baseline in separate source and target directory
+      - name: Checkout immutable current-main baseline in separate source and target directory
         id: baseline
         timeout-minutes: 1
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf
+          ref: 6f129ec9f92ae0de32654d9eb078af5e16ee435d
           path: baseline
           persist-credentials: false
           sparse-checkout-cone-mode: false
@@ -154,7 +88,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pr10-followup-windows-pair-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr10-main-interop-pair-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/pratique-release-validation
           if-no-files-found: error
           retention-days: 14

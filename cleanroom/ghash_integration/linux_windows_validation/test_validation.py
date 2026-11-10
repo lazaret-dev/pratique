@@ -32,6 +32,19 @@ def interop_output(failed=0):
 
 
 class ValidationContracts(unittest.TestCase):
+    def test_fixed_current_main_and_prospective_test_fix_pair(self):
+        self.assertEqual(V.BRANCH, "refs/heads/codex/pr10-windows-main-interop-pair")
+        self.assertEqual(V.BASELINE, "6f129ec9f92ae0de32654d9eb078af5e16ee435d")
+        self.assertEqual(V.INTEROP_CANDIDATE, "850be15094c6717cfd525c61f60a63f51b16caa2")
+        plan = V.fixed_plan("windows-pair")
+        self.assertEqual([name for name, _, _ in plan], [
+            "baseline-interop-build", "baseline-interop",
+            "candidate-interop-build", "candidate-interop",
+        ])
+        self.assertEqual([cap for _, cap, _ in plan], [360, 720, 360, 720])
+        self.assertTrue(all("--test" in argv and "interop_openssl" in argv
+                            for _, _, argv in plan if argv is not None))
+
     def test_fixed_commands_and_caps(self):
         msrv = dict((n, a) for n, _, a in V.fixed_plan("linux-followup"))
         self.assertEqual(set(msrv), {"production-audit", "source-package"})
