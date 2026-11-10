@@ -151,3 +151,34 @@ buffers after final use and verify that emitted code retains them. Generated
 node values, scalar temporaries, object moves and compiler spills are not
 claimed to be completely erased. No timing or security finding is closed by
 this clean-only API change or by quiet measurements on another machine.
+
+## November 9 fixed public guard-lane continuation
+
+The same independent author `/root`, parent workspace
+`01a1be54-c6e9-73d3-8a85-5e6f9a76a492`, authored this candidate in isolated
+clean-only workspace `/private/tmp/pratique-clean-guarded-batch-20261109`,
+logical session `20261109-guarded-clmul`, based on clean commit
+`27a1c8acfc42f41779c9e8bb2506c27615de9ede`. The owner requested an algorithm
+compatible with the observed value-dependent runtime behavior, with repeated
+testing on the problem processor and no dependence on a privileged CPU mode.
+
+New sources consulted are source-free outcome summaries of the unchanged
+gate, intermediate controls and fixed-slot key-swap controls; messages from
+the previously assigned separate integrator/reviewer; and the author's own
+clean circuit/generator and earlier SP800-38D test oracles. The root author
+did not read the supplied timing patch bodies, production AES/GHASH code or
+diffs, or production disassembly. No third-party cryptographic implementation
+was consulted. The earlier unaccepted data-transpose candidate is not a base
+or source for this work.
+
+The new representation reserves fourteen public independent lanes in the
+author's64-lane polynomial circuit and uses fifty real lanes. A deterministic
+public finite witness covers each input and AND/XOR gate in the low, high and
+mixed products with both sentinel bit values. Independent polynomial
+multiplication derives the public guard-product correction. `GUARDED.md`
+states the arithmetic, borrowed/in-place lifecycle API, finite proof and its
+limits, including32-bit lowering and compiler reassociation. This source-only
+continuation does not integrate GHASH or change its timing tests/thresholds.
+Optimized-code review and unchanged whole-path8370C measurements remain
+mandatory before recommending the candidate. It does not establish that the
+observed effect is a CPU erratum or grant any timing/security waiver.

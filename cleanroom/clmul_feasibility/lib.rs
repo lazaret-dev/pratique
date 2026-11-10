@@ -7,6 +7,7 @@
 //! Fixed butterfly permutations transpose between lanes and coefficients.
 
 mod circuit;
+pub mod guarded;
 
 #[path = "../../src/crypto/clmul_clean.rs"]
 mod accepted;

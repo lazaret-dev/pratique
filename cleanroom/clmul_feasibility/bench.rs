@@ -103,4 +103,18 @@ fn main() {
             black_box(&destination128);
         },
     );
+    let a50: [u128; 50] = a128[..50].try_into().unwrap();
+    let b50: [u128; 50] = b128[..50].try_into().unwrap();
+    let mut guarded = primitive::guarded::PreparedPolynomial128x50::empty();
+    guarded.prepare(black_box(&b50));
+    measure("guarded 128-bit polynomial batch x50 xor", 150, iterations, || {
+        primitive::guarded::clmul128x50_batch_xor_prepared(
+            black_box(&a50), black_box(&guarded), black_box(&mut working),
+        );
+        black_box(working.output());
+    });
+    measure("prepare guarded x50 operand set in place", 150, iterations, || {
+        guarded.prepare(black_box(&b50));
+        black_box(&guarded);
+    });
 }
