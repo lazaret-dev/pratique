@@ -1906,6 +1906,22 @@ fn constraint_covers(c: &Constraint, name: &GeneralName) -> Option<bool> {
     }
 }
 
+/// Whether an excluded constraint covers a name. A wildcard dNSName stands for names inside its base: an exclusion of
+/// that base or any subtree inside it therefore excludes the wildcard too. This stricter rule is for exclusions only;
+/// permitted constraints still use the ordinary RFC 5280 name comparison above.
+fn excluded_constraint_covers(c: &Constraint, name: &GeneralName) -> Option<bool> {
+    let ordinary = constraint_covers(c, name);
+    let (Constraint::Dns(constraint), GeneralName::Dns(name)) = (c, name) else {
+        return ordinary;
+    };
+    let name = without_trailing_dot(name);
+    let Some(base) = name.strip_prefix("*.") else {
+        return ordinary;
+    };
+    let constraint = constraint.strip_prefix('.').unwrap_or(constraint);
+    Some(ordinary == Some(true) || constraint == base || constraint.ends_with(&format!(".{base}")))
+}
+
 fn name_label(name: &GeneralName) -> String {
     match name {
         GeneralName::Dns(n) => format!("DNS name {:?}", n),
@@ -2012,7 +2028,7 @@ fn check_one_name(ca: &Certificate, nc: &NameConstraints, name: &GeneralName) ->
     if nc
         .excluded
         .iter()
-        .any(|c| constraint_covers(c, name) == Some(true))
+        .any(|c| excluded_constraint_covers(c, name) == Some(true))
     {
         return Err(path_err(
             ca,
@@ -3198,6 +3214,49 @@ mod tests {
                 GeneralName::Dns("example.test".into())
             ),
             None
+        );
+        // A wildcard can match names in an excluded subtree under its base, so an excluded constraint covers the
+        // wildcard even though it does not textually cover the literal `*` label. Permitted constraints retain the
+        // ordinary comparison.
+        let wildcard = GeneralName::Dns("*.example.test".into());
+        for excluded in [
+            "example.test",
+            ".example.test",
+            "secret.example.test",
+            ".secret.example.test",
+            "deep.secret.example.test",
+        ] {
+            let constraint = Constraint::Dns(excluded.into());
+            assert_eq!(
+                excluded_constraint_covers(&constraint, &wildcard),
+                Some(true),
+                "{excluded}"
+            );
+        }
+        for outside in ["notexample.test", "example.org"] {
+            let constraint = Constraint::Dns(outside.into());
+            assert_eq!(
+                excluded_constraint_covers(&constraint, &wildcard),
+                Some(false),
+                "{outside}"
+            );
+        }
+        assert_eq!(
+            constraint_covers(&Constraint::Dns("secret.example.test".into()), &wildcard),
+            Some(false),
+            "permitted constraints use the ordinary comparison"
+        );
+        let ca = Certificate::parse(&fixture!("root_rsa")).unwrap();
+        let constraints = NameConstraints {
+            permitted: Vec::new(),
+            excluded: vec![Constraint::Dns("secret.example.test".into())],
+        };
+        assert!(
+            check_one_name(&ca, &constraints, &wildcard)
+                .unwrap_err()
+                .to_string()
+                .contains("is excluded by a name constraint"),
+            "the end-to-end constraint check must reject the wildcard"
         );
     }
 
