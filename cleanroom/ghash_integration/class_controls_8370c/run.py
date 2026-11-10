@@ -323,6 +323,9 @@ def summarize():
     results = []
     slots_path = out() / 'six-slots.json'
     slots = read(slots_path) if slots_path.exists() else planned()
+    fields = ['slot', 'iteration', 'kind', 'selector']
+    slot_schema_valid = (isinstance(slots, list) and all(isinstance(r, dict) for r in slots)
+        and [[r.get(k) for k in fields] for r in slots] == [[r[k] for k in fields] for r in planned()])
     binary_identity = read(out() / 'binary-window-identity.json') if (out() / 'binary-window-identity.json').exists() else None
     for r in slots:
         directory = out() / ('%02d-%s-%d' % (r['slot'], r['kind'], r['iteration']))
@@ -332,8 +335,9 @@ def summarize():
         parsed['complete'] = bool(parsed['complete'] and r.get('execution') == 'finished' and not r.get('cleanup_incomplete'))
         results.append({'case': r, 'parsed': parsed})
     result = {'schema': 'exact-raw-class-controls-six-v1', 'cases': results,
-              'collection_complete': bool(len(results) == 6 and all(r['parsed']['complete'] for r in results)
+              'collection_complete': bool(slot_schema_valid and len(results) == 6 and all(r['parsed']['complete'] for r in results)
                                          and binary_identity and binary_identity.get('identity_unchanged') is True),
+              'slot_schema_valid': slot_schema_valid,
               'binary_window_identity': binary_identity,
               'original_confirmed_rows_by_iteration': {str(r['case']['iteration']): r['parsed']['confirmed_rows'] for r in results if r['case']['kind'] == 'gate'},
               'control_confirmed_rows_by_iteration': {str(r['case']['iteration']): [j['name'] for j in r['parsed']['judges'] if j['confirmed']] for r in results if r['case']['kind'] == 'control'},

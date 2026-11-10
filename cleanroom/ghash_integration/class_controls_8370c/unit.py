@@ -174,6 +174,18 @@ class Sequencing(unittest.TestCase):
             with (root / 'control-signed-t.csv').open() as f:
                 self.assertEqual(len(list(csv.DictReader(f))), 294)
             json.dumps(result, allow_nan=False)
+            # A duplicated complete gate cannot impersonate the missing control slot.
+            duplicated = [dict(r) for r in slots]
+            duplicated[1] = dict(duplicated[0])
+            c.save(root / 'six-slots.json', duplicated)
+            with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root)}):
+                self.assertEqual(c.summarize(), 1)
+            self.assertFalse(c.read(root / 'results.json')['slot_schema_valid'])
+            # Nor can complete records silently change the declared native order.
+            c.save(root / 'six-slots.json', slots[::-1])
+            with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root)}):
+                self.assertEqual(c.summarize(), 1)
+            self.assertFalse(c.read(root / 'results.json')['slot_schema_valid'])
 
 
 if __name__ == '__main__':
