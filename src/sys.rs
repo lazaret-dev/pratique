@@ -20,6 +20,7 @@ pub fn trust_store_from_pem_file(path: impl AsRef<Path>) -> Result<TrustStore> {
 }
 
 /// Where the systems keep their CA bundle file, in the order they are looked for.
+#[cfg(not(windows))]
 pub(crate) const BUNDLE_FILES: [&str; 8] = [
     "/etc/ssl/certs/ca-certificates.crt",
     "/etc/pki/tls/certs/ca-bundle.crt",
@@ -31,10 +32,15 @@ pub(crate) const BUNDLE_FILES: [&str; 8] = [
     "/usr/local/share/certs/ca-root-nss.crt",
 ];
 
+/// Windows uses its certificate store and has no conventional PEM bundle path. In particular, Unix-looking paths on Windows
+/// are drive-relative and must not take precedence over the native store.
+#[cfg(windows)]
+pub(crate) const BUNDLE_FILES: [&str; 0] = [];
+
 /// Loads the operating system's CA bundle from its conventional file location.
 ///
-/// Honors `SSL_CERT_FILE` first. Common Linux, macOS and BSD bundle paths follow. On Windows, which has no bundle file,
-/// the certificate store is read when none of those exists ([`native_trust_store`]). On macOS the bundle file
+/// Honors `SSL_CERT_FILE` first. On Windows the certificate store follows immediately ([`native_trust_store`]); Unix-looking
+/// bundle paths are not considered. Common Linux, macOS and BSD bundle paths follow on those systems. On macOS the bundle file
 /// (`/etc/ssl/cert.pem`) is used, which knows nothing of the Keychain's trust settings: [`native_trust_store`] reads those.
 pub fn system_trust_store() -> Result<TrustStore> {
     let mut candidates: Vec<String> = Vec::new();
@@ -53,6 +59,14 @@ pub fn system_trust_store() -> Result<TrustStore> {
         return native_trust_store();
     }
     cert("could not find a system CA bundle; set SSL_CERT_FILE or load a PEM file explicitly")
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    #[test]
+    fn conventional_unix_bundle_paths_are_not_windows_candidates() {
+        assert!(super::BUNDLE_FILES.is_empty());
+    }
 }
 
 /// The roots the operating system's own store trusts for TLS servers: the macOS Keychain's trust settings (the user's, the
