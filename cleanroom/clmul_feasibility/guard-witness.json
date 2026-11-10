@@ -1,0 +1,92 @@
+{
+  "status": "abstract-circuit-feasibility-only",
+  "pool": 2048,
+  "nonzero_only": false,
+  "gates": 4593,
+  "wires_including_inputs": 14163,
+  "deduplicated_constraints": 28326,
+  "guard_lanes": 14,
+  "payload_lanes": 50,
+  "selected_pool_indices": [
+    0,
+    1929,
+    1606,
+    526,
+    338,
+    651,
+    65,
+    551,
+    1783,
+    1852,
+    318,
+    360,
+    788,
+    843
+  ],
+  "public_pairs_hex": [
+    [
+      "041225630ce1b5afc12e2073dce8ae3e",
+      "39ee07caac7cd409ebb15f64513ee584"
+    ],
+    [
+      "95919a2b0d1440290a8af22f3d72df03",
+      "59729394f4b8eab0153c18b82a6183e7"
+    ],
+    [
+      "5fe38e5c0d7aa26b31ab3b80927b9e11",
+      "b6a911a80407be82c7f7a1fd67e79a72"
+    ],
+    [
+      "6d50783a5c27cbf7344f4af74390051f",
+      "cc046226bb8116f9758aeb2d96a9ace8"
+    ],
+    [
+      "091929430ab2a20cb260efb4db0efce9",
+      "2abcc0049957cb48057f892f8b32fdce"
+    ],
+    [
+      "28c88edec63d5e20a3364f80231c614f",
+      "eb97a14bd2538e96ed15457e6a1fc499"
+    ],
+    [
+      "2404ad026efaaa6693e2c2d3ab19109c",
+      "a13dc8fe94f6b8bd5eac1862357c5bc3"
+    ],
+    [
+      "eefc15d0fbe51af0e301025a8397cb3a",
+      "130a6fc50f6d5e2e33e4437ba0d057dd"
+    ],
+    [
+      "5a8fe8c81b0c2689abc0fdfe08dbfe2d",
+      "cf227f4e80fe1698595d8a76865fd36c"
+    ],
+    [
+      "d9965407e3b5c75e04a2605ca340ecce",
+      "50e15675ebbb7451d093facf7ab08e23"
+    ],
+    [
+      "c17281414ae188e7a8077ee131d080b8",
+      "f7fcf15a54509a7e38eb7234a22719c8"
+    ],
+    [
+      "bbc867fea274bd09d86d1d2e071eb138",
+      "983b6e9a9fcb13f4826fa8b1af1565c6"
+    ],
+    [
+      "7102a9a42dbef34075ddda128779c232",
+      "3ab5fd3a48e68a46ff3285d15db36bff"
+    ],
+    [
+      "a620edd7787f8cb88188dc1e2285f546",
+      "2cb318e632e4fe712360b8156931dfa8"
+    ]
+  ],
+  "elapsed_seconds": 0.18966962499999998,
+  "script_sha256": "8c7c4add6ecb5ce5c7f668f4c4a2fa6a9b63aba317b02ea85a320c7b2df2634a",
+  "limitations": [
+    "No optimized-code coverage",
+    "No packing/reduction/setup coverage",
+    "No timing result",
+    "Not protection against arbitrary value-dependent timing"
+  ]
+}

@@ -48,6 +48,7 @@ def main():
     parser.add_argument("--target", action="append", default=[])
     parser.add_argument("--timing", action="store_true")
     parser.add_argument("--iterations", type=int, default=100_000)
+    parser.add_argument("--report")
     args = parser.parse_args()
     out = Path(tempfile.mkdtemp(prefix=f"pratique-clmul-{args.toolchain}-"))
     record = {"platform": platform.platform(), "machine": platform.machine(),
@@ -76,6 +77,7 @@ def main():
         return []
 
     run(["python3", HERE / "generate.py"])
+    run(["python3", HERE / "guard_generate.py"])
     run(compiler + flags + feature(host) + ["--test", HERE / "lib.rs", "-o", out / "tests"])
     run([out / "tests"])
     library = out / "libclmul_feasibility.rlib"
@@ -96,10 +98,12 @@ def main():
     if args.timing:
         run([out / "timing"])
     record["sources"] = {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
-                         for name in ["lib.rs", "circuit.rs", "generate.py", "bench.rs", "timing.rs", "check.py"]}
+                         for name in ["lib.rs", "circuit.rs", "generate.py", "bench.rs", "timing.rs", "check.py",
+                                      "guarded.rs", "guard_constants.rs", "guard_generate.py", "guard_witness.py",
+                                      "guard-witness.json", "GUARDED.md"]}
     results = HERE / "results"
     results.mkdir(exist_ok=True)
-    report = results / f"{args.toolchain}.json"
+    report = results / (args.report or f"guarded-{args.toolchain}.json")
     report.write_text(json.dumps(record, indent=2) + "\n")
     print(f"Saved {report}; binaries and assembly: {out}")
 
