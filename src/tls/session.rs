@@ -166,12 +166,14 @@ struct Store {
     servers: VecDeque<(String, VecDeque<Session>)>,
 }
 
-/// What a session was made under, and must be used under: the trust it was checked against.
+/// What a session was made under, and must be used under: the trust it was checked against and
+/// the client identity it presented (if any).
 #[derive(Clone)]
 pub(crate) struct Scope {
     pub(crate) trust: Arc<TrustStore>,
     pub(crate) verify: bool,
     pub(crate) revocation: RevocationMode,
+    pub(crate) client_identity: Option<[u8; 32]>,
 }
 
 impl Scope {
@@ -179,6 +181,7 @@ impl Scope {
         Arc::ptr_eq(&self.trust, &other.trust)
             && self.verify == other.verify
             && self.revocation == other.revocation
+            && self.client_identity == other.client_identity
     }
 }
 
@@ -222,6 +225,7 @@ mod tests {
             trust: trust.clone(),
             verify: true,
             revocation: RevocationMode::SoftFail,
+            client_identity: None,
         }
     }
 
@@ -285,6 +289,23 @@ mod tests {
             )
             .is_none());
         assert_eq!(r.take("a.test", &scope(&t), 0).unwrap().ticket, [1]);
+    }
+
+    #[test]
+    fn a_session_is_offered_only_under_the_client_identity_it_was_made_with() {
+        let r = Resumption::new();
+        let t = Arc::new(TrustStore::empty());
+        let mut made_with = scope(&t);
+        made_with.client_identity = Some([1; 32]);
+        let mut s = session(&t, 1, 100);
+        s.scope = made_with.clone();
+        r.insert("a.test", s);
+
+        assert!(r.take("a.test", &scope(&t), 0).is_none());
+        let mut another = scope(&t);
+        another.client_identity = Some([2; 32]);
+        assert!(r.take("a.test", &another, 0).is_none());
+        assert_eq!(r.take("a.test", &made_with, 0).unwrap().ticket, [1]);
     }
 
     #[test]

@@ -906,12 +906,26 @@ pub(crate) fn session_key(server_name: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// The trust a session made under `config` rests on.
+/// The trust and client identity a session made under `config` rests on. The length prefixes make
+/// alternate chains for the same leaf distinct without retaining certificate material in the ticket store.
 pub(crate) fn scope_of(config: &ClientConfig) -> Scope {
+    let client_identity = config.client_certificate.as_ref().map(|cert| {
+        let mut hash = HashAlg::Sha256.start();
+        hash.update(&(cert.chain().len() as u64).to_be_bytes());
+        for der in cert.chain() {
+            hash.update(&(der.len() as u64).to_be_bytes());
+            hash.update(der);
+        }
+        let digest = hash.digest();
+        let mut identity = [0; 32];
+        identity.copy_from_slice(&digest);
+        identity
+    });
     Scope {
         trust: config.trust_store.clone(),
         verify: config.verify_server_certificate,
         revocation: config.revocation.mode,
+        client_identity,
     }
 }
 
