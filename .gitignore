@@ -22,3 +22,6 @@
 !.env.example
 *.key
 .DS_Store
+# generated Python validation caches
+__pycache__/
+*.pyc

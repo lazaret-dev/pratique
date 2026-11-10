@@ -39,8 +39,8 @@ equivalence, or timing independence of every instruction or platform.
 
 One existing release-profile invocation per version followed the twenty timing
 calls. At 1 MiB the recorded GHASH throughput changed from 229.791 to
-184.677 MB/s, a 19.6% reduction. AES128-GCM throughput declined by about 8.4%,
-and AES256-GCM by about 7.2%. These are matched observations on this host, not a
+184.677 MB/s, a 19.6% reduction. At the same 1 MiB size, AES128-GCM seal throughput
+declined by about 8.4%, and AES256-GCM seal by about 7.2%. These are matched observations on this host, not a
 multi-host benchmark or a waived performance requirement.
 
 The earlier b8 audit/documentation closure and the c131 failure-observability
