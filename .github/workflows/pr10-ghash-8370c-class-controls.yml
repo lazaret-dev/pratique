@@ -1,4 +1,4 @@
-name: Manual GHASH class controls on Xeon 8370C
+name: Manual GHASH hot-key swap controls on Xeon 8370C
 
 on:
   workflow_dispatch:
@@ -7,20 +7,20 @@ permissions:
   contents: read
 
 concurrency:
-  group: pr10-ghash-8370c-manual
+  group: pr10-ghash-8370c-hot-key-swap-manual
   cancel-in-progress: false
 
 jobs:
   xeon-8370c:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/codex/pr10-ghash-8370c-hot-key-swap-workflow'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       RUSTUP_TOOLCHAIN: 1.87.0
       RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
       PRATIQUE_TIMING_SECS: '3'
-      PRATIQUE_EXPECTED_SOURCE_COMMIT: 9ba854cf5b793f5ff9525964d58519018ed9f275
-      PRATIQUE_CLASS_OUTPUT: /tmp/pratique-ghash-8370c
+      PRATIQUE_EXPECTED_SOURCE_COMMIT: a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf
+      PRATIQUE_CLASS_OUTPUT: /tmp/pratique-ghash-8370c-hot-key-swap
       LC_ALL: C
     steps:
       - name: Record host and filter before checkout or compiler
@@ -50,10 +50,10 @@ jobs:
                     'run_id': os.environ.get('GITHUB_RUN_ID'),
                     'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
                     'diagnostic_source_commit': os.environ['PRATIQUE_EXPECTED_SOURCE_COMMIT'],
-                    'selection_basis': 'Reported Xeon model token8370C, before checkout/compiler; no outcome selection.',
+                    'selection_basis': 'Reported Xeon model token8370C; external controller cap20, first match stops regardless of outcome.',
                     'skip_reason': None if matched else 'Reported model is not Xeon8370C; no checkout, compiler or tests.',
                     'planned_six_slots': [{'iteration': i, 'kind': kind, 'execution': 'not_attempted'}
-                                         for i in range(1, 4) for kind in ['gate', 'control']]}
+                                         for i in range(1, 4) for kind in ['gate', 'swap']]}
           (root / 'host/selection.json').write_text(json.dumps(record, indent=2) + '\n')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write('matched=' + str(matched).lower() + '\n')
@@ -65,7 +65,7 @@ jobs:
         timeout-minutes: 1
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 9ba854cf5b793f5ff9525964d58519018ed9f275
+          ref: a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf
           fetch-depth: 0
           persist-credentials: false
           sparse-checkout-cone-mode: false
@@ -84,7 +84,7 @@ jobs:
           cargo --version > "$PRATIQUE_CLASS_OUTPUT/cargo-version.txt"
           python3 cleanroom/ghash_integration/class_controls_8370c/run.py verify
 
-      - name: Build and hash one release test executable
+      - name: Build, hash and retain one release test executable
         id: build
         if: steps.cpu.outputs.matched == 'true'
         timeout-minutes: 6
@@ -94,7 +94,7 @@ jobs:
           cargo test --release --all-features --lib --no-run --message-format=json > "$PRATIQUE_CLASS_OUTPUT/build-events.jsonl" 2> "$PRATIQUE_CLASS_OUTPUT/build.stderr.log"
           python3 cleanroom/ghash_integration/class_controls_8370c/run.py bind-binary
 
-      - name: Attempt all six alternating original and control calls
+      - name: Attempt all six original and hot-key-swap calls
         if: steps.cpu.outputs.matched == 'true' && steps.build.outcome == 'success'
         timeout-minutes: 6
         shell: bash
@@ -106,12 +106,12 @@ jobs:
         shell: bash
         run: python3 cleanroom/ghash_integration/class_controls_8370c/run.py summarize
 
-      - name: Upload skipped-host metadata or all six complete and partial logs
+      - name: Upload skipped-host metadata or all six logs and linked evidence
         if: always()
         timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr10-ghash-8370c-${{ github.run_id }}-${{ github.run_attempt }}
-          path: /tmp/pratique-ghash-8370c
+          name: pr10-ghash-hot-key-swap-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/pratique-ghash-8370c-hot-key-swap
           if-no-files-found: error
           retention-days: 14
