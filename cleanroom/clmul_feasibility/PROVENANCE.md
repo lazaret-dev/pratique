@@ -188,3 +188,10 @@ existing post-wipe and clone lifecycle assertions. The author added
 `words(&self)` returning references to the same retained arrays, matching the
 earlier API's test-only observer. It makes no populated copy and adds no
 production operation or timing-path change.
+
+The integrator also requested exact retained-state cloning, including already
+wiped keys. The author added `copy_from(&mut self, &Self)` as three direct
+slice copies into the caller's final retained destination. This deliberately
+creates a second long-lived owner, each with its own wipe obligation, and
+creates no source-owned scratch array or populated return. A lifecycle test
+checks destination addresses, independence and preservation of wiped state.
