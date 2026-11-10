@@ -1,0 +1,40 @@
+   Compiling pratique v0.1.0 (/private/tmp/pratique-batch-ghash-integration-20261108)
+error: rustc interrupted by SIGBUS, printing backtrace
+
+0   librustc_driver-82bda6a8a1496c15.dy 0x000000010c557870 _RNvNtCs1qQ4FH5FMY4_17rustc_driver_impl14signal_handler17print_stack_trace + 140
+1   libsystem_platform.dylib            0x0000000193b36144 _sigtramp + 56
+2   rustc                               0x00000001006646ac zone_size + 96
+3   libsystem_malloc.dylib              0x000000019049911c find_zone_and_free + 192
+4   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff63888 _ZN4llvm9DwarfFile8addRangeERKNS_16DwarfCompileUnitENS_11SmallVectorINS_9RangeSpanELj2EEE + 352
+5   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff36078 _ZN4llvm16DwarfCompileUnit17addScopeRangeListERNS_3DIEENS_11SmallVectorINS_9RangeSpanELj2EEE + 164
+6   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff345d8 _ZN4llvm16DwarfCompileUnit23attachRangesOrLowHighPCERNS_3DIEENS_11SmallVectorINS_9RangeSpanELj2EEE + 220
+7   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff36518 _ZN4llvm16DwarfCompileUnit23attachRangesOrLowHighPCERNS_3DIEERKNS_15SmallVectorImplINSt3__14pairIPKNS_12MachineInstrES8_EEEE + 980
+8   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff35f8c _ZN4llvm16DwarfCompileUnit24constructLexicalScopeDIEEPNS_12LexicalScopeE + 540
+9   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff34910 _ZN4llvm16DwarfCompileUnit17constructScopeDIEEPNS_12LexicalScopeERNS_3DIEE + 148
+
+### cycle encountered after 10 frames with period 11
+0   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+1   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+2   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+3   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+4   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+5   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+6   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+7   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+8   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+9   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+10  librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+### recursed 22 times
+
+0   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+1   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+2   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+3   librustc_driver-82bda6a8a1496c15.dy 0x000000010ff359e8 _ZN4llvm16DwarfCompileUnit25createAndAddScopeChildrenEPNS_12LexicalScopeERNS_3DIEE + 3412
+
+note: maximum backtrace depth reached, frames may have been lost
+note: we would appreciate a report at https://github.com/rust-lang/rust
+note: backtrace dumped due to SIGBUS! resuming signal
+error: could not compile `pratique` (lib test)
+
+Caused by:
+  process didn't exit successfully: `rustc --crate-name pratique --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C opt-level=2 -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --warn=unexpected_cfgs --check-cfg 'cfg(pratique_portable)' --check-cfg 'cfg(pratique_fuzzing)' -C debug-assertions=on --test --cfg 'feature="default"' --cfg 'feature="net"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default", "mozilla-roots", "net", "server"))' -C metadata=fada26745b4d77b2 -C extra-filename=-9fe2e9bee1ef1f9f --out-dir /private/tmp/pratique-integration-target-check/debug/deps -C incremental=/private/tmp/pratique-integration-target-check/debug/incremental -L dependency=/private/tmp/pratique-integration-target-check/debug/deps` (signal: 10, SIGBUS: access to undefined memory)

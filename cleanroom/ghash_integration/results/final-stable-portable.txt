@@ -1,0 +1,23 @@
+
+running 1 test
+test crypto::integration_profile::release_profile ... hardware_available=false
+operation,bytes,ns_per_call,decimal_MB_per_second
+AES128-CTR-Portable,1048576,4372345.900,239.820
+GHASH-Portable,1048576,1235840.706,848.472
+AES128-GCM-seal-Portable,1048576,5609177.125,186.939
+AES128-GCM-open-copy-Portable,1048576,5081135.500,206.366
+AES128-CTR-Portable,16384,62308.088,262.951
+GHASH-Portable,16384,17752.950,922.889
+AES128-GCM-seal-Portable,16384,80265.842,204.122
+AES128-GCM-open-copy-Portable,16384,94647.181,173.106
+AES128-GCM-key-Portable,0,12379.245,0.000
+AES256-CTR-Portable,1048576,5707130.250,183.731
+AES256-GCM-seal-Portable,1048576,6819479.167,153.762
+AES256-GCM-open-copy-Portable,1048576,6466750.000,162.149
+AES256-CTR-Portable,16384,81991.550,199.825
+AES256-GCM-seal-Portable,16384,100574.013,162.905
+AES256-GCM-open-copy-Portable,16384,95723.441,171.160
+AES256-GCM-key-Portable,0,9811.343,0.000
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1652 filtered out; finished in 5.39s

@@ -1,0 +1,20 @@
+    Finished `release` profile [optimized] target(s) in 0.00s
+     Running tests/interop_openssl.rs (/private/tmp/pratique-integration-target-full/release/deps/interop_openssl-27221e44fc822fae)
+
+running 1 test
+test sessions_are_resumed_with_openssl ...
+thread 'sessions_are_resumed_with_openssl' panicked at tests/interop_openssl.rs:2467:9:
+assertion `left == right` failed: OpenSSL sends two tickets
+  left: 0
+ right: 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    sessions_are_resumed_with_openssl
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.31s
+
+error: test failed, to rerun pass `--test interop_openssl`

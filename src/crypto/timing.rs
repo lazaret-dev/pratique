@@ -1048,8 +1048,238 @@ fn ghash_multiplication_is_constant_time() {
             |rng, c| (key(rng, c, 0xff), data.clone()),
             by_data,
         );
+        // Prepared batch inputs: key preparation happens before the timed operation.
+        // Exercise a full batch and a batch followed by scalar/partial tails.
+        for len in [1024, 2049] {
+            let prepared = GhashKey::new(&fixed_h, backend);
+            expect_constant_time(
+                &format!("ghash [{backend:?}] batch {len} data: 0 vs random"),
+                |rng, c| fixed_or_random(rng, c, len, 0),
+                |data: &Vec<u8>| prepared.hash(b"aad", data),
+            );
+            let data = vec![0x5au8; len];
+            expect_constant_time(
+                &format!("ghash [{backend:?}] batch {len} prepared H: 0 vs random"),
+                |rng, c| GhashKey::new(&key(rng, c, 0), backend),
+                |prepared: &GhashKey| prepared.hash(b"aad", &data),
+            );
+        }
     }
     finish();
+}
+
+/// One row of [`ghash_batch_class_controls`]: both seeds are always measured, and the signed statistics and the
+/// size of the difference are printed (class 1 minus class 0), with what the unchanged [`judge`] says of the pair.
+fn control_row<I, R>(name: &str, mut gen: impl FnMut(&mut Rng, bool) -> I, op: impl Fn(&I) -> R) {
+    let first = measure_seeded(name, budget(), 0, &mut gen, &op);
+    let again = measure_seeded(name, budget(), 1, &mut gen, &op);
+    for r in [&first, &again] {
+        r.print();
+        let stats: Vec<String> = r
+            .statistics()
+            .enumerate()
+            .map(|(i, t)| format!("{}:{:+.1}", r.label(i), t))
+            .collect();
+        println!("    signed t: {}", stats.join("  "));
+        let sizes: Vec<String> = [1.0, 0.95, 0.75, 0.5]
+            .iter()
+            .map(|&p| {
+                let (d, se) = r.per_call_at(p);
+                format!("keep {p}: {d:+.3} +- {se:.3} ns")
+            })
+            .collect();
+        println!("    per call: {}", sizes.join("  "));
+    }
+    match judge(&first, &again) {
+        Some(why) => println!("    unchanged judge: CONFIRMED ({why})"),
+        None => println!("    unchanged judge: not confirmed"),
+    }
+}
+
+/// Diagnostic for the x86 findings on the batched portable GHASH: the two flagged rows as they are, then the
+/// same operation on classes that are not all zeros, then the same inputs through the scalar path. It prints
+/// and never fails; the gate is `ghash_multiplication_is_constant_time`, unchanged.
+#[test]
+#[ignore = "diagnostic timing run; prints signed statistics and never fails"]
+fn ghash_batch_class_controls() {
+    let _dit = Dit::on();
+    let backend = Backend::Portable;
+    let fixed_h = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128.to_be_bytes();
+    let other_h = 0x9e37_79b9_7f4a_7c15_f39c_c060_5ced_c834_u128.to_be_bytes();
+    let len = 1024;
+    let pattern: Vec<u8> = Rng::new(0x5eed_c0de).bytes(len);
+    let fixed_data = vec![0x5au8; len];
+    let prepared = GhashKey::new(&fixed_h, backend);
+    let reflected = |h: &[u8; 16]| u128::from_be_bytes(*h).reverse_bits();
+    let key = |rng: &mut Rng, random: bool, fixed: [u8; 16]| -> [u8; 16] {
+        if random {
+            rng.bytes(16).try_into().unwrap()
+        } else {
+            fixed
+        }
+    };
+    // the two rows that were flagged, with the gate's own generators
+    control_row(
+        "repro: batch 1024 data: 0 vs random",
+        |rng, c| fixed_or_random(rng, c, len, 0),
+        |data: &Vec<u8>| prepared.hash(b"aad", data),
+    );
+    control_row(
+        "repro: batch 1024 prepared H: 0 vs random",
+        |rng, c| GhashKey::new(&key(rng, c, [0; 16]), backend),
+        |k: &GhashKey| k.hash(b"aad", &fixed_data),
+    );
+    // the same operation, with a fixed class that is not all zeros
+    control_row(
+        "control: batch 1024 data: all ones vs random",
+        |rng, c| fixed_or_random(rng, c, len, 0xff),
+        |data: &Vec<u8>| prepared.hash(b"aad", data),
+    );
+    control_row(
+        "control: batch 1024 data: fixed pattern vs random",
+        |rng, c| {
+            let mut v = rng.bytes(len);
+            if !c {
+                v.copy_from_slice(&pattern);
+            }
+            v
+        },
+        |data: &Vec<u8>| prepared.hash(b"aad", data),
+    );
+    control_row(
+        "control: batch 1024 prepared H: fixed nonzero vs random",
+        |rng, c| GhashKey::new(&key(rng, c, other_h), backend),
+        |k: &GhashKey| k.hash(b"aad", &fixed_data),
+    );
+    // the same inputs through the scalar path, which has no batch kernel
+    let h = reflected(&fixed_h);
+    control_row(
+        "control: scalar 1024 data: 0 vs random",
+        |rng, c| fixed_or_random(rng, c, len, 0),
+        |data: &Vec<u8>| super::ghash::hash_with::<false>(h, b"aad", data),
+    );
+    control_row(
+        "control: scalar 1024 H: 0 vs random",
+        |rng, c| reflected(&key(rng, c, [0; 16])),
+        |h: &u128| super::ghash::hash_with::<false>(*h, b"aad", &fixed_data),
+    );
+}
+
+/// Second diagnostic for the x86 findings on the batched portable GHASH. The first one showed the finding for
+/// all-zero and all-ones data and for a zero key, and not for a fixed pattern or a fixed nonzero key. These rows
+/// ask what the trigger is and whether the key matters once it is present:
+/// - "hot keys": two keys prepared once and chosen by index, so no key is built, allocated or read cold for a
+///   sample. With a zero key at one index it tells the values inside the kernel from the history and placement
+///   of the per-sample key; with two nonzero keys it is the control for the two addresses.
+/// - "repeated word": each sample's data is one random 8-byte word 128 times. The bytes are not uniform and
+///   differ from sample to sample, but the lanes are equal and the two halves of each block are equal, so the
+///   kernel's operands are degenerate as they are for all-zero and all-ones data.
+/// - "zero data: H fixed nonzero vs random": the degenerate public input in both classes, only the key differs.
+/// It prints and never fails; the gate is `ghash_multiplication_is_constant_time`, unchanged.
+#[test]
+#[ignore = "diagnostic timing run; prints signed statistics and never fails"]
+fn ghash_batch_intermediate_controls() {
+    let _dit = Dit::on();
+    let backend = Backend::Portable;
+    let fixed_h = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128.to_be_bytes();
+    let other_h = 0x9e37_79b9_7f4a_7c15_f39c_c060_5ced_c834_u128.to_be_bytes();
+    let len = 1024;
+    let fixed_data = vec![0x5au8; len];
+    let zero_data = vec![0u8; len];
+    println!("clock: coarse_tick() = {:?}", Clock::new().coarse_tick());
+    let prepared = GhashKey::new(&fixed_h, backend);
+    let zero_and_nonzero = [GhashKey::new(&[0; 16], backend), GhashKey::new(&other_h, backend)];
+    let two_nonzero = [GhashKey::new(&fixed_h, backend), GhashKey::new(&other_h, backend)];
+    control_row(
+        "control: batch 1024 hot keys: H 0 vs fixed nonzero",
+        |_, c| usize::from(c),
+        |i: &usize| zero_and_nonzero[*i].hash(b"aad", &fixed_data),
+    );
+    control_row(
+        "control: batch 1024 hot keys: two fixed nonzero H",
+        |_, c| usize::from(c),
+        |i: &usize| two_nonzero[*i].hash(b"aad", &fixed_data),
+    );
+    control_row(
+        "control: batch 1024 data: repeated word vs random",
+        |rng, c| {
+            let mut v = rng.bytes(len);
+            if !c {
+                let word: [u8; 8] = v[..8].try_into().unwrap();
+                for chunk in v.chunks_exact_mut(8) {
+                    chunk.copy_from_slice(&word);
+                }
+            }
+            v
+        },
+        |data: &Vec<u8>| prepared.hash(b"aad", data),
+    );
+    control_row(
+        "control: batch 1024 zero data: H fixed nonzero vs random",
+        |rng, c| {
+            let h: [u8; 16] = if c {
+                rng.bytes(16).try_into().unwrap()
+            } else {
+                other_h
+            };
+            GhashKey::new(&h, backend)
+        },
+        |k: &GhashKey| k.hash(b"aad", &zero_data),
+    );
+}
+
+/// A key on its own page, so that two of them sit at the same offset within a page and a cache line.
+#[repr(align(4096))]
+struct PageAligned(GhashKey);
+
+/// Third diagnostic for the x86 findings on the batched portable GHASH. In the hot-key rows of the second one
+/// the class is also the key's address, and two nonzero keys at the two addresses were themselves flagged. Here
+/// each pair is measured twice in the same two page-aligned slots, with the contents exchanged in between. With
+/// d = class 1 minus class 0 (slot 1 minus slot 0), for a pair (X, Y) and then (Y, X):
+///   effect of the value (Y minus X) = (d_first - d_second) / 2
+///   effect of the slot (slot 1 minus slot 0) = (d_first + d_second) / 2
+/// It prints and never fails; the gate is `ghash_multiplication_is_constant_time`, unchanged.
+#[test]
+#[ignore = "diagnostic timing run; prints signed statistics and never fails"]
+fn ghash_batch_hot_key_swap_controls() {
+    let _dit = Dit::on();
+    let backend = Backend::Portable;
+    let fixed_h = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128.to_be_bytes();
+    let other_h = 0x9e37_79b9_7f4a_7c15_f39c_c060_5ced_c834_u128.to_be_bytes();
+    let fixed_data = vec![0x5au8; 1024];
+    println!("clock: coarse_tick() = {:?}", Clock::new().coarse_tick());
+    let mut pair = [
+        PageAligned(GhashKey::new(&[0; 16], backend)),
+        PageAligned(GhashKey::new(&other_h, backend)),
+    ];
+    println!("slots: {:p} and {:p}", &pair[0], &pair[1]);
+    control_row(
+        "swap: aligned hot keys: H 0 in slot 0, nonzero in slot 1",
+        |_, c| usize::from(c),
+        |i: &usize| pair[*i].0.hash(b"aad", &fixed_data),
+    );
+    pair.swap(0, 1);
+    control_row(
+        "swap: aligned hot keys: H nonzero in slot 0, 0 in slot 1",
+        |_, c| usize::from(c),
+        |i: &usize| pair[*i].0.hash(b"aad", &fixed_data),
+    );
+    let mut both = [
+        PageAligned(GhashKey::new(&fixed_h, backend)),
+        PageAligned(GhashKey::new(&other_h, backend)),
+    ];
+    println!("slots: {:p} and {:p}", &both[0], &both[1]);
+    control_row(
+        "swap: aligned hot keys: nonzero A in slot 0, B in slot 1",
+        |_, c| usize::from(c),
+        |i: &usize| both[*i].0.hash(b"aad", &fixed_data),
+    );
+    both.swap(0, 1);
+    control_row(
+        "swap: aligned hot keys: nonzero B in slot 0, A in slot 1",
+        |_, c| usize::from(c),
+        |i: &usize| both[*i].0.hash(b"aad", &fixed_data),
+    );
 }
 
 #[test]

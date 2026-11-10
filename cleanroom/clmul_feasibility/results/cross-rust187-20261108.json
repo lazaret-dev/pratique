@@ -1,0 +1,237 @@
+{
+  "artifact_directory": "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-six-targets-796x9tov",
+  "rustc": "rustc 1.87.0 (17067e9ac 2025-05-09)\nbinary: rustc\ncommit-hash: 17067e9ac6d7ecb70e50f92c1944e545188d2359\ncommit-date: 2025-05-09\nhost: aarch64-apple-darwin\nrelease: 1.87.0\nLLVM version: 20.1.1\n",
+  "source_sha256": "6614e96d1d1baff760168b37dfc69b4873730704c4ed53e766c97b31b4b01c6a",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "aarch64-apple-darwin",
+        "-C",
+        "target-feature=-aes",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-six-targets-796x9tov/aarch64-apple-darwin.s"
+      ],
+      "exit": 0,
+      "output": "",
+      "scan": {
+        "sha256": "0ed1fe708af1b46732dab18eeac3de561324ec354d598960e0178e5b831b8c59",
+        "instruction_lines": 8682,
+        "multiplication_or_division": [],
+        "branches_for_manual_review": [
+          "b.ne\tLBB2_1",
+          "b.ne\tLBB4_1",
+          "b.ne\tLBB5_1",
+          "b.ne\tLBB6_1"
+        ],
+        "calls_for_manual_review": [
+          "bl\t__ZN3lib26clmul64_batch_xor_prepared17h63092160eb86dafdE",
+          "bl\t__ZN3lib7circuit14planes_product17hc732cf533fd2193bE",
+          "bl\t__ZN3lib9transpose17h3c8ffc134fbde9a1E",
+          "bl\t_bzero",
+          "bl\t_memcpy"
+        ]
+      },
+      "scan_pass": true,
+      "mul_div_lines": []
+    },
+    "x86_64-unknown-linux-gnu": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+        "-C",
+        "target-feature=-pclmulqdq",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-six-targets-796x9tov/x86_64-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": "",
+      "scan": {
+        "sha256": "b4eed0983cab7818725697cbc4a24677d01399c40948572d8ef45de3de83aea7",
+        "instruction_lines": 11318,
+        "multiplication_or_division": [],
+        "branches_for_manual_review": [
+          "jne\t.LBB1_1",
+          "jne\t.LBB2_1",
+          "jne\t.LBB4_1",
+          "jne\t.LBB5_1",
+          "jne\t.LBB6_1"
+        ],
+        "calls_for_manual_review": [
+          "callq\t*%r12",
+          "callq\t*%r14",
+          "callq\t*%r15",
+          "callq\t*%rbp",
+          "callq\t*%rcx",
+          "callq\t*_ZN3lib9transpose17h3c8ffc134fbde9a1E@GOTPCREL(%rip)",
+          "callq\t*memcpy@GOTPCREL(%rip)",
+          "callq\t*memset@GOTPCREL(%rip)",
+          "callq\t_ZN3lib7circuit14planes_product17hc732cf533fd2193bE"
+        ]
+      },
+      "scan_pass": true,
+      "mul_div_lines": []
+    },
+    "wasm32-unknown-unknown": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "wasm32-unknown-unknown",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-six-targets-796x9tov/wasm32-unknown-unknown.s"
+      ],
+      "exit": 0,
+      "output": "",
+      "scan": {
+        "sha256": "afca349cf06cdea6606e668df745a776703af1594897839c4c56e5e1bc380cf9",
+        "instruction_lines": 14261,
+        "multiplication_or_division": [],
+        "branches_for_manual_review": [
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0",
+          "br_if   \t0"
+        ],
+        "calls_for_manual_review": [
+          "call\t_ZN3lib26clmul64_batch_xor_prepared17h1915a6dffd071ad2E",
+          "call\t_ZN3lib7circuit14planes_product17hbd447221958fa6eaE",
+          "call\t_ZN3lib9transpose17h14b89d17527321c4E"
+        ]
+      },
+      "scan_pass": true,
+      "mul_div_lines": []
+    },
+    "i686-unknown-linux-gnu": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "i686-unknown-linux-gnu",
+        "-C",
+        "target-feature=-pclmulqdq",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-six-targets-796x9tov/i686-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": "",
+      "scan": {
+        "sha256": "cf94e08b7598d96cc94984589f5c49fda80997e4bd51cfbcb47b26a28e017dda",
+        "instruction_lines": 22703,
+        "multiplication_or_division": [],
+        "branches_for_manual_review": [
+          "jne\t.LBB1_1",
+          "jne\t.LBB2_1",
+          "jne\t.LBB4_1",
+          "jne\t.LBB5_1",
+          "jne\t.LBB6_1"
+        ],
+        "calls_for_manual_review": []
+      },
+      "scan_pass": true,
+      "mul_div_lines": []
+    },
+    "armv7-unknown-linux-gnueabihf": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "armv7-unknown-linux-gnueabihf",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-six-targets-796x9tov/armv7-unknown-linux-gnueabihf.s"
+      ],
+      "exit": 0,
+      "output": "",
+      "scan": {
+        "sha256": "b6b09af02079c9225041f06709940662bbfcdcbfa76b52e453e842165936f040",
+        "instruction_lines": 23499,
+        "multiplication_or_division": [],
+        "branches_for_manual_review": [],
+        "calls_for_manual_review": [
+          "bl\t_ZN3lib26clmul64_batch_xor_prepared17h1915a6dffd071ad2E",
+          "bl\t_ZN3lib7circuit14planes_product17hbd447221958fa6eaE",
+          "bl\t_ZN3lib9transpose17h14b89d17527321c4E",
+          "bl\tmemcpy",
+          "bl\tmemset"
+        ]
+      },
+      "scan_pass": true,
+      "mul_div_lines": []
+    },
+    "riscv64gc-unknown-linux-gnu": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "riscv64gc-unknown-linux-gnu",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-six-targets-796x9tov/riscv64gc-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": "",
+      "scan": {
+        "sha256": "33fbb8a88cf14d48f35c2bc31e6fa7e92d189fd9b36aac0243c98b3a6611713e",
+        "instruction_lines": 26807,
+        "multiplication_or_division": [],
+        "branches_for_manual_review": [],
+        "calls_for_manual_review": [
+          "call\t_ZN3lib26clmul64_batch_xor_prepared17h63092160eb86dafdE",
+          "call\t_ZN3lib7circuit14planes_product17hc732cf533fd2193bE",
+          "call\t_ZN3lib9transpose17h3c8ffc134fbde9a1E",
+          "call\tmemcpy",
+          "call\tmemset"
+        ]
+      },
+      "scan_pass": true,
+      "mul_div_lines": []
+    }
+  }
+}

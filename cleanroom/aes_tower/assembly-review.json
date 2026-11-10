@@ -1,0 +1,132 @@
+{
+  "artifacts": "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-tower-six-targets-7y2dvp9v",
+  "source_sha256": "7aa0d2e722af6f9ab5557262a5b2ac4f364efcec351500d5c9e8510b7f1d96c3",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "aarch64-apple-darwin",
+        "-C",
+        "target-feature=-aes",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/aes_tower/assembly.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-tower-six-targets-7y2dvp9v/aarch64-apple-darwin.s"
+      ],
+      "sha256": "076781ffc88867accfe823441c47a014fb9b640b13371e9f715aa2f6a36dd5c3",
+      "multiply_divide": [],
+      "branches": [],
+      "calls": [],
+      "diagnostics": ""
+    },
+    "x86_64-unknown-linux-gnu": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+        "-C",
+        "target-feature=-pclmulqdq",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/aes_tower/assembly.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-tower-six-targets-7y2dvp9v/x86_64-unknown-linux-gnu.s"
+      ],
+      "sha256": "f120f6efca103f6efc20b87d9f87bb6f43ccc92f34c4057faa76e37d6a133292",
+      "multiply_divide": [],
+      "branches": [],
+      "calls": [],
+      "diagnostics": ""
+    },
+    "wasm32-unknown-unknown": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "wasm32-unknown-unknown",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/aes_tower/assembly.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-tower-six-targets-7y2dvp9v/wasm32-unknown-unknown.s"
+      ],
+      "sha256": "2d8abea51b1da58714c9109a747be0d29125120d6ed460afd6aea0cc72812e87",
+      "multiply_divide": [],
+      "branches": [],
+      "calls": [],
+      "diagnostics": ""
+    },
+    "i686-unknown-linux-gnu": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "i686-unknown-linux-gnu",
+        "-C",
+        "target-feature=-pclmulqdq",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/aes_tower/assembly.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-tower-six-targets-7y2dvp9v/i686-unknown-linux-gnu.s"
+      ],
+      "sha256": "2e684314f781d5b91027b84112334069309b42b2b423484ce7b34386808ea1d1",
+      "multiply_divide": [],
+      "branches": [],
+      "calls": [],
+      "diagnostics": ""
+    },
+    "armv7-unknown-linux-gnueabihf": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "armv7-unknown-linux-gnueabihf",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/aes_tower/assembly.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-tower-six-targets-7y2dvp9v/armv7-unknown-linux-gnueabihf.s"
+      ],
+      "sha256": "80780a4f48ffb8fe41f7624a29f62d8e5b31b9b238affeaab673fa2385d87667",
+      "multiply_divide": [],
+      "branches": [],
+      "calls": [],
+      "diagnostics": ""
+    },
+    "riscv64gc-unknown-linux-gnu": {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "riscv64gc-unknown-linux-gnu",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/aes_tower/assembly.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-tower-six-targets-7y2dvp9v/riscv64gc-unknown-linux-gnu.s"
+      ],
+      "sha256": "4475f5e2165bd11ec98414d0ff6cf1ec7e9d741162800e67c7cb7aba66135f96",
+      "multiply_divide": [],
+      "branches": [],
+      "calls": [],
+      "diagnostics": ""
+    }
+  }
+}

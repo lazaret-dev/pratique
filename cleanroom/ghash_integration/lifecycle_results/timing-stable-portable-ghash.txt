@@ -1,0 +1,13 @@
+
+running 1 test
+test crypto::timing::ghash_multiplication_is_constant_time ... ghash [Portable] data blocks: 0 vs random (fixed H)        n= 322560      median    8125 ns  |t| uncropped    0.4  max    2.8  no leak detected
+ghash [Portable] data blocks: all ones vs random (fixed H) n= 324608      median    8000 ns  |t| uncropped    2.4  max    2.4  no leak detected
+ghash [Portable] hash key H: 0 vs random                   n= 339968      median    8042 ns  |t| uncropped    0.9  max    2.0  no leak detected
+ghash [Portable] hash key H: all ones vs random            n= 344064      median    8084 ns  |t| uncropped    1.1  max    1.6  no leak detected
+ghash [Portable] batch 1024 data: 0 vs random              n=1013760      median    1250 ns  |t| uncropped    1.2  max    2.2  no leak detected
+ghash [Portable] batch 1024 prepared H: 0 vs random        n= 337920      median    1250 ns  |t| uncropped    1.7  max    1.7  no leak detected
+ghash [Portable] batch 2049 data: 0 vs random              n= 542720      median    2334 ns  |t| uncropped    1.0  max    1.0  no leak detected
+ghash [Portable] batch 2049 prepared H: 0 vs random        n= 305152      median    2334 ns  |t| uncropped    1.3  max    1.3  no leak detected
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1655 filtered out; finished in 24.24s

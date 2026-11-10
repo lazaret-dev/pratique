@@ -1,0 +1,250 @@
+{
+  "commands": [
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2021",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "aarch64-apple-darwin",
+        "-C",
+        "target-feature=-aes",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/wrapper.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/aarch64-apple-darwin.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2021",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+        "-C",
+        "target-feature=-aes,-pclmulqdq",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/wrapper.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/x86_64-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2021",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "wasm32-unknown-unknown",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/wrapper.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/wasm32-unknown-unknown.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2021",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "i686-unknown-linux-gnu",
+        "-C",
+        "target-feature=-aes,-pclmulqdq",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/wrapper.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/i686-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2021",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "armv7-unknown-linux-gnueabihf",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/wrapper.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/armv7-unknown-linux-gnueabihf.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2021",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "riscv64gc-unknown-linux-gnu",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/wrapper.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc/riscv64gc-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": ""
+    }
+  ],
+  "copies": {
+    "src/crypto/aes_sbox_tower_clean.rs": "7aa0d2e722af6f9ab5557262a5b2ac4f364efcec351500d5c9e8510b7f1d96c3",
+    "src/crypto/clmul_batch_circuit.rs": "d1c114b78ac65e4056d4c300c0de8d6c9a54317d19a25e942d8f489d3850d156"
+  },
+  "assembly": {
+    "aarch64-apple-darwin": {
+      "sha256": "6205c8afc0cfff3523d304debc131775ffb6891242c36dbce16294a07dc716c8",
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "b.ne\tLBB2_1",
+        "b.ne\tLBB3_1",
+        "b.ne\tLBB4_1",
+        "b.ne\tLBB6_1",
+        "b.ne\tLBB7_1"
+      ],
+      "calls_for_manual_review": [
+        "bl\t__ZN7wrapper5batch26clmul64_batch_xor_prepared17h153e2c01fd2bcbbcE",
+        "bl\t__ZN7wrapper5batch7circuit14planes_product17hcff99ac19961bd74E",
+        "bl\t__ZN7wrapper5batch9transpose17hda711563094b9081E"
+      ]
+    },
+    "x86_64-unknown-linux-gnu": {
+      "sha256": "83be985fe494879a09b74b261a9bf4e355e1a25c53df361c993ca6c2bbc38ffb",
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "jne\t.LBB1_1",
+        "jmpq\t*memcpy@GOTPCREL(%rip)",
+        "jne\t.LBB2_1",
+        "jne\t.LBB3_1",
+        "jne\t.LBB4_1",
+        "jne\t.LBB6_1",
+        "jne\t.LBB7_1"
+      ],
+      "calls_for_manual_review": [
+        "callq\t*%r12",
+        "callq\t*%r14",
+        "callq\t*%rbp",
+        "callq\t_ZN7wrapper5batch26clmul64_batch_xor_prepared17h153e2c01fd2bcbbcE",
+        "callq\t_ZN7wrapper5batch27clmul128_batch_xor_prepared17h37b84ba81f0bdb25E",
+        "callq\t_ZN7wrapper5batch7circuit14planes_product17hcff99ac19961bd74E",
+        "callq\t_ZN7wrapper5batch9transpose17hda711563094b9081E"
+      ]
+    },
+    "wasm32-unknown-unknown": {
+      "sha256": "51d7d9123092d0b540c01eca8cad240a5e7dca33cde1cfd95277998a3411c88a",
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0"
+      ],
+      "calls_for_manual_review": [
+        "call\t_ZN7wrapper5batch26clmul64_batch_xor_prepared17h040813c3095b3d8dE",
+        "call\t_ZN7wrapper5batch27clmul128_batch_xor_prepared17h69fd5d3118161e81E",
+        "call\t_ZN7wrapper5batch7circuit14planes_product17h696b33a4771f6e0eE",
+        "call\t_ZN7wrapper5batch9transpose17hd46f5e2a2ca43c80E",
+        "call\t__ashlti3"
+      ]
+    },
+    "i686-unknown-linux-gnu": {
+      "sha256": "ee45df58834e231d3dcf21ad5fabdeb4486598b5acef8a04b5e38561e7b5997f",
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "jne\t.LBB1_1",
+        "jne\t.LBB2_1",
+        "jne\t.LBB3_1",
+        "jne\t.LBB4_1",
+        "jne\t.LBB6_1",
+        "jne\t.LBB7_1"
+      ],
+      "calls_for_manual_review": []
+    },
+    "armv7-unknown-linux-gnueabihf": {
+      "sha256": "8352bde2b31d3a0610fcce657c8c19302daa92445df6a7ecd2db05107a9ae4d4",
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "bne\t.LBB1_1",
+        "bne\t.LBB1_3",
+        "bne\t.LBB1_5",
+        "bne\t.LBB1_7",
+        "bne\t.LBB1_9",
+        "bne\t.LBB1_11",
+        "bne\t.LBB2_1",
+        "bne\t.LBB3_1",
+        "bne\t.LBB4_1",
+        "bne\t.LBB6_1",
+        "bne\t.LBB7_1"
+      ],
+      "calls_for_manual_review": [
+        "bl\t_ZN7wrapper5batch26clmul64_batch_xor_prepared17h040813c3095b3d8dE",
+        "bl\t_ZN7wrapper5batch27clmul128_batch_xor_prepared17h69fd5d3118161e81E",
+        "bl\t_ZN7wrapper5batch7circuit14planes_product17h696b33a4771f6e0eE",
+        "bl\t_ZN7wrapper5batch9transpose17hd46f5e2a2ca43c80E",
+        "bl\tmemset"
+      ]
+    },
+    "riscv64gc-unknown-linux-gnu": {
+      "sha256": "8e4f16f0be2e69e090765a1505b33ae2f4c927765d4fe33e784dd28d69db58ec",
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "bne\ta0, a2, .LBB1_1",
+        "bne\ta0, a6, .LBB1_3",
+        "bne\ta0, a2, .LBB1_5",
+        "bne\ta5, a6, .LBB2_1",
+        "bne\ts1, a0, .LBB3_1",
+        "bne\ts1, a0, .LBB4_1",
+        "j\t.LBB6_3",
+        "beq\ta4, a6, .LBB6_5",
+        "bgez\tt2, .LBB6_1",
+        "j\t.LBB6_2",
+        "bne\ts1, a0, .LBB7_1"
+      ],
+      "calls_for_manual_review": [
+        "call\t_ZN7wrapper5batch26clmul64_batch_xor_prepared17h153e2c01fd2bcbbcE",
+        "call\t_ZN7wrapper5batch27clmul128_batch_xor_prepared17h37b84ba81f0bdb25E",
+        "call\t_ZN7wrapper5batch7circuit14planes_product17hcff99ac19961bd74E",
+        "call\t_ZN7wrapper5batch9transpose17hda711563094b9081E",
+        "call\tmemset"
+      ]
+    }
+  },
+  "artifacts": "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-production-primitive-audit-bod9hijc",
+  "compiler": "rustc 1.87.0 (17067e9ac 2025-05-09)\nbinary: rustc\ncommit-hash: 17067e9ac6d7ecb70e50f92c1944e545188d2359\ncommit-date: 2025-05-09\nhost: aarch64-apple-darwin\nrelease: 1.87.0\nLLVM version: 20.1.1\n"
+}

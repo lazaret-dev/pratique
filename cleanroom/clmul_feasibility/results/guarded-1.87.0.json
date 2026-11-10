@@ -1,0 +1,390 @@
+{
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "machine": "arm64",
+  "artifacts": "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp",
+  "commands": [
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--version",
+        "--verbose"
+      ],
+      "exit": 0,
+      "output": "rustc 1.87.0 (17067e9ac 2025-05-09)\nbinary: rustc\ncommit-hash: 17067e9ac6d7ecb70e50f92c1944e545188d2359\ncommit-date: 2025-05-09\nhost: aarch64-apple-darwin\nrelease: 1.87.0\nLLVM version: 20.1.1\n"
+    },
+    {
+      "argv": [
+        "python3",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/generate.py"
+      ],
+      "exit": 0,
+      "output": "{'xor': 3864, 'and': 729}\n"
+    },
+    {
+      "argv": [
+        "python3",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/guard_generate.py"
+      ],
+      "exit": 0,
+      "output": "{\"public_pairs\": 14, \"correction_hex\": \"2a84905ebbf606ebfe6f3e4ac5339a85eb68a8718c4974336328e2f66ba51904\"}\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--test",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/tests"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/tests"
+      ],
+      "exit": 0,
+      "output": "\nrunning 18 tests\ntest accepted::tests::differs_from_ordinary_integer_multiplication ... ok\ntest accepted::tests::zero_one_and_boundaries ... ok\ntest guarded::tests::guarded_preparation_retains_and_exposes_all_key_storage ... ok\ntest guarded::tests::public_correction_is_exact_and_zero_payload_is_zero ... ok\ntest guarded::tests::fifty_lane_weighted_batches_match_nist_with_carried_state ... ok\ntest tests::preparation_borrows_inputs_and_replaces_all_retained_planes ... ok\ntest tests::working_storage_is_retained_and_exposes_every_aggregate_for_wiping ... ok\ntest tests::prepared_clone_can_be_wiped_without_changing_original ... ok\ntest accepted::tests::every_pair_of_single_bits ... ok\ntest tests::weighted_batch_matches_nist_recurrence ... ok\ntest guarded::tests::every_abstract_wire_has_both_public_sentinel_values ... ok\ntest tests::transpose_every_lane_and_bit ... ok\ntest tests::every_single_bit_pair ... ok\ntest tests::edges_and_mixed_lanes ... ok\ntest accepted::tests::deterministic_random_pairs ... ok\ntest tests::deterministic_random_pairs ... ok\ntest guarded::tests::fifty_lane_edges_and_random_products_match_independent_oracle ... ok\ntest tests::wide_polynomial_oracle_and_boundaries ... ok\n\ntest result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--crate-type=rlib",
+        "--crate-name=clmul_feasibility",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/libclmul_feasibility.rlib"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--extern",
+        "clmul_feasibility=/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/libclmul_feasibility.rlib",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/bench.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/bench"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "aarch64-apple-darwin",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/aarch64-apple-darwin.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-pclmulqdq",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/x86_64-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-pclmulqdq",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "i686-unknown-linux-gnu",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/i686-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "armv7-unknown-linux-gnueabihf",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/armv7-unknown-linux-gnueabihf.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "riscv64gc-unknown-linux-gnu",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/riscv64gc-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "wasm32-unknown-unknown",
+        "/private/tmp/pratique-clean-guarded-batch-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/wasm32-unknown-unknown.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-tgvuh7yp/bench",
+        "20000"
+      ],
+      "exit": 0,
+      "output": "accepted scalar x3: median 100.794 ns/call; 100.794 ns/three products; min 100.088\ntranspose only: median 64.804 ns/call; 3.038 ns/three products; min 3.028\nBoolean Karatsuba x64: median 505.069 ns/call; 23.675 ns/three products; min 23.646\nprepared x64 xor: median 303.340 ns/call; 14.219 ns/three products; min 14.208\n128-bit polynomial batch x64 xor: median 924.333 ns/call; 14.443 ns/three products; min 14.434\nprepare x64 operand in place: median 57.006 ns/call; 2.672 ns/three products; min 2.663\nprepare 128-bit operand set in place: median 161.860 ns/call; 2.529 ns/three products; min 2.526\nguarded 128-bit polynomial batch x50 xor: median 928.298 ns/call; 18.566 ns/three products; min 18.560\nprepare guarded x50 operand set in place: median 162.658 ns/call; 3.253 ns/three products; min 3.243\n"
+    }
+  ],
+  "assembly": {
+    "aarch64-apple-darwin": {
+      "sha256": "8c6972e9075987ad71582c97170580fd324adddd9a8c07adef653b2ae3b8a4cf",
+      "instruction_lines": 9296,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "b.ne\tLBB2_1",
+        "b.ne\tLBB6_1",
+        "b.ne\tLBB8_1",
+        "b.ne\tLBB9_1",
+        "b.ne\tLBB10_1"
+      ],
+      "calls_for_manual_review": [
+        "bl\t__ZN3lib18transpose_in_place17hdecbad0232d0eeeeE",
+        "bl\t__ZN3lib26clmul64_batch_xor_prepared17h5a5a4b8d270484d8E",
+        "bl\t__ZN3lib7circuit14planes_product17hdaa186562071c4e2E",
+        "bl\t__ZN3lib7guarded11guarded_sum17hb6ed5d9d8ea96724E",
+        "bl\t__ZN3lib9transpose17h3c8ffc134fbde9a1E",
+        "bl\t_bzero",
+        "bl\t_memcpy"
+      ]
+    },
+    "x86_64-unknown-linux-gnu": {
+      "sha256": "10010431623d34c0f73feecd5d54b9cd261f62aeb342ea1950b5ac145cbc6183",
+      "instruction_lines": 11698,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "jne\t.LBB1_1",
+        "jmpq\t*%rax",
+        "jne\t.LBB2_1",
+        "jne\t.LBB3_1",
+        "jne\t.LBB4_1",
+        "jne\t.LBB6_1",
+        "jmpq\t*_ZN3lib18transpose_in_place17hdecbad0232d0eeeeE@GOTPCREL(%rip)",
+        "jne\t.LBB8_1",
+        "jne\t.LBB9_1",
+        "jmpq\t*%rax",
+        "jne\t.LBB10_1"
+      ],
+      "calls_for_manual_review": [
+        "callq\t*%r13",
+        "callq\t*%r15",
+        "callq\t*%rbp",
+        "callq\t*_ZN3lib18transpose_in_place17hdecbad0232d0eeeeE@GOTPCREL(%rip)",
+        "callq\t*memcpy@GOTPCREL(%rip)",
+        "callq\t*memset@GOTPCREL(%rip)",
+        "callq\t_ZN3lib7circuit14planes_product17hdaa186562071c4e2E",
+        "callq\t_ZN3lib7guarded11guarded_sum17hb6ed5d9d8ea96724E"
+      ]
+    },
+    "i686-unknown-linux-gnu": {
+      "sha256": "f84f8763e7ca41d77ad2d4664bec438e9c5e298e78980cd35af44579723b91b2",
+      "instruction_lines": 22856,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "jne\t.LBB1_1",
+        "jne\t.LBB2_1",
+        "jne\t.LBB3_1",
+        "jne\t.LBB4_1",
+        "jne\t.LBB6_1",
+        "jne\t.LBB8_1",
+        "jne\t.LBB9_1",
+        "jne\t.LBB10_1"
+      ],
+      "calls_for_manual_review": [
+        "calll\t.L1$pb",
+        "calll\t.L10$pb",
+        "calll\t.L2$pb",
+        "calll\t.L3$pb",
+        "calll\t.L4$pb",
+        "calll\t.L5$pb",
+        "calll\t.L6$pb",
+        "calll\t.L7$pb",
+        "calll\t.L8$pb",
+        "calll\t.L9$pb",
+        "calll\t_ZN3lib18transpose_in_place17h0f72a4f49c08e7abE@PLT",
+        "calll\t_ZN3lib26clmul64_batch_xor_prepared17h66ccb2b93dd7f37eE@PLT",
+        "calll\t_ZN3lib7circuit14planes_product17h86531fd9a0462c29E",
+        "calll\t_ZN3lib7guarded11guarded_sum17h6aeab518d3ac50f8E",
+        "calll\t_ZN3lib9transpose17h14b89d17527321c4E@PLT",
+        "calll\tmemcpy@PLT",
+        "calll\tmemset@PLT"
+      ]
+    },
+    "armv7-unknown-linux-gnueabihf": {
+      "sha256": "3d2af5de0a10dcfe9998f1e13dfd6f492a4c081960576c3e7e08f5d9f4908114",
+      "instruction_lines": 24202,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "bne\t.LBB1_1",
+        "bne\t.LBB2_1",
+        "bne\t.LBB3_1",
+        "bne\t.LBB4_1",
+        "bne\t.LBB4_3",
+        "bne\t.LBB4_5",
+        "bne\t.LBB4_7",
+        "bne\t.LBB4_9",
+        "bne\t.LBB4_11",
+        "bne\t.LBB6_1",
+        "bne\t.LBB8_1",
+        "bne\t.LBB9_1",
+        "bne\t.LBB10_1"
+      ],
+      "calls_for_manual_review": [
+        "bl\t_ZN3lib18transpose_in_place17h0f72a4f49c08e7abE",
+        "bl\t_ZN3lib26clmul64_batch_xor_prepared17h66ccb2b93dd7f37eE",
+        "bl\t_ZN3lib7circuit14planes_product17h86531fd9a0462c29E",
+        "bl\t_ZN3lib7guarded11guarded_sum17h6aeab518d3ac50f8E",
+        "bl\t_ZN3lib9transpose17h14b89d17527321c4E",
+        "bl\tmemcpy",
+        "bl\tmemset"
+      ]
+    },
+    "riscv64gc-unknown-linux-gnu": {
+      "sha256": "6bbb2f8751192658396a4132da495ebce9f258c6cdb442a84d59d20a4be96baa",
+      "instruction_lines": 27318,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "bne\ta1, a2, .LBB1_1",
+        "bne\ta3, a6, .LBB2_1",
+        "bne\ta1, a0, .LBB3_1",
+        "bne\ta0, a1, .LBB4_1",
+        "bne\ta0, a6, .LBB4_3",
+        "bne\ta0, a1, .LBB4_5",
+        "bne\ts0, a0, .LBB6_1",
+        "bne\ta4, a6, .LBB8_1",
+        "bne\ta3, a2, .LBB9_1",
+        "bne\ta4, a3, .LBB10_1"
+      ],
+      "calls_for_manual_review": [
+        "call\t_ZN3lib18transpose_in_place17hdecbad0232d0eeeeE",
+        "call\t_ZN3lib26clmul64_batch_xor_prepared17h5a5a4b8d270484d8E",
+        "call\t_ZN3lib7circuit14planes_product17hdaa186562071c4e2E",
+        "call\t_ZN3lib7guarded11guarded_sum17hb6ed5d9d8ea96724E",
+        "call\t_ZN3lib9transpose17h3c8ffc134fbde9a1E",
+        "call\tmemcpy",
+        "call\tmemset"
+      ]
+    },
+    "wasm32-unknown-unknown": {
+      "sha256": "882298a99d1c5c38b9a52b08130282132c6608b11c2295e21e9ae3096a5da814",
+      "instruction_lines": 14782,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0"
+      ],
+      "calls_for_manual_review": [
+        "call\t_ZN3lib18transpose_in_place17h0f72a4f49c08e7abE",
+        "call\t_ZN3lib26clmul64_batch_xor_prepared17h66ccb2b93dd7f37eE",
+        "call\t_ZN3lib7circuit14planes_product17h86531fd9a0462c29E",
+        "call\t_ZN3lib7guarded11guarded_sum17h6aeab518d3ac50f8E",
+        "call\t_ZN3lib9transpose17h14b89d17527321c4E"
+      ]
+    }
+  },
+  "sources": {
+    "lib.rs": "c3ca7b3367494b8cf394c9c6c30fbf1517b15afa088e693b38b1cfd090400997",
+    "circuit.rs": "4e95f3308435b4b91885c2013a20dc8748ebf2879af14acf9c6265f0e7a2c467",
+    "generate.py": "ef8d2043c0241ece9f2922f982fbe2fa93b31f8eeae162c2f76443be12e4fbef",
+    "bench.rs": "4131ad6ff14a7cb859b679f682cf87a8002b476b02d8008ec0a3723547c5767d",
+    "timing.rs": "ed6b00c98d1158ee9a982d2b67edf5a542c8ca0a6a31a6e7a927614985b6fb41",
+    "check.py": "6a0e8256704a24a56d2e2c6e6b65e5eda4f5f75f177352738322d4b643f1816a",
+    "guarded.rs": "b37dafde68dec57925b98040fac70a614fbfdc24ede3384df2f9fc01d825de76",
+    "guard_constants.rs": "0749b807035493f54b4bad10359bb80c625875ac7143140ad1d3680cc1e36716",
+    "guard_generate.py": "f2d6ddf6b9a480b04d008bd84eb4da6a1cfe200ab40d1bee3ca7e60e63c33a8e",
+    "guard_witness.py": "8c7c4add6ecb5ce5c7f668f4c4a2fa6a9b63aba317b02ea85a320c7b2df2634a",
+    "guard-witness.json": "3eff3b37fa6926989e3ff78c8da249df59eacd864072a5d1cb24deadbfa477e5",
+    "GUARDED.md": "0010c5fd28f5922a4b55d4afd99b4d4af529ec1b2741e6c4bafbe120f5afe6b7"
+  }
+}

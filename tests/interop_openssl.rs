@@ -14,16 +14,26 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+// Preserve a bounded result of the availability command already run by these
+// tests; failure reporting must not launch another process or extend a wait.
+static OPENSSL_VERSION_FOR_FAILURE: OnceLock<String> = OnceLock::new();
 
 fn have_openssl() -> bool {
     Command::new("openssl")
         .arg("version")
-        .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
+        .output()
+        .map(|output| {
+            if output.status.success() && OPENSSL_VERSION_FOR_FAILURE.get().is_none() {
+                let version = &output.stdout[..output.stdout.len().min(1024)];
+                let _ = OPENSSL_VERSION_FOR_FAILURE
+                    .set(String::from_utf8_lossy(version).trim().to_owned());
+            }
+            output.status.success()
+        })
         .unwrap_or(false)
 }
 
@@ -1349,8 +1359,17 @@ fn wait_for(path: &Path, needle: &[u8], what: &str) {
         }
         assert!(
             Instant::now() < deadline,
-            "{what}: the server never printed {:?}",
-            String::from_utf8_lossy(needle)
+            "{what}: the server never printed {:?}; OpenSSL version: {}; \
+             last read of {}: {} bytes (empty also covers a read error); \
+             final at most 4096 bytes: {:?}",
+            String::from_utf8_lossy(needle),
+            OPENSSL_VERSION_FOR_FAILURE
+                .get()
+                .map(String::as_str)
+                .unwrap_or("unavailable: no successful version command observed"),
+            path.display(),
+            data.len(),
+            String::from_utf8_lossy(&data[data.len().saturating_sub(4096)..])
         );
         std::thread::sleep(Duration::from_millis(20));
     }

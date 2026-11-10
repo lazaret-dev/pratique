@@ -1,0 +1,7 @@
+fuzz[aead]: 20 corpus files (0 from disk), 774 edges so far
+fuzz[aead]: #153472 edges 792 corpus 88 exec/s 15338 crashes 0 bloat 0 (last new coverage 4 s ago)
+fuzz[aead]: #290304 edges 792 corpus 89 exec/s 14507 crashes 0 bloat 0 (last new coverage 8 s ago)
+fuzz[aead]: #415232 edges 792 corpus 89 exec/s 13833 crashes 0 bloat 0 (last new coverage 18 s ago)
+fuzz[aead]: #546048 edges 792 corpus 89 exec/s 13640 crashes 0 bloat 0 (last new coverage 28 s ago)
+fuzz[aead]: #660864 edges 792 corpus 89 exec/s 13207 crashes 0 bloat 0 (last new coverage 38 s ago)
+fuzz[aead]: done. 791168 execs in 60 s (13186/s), 792 edges, corpus 89, 0 distinct panics, 0 bloat inputs

@@ -1,0 +1,21 @@
+
+running 1 test
+test crypto::timing::ghash_multiplication_is_constant_time ... ghash [Portable] data blocks: 0 vs random (fixed H)        n= 354304      median    7958 ns  |t| uncropped    0.2  max    1.6  no leak detected
+ghash [Portable] data blocks: all ones vs random (fixed H) n= 355328      median    7958 ns  |t| uncropped    1.2  max    1.2  no leak detected
+ghash [Portable] hash key H: 0 vs random                   n= 363520      median    7958 ns  |t| uncropped    0.8  max    1.5  no leak detected
+ghash [Portable] hash key H: all ones vs random            n= 359424      median    7959 ns  |t| uncropped    1.6  max    2.8  no leak detected
+ghash [Portable] batch 1024 data: 0 vs random              n=1072128      median    1209 ns  |t| uncropped    2.2  max    2.2  no leak detected
+ghash [Portable] batch 1024 prepared H: 0 vs random        n= 348160      median    1250 ns  |t| uncropped    0.6  max    1.2  no leak detected
+ghash [Portable] batch 2049 data: 0 vs random              n= 550912      median    2334 ns  |t| uncropped    0.2  max    0.8  no leak detected
+ghash [Portable] batch 2049 prepared H: 0 vs random        n= 309248      median    2334 ns  |t| uncropped    1.9  max    1.9  no leak detected
+ghash [Hardware] data blocks: 0 vs random (fixed H)        n=1265664 x8   median      93 ns  |t| uncropped    0.3  max    0.8  no leak detected
+ghash [Hardware] data blocks: all ones vs random (fixed H) n=1286144 x8   median      93 ns  |t| uncropped    0.0  max    2.2  no leak detected
+ghash [Hardware] hash key H: 0 vs random                   n=2658304 x9   median      92 ns  |t| uncropped    0.7  max    1.6  no leak detected
+ghash [Hardware] hash key H: all ones vs random            n=2675712 x9   median      92 ns  |t| uncropped    1.4  max    1.4  no leak detected
+ghash [Hardware] batch 1024 data: 0 vs random              n= 524288 x3   median     403 ns  |t| uncropped    2.0  max    2.0  no leak detected
+ghash [Hardware] batch 1024 prepared H: 0 vs random        n=2790400 x2   median     416 ns  |t| uncropped    0.4  max    1.1  no leak detected
+ghash [Hardware] batch 2049 data: 0 vs random              n= 395264 x2   median     812 ns  |t| uncropped    1.2  max    1.2  no leak detected
+ghash [Hardware] batch 2049 prepared H: 0 vs random        n=1610752 x2   median     812 ns  |t| uncropped    0.7  max    1.0  no leak detected
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1653 filtered out; finished in 48.80s

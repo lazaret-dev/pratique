@@ -1,0 +1,13 @@
+
+running 1 test
+test crypto::timing::aes_is_constant_time ... aes-128-gcm [Portable] key setup + seal 64 B: zero key vs random n= 312320      median    9416 ns  |t| uncropped    0.3  max    1.1  no leak detected
+aes-128-gcm [Portable] key setup + seal 64 B: all-ones key vs random n= 306176      median    9417 ns  |t| uncropped    0.4  max    2.1  no leak detected
+aes-256-gcm [Portable] key setup + seal 64 B: zero key vs random n= 294912      median    9917 ns  |t| uncropped    1.0  max    1.2  no leak detected
+aes-256-gcm [Portable] key setup + seal 64 B: all-ones key vs random n= 294912      median    9917 ns  |t| uncropped    0.8  max    0.8  no leak detected
+aes-128-gcm [Portable] key setup + seal 32 B: zero key vs random n= 325632      median    9000 ns  |t| uncropped    1.7  max    1.7  no leak detected
+aes-128-gcm [Portable] seal 32 B: zeros vs random          n=2171904 x2   median     583 ns  |t| uncropped    0.1  max    2.1  no leak detected
+aes-128-gcm [Portable] seal 1 KiB: zeros vs random         n= 446464      median    5042 ns  |t| uncropped    1.3  max    1.3  no leak detected
+aes-128-gcm [Portable] seal 1 KiB: all-ones vs random      n= 449536      median    5042 ns  |t| uncropped    0.3  max    0.8  no leak detected
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1653 filtered out; finished in 24.28s

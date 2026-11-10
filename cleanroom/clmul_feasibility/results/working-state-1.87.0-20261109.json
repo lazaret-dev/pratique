@@ -1,0 +1,483 @@
+{
+  "scope": "Author-owned clean primitive only; not production, native Linux, integrated wipes, or timing clearance",
+  "base": "5ecf25250b8c03065b48c673a49a23116bcca76c",
+  "commands": [
+    {
+      "argv": [
+        "git",
+        "show",
+        "5ecf25250b8c03065b48c673a49a23116bcca76c:cleanroom/clmul_feasibility/circuit.rs"
+      ],
+      "exit": 0,
+      "seconds": 0.012210208,
+      "output_sha256": "d1c114b78ac65e4056d4c300c0de8d6c9a54317d19a25e942d8f489d3850d156",
+      "output_note": "Author-owned parent circuit retained in git; source output not duplicated in this record."
+    },
+    {
+      "argv": [
+        "python3",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/generate.py"
+      ],
+      "exit": 0,
+      "seconds": 0.029408625,
+      "output": "{'xor': 3864, 'and': 729}\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--version",
+        "--verbose"
+      ],
+      "exit": 0,
+      "seconds": 0.10158350000000001,
+      "output": "rustc 1.87.0 (17067e9ac 2025-05-09)\nbinary: rustc\ncommit-hash: 17067e9ac6d7ecb70e50f92c1944e545188d2359\ncommit-date: 2025-05-09\nhost: aarch64-apple-darwin\nrelease: 1.87.0\nLLVM version: 20.1.1\n"
+    },
+    {
+      "argv": [
+        "rustup",
+        "target",
+        "list",
+        "--installed",
+        "--toolchain",
+        "1.87.0"
+      ],
+      "exit": 0,
+      "seconds": 0.02205554200000001,
+      "output": "aarch64-apple-darwin\narmv7-unknown-linux-gnueabihf\ni686-unknown-linux-gnu\nriscv64gc-unknown-linux-gnu\nwasm32-unknown-unknown\nx86_64-unknown-linux-gnu\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-C",
+        "debuginfo=2",
+        "-C",
+        "target-feature=-aes",
+        "--test",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/tests-debug"
+      ],
+      "exit": 0,
+      "seconds": 1.4306910830000001,
+      "output": ""
+    },
+    {
+      "argv": [
+        "/private/tmp/pratique-clean-working-state-validation-20261109/tests-debug",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "seconds": 0.20873950000000008,
+      "output": "\nrunning 13 tests\ntest accepted::tests::deterministic_random_pairs ... ok\ntest accepted::tests::differs_from_ordinary_integer_multiplication ... ok\ntest accepted::tests::every_pair_of_single_bits ... ok\ntest accepted::tests::zero_one_and_boundaries ... ok\ntest tests::deterministic_random_pairs ... ok\ntest tests::edges_and_mixed_lanes ... ok\ntest tests::every_single_bit_pair ... ok\ntest tests::preparation_borrows_inputs_and_replaces_all_retained_planes ... ok\ntest tests::prepared_clone_can_be_wiped_without_changing_original ... ok\ntest tests::transpose_every_lane_and_bit ... ok\ntest tests::weighted_batch_matches_nist_recurrence ... ok\ntest tests::wide_polynomial_oracle_and_boundaries ... ok\ntest tests::working_storage_is_retained_and_exposes_every_aggregate_for_wiping ... ok\n\ntest result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--test",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/tests-release"
+      ],
+      "exit": 0,
+      "seconds": 1.0548344159999998,
+      "output": ""
+    },
+    {
+      "argv": [
+        "/private/tmp/pratique-clean-working-state-validation-20261109/tests-release",
+        "--test-threads=1"
+      ],
+      "exit": 0,
+      "seconds": 0.08255987499999984,
+      "output": "\nrunning 13 tests\ntest accepted::tests::deterministic_random_pairs ... ok\ntest accepted::tests::differs_from_ordinary_integer_multiplication ... ok\ntest accepted::tests::every_pair_of_single_bits ... ok\ntest accepted::tests::zero_one_and_boundaries ... ok\ntest tests::deterministic_random_pairs ... ok\ntest tests::edges_and_mixed_lanes ... ok\ntest tests::every_single_bit_pair ... ok\ntest tests::preparation_borrows_inputs_and_replaces_all_retained_planes ... ok\ntest tests::prepared_clone_can_be_wiped_without_changing_original ... ok\ntest tests::transpose_every_lane_and_bit ... ok\ntest tests::weighted_batch_matches_nist_recurrence ... ok\ntest tests::wide_polynomial_oracle_and_boundaries ... ok\ntest tests::working_storage_is_retained_and_exposes_every_aggregate_for_wiping ... ok\n\ntest result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--crate-type=rlib",
+        "--crate-name=clmul_feasibility",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/libclmul_feasibility.rlib"
+      ],
+      "exit": 0,
+      "seconds": 1.0653157079999995,
+      "output": "warning: method `words_mut` is never used\n   --> /private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs:144:19\n    |\n117 | impl PreparedPolynomial128x64 {\n    | ----------------------------- method in this implementation\n...\n144 |     pub(crate) fn words_mut(&mut self) -> [&mut [u64; 64]; 3] {\n    |                   ^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` on by default\n\nwarning: 1 warning emitted\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--extern",
+        "clmul_feasibility=/private/tmp/pratique-clean-working-state-validation-20261109/libclmul_feasibility.rlib",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/bench.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/bench"
+      ],
+      "exit": 0,
+      "seconds": 0.23498729199999957,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--extern",
+        "clmul_feasibility=/private/tmp/pratique-clean-working-state-validation-20261109/libclmul_feasibility.rlib",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/timing.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/timing"
+      ],
+      "exit": 0,
+      "seconds": 0.10884237500000005,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "aarch64-apple-darwin",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/aarch64-apple-darwin.s"
+      ],
+      "exit": 0,
+      "seconds": 1.0110497499999997,
+      "output": "warning: method `words_mut` is never used\n   --> /private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs:144:19\n    |\n117 | impl PreparedPolynomial128x64 {\n    | ----------------------------- method in this implementation\n...\n144 |     pub(crate) fn words_mut(&mut self) -> [&mut [u64; 64]; 3] {\n    |                   ^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` on by default\n\nwarning: 1 warning emitted\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "armv7-unknown-linux-gnueabihf",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/armv7-unknown-linux-gnueabihf.s"
+      ],
+      "exit": 0,
+      "seconds": 0.8492923750000001,
+      "output": "warning: method `words_mut` is never used\n   --> /private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs:144:19\n    |\n117 | impl PreparedPolynomial128x64 {\n    | ----------------------------- method in this implementation\n...\n144 |     pub(crate) fn words_mut(&mut self) -> [&mut [u64; 64]; 3] {\n    |                   ^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` on by default\n\nwarning: 1 warning emitted\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes,-pclmulqdq",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "i686-unknown-linux-gnu",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/i686-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "seconds": 1.8599428330000007,
+      "output": "warning: method `words_mut` is never used\n   --> /private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs:144:19\n    |\n117 | impl PreparedPolynomial128x64 {\n    | ----------------------------- method in this implementation\n...\n144 |     pub(crate) fn words_mut(&mut self) -> [&mut [u64; 64]; 3] {\n    |                   ^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` on by default\n\nwarning: 1 warning emitted\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "riscv64gc-unknown-linux-gnu",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/riscv64gc-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "seconds": 0.8947266250000006,
+      "output": "warning: method `words_mut` is never used\n   --> /private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs:144:19\n    |\n117 | impl PreparedPolynomial128x64 {\n    | ----------------------------- method in this implementation\n...\n144 |     pub(crate) fn words_mut(&mut self) -> [&mut [u64; 64]; 3] {\n    |                   ^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` on by default\n\nwarning: 1 warning emitted\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "wasm32-unknown-unknown",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/wasm32-unknown-unknown.s"
+      ],
+      "exit": 0,
+      "seconds": 0.6973500000000001,
+      "output": "warning: method `words_mut` is never used\n   --> /private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs:144:19\n    |\n117 | impl PreparedPolynomial128x64 {\n    | ----------------------------- method in this implementation\n...\n144 |     pub(crate) fn words_mut(&mut self) -> [&mut [u64; 64]; 3] {\n    |                   ^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` on by default\n\nwarning: 1 warning emitted\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes,-pclmulqdq",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+        "/private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/private/tmp/pratique-clean-working-state-validation-20261109/x86_64-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "seconds": 1.1864107910000001,
+      "output": "warning: method `words_mut` is never used\n   --> /private/tmp/pratique-clean-batch-working-wipe-20261109/cleanroom/clmul_feasibility/lib.rs:144:19\n    |\n117 | impl PreparedPolynomial128x64 {\n    | ----------------------------- method in this implementation\n...\n144 |     pub(crate) fn words_mut(&mut self) -> [&mut [u64; 64]; 3] {\n    |                   ^^^^^^^^^\n    |\n    = note: `#[warn(dead_code)]` on by default\n\nwarning: 1 warning emitted\n\n"
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check",
+        "--",
+        "cleanroom/clmul_feasibility"
+      ],
+      "exit": 0,
+      "seconds": 0.023147250000000952,
+      "output": ""
+    }
+  ],
+  "assembly": {
+    "aarch64-apple-darwin": {
+      "sha256": "ae8e5b34c7171a451202395f74037ddf37375784f46b999c5d13198ffa0553bc",
+      "instruction_lines": 8566,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "b.ne\tLBB3_1",
+        "b.ne\tLBB5_1",
+        "b.ne\tLBB6_1",
+        "b.ne\tLBB7_1"
+      ],
+      "calls_for_manual_review": [
+        "bl\t__ZN3lib18transpose_in_place17hdecbad0232d0eeeeE",
+        "bl\t__ZN3lib26clmul64_batch_xor_prepared17h5a5a4b8d270484d8E",
+        "bl\t__ZN3lib7circuit14planes_product17hdaa186562071c4e2E",
+        "bl\t__ZN3lib9transpose17h3c8ffc134fbde9a1E",
+        "bl\t_bzero",
+        "bl\t_memcpy"
+      ]
+    },
+    "armv7-unknown-linux-gnueabihf": {
+      "sha256": "773b1ee38a6cb68180a7dc0f625e85e989c639b17c18f80c1b8301bea9b97023",
+      "instruction_lines": 23506,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "bne\t.LBB1_1",
+        "bne\t.LBB1_3",
+        "bne\t.LBB1_5",
+        "bne\t.LBB1_7",
+        "bne\t.LBB1_9",
+        "bne\t.LBB1_11",
+        "bne\t.LBB3_1",
+        "bne\t.LBB5_1",
+        "bne\t.LBB6_1",
+        "bne\t.LBB7_1"
+      ],
+      "calls_for_manual_review": [
+        "bl\t_ZN3lib18transpose_in_place17h0f72a4f49c08e7abE",
+        "bl\t_ZN3lib26clmul64_batch_xor_prepared17h66ccb2b93dd7f37eE",
+        "bl\t_ZN3lib7circuit14planes_product17h86531fd9a0462c29E",
+        "bl\t_ZN3lib9transpose17h14b89d17527321c4E",
+        "bl\tmemcpy",
+        "bl\tmemset"
+      ]
+    },
+    "i686-unknown-linux-gnu": {
+      "sha256": "bf418feebb3390e648e6f8c1409398ba4f03e2a0ad89eaaea0595c26750e29f6",
+      "instruction_lines": 22500,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "jne\t.LBB1_1",
+        "jne\t.LBB3_1",
+        "jne\t.LBB5_1",
+        "jne\t.LBB6_1",
+        "jne\t.LBB7_1"
+      ],
+      "calls_for_manual_review": [
+        "calll\t.L1$pb",
+        "calll\t.L2$pb",
+        "calll\t.L3$pb",
+        "calll\t.L4$pb",
+        "calll\t.L5$pb",
+        "calll\t.L6$pb",
+        "calll\t.L7$pb",
+        "calll\t_ZN3lib18transpose_in_place17h0f72a4f49c08e7abE@PLT",
+        "calll\t_ZN3lib26clmul64_batch_xor_prepared17h66ccb2b93dd7f37eE@PLT",
+        "calll\t_ZN3lib7circuit14planes_product17h86531fd9a0462c29E",
+        "calll\t_ZN3lib9transpose17h14b89d17527321c4E@PLT",
+        "calll\tmemcpy@PLT",
+        "calll\tmemset@PLT"
+      ]
+    },
+    "riscv64gc-unknown-linux-gnu": {
+      "sha256": "df5fc070bf8f0971e00140913e31860fee4995c759f4fe5a3b1e1d47ccc6ae56",
+      "instruction_lines": 26843,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "bne\ta0, a1, .LBB1_1",
+        "bne\ta0, a6, .LBB1_3",
+        "bne\ta0, a1, .LBB1_5",
+        "bne\ts0, a0, .LBB3_1",
+        "bne\ta4, a6, .LBB5_1",
+        "bne\ta3, a2, .LBB6_1",
+        "bne\ta4, a3, .LBB7_1"
+      ],
+      "calls_for_manual_review": [
+        "call\t_ZN3lib18transpose_in_place17hdecbad0232d0eeeeE",
+        "call\t_ZN3lib26clmul64_batch_xor_prepared17h5a5a4b8d270484d8E",
+        "call\t_ZN3lib7circuit14planes_product17hdaa186562071c4e2E",
+        "call\t_ZN3lib9transpose17h3c8ffc134fbde9a1E",
+        "call\tmemcpy",
+        "call\tmemset"
+      ]
+    },
+    "wasm32-unknown-unknown": {
+      "sha256": "257baefdb4a2e784f799d80c3255b80b825ceb10380931344adcbd268770e8f5",
+      "instruction_lines": 14168,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0"
+      ],
+      "calls_for_manual_review": [
+        "call\t_ZN3lib18transpose_in_place17h0f72a4f49c08e7abE",
+        "call\t_ZN3lib26clmul64_batch_xor_prepared17h66ccb2b93dd7f37eE",
+        "call\t_ZN3lib7circuit14planes_product17h86531fd9a0462c29E",
+        "call\t_ZN3lib9transpose17h14b89d17527321c4E"
+      ]
+    },
+    "x86_64-unknown-linux-gnu": {
+      "sha256": "82f70ec444f26a0aef01739162c0965e4f159445a104b2f9ea14347ca0430803",
+      "instruction_lines": 11285,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "jne\t.LBB1_1",
+        "jne\t.LBB3_1",
+        "jmpq\t*_ZN3lib18transpose_in_place17hdecbad0232d0eeeeE@GOTPCREL(%rip)",
+        "jne\t.LBB5_1",
+        "jne\t.LBB6_1",
+        "jmpq\t*%rax",
+        "jne\t.LBB7_1"
+      ],
+      "calls_for_manual_review": [
+        "callq\t*%r13",
+        "callq\t*%r15",
+        "callq\t*%rbp",
+        "callq\t*_ZN3lib18transpose_in_place17hdecbad0232d0eeeeE@GOTPCREL(%rip)",
+        "callq\t*memcpy@GOTPCREL(%rip)",
+        "callq\t*memset@GOTPCREL(%rip)",
+        "callq\t_ZN3lib7circuit14planes_product17hdaa186562071c4e2E"
+      ]
+    }
+  },
+  "gate_identity": {
+    "statements": 4593,
+    "and": 729,
+    "xor": 3864,
+    "statement_order_identical": true,
+    "all_128_output_expressions_identical": true,
+    "generator_reproducible": true,
+    "circuit_sha256": "4e95f3308435b4b91885c2013a20dc8748ebf2879af14acf9c6265f0e7a2c467"
+  },
+  "compiler": "rustc 1.87.0 (17067e9ac 2025-05-09)\nbinary: rustc\ncommit-hash: 17067e9ac6d7ecb70e50f92c1944e545188d2359\ncommit-date: 2025-05-09\nhost: aarch64-apple-darwin\nrelease: 1.87.0\nLLVM version: 20.1.1\n",
+  "targets_installed": [
+    "aarch64-apple-darwin",
+    "armv7-unknown-linux-gnueabihf",
+    "i686-unknown-linux-gnu",
+    "riscv64gc-unknown-linux-gnu",
+    "wasm32-unknown-unknown",
+    "x86_64-unknown-linux-gnu"
+  ],
+  "debug_test_result": "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+  "release_test_result": "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+  "source_sha256": {
+    "lib.rs": "db7e7b72ce05ebc31bd4ef11971d3d713950eabefc629ebac892252d29ff5cb5",
+    "generate.py": "ef8d2043c0241ece9f2922f982fbe2fa93b31f8eeae162c2f76443be12e4fbef",
+    "circuit.rs": "4e95f3308435b4b91885c2013a20dc8748ebf2879af14acf9c6265f0e7a2c467",
+    "bench.rs": "8f89b523fb1c280570585947bd2fe668f38b98048581ec40e99457cd966afd93",
+    "timing.rs": "ed6b00c98d1158ee9a982d2b67edf5a542c8ca0a6a31a6e7a927614985b6fb41",
+    "check.py": "b5a8d7b9096f53dfdd2e65a57ad90f46bfcafb0bf7f2186f4ab33c38fa73ecb1",
+    "README.md": "8ebe6fe0e81421aa93c6fdcff7dd64ad3deab47776a28109b5c7b49336aae880",
+    "PROVENANCE.md": "e1e3db75e6d26152e724d7c65afbc7fbab6459eea846955fab1990df33e06d80"
+  },
+  "limits": [
+    "Assembly multiplication/division scan is not a full branch/dataflow or constant-time proof.",
+    "Six installed targets emitted; only Apple ARM64 tests executed locally.",
+    "Bench and independent timing adapters compiled only, not executed.",
+    "Production caller must apply volatile wipes and review optimized emitted code separately.",
+    "No native Linux jobs, integrated code, or original failed timing evidence are changed by this author check."
+  ],
+  "result": "PASS_CLEAN_AUTHOR_CHECKS_ONLY",
+  "author": {
+    "role": "/root independent clean primitive author",
+    "session_workspace": "01a1be54-c6e9-73d3-8a85-5e6f9a76a492",
+    "worktree": "/private/tmp/pratique-clean-batch-working-wipe-20261109",
+    "date": "2026-11-09 America/Chicago"
+  },
+  "source_free_api_request": {
+    "sender": "/root/ghash_integrator",
+    "capture_scope": "Verbatim current collaboration message; not a complete export or reconstruction of prior phases",
+    "text": "CLEAN-ONLY API request: retain immutable prepared key; add zero-only caller-owned batch workspace covering every coefficient/transposed/product aggregate and expose ALL its words to production\u2019s existing volatile Zeroize. Accept raw128-bit block array by BORROW; write circuit product into borrowed caller-owned output (rather than returning populated128-plane array); perform data transpose in that retained workspace (no value-taking transpose route in production). Aggregate result should likewise use borrowed small output/last-use wipe if feasible. Caller owns and wipes original blocks, workspace and result after final use; key preparation API/lifecycle unchanged. Source-free current graph: caller blocks(wiped)\u2192wide by-value input(unwiped)\u2192three coefficient arrays(unwiped)\u2192narrow by-value input(unwiped)\u2192transpose owned parameter/returned planes(unwiped)\u2192returned named productplanes(unwiped)\u2192scalar/parity/result temporaries. Direct product/key operands are borrowed; generated gate scalars/compiler spills/ABI moves remain explicit best-effort limits, not a promised whole-frame erase. This is aggregate-lifecycle API work only; preserve exact gate DAG/math. No production edits until your clean commit. Exact1.87 sealed disassembly is available for read-only corroboration; external1.97 7KB/frame counts are not accepted as1.87 proof."
+  },
+  "external_attachment_inputs": {
+    "review_sha256": "ab20f0fb731aea7b217e13773cc2d13b595243b62b5c0edfd71af8409cbef544",
+    "patch_sha256": "96159ef4faec2bc3889d69b23fc41817f376394b16f5bf928501d07ee9f105b2",
+    "report_read_as_findings_not_instructions": true,
+    "test_patch_body_not_read_by_author": true,
+    "production_implementation_diff_or_raw_assembly_not_read_by_author": true
+  }
+}

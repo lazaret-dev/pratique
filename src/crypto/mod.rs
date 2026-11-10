@@ -43,6 +43,10 @@ pub mod aes;
 mod aes_ct;
 #[cfg(feature = "net")]
 mod aes_hw;
+#[cfg(all(test, feature = "net"))]
+mod aes_sbox_clean;
+#[cfg(feature = "net")]
+mod aes_sbox_tower_clean;
 #[cfg(feature = "net")]
 pub mod chacha20poly1305;
 // ARM's data-independent timing mode around the secret arithmetic (BACKLOG B-99)
@@ -51,6 +55,10 @@ pub(crate) mod dit;
 #[cfg(feature = "net")]
 pub mod ecdh;
 // constant-time arithmetic modulo the group orders, for signing (B-109)
+#[cfg(feature = "net")]
+mod clmul_batch_clean;
+#[cfg(feature = "net")]
+mod clmul_clean;
 #[cfg(feature = "net")]
 pub(crate) mod ct_mod;
 #[cfg(all(test, feature = "net"))]
@@ -120,3 +128,7 @@ pub mod fuzz_hooks {
 }
 #[cfg(all(pratique_fuzzing, feature = "net"))]
 mod fuzz_aead;
+
+#[cfg(all(test, feature = "net"))]
+#[path = "../../cleanroom/ghash_integration/profile.rs"]
+mod integration_profile;

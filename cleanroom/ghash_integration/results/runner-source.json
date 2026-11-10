@@ -1,0 +1,27 @@
+{
+  "purpose": "Contained cross-platform validation wrapper only; no product source rewrites",
+  "source_commit": "9e16efed4b547a346c83d5725d4f533d74c35e8a",
+  "source_tree": "a0c714834868a22010af66dd02124d4c063677f7",
+  "source_prefix": "rust/",
+  "excluded": [
+    "fuzz/corpus/"
+  ],
+  "wrapper_commit": "5f0539326dfb945f630f0caad89868e29fc28b94",
+  "wrapper_tree": "56f311e54c987d4c0c68a8cde40f11cafd84228e",
+  "subtree_checks": {
+    "src": "de20bdbd58b9815aeeeb11f6d169a9a6e5fbb161",
+    "tests": "0366b064ea1a7495e923862a07e6d0bd916a8380",
+    "Cargo.toml": "691330c508224970499d585100157c30de65be25",
+    "roots": "6aba3f2ba8dafa4af80083ba535d95801cc7cf99",
+    "examples": "9fed5a4f0ecba10c4f5162ba57bd6f2f70ea4ef8",
+    "tools": "545b6e7369d4bc695a784c847b02c9b94e071628",
+    "cleanroom": "57e841e657be74a372a128b0b475bcbe2bdaddb8"
+  },
+  "workspace_root": "/private/tmp/pratique-runner-validation-20261108/rust",
+  "workspace_members": [
+    "path+file:///private/tmp/pratique-runner-validation-20261108/rust#pratique@0.1.0"
+  ],
+  "bundle": "/private/tmp/pratique-runner-validation-20261108.bundle",
+  "bundle_bytes": 4633041,
+  "bundle_sha256": "71b4d837cc3308d1bdc43fd388f785db9b1e36c740e7737d0a03f77751dc4904"
+}

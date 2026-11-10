@@ -1,0 +1,103 @@
+{
+  "apply_generated": false,
+  "arch": null,
+  "base_commit": "5f0539326dfb945f630f0caad89868e29fc28b94",
+  "cancel_requested": false,
+  "clean_gate_eligible": true,
+  "completed_at": "2026-11-09T04:27:01.895380Z",
+  "current_step": 1,
+  "declared_source_sha256": "71b4d837cc3308d1bdc43fd388f785db9b1e36c740e7737d0a03f77751dc4904",
+  "detail": false,
+  "error_code": null,
+  "error_message": null,
+  "exchange_id": "pratique-batch-crypto-linux-20261108-5f053932",
+  "expected_tree_oid": "56f311e54c987d4c0c68a8cde40f11cafd84228e",
+  "full_gate": false,
+  "inbox_file": "exchange-pratique-batch-crypto-linux-20261108-5f053932-b9cacd6dd53d4f9190c635c5500f108c.bundle",
+  "job_id": "36f97d6f-668b-4dd6-9146-de9add122517",
+  "observed_commit_oid": "5f0539326dfb945f630f0caad89868e29fc28b94",
+  "observed_tree_oid": "56f311e54c987d4c0c68a8cde40f11cafd84228e",
+  "platform": "linux_arm64",
+  "python_version": "3.12",
+  "queue_sequence": 803,
+  "requested_commit": "5f0539326dfb945f630f0caad89868e29fc28b94",
+  "result": {
+    "artifacts": [],
+    "clean_gate_eligible": true,
+    "engine_provenance": {
+      "native_commit": null,
+      "wasm_commit": null
+    },
+    "generated_patch": null,
+    "source": {
+      "commit_oid": "5f0539326dfb945f630f0caad89868e29fc28b94",
+      "mirror_has_declared_base": false,
+      "source_sha256": "71b4d837cc3308d1bdc43fd388f785db9b1e36c740e7737d0a03f77751dc4904",
+      "tree_oid": "56f311e54c987d4c0c68a8cde40f11cafd84228e"
+    },
+    "target_cache": {
+      "ancestor_distance": null,
+      "clone_mode": "empty",
+      "source_commit": null,
+      "warm": false
+    },
+    "toolchain": {
+      "cargo": "cargo 1.97.0 (c980f4866 2026-06-30)",
+      "container_image": "lazaret-runner-executor:0.11.0",
+      "node": "v22.23.4",
+      "platform": "linux/arm64",
+      "python": "Python 3.12.16",
+      "requested_python": "3.12",
+      "rust_targets": [
+        "aarch64-unknown-linux-gnu",
+        "wasm32-unknown-unknown"
+      ],
+      "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: aarch64-unknown-linux-gnu\nrelease: 1.97.0\nLLVM version: 22.1.6"
+    }
+  },
+  "source_kind": "bundle",
+  "source_sha256": "71b4d837cc3308d1bdc43fd388f785db9b1e36c740e7737d0a03f77751dc4904",
+  "started_at": "2026-11-09T04:25:42.060211Z",
+  "state": "succeeded",
+  "steps": [
+    {
+      "completed_at": "2026-11-09T04:26:57.898496Z",
+      "duration_ms": 763,
+      "errors": 0,
+      "exit_code": 0,
+      "extended_timeout": false,
+      "failed": 0,
+      "failing_tests": [],
+      "kind": "cargo_test",
+      "passed": 187,
+      "skipped": 21,
+      "skipped_reasons": {},
+      "slow_modules": [],
+      "started_at": "2026-11-09T04:25:56.108309Z",
+      "state": "passed",
+      "step_no": 0,
+      "tests_run": 208,
+      "timeout_seconds": 45
+    },
+    {
+      "completed_at": "2026-11-09T04:26:59.332359Z",
+      "duration_ms": 637,
+      "errors": 0,
+      "exit_code": 0,
+      "extended_timeout": false,
+      "failed": 0,
+      "failing_tests": [],
+      "kind": "cargo_test",
+      "passed": 169,
+      "skipped": 0,
+      "skipped_reasons": {},
+      "slow_modules": [],
+      "started_at": "2026-11-09T04:26:58.310281Z",
+      "state": "passed",
+      "step_no": 1,
+      "tests_run": 169,
+      "timeout_seconds": 45
+    }
+  ],
+  "submitted_at": "2026-11-09T04:25:42.044395Z"
+}

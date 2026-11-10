@@ -1,0 +1,239 @@
+{
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "machine": "arm64",
+  "artifacts": "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9",
+  "commands": [
+    {
+      "argv": [
+        "rustc",
+        "+stable",
+        "--version",
+        "--verbose"
+      ],
+      "exit": 0,
+      "output": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: aarch64-apple-darwin\nrelease: 1.99.1\nLLVM version: 23.1.1\n"
+    },
+    {
+      "argv": [
+        "python3",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/generate.py"
+      ],
+      "exit": 0,
+      "output": "{'xor': 3864, 'and': 729}\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+stable",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--test",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/tests"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/tests"
+      ],
+      "exit": 0,
+      "output": "\nrunning 10 tests\ntest accepted::tests::differs_from_ordinary_integer_multiplication ... ok\ntest accepted::tests::zero_one_and_boundaries ... ok\ntest tests::edges_and_mixed_lanes ... ok\ntest tests::weighted_batch_matches_nist_recurrence ... ok\ntest tests::every_single_bit_pair ... ok\ntest tests::transpose_every_lane_and_bit ... ok\ntest accepted::tests::every_pair_of_single_bits ... ok\ntest accepted::tests::deterministic_random_pairs ... ok\ntest tests::deterministic_random_pairs ... ok\ntest tests::wide_polynomial_oracle_and_boundaries ... ok\n\ntest result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+stable",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--crate-type=rlib",
+        "--crate-name=clmul_feasibility",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/libclmul_feasibility.rlib"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+stable",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--extern",
+        "clmul_feasibility=/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/libclmul_feasibility.rlib",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/bench.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/bench"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+stable",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--extern",
+        "clmul_feasibility=/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/libclmul_feasibility.rlib",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/timing.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/timing"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+stable",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "aarch64-apple-darwin",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/aarch64-apple-darwin.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+stable",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-pclmulqdq",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "x86_64-unknown-linux-gnu",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/x86_64-unknown-linux-gnu.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+stable",
+        "--edition=2024",
+        "-O",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "wasm32-unknown-unknown",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/wasm32-unknown-unknown.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/bench",
+        "100000"
+      ],
+      "exit": 0,
+      "output": "accepted scalar x3: median 107.268 ns/call; 107.268 ns/three products; min 105.517\ntranspose only: median 65.473 ns/call; 3.069 ns/three products; min 3.004\nBoolean Karatsuba x64: median 531.256 ns/call; 24.903 ns/three products; min 24.510\nprepared x64 xor: median 338.395 ns/call; 15.862 ns/three products; min 15.709\n128-bit polynomial batch x64 xor: median 1056.727 ns/call; 16.511 ns/three products; min 16.307\nprepare x64 operand: median 67.988 ns/call; 3.187 ns/three products; min 3.089\nprepare 128-bit operand set: median 214.504 ns/call; 3.352 ns/three products; min 3.303\n"
+    },
+    {
+      "argv": [
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-stable-217sacp9/timing"
+      ],
+      "exit": 0,
+      "output": "varied message operand: n/class=20000, calls/sample=8, zero=1093.840 ns, random=1092.960 ns, Welch t=0.302\nvaried prepared operand: n/class=20000, calls/sample=8, zero=1205.271 ns, random=1204.503 ns, Welch t=0.181\n"
+    }
+  ],
+  "assembly": {
+    "aarch64-apple-darwin": {
+      "sha256": "865eac37f04791fe15332aa4d5e069f9898604fe26070d4925b6ce7fcfc64ae6",
+      "instruction_lines": 9013,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "b.ne\tLBB1_1",
+        "b.ne\tLBB2_1",
+        "b.ne\tLBB3_1",
+        "b.ne\tLBB6_1"
+      ],
+      "calls_for_manual_review": [
+        "bl\t__RINvNtCsdjFn5GDoF3D_3lib7circuit14planes_productyEB4_",
+        "bl\t__RNvCsdjFn5GDoF3D_3lib26clmul64_batch_xor_prepared",
+        "bl\t__RNvCsdjFn5GDoF3D_3lib9transpose",
+        "bl\t_bzero"
+      ]
+    },
+    "x86_64-unknown-linux-gnu": {
+      "sha256": "85f7afb36cf8538867ccfb07bb71a7a686bee917251427ebe97b2a4416b1f17a",
+      "instruction_lines": 11869,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "jne\t.LBB1_1",
+        "jne\t.LBB2_1",
+        "jne\t.LBB3_1",
+        "jne\t.LBB4_1",
+        "jmpq\t*_RNvCsdjFn5GDoF3D_3lib9transpose@GOTPCREL(%rip)",
+        "jne\t.LBB6_1"
+      ],
+      "calls_for_manual_review": [
+        "callq\t*%r12",
+        "callq\t*%r14",
+        "callq\t*%r15",
+        "callq\t*%rbp",
+        "callq\t*%rcx",
+        "callq\t*_RNvCsdjFn5GDoF3D_3lib9transpose@GOTPCREL(%rip)",
+        "callq\t*memcpy@GOTPCREL(%rip)",
+        "callq\t*memset@GOTPCREL(%rip)",
+        "callq\t_RINvNtCsdjFn5GDoF3D_3lib7circuit14planes_productyEB4_"
+      ]
+    },
+    "wasm32-unknown-unknown": {
+      "sha256": "f694f948821049e50850f4135e57d6f923d73ab57858ae325b85e5dea7a212ce",
+      "instruction_lines": 14185,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0",
+        "br_if   \t0"
+      ],
+      "calls_for_manual_review": [
+        "call\t_RINvNtCsdjFn5GDoF3D_3lib7circuit14planes_productyEB4_",
+        "call\t_RNvCsdjFn5GDoF3D_3lib26clmul64_batch_xor_prepared",
+        "call\t_RNvCsdjFn5GDoF3D_3lib9transpose"
+      ]
+    }
+  },
+  "sources": {
+    "lib.rs": "6614e96d1d1baff760168b37dfc69b4873730704c4ed53e766c97b31b4b01c6a",
+    "circuit.rs": "db6914c824540336db645ec7ba374aa88d316934e7f432d4557ac6ff758274cc",
+    "generate.py": "9cc359eac8e461d93f92b4561b1b1e6a3d0aeeec8f71587894fd57a5125038d5",
+    "bench.rs": "e19a515b3b65962ecddb1863b0b328fa0d87f95bc73c15aea4b3e802267afb63",
+    "timing.rs": "cd370314f4b0ea3b62c002b134579e8fe29f86a0d0ada9e9306e19c7fc17b07f",
+    "check.py": "248d34cf42f6490f7f0b1f2f62c3ad17c059dc7cf6a41ec06d891666573cdc1a"
+  }
+}

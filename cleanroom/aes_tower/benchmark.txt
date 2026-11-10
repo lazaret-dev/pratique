@@ -1,0 +1,7 @@
+1.87.0
+accepted: median 28.863 ns per S-box call (64 lanes), min 28.573
+tower: median 13.193 ns per S-box call (64 lanes), min 13.031
+
+1.99.1
+accepted: median 29.048 ns per S-box call (64 lanes), min 28.676
+tower: median 11.992 ns per S-box call (64 lanes), min 11.925

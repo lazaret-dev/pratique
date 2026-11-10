@@ -1,0 +1,161 @@
+{
+  "platform": "macOS-27.2-arm64-arm-64bit",
+  "machine": "arm64",
+  "artifacts": "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf",
+  "commands": [
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--version",
+        "--verbose"
+      ],
+      "exit": 0,
+      "output": "rustc 1.87.0 (17067e9ac 2025-05-09)\nbinary: rustc\ncommit-hash: 17067e9ac6d7ecb70e50f92c1944e545188d2359\ncommit-date: 2025-05-09\nhost: aarch64-apple-darwin\nrelease: 1.87.0\nLLVM version: 20.1.1\n"
+    },
+    {
+      "argv": [
+        "python3",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/generate.py"
+      ],
+      "exit": 0,
+      "output": "{'xor': 3864, 'and': 729}\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--test",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/tests"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/tests"
+      ],
+      "exit": 0,
+      "output": "\nrunning 10 tests\ntest accepted::tests::differs_from_ordinary_integer_multiplication ... ok\ntest accepted::tests::zero_one_and_boundaries ... ok\ntest tests::weighted_batch_matches_nist_recurrence ... ok\ntest tests::edges_and_mixed_lanes ... ok\ntest tests::transpose_every_lane_and_bit ... ok\ntest tests::every_single_bit_pair ... ok\ntest accepted::tests::every_pair_of_single_bits ... ok\ntest accepted::tests::deterministic_random_pairs ... ok\ntest tests::deterministic_random_pairs ... ok\ntest tests::wide_polynomial_oracle_and_boundaries ... ok\n\ntest result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n"
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--crate-type=rlib",
+        "--crate-name=clmul_feasibility",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/libclmul_feasibility.rlib"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--extern",
+        "clmul_feasibility=/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/libclmul_feasibility.rlib",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/bench.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/bench"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--extern",
+        "clmul_feasibility=/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/libclmul_feasibility.rlib",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/timing.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/timing"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "rustc",
+        "+1.87.0",
+        "--edition=2024",
+        "-O",
+        "-C",
+        "target-feature=-aes",
+        "--crate-type=lib",
+        "--emit=asm",
+        "--target",
+        "aarch64-apple-darwin",
+        "/private/tmp/pratique-clmul-feasibility-20261108/cleanroom/clmul_feasibility/lib.rs",
+        "-o",
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/aarch64-apple-darwin.s"
+      ],
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "argv": [
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/bench",
+        "100000"
+      ],
+      "exit": 0,
+      "output": "accepted scalar x3: median 102.521 ns/call; 102.521 ns/three products; min 100.182\ntranspose only: median 65.722 ns/call; 3.081 ns/three products; min 3.044\nBoolean Karatsuba x64: median 500.870 ns/call; 23.478 ns/three products; min 23.355\nprepared x64 xor: median 319.270 ns/call; 14.966 ns/three products; min 14.878\n128-bit polynomial batch x64 xor: median 984.265 ns/call; 15.379 ns/three products; min 15.314\nprepare x64 operand: median 64.666 ns/call; 3.031 ns/three products; min 3.003\nprepare 128-bit operand set: median 201.190 ns/call; 3.144 ns/three products; min 3.123\n"
+    },
+    {
+      "argv": [
+        "/var/folders/v_/lgldzvld5fv_v08q6bs220f00000gn/T/pratique-clmul-1.87.0-nyrp6zrf/timing"
+      ],
+      "exit": 0,
+      "output": "varied message operand: n/class=20000, calls/sample=8, zero=973.146 ns, random=977.103 ns, Welch t=-4.315\nvaried prepared operand: n/class=20000, calls/sample=8, zero=981.413 ns, random=982.291 ns, Welch t=-0.869\n"
+    }
+  ],
+  "assembly": {
+    "aarch64-apple-darwin": {
+      "sha256": "0ed1fe708af1b46732dab18eeac3de561324ec354d598960e0178e5b831b8c59",
+      "instruction_lines": 8682,
+      "multiplication_or_division": [],
+      "branches_for_manual_review": [
+        "b.ne\tLBB2_1",
+        "b.ne\tLBB4_1",
+        "b.ne\tLBB5_1",
+        "b.ne\tLBB6_1"
+      ],
+      "calls_for_manual_review": [
+        "bl\t__ZN3lib26clmul64_batch_xor_prepared17h63092160eb86dafdE",
+        "bl\t__ZN3lib7circuit14planes_product17hc732cf533fd2193bE",
+        "bl\t__ZN3lib9transpose17h3c8ffc134fbde9a1E",
+        "bl\t_bzero",
+        "bl\t_memcpy"
+      ]
+    }
+  },
+  "sources": {
+    "lib.rs": "6614e96d1d1baff760168b37dfc69b4873730704c4ed53e766c97b31b4b01c6a",
+    "circuit.rs": "db6914c824540336db645ec7ba374aa88d316934e7f432d4557ac6ff758274cc",
+    "generate.py": "9cc359eac8e461d93f92b4561b1b1e6a3d0aeeec8f71587894fd57a5125038d5",
+    "bench.rs": "e19a515b3b65962ecddb1863b0b328fa0d87f95bc73c15aea4b3e802267afb63",
+    "timing.rs": "cd370314f4b0ea3b62c002b134579e8fe29f86a0d0ada9e9306e19c7fc17b07f",
+    "check.py": "248d34cf42f6490f7f0b1f2f62c3ad17c059dc7cf6a41ec06d891666573cdc1a"
+  }
+}
