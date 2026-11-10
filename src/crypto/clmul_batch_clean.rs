@@ -10,6 +10,10 @@
 #[path = "clmul_batch_circuit.rs"]
 mod circuit;
 
+// The guarded variant is used only where all64 guard bits are in one word.
+#[cfg(target_pointer_width = "64")]
+pub(crate) mod guarded;
+
 #[inline(always)]
 fn transpose_step<const SHIFT: usize>(q: &mut [u64; 64], mask: u64) {
     for block in (0..64).step_by(SHIFT << 1) {

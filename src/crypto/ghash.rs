@@ -1,4 +1,4 @@
-//! GHASH (NIST SP 800-38D section 6.4), the universal hash inside AES-GCM, in constant time.
+//! GHASH (NIST SP 800-38D section 6.4), the universal hash inside AES-GCM.
 //!
 //! GCM numbers the bits of a block backwards: in the 128-bit big-endian value of a block, the top
 //! bit is the coefficient of x^0. Reversing all 128 bits turns a block into an ordinary polynomial
@@ -7,17 +7,22 @@
 //! runs entirely in that reflected form and reverses the result at the end.
 //!
 //! Portable products use the independently derived Boolean primitives in
-//! `clmul_clean` and `clmul_batch_clean`. Full groups of 64 blocks use prepared
-//! H^64 ... H powers, aggregate unreduced products, and reduce once. Tails keep
-//! the scalar recurrence. PCLMULQDQ/PMULL retain their existing hardware path.
+//! `clmul_clean` and `clmul_batch_clean`. On64-bit targets, fifty payload blocks
+//! share each batch with fourteen public guard lanes; the fixed guard product is
+//! removed before reduction. On32-bit targets and for tails, the accepted scalar
+//! recurrence is retained. PCLMULQDQ/PMULL keep their existing hardware path.
 
 use super::aes::Backend;
 use super::aes_hw;
-use super::clmul_batch_clean::{
-    clmul128_batch_xor_prepared, BatchWorking128x64, PreparedPolynomial128x64,
+#[cfg(target_pointer_width = "64")]
+use super::clmul_batch_clean::guarded::{
+    clmul128x50_batch_xor_prepared, PreparedPolynomial128x50, PAYLOAD_LANES,
 };
+use super::clmul_batch_clean::BatchWorking128x64;
 use super::clmul_clean::clmul64_portable;
-use crate::zeroize::{Zeroize, Zeroizing};
+use crate::zeroize::Zeroize;
+#[cfg(target_pointer_width = "64")]
+use crate::zeroize::Zeroizing;
 
 // The clean primitive exposes its retained arrays without depending on the
 // production zeroization implementation. Every aggregate is covered here.
@@ -87,15 +92,16 @@ fn absorb<const HW: bool>(h: u128, mut acc: u128, data: &[u8]) -> u128 {
 
 /// Absorb full public-length batches, then preserve scalar zero-padding of the tail.
 /// Each batch expands the same recurrence with its incoming state in block one.
+#[cfg(target_pointer_width = "64")]
 fn absorb_portable(
     h: u128,
-    prepared: &PreparedPolynomial128x64,
+    prepared: &PreparedPolynomial128x50,
     mut acc: u128,
     data: &[u8],
 ) -> u128 {
-    let mut batches = data.chunks_exact(64 * 16);
+    let mut batches = data.chunks_exact(PAYLOAD_LANES * 16);
     for batch in &mut batches {
-        let mut blocks = Zeroizing::new([0u128; 64]);
+        let mut blocks = Zeroizing::new([0u128; PAYLOAD_LANES]);
         for (block, bytes) in blocks.iter_mut().zip(batch.chunks_exact(16)) {
             *block = u128::from_be_bytes(bytes.try_into().unwrap()).reverse_bits();
         }
@@ -104,7 +110,7 @@ fn absorb_portable(
             // Only zero storage moves into the guard. The populated workspace is
             // borrowed in place and wiped at this scope boundary after output use.
             let mut working = Zeroizing::new(BatchWorking128x64::empty());
-            clmul128_batch_xor_prepared(&blocks, prepared, &mut working);
+            clmul128x50_batch_xor_prepared(&blocks, prepared, &mut working);
             acc = reduce(working.output()[0], working.output()[1]);
         }
         // The raw block guard wipes its retained array at the iteration boundary.
@@ -113,17 +119,19 @@ fn absorb_portable(
     absorb::<false>(h, acc, batches.remainder())
 }
 
-/// Prepare H^64 ... H once per portable key, using the accepted scalar primitive.
-fn prepare_powers(h: u128, prepared: &mut PreparedPolynomial128x64) {
-    let mut powers = [0u128; 64];
-    let mut power = h;
+/// Prepare H^50 ... H once per portable key, using the accepted scalar primitive.
+#[cfg(target_pointer_width = "64")]
+fn prepare_powers(h: u128, prepared: &mut PreparedPolynomial128x50) {
+    let mut powers = Zeroizing::new([0u128; PAYLOAD_LANES]);
+    let mut power = Zeroizing::new(0u128);
+    *power = h;
     for slot in powers.iter_mut().rev() {
-        *slot = power;
-        power = mul::<false>(power, h);
+        *slot = *power;
+        *power = mul::<false>(*power, h);
     }
     prepared.prepare(&powers);
-    powers.zeroize();
-    power.zeroize();
+    // Retained raw powers and runningpower use existing volatile guards on
+    // normal return and unwinding; scalar/register copies remain best effort.
 }
 
 /// GHASH of `aad` and `ct` (each zero-padded to a block boundary, then the two bit lengths) under
@@ -143,15 +151,37 @@ pub(super) fn hash_with<const HW: bool>(h: u128, aad: &[u8], ct: &[u8]) -> u128 
 }
 
 /// The hash key H, prepared for the chosen implementation.
-#[derive(Clone)]
+#[cfg_attr(not(target_pointer_width = "64"), derive(Clone))]
 pub(super) struct GhashKey {
     /// H as a reflected field element.
     h: u128,
     hw: bool,
     /// H^1 ... H^8 in the form of the one-pass hardware GCM, where this CPU has one (see [`aes_hw::Keys::gcm_seal`]).
     powers: Option<aes_hw::Powers>,
-    /// Portable H^64 ... H in 64-lane Boolean planes, prepared for the key lifetime.
-    portable_powers: Option<PreparedPolynomial128x64>,
+    /// Fifty real powers plus public guard operands, retained for the key lifetime.
+    #[cfg(target_pointer_width = "64")]
+    portable_powers: Option<PreparedPolynomial128x50>,
+}
+
+#[cfg(target_pointer_width = "64")]
+impl Clone for GhashKey {
+    fn clone(&self) -> Self {
+        let mut key = Self {
+            h: self.h,
+            hw: self.hw,
+            powers: self.powers.clone(),
+            portable_powers: self
+                .portable_powers
+                .as_ref()
+                .map(|_| PreparedPolynomial128x50::empty()),
+        };
+        if let (Some(destination), Some(source)) =
+            (key.portable_powers.as_mut(), self.portable_powers.as_ref())
+        {
+            destination.copy_from(source);
+        }
+        key
+    }
 }
 
 impl Drop for GhashKey {
@@ -166,21 +196,28 @@ impl GhashKey {
     pub(super) fn new(h: &[u8; 16], backend: Backend) -> GhashKey {
         let hw = backend == Backend::Hardware;
         let reflected = u128::from_be_bytes(*h).reverse_bits();
-        let mut key = GhashKey {
+        let key = GhashKey {
             h: reflected,
             hw,
             powers: if hw { aes_hw::ghash_powers(h) } else { None },
+            #[cfg(target_pointer_width = "64")]
             portable_powers: if hw {
                 None
             } else {
-                Some(PreparedPolynomial128x64::empty())
+                Some(PreparedPolynomial128x50::empty())
             },
         };
-        if let Some(prepared) = key.portable_powers.as_mut() {
-            prepare_powers(reflected, prepared);
-        }
         // The retained key object moves through the existing constructor API.
         // Wiping is best effort for compiler-created copies and register spills.
+        #[cfg(target_pointer_width = "64")]
+        {
+            let mut key = key;
+            if let Some(prepared) = key.portable_powers.as_mut() {
+                prepare_powers(reflected, prepared);
+            }
+            key
+        }
+        #[cfg(not(target_pointer_width = "64"))]
         key
     }
 
@@ -194,6 +231,7 @@ impl GhashKey {
         if let Some(p) = self.powers.as_mut() {
             p.zeroize();
         }
+        #[cfg(target_pointer_width = "64")]
         if let Some(p) = self.portable_powers.as_mut() {
             for words in p.words_mut() {
                 words.zeroize();
@@ -203,32 +241,44 @@ impl GhashKey {
 
     #[cfg(test)]
     pub(super) fn is_wiped(&self) -> bool {
-        self.h == 0
-            && self.powers.iter().all(|p| p.iter().all(|&x| x == 0))
+        let scalar_and_hardware =
+            self.h == 0 && self.powers.iter().all(|p| p.iter().all(|&x| x == 0));
+        #[cfg(target_pointer_width = "64")]
+        return scalar_and_hardware
             && self
                 .portable_powers
                 .iter()
-                .all(|p| p.words().iter().all(|words| words.iter().all(|&x| x == 0)))
+                .all(|p| p.words().iter().all(|words| words.iter().all(|&x| x == 0)));
+        #[cfg(not(target_pointer_width = "64"))]
+        scalar_and_hardware
     }
 
     /// GHASH of `aad` and `ct` as a 16-byte block.
     pub(super) fn hash(&self, aad: &[u8], ct: &[u8]) -> [u8; 16] {
         let s = if self.hw {
             aes_hw::ghash_hw(self.h, aad, ct)
-        } else if aad.len() < 64 * 16 && ct.len() < 64 * 16 {
-            hash_with::<false>(self.h, aad, ct)
         } else {
-            let prepared = self
-                .portable_powers
-                .as_ref()
-                .expect("portable GHASH powers");
-            let mut acc = absorb_portable(self.h, prepared, 0, aad);
-            acc = absorb_portable(self.h, prepared, acc, ct);
-            let lens = ((aad.len() as u128 * 8) << 64) | (ct.len() as u128 * 8);
-            acc = mul::<false>(acc ^ lens.reverse_bits(), self.h);
-            let s = acc.reverse_bits();
-            acc.zeroize();
-            s
+            #[cfg(target_pointer_width = "64")]
+            {
+                if aad.len() < PAYLOAD_LANES * 16 && ct.len() < PAYLOAD_LANES * 16 {
+                    return hash_with::<false>(self.h, aad, ct).to_be_bytes();
+                }
+                let prepared = self
+                    .portable_powers
+                    .as_ref()
+                    .expect("portable GHASH powers");
+                let mut acc = absorb_portable(self.h, prepared, 0, aad);
+                acc = absorb_portable(self.h, prepared, acc, ct);
+                let lens = ((aad.len() as u128 * 8) << 64) | (ct.len() as u128 * 8);
+                acc = mul::<false>(acc ^ lens.reverse_bits(), self.h);
+                let s = acc.reverse_bits();
+                acc.zeroize();
+                s
+            }
+            #[cfg(not(target_pointer_width = "64"))]
+            {
+                hash_with::<false>(self.h, aad, ct)
+            }
         };
         s.to_be_bytes()
     }
@@ -451,9 +501,11 @@ mod tests {
         let mut rng = Lcg(0x8a5c_27b1_6d09_4e3f);
         for h in [0, 1, 1 << 127, u128::MAX, rng.u128()] {
             let key = GhashKey::new(&h.to_be_bytes(), Backend::Portable);
+            #[cfg(target_pointer_width = "64")]
             let prepared = key.portable_powers.as_ref().unwrap();
             for len in [
-                0, 1, 15, 16, 1008, 1023, 1024, 1025, 1040, 2047, 2048, 2049, 3089,
+                0, 1, 15, 16, 784, 799, 800, 801, 816, 1008, 1023, 1024, 1025, 1040, 1599, 1600,
+                1601, 1616, 2047, 2048, 2049, 2399, 2400, 2401, 3089,
             ] {
                 let initial = rng.u128();
                 let data = rng.bytes(len);
@@ -463,7 +515,10 @@ mod tests {
                     block[..chunk.len()].copy_from_slice(chunk);
                     expected = gf_mul(expected ^ u128::from_be_bytes(block), h);
                 }
+                #[cfg(target_pointer_width = "64")]
                 let actual = absorb_portable(key.h, prepared, initial.reverse_bits(), &data);
+                #[cfg(not(target_pointer_width = "64"))]
+                let actual = absorb::<false>(key.h, initial.reverse_bits(), &data);
                 assert_eq!(actual.reverse_bits(), expected, "len {len}, h {h:#x}");
             }
         }
@@ -473,6 +528,16 @@ mod tests {
     fn batches_keep_aad_and_ciphertext_padding_independent() {
         let mut rng = Lcg(0x49e0_b7a2_8c36_15df);
         for (aad_len, ct_len) in [
+            (0, 800),
+            (1, 799),
+            (15, 800),
+            (17, 801),
+            (799, 800),
+            (800, 799),
+            (800, 800),
+            (801, 801),
+            (1599, 1600),
+            (1600, 1601),
             (0, 1024),
             (1, 1023),
             (15, 1024),
@@ -499,6 +564,7 @@ mod tests {
             let mut wiped = portable;
             wiped.wipe();
             assert!(wiped.is_wiped());
+            assert!(wiped.clone().is_wiped());
             assert!(!cloned.is_wiped());
             assert_eq!(cloned.hash(&aad, &ct), expected);
             if aes_hw::available() {
@@ -506,6 +572,21 @@ mod tests {
                 assert_eq!(hardware.hash(&aad, &ct), expected);
             }
         }
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn guarded_zero_key_clone_preserves_guards_and_wiped_state() {
+        let key = GhashKey::new(&[0; 16], Backend::Portable);
+        assert!(!key.is_wiped());
+        let cloned = key.clone();
+        assert!(!cloned.is_wiped());
+        assert_eq!(cloned.hash(b"aad", &[0x5a; 2049]), [0; 16]);
+        let mut wiped = cloned;
+        wiped.wipe();
+        assert!(wiped.is_wiped());
+        assert!(wiped.clone().is_wiped());
+        assert!(!key.is_wiped());
     }
 
     /// SP 800-38D test case 2 (the zero key): H = E_K(0^128), and GHASH(H, {}, C) for its single
