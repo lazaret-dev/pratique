@@ -18,17 +18,16 @@ import sys
 import tarfile
 import time
 
-BRANCH = "refs/heads/codex/pr10-linux-windows-validation"
-CANDIDATE = "c6377a42e8e30131692e305ca8e016d78def19f0"
+BRANCH = "refs/heads/codex/pr10-validation-followup"
+CANDIDATE = "100dd05739eecbe7695d7a495e5197e447239f28"
+INTEROP_CANDIDATE = "c6377a42e8e30131692e305ca8e016d78def19f0"
 BASELINE = "a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf"
 HRR = "a_server_that_accepts_only_nist_groups_makes_the_client_retry"
 PORTABLE = "--cfg pratique_portable -C target-feature=-aes,-pclmulqdq"
 TIMING_SELECTORS = {"aes-timing": "crypto::timing::aes_is_constant_time",
                     "ghash-timing": "crypto::timing::ghash_multiplication_is_constant_time"}
-TARGETS = {"windows-arm64": "aarch64-pc-windows-msvc",
-           "windows-x64": "x86_64-pc-windows-msvc",
-           "linux-msrv": "x86_64-unknown-linux-gnu",
-           "linux-stable": "x86_64-unknown-linux-gnu"}
+TARGETS = {"windows-pair": "x86_64-pc-windows-msvc",
+           "linux-followup": "x86_64-unknown-linux-gnu"}
 PE_MACHINES = {0xAA64: "aarch64-pc-windows-msvc", 0x8664: "x86_64-pc-windows-msvc"}
 PACKAGE_PROVENANCE = {"LICENSE", "NOTICE", "roots/mozilla.pem", "CLEAN_ROOM_AES_GHASH.md",
                       "cleanroom/ghash_integration/PROVENANCE.md",
@@ -105,8 +104,10 @@ def footer_summary(stdout, stderr, exact_hrr=False):
 def validate_environment(lane, env):
     if "CARGO_ENCODED_RUSTFLAGS" in env or env.get("CARGO_BUILD_TARGET") or env.get("CARGO_TARGET_DIR"):
         raise ValueError("unexpected inherited target/flags override")
-    if env.get("RUSTFLAGS", "") != (PORTABLE if lane == "linux-msrv" else ""):
+    if env.get("RUSTFLAGS", "") != (PORTABLE if lane == "linux-followup" else ""):
         raise ValueError("wrong fixed Rust flags")
+    if env.get("PYTHONDONTWRITEBYTECODE") != "1":
+        raise ValueError("Python cache writes must be disabled for all children")
     if env.get("PRATIQUE_TIMING_SECS") != "3":
         raise ValueError("wrong original timing seconds budget")
     for name in ("PRATIQUE_TIMING_REPS", "PRATIQUE_TIMING_TICK_NS", "PRATIQUE_TIMING_TICKS", "PRATIQUE_NULL_PAIRS"):
@@ -158,22 +159,15 @@ def source_binding(source, expected, production_expected=None):
             "synthetic_worker_git_identity": False}
 
 
-def fixed_plan(lane):
-    if lane == "linux-msrv":
-        return [("debug-crypto", 300, ["cargo", "test", "--lib", "crypto::", "--", "--skip", "crypto::timing", "--skip", "release_profile"]),
-                ("full-release", 480, ["cargo", "test", "--release", "--all-features"]),
-                ("aes-timing", 55, ["cargo", "test", "--release", "--all-features", "--lib", TIMING_SELECTORS["aes-timing"], "--", "--ignored", "--nocapture", "--test-threads=1"]),
-                ("ghash-timing", 55, ["cargo", "test", "--release", "--all-features", "--lib", TIMING_SELECTORS["ghash-timing"], "--", "--ignored", "--nocapture", "--test-threads=1"]),
-                ("production-audit", 180, ["python3", "cleanroom/ghash_integration/audit_primitives.py", "--toolchain", "1.87.0"]),
-                ("source-package", 360, ["cargo", "package", "--frozen", "--all-features"])]
-    if lane == "linux-stable":
-        return [("full-release", 720, ["cargo", "test", "--release", "--all-features"]),
+def fixed_plan(lane, output=None):
+    if lane == "linux-followup":
+        out = Path(output) if output is not None else Path("ARTIFACT_OUTPUT")
+        return [("production-audit", 180, ["python3", "-B", "cleanroom/ghash_integration/audit_primitives.py", "--toolchain", "1.87.0", "--output", str(out / "production-audit/production-assembly-1.87.0.json")]),
                 ("source-package", 360, ["cargo", "package", "--frozen", "--all-features"])]
     target = TARGETS[lane]
-    build = ["cargo", "test", "--target", target, "--test", "interop_openssl", "--no-run", "--message-format=json"]
-    return [("baseline-hrr-build", 360, build), ("baseline-hrr", 45, None),
-            ("candidate-hrr-build", 360, build), ("candidate-hrr", 45, None),
-            ("full-release", 720, ["cargo", "test", "--release", "--target", target])]
+    build = ["cargo", "test", "--release", "--target", target, "--test", "interop_openssl", "--no-run", "--message-format=json"]
+    return [("baseline-interop-build", 360, build), ("baseline-interop", 720, None),
+            ("candidate-interop-build", 360, build), ("candidate-interop", 720, None)]
 
 
 class Driver:
@@ -185,8 +179,7 @@ class Driver:
         self.safe = True
         self.binaries = {}
         self.start = time.monotonic()
-        self.deadline = self.start + {"linux-msrv": 1680, "linux-stable": 1200,
-                                     "windows-arm64": 1620, "windows-x64": 1620}[lane]
+        self.deadline = self.start + {"linux-followup": 660, "windows-pair": 2280}[lane]
 
     def command(self, name, argv, cwd, cap, exact=False, test=False):
         directory = self.output / name
@@ -202,16 +195,11 @@ class Driver:
             return rec
         before = self.catalog(cwd)
         rec["binaries_before"] = before
-        identity_enforced = exact or name in ("aes-timing", "ghash-timing")
+        identity_enforced = exact or name.endswith("-interop")
         rec["binary_identity_required"] = identity_enforced
         selected_binary = None
-        if exact:
+        if exact or name.endswith("-interop"):
             selected_binary = str(Path(argv[0]).resolve())
-        elif identity_enforced:
-            candidates = [p for p in before if Path(p).name.startswith("pratique-") and
-                          "release" in Path(p).parts]
-            if len(candidates) == 1:
-                selected_binary = candidates[0]
         if identity_enforced and (selected_binary is None or selected_binary not in before):
             rec["identity_error"] = "selected test executable unavailable or ambiguous before invocation"
             write(directory / "case.json", rec)
@@ -252,13 +240,17 @@ class Driver:
         stderr = (directory / "stderr.log").read_text(encoding="utf-8", errors="replace") if (directory / "stderr.log").exists() else ""
         rec.update(footer_summary(stdout, stderr, exact_hrr=exact))
         rec["executed_tests_from_footers"] = sum(f["passed"] + f["failed"] for f in rec["footers"])
-        if name in ("aes-timing", "ghash-timing"):
-            rec["selected_exact_timing_test_completed"] = single_test_completed(rec, stdout, TIMING_SELECTORS[name])
+        if name.endswith("-interop"):
+            fs = rec["footers"]
+            rec["all52_interop_tests_completed"] = len(fs) == 1 and fs[0]["passed"] + fs[0]["failed"] == 52 and fs[0]["ignored"] == 0 and "running 52 tests" in stdout
+        rec["footer_exit_consistent"] = (not test or (rec["exit_code"] in (0, 101) and
+              (all(f["result"] == "ok" and f["failed"] == 0 for f in rec["footers"]) if rec["exit_code"] == 0 else
+               any(f["result"] == "FAILED" and f["failed"] > 0 for f in rec["footers"]))))
         rec["invocation_completed"] = rec["execution"] == "started" and not any(rec.get(k) for k in ("timed_out", "interrupted", "cleanup_incomplete", "collector_error"))
         rec["test_footer_completed"] = rec["invocation_completed"] and rec["selected_binary_identity_verified"] and (
              not test or (rec["footer_present"] and rec["exact_hrr_completion"] and
-             rec["executed_tests_from_footers"] > 0 and rec.get("selected_exact_timing_test_completed", True)
-             and not rec["openssl_skip_observed"]))
+             rec["executed_tests_from_footers"] > 0 and rec.get("all52_interop_tests_completed", True)
+             and rec["footer_exit_consistent"] and not rec["openssl_skip_observed"]))
         rec["check_passed"] = rec["test_footer_completed"] and rec["exit_code"] == 0
         rec["logs"] = {name: {"bytes": (directory / name).stat().st_size, "sha256": sha(directory / name)}
                        for name in ("stdout.log", "stderr.log") if (directory / name).exists()}
@@ -316,7 +308,7 @@ class Driver:
         release = re.search(r"^release: (\S+)$", version, re.M)
         if not host or host.group(1) != TARGETS[self.lane]:
             raise ValueError("actual Rust compiler host architecture differs from declared native lane")
-        expected_release = "1.87.0" if self.lane == "linux-msrv" else "1.97.0" if self.lane.startswith("windows-") else None
+        expected_release = "1.87.0" if self.lane == "linux-followup" else "1.97.0"
         if expected_release and (not release or release.group(1) != expected_release):
             raise ValueError("actual Rust compiler version differs from pinned release")
         if not rust["check_passed"] or not cargo["check_passed"]:
@@ -327,6 +319,13 @@ class Driver:
         compiler = binary_info((self.output / "rustup-which-rustc/stdout.log").read_text(encoding="utf-8").strip())
         if compiler["target"] != TARGETS[self.lane]:
             raise ValueError("actual Rust compiler executable machine differs from native lane")
+        common = {"actual_rust_host": host.group(1), "actual_rust_release": release.group(1) if release else None,
+                  "actual_rust_compiler": compiler, "python": sys.version, "python_machine": platform.machine(),
+                  "runner_arch": os.environ.get("RUNNER_ARCH"), "os": platform.platform(),
+                  "PROCESSOR_ARCHITECTURE": os.environ.get("PROCESSOR_ARCHITECTURE"),
+                  "PROCESSOR_ARCHITEW6432": os.environ.get("PROCESSOR_ARCHITEW6432")}
+        if self.lane == "linux-followup":
+            return common
         executable = shutil.which("openssl")
         if not executable:
             raise ValueError("OpenSSL unavailable; tests must not silently skip")
@@ -338,24 +337,10 @@ class Driver:
         write(self.output / "openssl-version/case.json", rec)
         if not rec["check_passed"]:
             raise ValueError("OpenSSL prerequisite invocation failed")
-        go = shutil.which("go")
-        go_result = None
-        if go:
-            go_result = self.command("go-version", [go, "version"], self.workspace, 15)
-            if self.lane.startswith("linux-") and not go_result["check_passed"]:
-                raise ValueError("Go version prerequisite failed")
-        elif self.lane.startswith("linux-"):
-            raise ValueError("Go prerequisite unavailable for existing Linux CI contract")
-        return {"actual_rust_host": host.group(1), "actual_rust_release": release.group(1) if release else None,
-                "actual_rust_compiler": compiler,
-                "openssl": openssl_info, "openssl_native_to_rust_host": openssl_info["target"] == TARGETS[self.lane],
-                "go_available": bool(go), "python": sys.version, "python_machine": platform.machine(),
-                "go_version_check_passed": go_result.get("check_passed") if go_result else None,
-                "runner_arch": os.environ.get("RUNNER_ARCH"), "os": platform.platform(),
-                "PROCESSOR_ARCHITECTURE": os.environ.get("PROCESSOR_ARCHITECTURE"),
-                "PROCESSOR_ARCHITEW6432": os.environ.get("PROCESSOR_ARCHITEW6432")}
+        common.update({"openssl": openssl_info, "openssl_native_to_rust_host": openssl_info["target"] == TARGETS[self.lane]})
+        return common
 
-    def hrr_binary(self, name, source):
+    def interop_binary(self, name, source):
         path = self.output / name / "stdout.log"
         candidates = []
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -366,14 +351,14 @@ class Driver:
             if event.get("reason") == "compiler-artifact" and event.get("target", {}).get("name") == "interop_openssl" and event.get("executable"):
                 p = Path(event["executable"]).resolve()
                 if Path(source).resolve() not in p.parents:
-                    raise ValueError("HRR test executable escaped its source/target directory")
+                    raise ValueError("interop test executable escaped its source/target directory")
                 candidates.append(p)
         if len(set(candidates)) != 1:
             raise ValueError("expected exactly one built OpenSSL integration test executable")
         p = candidates[0]
         info = binary_info(p)
         if info["target"] != TARGETS[self.lane]:
-            raise ValueError("HRR test PE machine does not match native Rust target")
+            raise ValueError("interop test PE machine does not match native Rust target")
         return p
 
     def retain_binaries(self):
@@ -383,15 +368,19 @@ class Driver:
                 p = Path(info["path"])
                 if not p.name.startswith(("pratique-", "interop_openssl-")) or info["sha256"] in {v["sha256"] for v in retained}:
                     continue
-                if p.stat().st_size > 80000000 or sum(v["bytes"] for v in retained) + p.stat().st_size > 240000000:
-                    unavailable.append({"path": str(p), "sha256": info["sha256"], "reason": "declared retained-binary size bound"})
-                    continue
-                dest = self.output / "binaries" / (info["sha256"][:16] + "-" + p.name)
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(p, dest)
-                if sha(dest) != info["sha256"]:
-                    raise ValueError("retained executable differs from measured/built hash")
-                retained.append({"artifact_path": str(dest.relative_to(self.output)), "sha256": info["sha256"], "bytes": info["bytes"]})
+                try:
+                    if sha(p) != info["sha256"]:
+                        raise ValueError("current executable differs from recorded hash")
+                    if p.stat().st_size > 80000000 or sum(v["bytes"] for v in retained) + p.stat().st_size > 240000000:
+                        raise ValueError("declared retained-binary size bound")
+                    dest = self.output / "binaries" / (info["sha256"][:16] + "-" + p.name)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(p, dest)
+                    if sha(dest) != info["sha256"]:
+                        raise ValueError("retained executable differs from recorded hash")
+                    retained.append({"artifact_path": str(dest.relative_to(self.output)), "sha256": info["sha256"], "bytes": info["bytes"]})
+                except (OSError, ValueError) as exc:
+                    unavailable.append({"path": str(p), "sha256": info["sha256"], "reason": str(exc)})
         return {"retained": retained, "not_retained": unavailable,
                 "bounds": {"one_file_bytes": 80000000, "total_bytes": 240000000}}
 
@@ -449,11 +438,13 @@ def main():
     workspace = Path(os.environ["GITHUB_WORKSPACE"]).resolve()
     output = Path(os.environ["RUNNER_TEMP"]) / "pratique-release-validation"
     d = Driver(args.lane, workspace, output)
+    candidate = CANDIDATE if args.lane == "linux-followup" else INTEROP_CANDIDATE
     report = {"started_at": now(), "lane": args.lane, "workflow_head": os.environ.get("GITHUB_SHA"),
               "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"), "workflow_sha": os.environ.get("GITHUB_WORKFLOW_SHA"),
               "run_id": os.environ.get("GITHUB_RUN_ID"), "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
-              "candidate_commit": CANDIDATE, "baseline_commit": BASELINE,
-              "planned_checks": [{"name": n, "timeout_seconds": t, "argv": a} for n, t, a in fixed_plan(args.lane)],
+              "candidate_commit": candidate, "release_aux_commit": CANDIDATE, "baseline_commit": BASELINE,
+              "environment": {k: os.environ.get(k) for k in ("RUSTUP_TOOLCHAIN", "RUSTFLAGS", "PRATIQUE_TIMING_SECS", "PYTHONDONTWRITEBYTECODE", "RUST_TEST_THREADS")},
+              "planned_checks": [{"name": n, "timeout_seconds": t, "argv": a} for n, t, a in fixed_plan(args.lane, output)],
               "records": d.records, "collection_complete": False, "all_requested_checks_passed": False}
     sources = {}
     try:
@@ -461,7 +452,7 @@ def main():
             raise ValueError("wrong fixed workflow branch/admin commit")
         validate_environment(args.lane, os.environ)
         expected = json.loads((HERE / "production-sha256.json").read_text(encoding="utf-8"))
-        sources["candidate"] = source_binding(workspace / "candidate", CANDIDATE, expected)
+        sources["candidate"] = source_binding(workspace / "candidate", candidate, expected)
         if args.lane.startswith("windows-"):
             try:
                 sources["baseline"] = source_binding(workspace / "baseline", BASELINE)
@@ -471,7 +462,7 @@ def main():
         report["host"] = d.prerequisites()
         if args.lane.startswith("linux-"):
             d.command("lscpu", ["lscpu"], workspace, 15)
-        for name, cap, argv in fixed_plan(args.lane):
+        for name, cap, argv in fixed_plan(args.lane, output):
             who = "baseline" if name.startswith("baseline-") else "candidate"
             source = workspace / who
             if who not in sources:
@@ -480,16 +471,15 @@ def main():
             if argv is None:
                 build = next(r for r in d.records if r["name"] == name + "-build")
                 if not build.get("check_passed"):
-                    d.records.append({"name": name, "execution": "not_started", "skip_reason": "HRR build not successful"})
+                    d.records.append({"name": name, "execution": "not_started", "skip_reason": "interop build not successful"})
                     continue
                 try:
-                    binary = d.hrr_binary(name + "-build", source)
+                    binary = d.interop_binary(name + "-build", source)
                 except Exception as exc:
                     d.records.append({"name": name, "execution": "not_started", "identity_error": str(exc)})
                     continue
-                argv = [str(binary), HRR, "--exact", "--nocapture", "--test-threads=1"]
-            rec = d.command(name, argv, source, cap, exact=name.endswith("-hrr"),
-                            test=name in ("debug-crypto", "full-release", "aes-timing", "ghash-timing", "baseline-hrr", "candidate-hrr"))
+                argv = [str(binary), "--nocapture"]
+            rec = d.command(name, argv, source, cap, test=name.endswith("-interop"))
             if name == "source-package" and rec.get("check_passed"):
                 try:
                     rec["package"] = d.package_binding(source)
@@ -497,32 +487,41 @@ def main():
                     rec["package_identity_error"] = str(exc)
                     rec["check_passed"] = False
                 write(output / name / "case.json", rec)
-        after = {name: source_binding(workspace / name, value["commit"], expected if name == "candidate" else None)
-                 for name, value in sources.items()}
-        write(output / "source-binding-after.json", after)
-        report["source_inputs_unchanged"] = sources == after
-        report["retained_binaries"] = d.retain_binaries()
-        wanted = [n for n, _, _ in fixed_plan(args.lane)]
-        checks = [r for r in d.records if r["name"] in wanted]
-        report["collection_complete"] = (len(checks) == len(wanted) and
-              [r["name"] for r in checks] == wanted and all(r.get("invocation_completed") and
-                   (not r.get("is_test") or r.get("test_footer_completed")) for r in checks)
-              and report["source_inputs_unchanged"] and d.safe)
-        report["all_requested_checks_passed"] = report["collection_complete"] and all(r.get("check_passed") for r in checks)
+        after, errors = {}, {}
+        for name, value in sources.items():
+            try:
+                after[name] = source_binding(workspace / name, value["commit"], expected if name == "candidate" else None)
+            except Exception as exc:
+                errors[name] = str(exc)
+        write(output / "source-binding-after.json", {"verified": after, "errors": errors})
+        report["source_binding_after_errors"] = errors
+        report["source_inputs_unchanged"] = not errors and sources == after
     except BaseException as exc:
         report["controller_error"] = type(exc).__name__ + ": " + str(exc)
     finally:
         report["finished_at"] = now()
         report["elapsed_seconds"] = round(time.monotonic() - d.start, 6)
         names = {r["name"] for r in d.records}
-        for name, cap, argv in fixed_plan(args.lane):
+        for name, cap, argv in fixed_plan(args.lane, output):
             if name not in names:
                 d.records.append({"name": name, "execution": "not_started", "skip_reason": "prerequisite/controller failure; no retry"})
+        try:
+            report["retained_binaries"] = d.retain_binaries()
+            report["binary_retention_complete"] = not report["retained_binaries"]["not_retained"]
+        except Exception as exc:
+            report["binary_retention_error"] = str(exc)
+            report["binary_retention_complete"] = False
+        wanted = [n for n, _, _ in fixed_plan(args.lane, output)]
+        checks = [r for r in d.records if r["name"] in wanted]
+        report["collection_complete"] = (len(checks) == len(wanted) and [r["name"] for r in checks] == wanted and
+                all(r.get("invocation_completed") and (not r.get("is_test") or r.get("test_footer_completed")) for r in checks) and
+                report.get("source_inputs_unchanged", False) and d.safe and report["binary_retention_complete"])
+        report["all_requested_checks_passed"] = report["collection_complete"] and all(r.get("check_passed") for r in checks)
         report["limits"] = ["CI job success requires requested checks; artifact upload alone is collection only.",
-                            "No test/threshold/timeout assertion changes; HRR direct invocations use45s external cap.",
-                            "The full release suite contains its normal HRR test in addition to the predeclared exact diagnostics; no outcome-based repetition.",
-                            "No CPU selection, test retry, new sampler, privileged mode changes or release action.",
-                            "OpenSSL executable architecture is recorded separately and may be emulated on ARM."]
+                            "No crypto/unit/timing reruns: Linux audit/package only, Windows52interoptests once per version.",
+                            "Test assertions/internal deadlines/default parallelism unchanged; external targetcap720s matches prior hosted full-release cap.",
+                            "No CPU selection, test retry, stdin workaround, new sampler, privileged mode or release action.",
+                            "Post-source/package errors preserve partial outputs and all safely hash-bound available binaries."]
         write(output / "summary.json", report)
         files = {str(p.relative_to(output)): {"bytes": p.stat().st_size, "sha256": sha(p)}
                  for p in output.rglob("*") if p.is_file() and p.name != "manifest.json"}

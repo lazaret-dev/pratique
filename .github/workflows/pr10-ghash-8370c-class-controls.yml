@@ -1,4 +1,4 @@
-name: Manual reviewed Linux and Windows validation
+name: Manual bounded validation follow-up
 
 on:
   workflow_dispatch:
@@ -7,45 +7,31 @@ permissions:
   contents: read
 
 concurrency:
-  group: pr10-linux-windows-validation
+  group: pr10-validation-followup
   cancel-in-progress: false
 
 jobs:
-  linux:
-    if: github.ref == 'refs/heads/codex/pr10-linux-windows-validation'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - lane: linux-msrv
-            toolchain: 1.87.0
-            rustflags: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
-            job_minutes: 40
-            driver_minutes: 29
-          - lane: linux-stable
-            toolchain: stable
-            rustflags: ''
-            job_minutes: 30
-            driver_minutes: 21
-    name: ${{ matrix.lane }}
+  linux-audit-package:
+    if: github.ref == 'refs/heads/codex/pr10-validation-followup'
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ matrix.job_minutes }}
+    timeout-minutes: 20
     env:
-      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
-      RUSTFLAGS: ${{ matrix.rustflags }}
+      RUSTUP_TOOLCHAIN: 1.87.0
+      RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
       PRATIQUE_TIMING_SECS: '3'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - name: Initialize retained invocation metadata
         timeout-minutes: 1
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/pratique-release-validation"
-          python3 - <<'PY'
+          python3 -B - <<'PYTHON'
           import json, os, pathlib
           fields = ['GITHUB_SHA', 'GITHUB_REF', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'RUNNER_OS', 'RUNNER_ARCH', 'ImageOS', 'ImageVersion']
           p = pathlib.Path(os.environ['RUNNER_TEMP']) / 'pratique-release-validation/bootstrap.json'
           p.write_text(json.dumps({k: os.environ.get(k) for k in fields}, indent=2) + '\n')
-          PY
+          PYTHON
       - name: Checkout reviewed administrative branch head
         id: admin
         timeout-minutes: 1
@@ -58,58 +44,48 @@ jobs:
           sparse-checkout: |
             /*
             !/fuzz/corpus/
-      - name: Checkout immutable reviewed candidate
+      - name: Checkout immutable release auxiliary source
         id: candidate
         timeout-minutes: 1
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          ref: c6377a42e8e30131692e305ca8e016d78def19f0
+          ref: 100dd05739eecbe7695d7a495e5197e447239f28
           path: candidate
           persist-credentials: false
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /*
             !/fuzz/corpus/
-      - name: Install declared Rust toolchain without dependency installers
+      - name: Install exact MSRV
         id: install
         timeout-minutes: 2
         shell: bash
         run: |
           rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal > "$RUNNER_TEMP/pratique-release-validation/toolchain-install.stdout.log" 2> "$RUNNER_TEMP/pratique-release-validation/toolchain-install.stderr.log"
-      - name: Retain every fixed Linux check and package result without retry
+      - name: Audit and verify native source package without runtime reruns
         if: always() && steps.admin.outcome == 'success' && steps.candidate.outcome == 'success' && steps.install.outcome == 'success'
-        timeout-minutes: ${{ matrix.driver_minutes }}
+        timeout-minutes: 12
         shell: bash
-        run: python3 -B admin/cleanroom/ghash_integration/linux_windows_validation/run_validation.py ${{ matrix.lane }}
-      - name: Upload full Linux stdout stderr identities and source crate
+        run: python3 -B admin/cleanroom/ghash_integration/linux_windows_validation/run_validation.py linux-followup
+      - name: Upload complete or partial audit source package and identities
         if: always()
         timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pr10-validation-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr10-followup-linux-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/pratique-release-validation
           if-no-files-found: error
           retention-days: 14
 
-  windows:
-    if: github.ref == 'refs/heads/codex/pr10-linux-windows-validation'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - lane: windows-arm64
-            runner: windows-11-arm
-            toolchain: 1.97.0-aarch64-pc-windows-msvc
-          - lane: windows-x64
-            runner: windows-2025
-            toolchain: 1.97.0-x86_64-pc-windows-msvc
-    name: ${{ matrix.lane }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+  windows-x64-interop-pair:
+    if: github.ref == 'refs/heads/codex/pr10-validation-followup'
+    runs-on: windows-2025
+    timeout-minutes: 50
     env:
-      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+      RUSTUP_TOOLCHAIN: 1.97.0-x86_64-pc-windows-msvc
       RUSTFLAGS: ''
       PRATIQUE_TIMING_SECS: '3'
+      PYTHONDONTWRITEBYTECODE: '1'
     steps:
       - name: Initialize retained invocation metadata
         timeout-minutes: 1
@@ -133,7 +109,7 @@ jobs:
           sparse-checkout: |
             /*
             !/fuzz/corpus/
-      - name: Checkout immutable reviewed candidate
+      - name: Checkout immutable c637 candidate
         id: candidate
         timeout-minutes: 1
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -145,7 +121,7 @@ jobs:
           sparse-checkout: |
             /*
             !/fuzz/corpus/
-      - name: Checkout immutable original baseline in separate source and target directory
+      - name: Checkout immutable A3 baseline in separate source and target directory
         id: baseline
         timeout-minutes: 1
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
@@ -157,7 +133,7 @@ jobs:
           sparse-checkout: |
             /*
             !/fuzz/corpus/
-      - name: Install exact native Rust host toolchain
+      - name: Install exact native x64 Rust toolchain
         id: install
         if: always()
         timeout-minutes: 2
@@ -166,19 +142,19 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'pratique-release-validation'
           & rustup toolchain install $env:RUSTUP_TOOLCHAIN --profile minimal > (Join-Path $out 'toolchain-install.stdout.log') 2> (Join-Path $out 'toolchain-install.stderr.log')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Retain baseline HRR candidate HRR and full candidate release without retry
+      - name: Attempt baseline then candidate full 52-test release interop targets once
         if: always() && steps.admin.outcome == 'success' && steps.candidate.outcome == 'success' && steps.install.outcome == 'success'
-        timeout-minutes: 28
+        timeout-minutes: 39
         shell: pwsh
         run: |
-          & python -B admin/cleanroom/ghash_integration/linux_windows_validation/run_validation.py ${{ matrix.lane }}
+          & python -B admin/cleanroom/ghash_integration/linux_windows_validation/run_validation.py windows-pair
           exit $LASTEXITCODE
-      - name: Upload full Windows stdout stderr PE identities and failures
+      - name: Upload both complete or partial Windows interop outcomes and binaries
         if: always()
         timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: pr10-validation-${{ matrix.lane }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: pr10-followup-windows-pair-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/pratique-release-validation
           if-no-files-found: error
           retention-days: 14

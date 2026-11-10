@@ -1,119 +1,98 @@
-# Fixed manual Linux and Windows validation
+# Fixed two-job validation follow-up
 
-This administrative branch is based on main `6f129ec9f92ae0de32654d9eb078af5e16ee435d`
-and reuses the already registered workflow path only through an explicit
-`workflow_dispatch --ref codex/pr10-linux-windows-validation`. It has no push or
-PR trigger, configurable source ref, arbitrary command input, privileged mode
-operation, CPU selection, retry, release or publication step. Token permission
-is `contents: read`; official checkout/upload actions are pinned to full SHAs.
-The four matrix jobs have `fail-fast: false`. Their results are not substituted
-for earlier failed runs.
+This manual-only administrative branch is `codex/pr10-validation-followup`,
+based on frozen d06d241d. It reuses the registered
+`.github/workflows/pr10-ghash-8370c-class-controls.yml` path with branch-ref
+workflow dispatch. No main/PR10 change or default-branch registration is needed.
+There are exactly two jobs, with no matrix, configurable refs/commands, CPU
+selection, retry, stdin workaround, release or publication step. Token access
+is contents:read; official checkout/upload actions remain full-SHA pinned.
 
-The candidate is exact `c6377a42e8e30131692e305ca8e016d78def19f0`: the reviewed
-b8 guarded/audit/documentation candidate, the c131 failure observer, and a
-three-Markdown completed-result closure. All 197 production/Cargo inputs still
-match c872. The diagnostic baseline is exact A3
-`a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf`. Each source is checked out separately,
-with separate native target directories, using non-cone sparse checkout to omit
-only tracked `fuzz/corpus/`. All included Git blobs/modes and the candidate's
-197 expected hashes are checked before and after; no synthetic source HEAD or
-substituted `GITHUB_SHA` is used. Administrative HEAD must equal actual job HEAD
-on the one declared branch. The workflow/admin head is distinct from both
-source heads.
+The preceding four-lane run42863610327 remains failed evidence. Its MSRV crypto,
+full release, AES, GHASH and audit commands passed; packaging failed after an
+in-source generated JSON and three untracked Python caches. This follow-up
+neither reruns those successful runtime checks nor resets/deletes that evidence.
+The hosted Windows full suites each retained13 OpenSSL interoperability
+failures; their attribution requires a matched full-target baseline pair.
 
-## Linux, matching the existing portable-crypto checks
+## Linux MSRV audit and source package only
 
-Two `ubuntu-24.04` jobs select Rust 1.87.0 and current stable respectively.
-Actual `rustc -vV`, resolved compiler ELF, Cargo, OpenSSL, Go and `lscpu` output
-are retained. MSRV uses exactly
-`--cfg pratique_portable -C target-feature=-aes,-pclmulqdq` and
-`PRATIQUE_TIMING_SECS=3`. Stable uses default flags. Other repetition/clock/null
-overrides and inherited target/encoded-flags overrides are rejected.
+One ubuntu-24.04 job checks out immutable release auxiliary source
+`100dd05739eecbe7695d7a495e5197e447239f28`. It is c637 plus only cache ignore
+rules and precise1MiB GCM seal labels. All197 production/Cargo and every test
+remain byte-identical to c637/c872; the separate dedicated-msgfile diagnostic
+is excluded. There were zero tracked caches to delete. The ignore rule is
+hygiene, not a claim that Cargo1.87 accepts an ignored dirty fixture.
 
-MSRV executes the existing debug crypto command, full release
-`--all-features` suite, original AES ignored timing selector, original GHASH
-ignored timing selector, and existing production primitive audit. Selectors,
-three-second budget, clock/probe behavior, generators, crops, judge and test
-assertions are unchanged. Stable executes the full release `--all-features`
-suite. Both then execute `cargo package --frozen --all-features` on native Linux.
-Each failed command is retained and later checks still run when source/process
-identity remains valid; no failing test is retried. Standard Cargo's own stopping
-behavior within a full-suite invocation is preserved and may leave later test
-targets unrun after a failure.
+Rust1.87.0 and `--cfg pratique_portable -C target-feature=-aes,-pclmulqdq`
+are fixed. `PYTHONDONTWRITEBYTECODE=1` is mandatory for ALL descendants;
+`CARGO_ENCODED_RUSTFLAGS` presence, even empty, and other target/clock/repetition
+overrides are rejected. No runner framework is changed. The existing audit is
+invoked as `python3 -B .../audit_primitives.py --toolchain 1.87.0 --output`
+with an absolute artifact-directory JSON destination. Primitive/audit source
+bytes and assertions remain unchanged. Neither source reports nor bytecode are
+written into the canonical checkout. No --allow-dirty or evidence reset occurs.
 
-Source crates, hashes and complete member lists are uploaded. Ordinary members
-must match candidate bytes; Cargo's normalized manifest is distinguished from
-the byte-identical `Cargo.toml.orig`. VCS metadata, when present, must identify
-the clean candidate, and its absence is explicit with external source binding.
-Required guard sources, original manifests/lock, LICENSE/NOTICE, root bundle and
-clean-room provenance/attribution/current comparison documents must be present.
-No release upload or crates.io action occurs.
+Then `cargo package --frozen --all-features` verifies a native Linux source
+crate. Retain archive SHA256, full member hashes, clean source/Git binding and
+required clean-room provenance/attribution/guard files/LICENSE/NOTICE/roots.
+Distinguish Cargo's normalized manifest from exact Cargo.toml.orig. VCS metadata,
+when supplied, must name the clean source commit; absence is explicit and the
+external content binding remains authoritative. No crate is published.
 
-## Windows ARM64 and x64
+No library, crypto, timing or interop runtime selector is run in this Linux job.
+OpenSSL and Go are not prerequisites for the audit/package-only scope.
 
-The fixed labels are `windows-11-arm` and `windows-2025`. Native Rust 1.97.0 is
-selected explicitly as `1.97.0-aarch64-pc-windows-msvc` or
-`1.97.0-x86_64-pc-windows-msvc`. Actual Rust host/release, resolved compiler PE
-machine and every produced test PE machine must agree with that native target;
-the runner label alone is insufficient. Python/runner/OS architecture fields
-are separately retained.
+## One Windows x64 baseline/candidate interoperability pair
 
-OpenSSL must exist on PATH and its `version -a` must succeed before tests; no
-installer or silent test skip is accepted. Its resolved path, binary hash, PE
-machine and full version output are retained, and that directory is prepended
-for every child. OpenSSL may be x64-emulated on ARM if supplied that way; this
-is recorded separately and never described as native Rust or native OpenSSL
-without evidence. Go availability/version is recorded but is not a required
-Windows prerequisite. First-party image inventories are expectations, not
-substitutes for these runtime records.
+One windows-2025 worker uses native Rust1.97.0-x86_64-pc-windows-msvc and default
+Rust flags. It retains actual rustc-vV/compiler PE/Cargo/OS architecture and the
+resolved OpenSSL path, PE machine/hash and version-a. OpenSSL must run; no silent
+have_openssl skip is accepted. This job's sources are A3
+`a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf` then c637
+`c6377a42e8e30131692e305ca8e016d78def19f0`, not the auxiliary source.
 
-Each job builds the baseline's `interop_openssl` test once in the normal
-test profile (`opt-level=2`), binds the one PE, then directly runs exactly
-`a_server_that_accepts_only_nist_groups_makes_the_client_retry` once with
-`--exact --nocapture --test-threads=1`. It repeats that fixed diagnostic once
-for the candidate and then invokes the candidate's full default-feature release
-suite once. Both exact diagnostics have the supported 45-second external cap;
-the unchanged HRR assertion's 15-second deadline is not relaxed. A baseline
-exit 101 does not suppress the candidate diagnostic or full suite. An identity
-or build error produces explicit unmeasured slots, not a fabricated pass.
+Each has a separate checkout and target directory. Build exactly its existing
+release `interop_openssl` test executable once with no-run/message-format=json
+and explicit x86_64-pc-windows-msvc target. Verify PE identity/target, then invoke
+that executable once with --nocapture, no filter and no test-thread override.
+A3 executes first, then c637. Preserve default parallelism and record inherited
+RUST_TEST_THREADS rather than inventing thread metadata. Every existing positive
+assertion and internal socket/wait deadline remains unchanged. Each invocation
+must account for all52 tests (pass+fail52, ignored0) and a consistent Rust footer
+and child exit before it can count as complete.
 
-The full release suite naturally contains its normal HRR test in addition to
-the two predeclared exact diagnostics; this is fixed in advance, not an
-outcome-selected retry. Its existing deadlines/assertions remain unchanged.
-All failures remain findings, including failures of the OpenSSL trace marker.
-The observer changes bounded failure evidence only, never the predicate.
+A baseline assertion failure101 does not suppress the candidate when immutable
+staging and process cleanup remain safe. There is no rerun after any outcome.
+Standard test-binary behavior continues its complete52-test target after ordinary
+panics; a timeout/abort/partial footer is retained as incomplete. No full crate,
+ARM lane, exactHRR extra diagnostic, stdin adjustment or proposed binary-file
+server option is added to this pair.
 
-## Bounds, retention and interpretation
+## Binding, partial results and caps
 
-Job caps are MSRV 40 minutes, stable 30 minutes, Windows 40 minutes. Explicit
-step caps sum to 36, 28 and 36 minutes respectively, leaving extra overhead
-inside the job caps. Driver internal budgets are 28, 20 and 27 minutes; outer
-driver steps allow one further minute to write records/copy bounded artifacts.
-The command caps sum to 23m50s (MSRV), 18m (stable) and 25m30s (Windows), plus
-bounded prerequisite probes. This is build/package/collection budget, not a
-change to any test's acceptance or internal timing deadline.
+All source includes are verified against the exact Git blob/mode; candidate197
+production/Cargo hashes remain pinned. All non-cone sparse checkouts omit only
+tracked fuzz/corpus. Administrative job HEAD/ref is separate from the immutable
+source heads. The source is checked again after the window; post-binding or
+package failure cannot discard other logs or safely hash-bound binary files.
+There are no cleanup resets. Report each case independently with full stdout,
+stderr, argv, timestamps, exit/footer/timeout/cleanup flags and before/after PE
+hashes. Any source mismatch, partial52 count, inconsistent footer/exit or missing
+critical binary makes collection incomplete. Partial metadata remains explicit.
 
-Every phase has full separate stdout/stderr, exact argv/working directory,
-timestamps, exit/timeout/cleanup state, footers and executable hashes. Selected
-HRR/AES/GHASH test-binary before/after identity is enforced. Build phases may
-legitimately add binaries and are classified separately. Zero-test/ignored-only
-footers cannot pass an exact diagnostic. Partial logs are written before exit;
-unsafe timeout cleanup or cancellation prevents later children. Process-tree
-cleanup is bounded (`taskkill /T /F` on Windows, process group on Linux).
-Abrupt VM loss or hard runner termination cannot guarantee final collection.
+Audit/package have180s/360s command caps; Linux driver11min/outer12min and job20min.
+Windows builds retain360s each and targets720s each, matching the previous
+hosted full-release command cap. Driver38min/outer39min and job50min include both
+builds and target calls. Explicit workflow steps total19/47min respectively,
+leaving upload/overhead reserve. These are collection/build ceilings, not relaxed
+test assertions or timeouts. No empirical timing criterion is changed or used.
 
-Relevant HRR/library executables are retained within explicit 80 MB per-file /
-240 MB per-job bounds; discovered Cargo executables in target/deps are hashed
-and any size-limited omission is named. Transient rustdoc executables are not
-inventoried. No primitive disassembly is generated. Source
-binding, compiler/flags, complete stdout/stderr, source-crate members and a
-SHA256 file manifest are always uploaded when available. Artifact upload
-success alone is collection, never a gate pass. The controller exits nonzero
-for any failed/incomplete requested check. Summary counts are observational;
-they do not reimplement or relax the original timing judge.
-
-This campaign closes concrete feature/profile/platform/package validation gaps.
-It establishes neither universal constant-time behavior nor causal CPU
-classification. Earlier public findings, Windows failures, compiler-copy/
-physical-erasure limits and the measured guarded performance cost remain in
-the record. No main/PR10/version/tag/release mutation is part of execution.
+Process groups/taskkill are bounded; cancellation or unsafe post-spawn cleanup
+stops later children. Source/package errors still permit final retention of
+previously verified outputs. Available relevant binaries are copied with SHA256
+verification within the existing80MB/file,240MB/job bounds; every omission is
+named and makes complete-binary retention false. Always upload full or partial
+records/crates/binaries plus manifest. Job success requires every requested check;
+artifact upload alone is collection. Prior findings and erasure/performance
+limits remain, with no universal security or release-readiness inference.

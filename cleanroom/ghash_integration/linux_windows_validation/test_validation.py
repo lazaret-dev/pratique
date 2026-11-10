@@ -25,33 +25,36 @@ def output(selector=V.HRR, failed=False, ignored=False):
             "; 0 measured; 51 filtered out; finished in 0.01s\n")
 
 
+def interop_output(failed=0):
+    return ("running 52 tests\ntest synthetic_interop ... done\ntest result: " +
+            ("FAILED" if failed else "ok") + ". " + str(52 - failed) + " passed; " + str(failed) +
+            " failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n")
+
+
 class ValidationContracts(unittest.TestCase):
     def test_fixed_commands_and_caps(self):
-        msrv = dict((n, a) for n, _, a in V.fixed_plan("linux-msrv"))
-        self.assertEqual(msrv["full-release"], ["cargo", "test", "--release", "--all-features"])
+        msrv = dict((n, a) for n, _, a in V.fixed_plan("linux-followup"))
+        self.assertEqual(set(msrv), {"production-audit", "source-package"})
         self.assertEqual(msrv["source-package"], ["cargo", "package", "--frozen", "--all-features"])
-        for name, selector in V.TIMING_SELECTORS.items():
-            self.assertEqual(msrv[name][5], selector)
-            self.assertEqual(msrv[name][6:], ["--", "--ignored", "--nocapture", "--test-threads=1"])
-        for lane in ("windows-arm64", "windows-x64"):
-            plan = V.fixed_plan(lane)
-            self.assertEqual([n for n, _, _ in plan], ["baseline-hrr-build", "baseline-hrr", "candidate-hrr-build", "candidate-hrr", "full-release"])
-            self.assertEqual([cap for n, cap, _ in plan if n.endswith("-hrr")], [45, 45])
-            self.assertEqual(plan[0][2], plan[2][2])
-            self.assertEqual(plan[-1][2], ["cargo", "test", "--release", "--target", V.TARGETS[lane]])
-            self.assertNotIn("--all-features", plan[-1][2])
+        self.assertEqual(msrv["production-audit"][:2], ["python3", "-B"])
+        self.assertEqual(msrv["production-audit"][-2:], ["--output", "ARTIFACT_OUTPUT/production-audit/production-assembly-1.87.0.json"])
+        plan = V.fixed_plan("windows-pair")
+        self.assertEqual([n for n, _, _ in plan], ["baseline-interop-build", "baseline-interop", "candidate-interop-build", "candidate-interop"])
+        self.assertEqual([cap for n, cap, _ in plan], [360, 720, 360, 720])
+        self.assertEqual(plan[0][2], plan[2][2])
+        self.assertEqual(plan[0][2], ["cargo", "test", "--release", "--target", "x86_64-pc-windows-msvc", "--test", "interop_openssl", "--no-run", "--message-format=json"])
 
     def test_no_timing_override(self):
-        env = {"PRATIQUE_TIMING_SECS": "3", "RUSTFLAGS": V.PORTABLE}
-        V.validate_environment("linux-msrv", env)
+        env = {"PRATIQUE_TIMING_SECS": "3", "RUSTFLAGS": V.PORTABLE, "PYTHONDONTWRITEBYTECODE": "1"}
+        V.validate_environment("linux-followup", env)
         for key, value in [("PRATIQUE_TIMING_SECS", "30"), ("PRATIQUE_TIMING_REPS", "1"),
                            ("PRATIQUE_TIMING_TICKS", "0"), ("PRATIQUE_TIMING_TICK_NS", "0"),
                            ("PRATIQUE_NULL_PAIRS", ""), ("CARGO_ENCODED_RUSTFLAGS", "x"),
                            ("CARGO_ENCODED_RUSTFLAGS", ""),
                            ("CARGO_BUILD_TARGET", "aarch64"), ("CARGO_TARGET_DIR", "/other"),
-                           ("RUSTFLAGS", "")]:
+                           ("RUSTFLAGS", ""), ("PYTHONDONTWRITEBYTECODE", "0")]:
             with self.subTest(key=key), self.assertRaises(ValueError):
-                V.validate_environment("linux-msrv", dict(env, **{key: value}))
+                V.validate_environment("linux-followup", dict(env, **{key: value}))
 
     def test_exact_footer_and_zero_test_rejection(self):
         for failed in (False, True):
@@ -104,45 +107,64 @@ class ValidationContracts(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     V.source_binding(p, V.CANDIDATE)
 
-    def test_failed_hrr_continues_and_hash_mutation_rejects(self):
+    def test_failed52_interop_continues_and_hash_mutation_rejects(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             binary = str((root / "interop_openssl-fixture.exe").resolve())
-            info = {binary: {"path": binary, "sha256": "a" * 64, "target": V.TARGETS["windows-arm64"]}}
+            info = {binary: {"path": binary, "sha256": "a" * 64, "target": V.TARGETS["windows-pair"]}}
             modes = [101, 0, 0]
             class Process:
                 pid = 123456
                 def __init__(self, argv, stdout, stderr, **kwargs):
                     self.code = modes.pop(0)
-                    stdout.write(output(failed=self.code == 101).encode())
+                    stdout.write(interop_output(failed=13 if self.code == 101 else 0).encode())
                 def wait(self, timeout):
                     return self.code
-            d = V.Driver("windows-arm64", root, root / "out")
+            d = V.Driver("windows-pair", root, root / "out")
             with mock.patch.object(d, "catalog", return_value=info), mock.patch.object(V.subprocess, "Popen", Process):
-                first = d.command("baseline-hrr", [binary, V.HRR], root, 45, exact=True, test=True)
-                second = d.command("candidate-hrr", [binary, V.HRR], root, 45, exact=True, test=True)
+                first = d.command("baseline-interop", [binary, "--nocapture"], root, 720, test=True)
+                second = d.command("candidate-interop", [binary, "--nocapture"], root, 720, test=True)
             self.assertTrue(first["test_footer_completed"])
             self.assertFalse(first["check_passed"])
             self.assertTrue(second["check_passed"])
             changed = {binary: dict(info[binary], sha256="b" * 64)}
             with mock.patch.object(d, "catalog", side_effect=[info, changed]), mock.patch.object(V.subprocess, "Popen", Process):
-                mutation = d.command("candidate-hrr", [binary, V.HRR], root, 45, exact=True, test=True)
+                mutation = d.command("candidate-interop", [binary, "--nocapture"], root, 720, test=True)
             self.assertFalse(mutation["selected_binary_identity_verified"])
             self.assertFalse(mutation["test_footer_completed"])
             self.assertFalse(mutation["check_passed"])
 
     def test_missing_binary_prevents_execution(self):
         with tempfile.TemporaryDirectory() as tmp:
-            d = V.Driver("windows-arm64", tmp, Path(tmp) / "out")
+            d = V.Driver("windows-pair", tmp, Path(tmp) / "out")
             with mock.patch.object(d, "catalog", return_value={}), mock.patch.object(V.subprocess, "Popen") as create:
                 r = d.command("candidate-hrr", [str(Path(tmp) / "missing.exe"), V.HRR], tmp, 45, exact=True, test=True)
             create.assert_not_called()
             self.assertIn("identity_error", r)
 
+    def test52_completion_rejects_partial_and_contradictory_footer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = str((root / "interop_openssl-fixture.exe").resolve())
+            info = {binary: {"path": binary, "sha256": "a" * 64}}
+            texts = [output(), interop_output(failed=13), interop_output().replace("running 52 tests", "running 0 tests")]
+            for text in texts:
+                class Process:
+                    pid = 123456
+                    def __init__(self, argv, stdout, **kwargs):
+                        stdout.write(text.encode())
+                    def wait(self, timeout):
+                        return 0
+                d = V.Driver("windows-pair", root, root / "out")
+                with mock.patch.object(d, "catalog", return_value=info), mock.patch.object(V.subprocess, "Popen", Process):
+                    result = d.command("candidate-interop", [binary, "--nocapture"], root, 720, test=True)
+                self.assertFalse(result["test_footer_completed"])
+                self.assertFalse(result["check_passed"])
+
     def test_windows_timeout_and_cancel_cleanup(self):
         for cancel, cleanup_exit in [(False, 5), (True, 0)]:
             with self.subTest(cancel=cancel), tempfile.TemporaryDirectory() as tmp:
-                d = V.Driver("windows-arm64", tmp, Path(tmp) / "out")
+                d = V.Driver("windows-pair", tmp, Path(tmp) / "out")
                 class Process:
                     pid = 123456
                     calls = 0
@@ -199,7 +221,7 @@ class ValidationContracts(unittest.TestCase):
                         info = tarfile.TarInfo("pratique-0.1.0/" + name)
                         info.size = len(data)
                         tar.addfile(info, io.BytesIO(data))
-            d = V.Driver("linux-stable", root, root / "out")
+            d = V.Driver("linux-followup", root, root / "out")
             with mock.patch.object(V, "HERE", helper), mock.patch.object(V.subprocess, "check_output", return_value=b""):
                 make()
                 self.assertTrue(d.package_binding(source)["vcs_metadata_present"])
@@ -211,7 +233,7 @@ class ValidationContracts(unittest.TestCase):
 
     def test_post_spawn_recording_error_cleans_and_stops(self):
         with tempfile.TemporaryDirectory() as tmp:
-            d = V.Driver("windows-arm64", tmp, Path(tmp) / "out")
+            d = V.Driver("windows-pair", tmp, Path(tmp) / "out")
             process = SimpleNamespace(pid=123456, wait=mock.Mock(return_value=0))
             original = V.write
             failed = [False]
@@ -234,6 +256,69 @@ class ValidationContracts(unittest.TestCase):
             self.assertIn("collector_error", first)
             self.assertFalse(d.safe)
             self.assertEqual(later["execution"], "not_started")
+
+    def test_partial_main_retains_binary_after_source_or_package_error(self):
+        for source_error in (False, True):
+            with self.subTest(source_error=source_error), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                workspace = root / "workspace"
+                helper = workspace / "admin/cleanroom/ghash_integration/linux_windows_validation"
+                helper.mkdir(parents=True)
+                (helper / "production-sha256.json").write_text("{}")
+                binary = workspace / "candidate/target/release/deps/pratique-fixture"
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b"synthetic non-executable retained bytes")
+                info = {"path": str(binary), "bytes": binary.stat().st_size,
+                        "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()}
+                binding = {"commit": V.CANDIDATE, "source": "synthetic"}
+                count = [0]
+                def bind(*args):
+                    count[0] += 1
+                    if source_error and count[0] == 2:
+                        raise ValueError("synthetic post-check source mismatch")
+                    return binding
+                def command(driver, name, argv, cwd, cap, **kwargs):
+                    record = {"name": name, "execution": "started", "invocation_completed": True,
+                              "check_passed": not (source_error and name == "source-package"),
+                              "exit_code": 101 if source_error and name == "source-package" else 0,
+                              "binaries_after": {str(binary): info}, "is_test": False}
+                    driver.records.append(record)
+                    return record
+                env = {"GITHUB_WORKSPACE": str(workspace), "RUNNER_TEMP": str(root / "temp"),
+                       "GITHUB_SHA": "a" * 40, "GITHUB_REF": V.BRANCH,
+                       "RUSTFLAGS": V.PORTABLE, "PRATIQUE_TIMING_SECS": "3", "PYTHONDONTWRITEBYTECODE": "1"}
+                with mock.patch.dict(V.os.environ, env, clear=True), mock.patch.object(V, "HERE", helper), \
+                     mock.patch.object(V.sys, "argv", ["driver", "linux-followup"]), \
+                     mock.patch.object(V.subprocess, "check_output", return_value="a" * 40 + "\n"), \
+                     mock.patch.object(V, "source_binding", side_effect=bind), \
+                     mock.patch.object(V.Driver, "prerequisites", return_value={}), \
+                     mock.patch.object(V.Driver, "command", command), \
+                     mock.patch.object(V.Driver, "package_binding", side_effect=ValueError("synthetic package identity mismatch")):
+                    result = V.main()
+                report = json.loads((root / "temp/pratique-release-validation/summary.json").read_text())
+                self.assertEqual(result, 1)
+                self.assertFalse(report["all_requested_checks_passed"])
+                self.assertEqual(len(report["retained_binaries"]["retained"]), 1)
+                if source_error:
+                    self.assertFalse(report["source_inputs_unchanged"])
+                    self.assertIn("candidate", report["source_binding_after_errors"])
+                    self.assertFalse(report["collection_complete"])
+                else:
+                    package = next(r for r in report["records"] if r["name"] == "source-package")
+                    self.assertIn("package_identity_error", package)
+
+    def test_missing_binary_retention_does_not_discard_good_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            p = root / "pratique-good"
+            p.write_bytes(b"synthetic good bytes")
+            good = {"path": str(p), "bytes": p.stat().st_size, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+            missing = {"path": str(root / "pratique-missing"), "bytes": 1, "sha256": "a" * 64}
+            d = V.Driver("linux-followup", root, root / "out")
+            d.records = [{"binaries_after": {"missing": missing, "good": good}}]
+            result = d.retain_binaries()
+            self.assertEqual(len(result["retained"]), 1)
+            self.assertEqual(len(result["not_retained"]), 1)
 
 
 if __name__ == "__main__":
