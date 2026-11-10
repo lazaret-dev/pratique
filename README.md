@@ -394,12 +394,20 @@ responders answer from responses signed in advance (RFC 5019), and what stops an
 
 ## Constant-time status
 
+**Portable GHASH is an experimental candidate; timing remains on HOLD.** Earlier
+confirmed native timing findings remain unresolved. The guarded representation
+below is awaiting the fixed paired Xeon 8370C experiment; neither its finite
+circuit witness nor functional checks establish whole-path timing independence.
+Historical timing observations in this section are not acceptance of this
+candidate. See [the guarded candidate record](cleanroom/ghash_integration/GUARDED_COMPARISON.md).
+
 X25519, the P-256/P-384 key exchange (`src/crypto/ecdh.rs`), GHASH, Poly1305, ChaCha20 and AES contain no
 secret-dependent branches or table lookups (X25519 key generation, and since B-115 P-256/P-384 key pairs and ECDSA's nonce
 point, look up a table of multiples of the base point, but read every entry of a row at each lookup and keep the one they
 need with masks: `crypto/x25519_base.rs`, `crypto/ecdh.rs`), and a statistical timing harness (`src/crypto/timing.rs`, dudect style,
-with deliberately leaky positive controls) found no timing dependence on keys or data on x86-64 or on an Apple M5 Max
-(backlog B-24, B-58), with one exception that is not explained: on an Intel Xeon cloud VM the 32-bit-limb Poly1305 (which
+with deliberately leaky positive controls) historically found no timing dependence on keys or data on the tested
+x86-64 or Apple M5 Max configurations (backlog B-24, B-58). That historical record included an unexplained
+exception: on an Intel Xeon cloud VM the 32-bit-limb Poly1305 (which
 64-bit builds do not use) reads |t| 4 to 12 for an all-zero key against random keys (B-95). Known on the M5 under macOS: the one-pass AES-GCM seal (B-85) takes about 0.1 ns longer per KiB for random plaintext than for all-zero plaintext (under 0.1 percent, measured to +/- 0.01 ns; it was twice that before the kernel stopped reading its ciphertext back, and the 3.5 times slower two-pass seal shows none). The likely cause is the CPU predicting the values loads return, which DIT does not turn off; what it could reveal is whether the plaintext holds long runs of one value, to someone timing many seals on the same machine (B-24). The Linux VM on the same CPU shows none of it. Copying memory shows the same kind of difference there, much larger. The harness earned its keep on the P-256/P-384 code: the first version showed |t| above 100
 because LLVM had turned a mask-based conditional subtraction back into a branch on the data; the masks now go
 through `black_box` and all eight comparisons read below 3. Verification-only ECDSA (`ecdsa.rs`) handles public
@@ -411,8 +419,23 @@ instructions (AES-NI, or the ARMv8 AES instructions; found at run time and self-
 bitsliced circuit with no tables (B-20, B-41). Both pass the same harness: |t| stays under 3.5 on the key and data
 rows for AES-128 and AES-256 on x86-64. GHASH uses PCLMULQDQ / PMULL where available. Its portable path uses
 independently authored Boolean polynomial products: a fixed-work scalar product for short inputs and tails, and
-prepared powers with 64-block product aggregation for full batches. The portable product primitives use fixed
-AND, XOR, shift, transpose, and parity operations. Runtime platform timing guards remain active where supported.
+on 64-bit targets, fifty payload blocks plus fourteen fixed public guard lanes
+per 800-byte batch. Powers H^50 through H weight the payload recurrence, including
+its incoming state; the exact XOR of the fourteen public products is removed
+before field reduction, so the GHASH result is unchanged. The guard lanes keep
+both bit values present in the independently checked nonconstant circuit wires.
+That property does not cover packing, scalar tails/reduction, cleanup or arbitrary platform
+operand latency. On 32-bit targets the entire portable GHASH path uses the
+accepted scalar recurrence. Hardware PCLMULQDQ/PMULL and runtime platform timing
+guards retain their existing behavior; this candidate needs no privileged mode.
+
+Raw powers, the running preparation scalar, raw blocks and all source-owned batch
+workspace fields use zero-initialized owners and the existing volatile cleanup on
+normal scope exit and unwinding. All retained prepared planes are exposed to the
+key's wipe. This is best effort: compiler-created Clone/API-return temporaries,
+scalar/register/spill copies, OS copies and abort paths are not promised erased.
+The guard representation is not a whole-frame erasure or constant-time proof.
+
 RSA, ECDSA and Ed25519 are verification only and handle public data (the Ed25519 code is variable time by design; the field arithmetic it shares with X25519 is the constant-time code, in `crypto/fe25519.rs`).
 
 ## Features
@@ -860,7 +883,7 @@ is chosen at run time:
 |--------|--------------------|----------|---------|
 | x86-64 (Intel Macs, Windows, Linux) | SSE2, four blocks per step; AVX2, eight, if the CPU has it; AVX-512, sixteen, on Intel since Ice Lake and AMD since Zen 4 | radix 2^64 (two 64-bit limbs); four blocks at a time in AVX2's lanes for 2 KiB and more, if the CPU has it (B-104) | AES-NI + PCLMULQDQ if the CPU has them |
 | aarch64 (Apple Silicon, ARM servers, Windows on ARM) | NEON, eight blocks per step (four for the end of a message), with Poly1305 run between its rounds | radix 2^64 | ARMv8 AES + PMULL if the CPU has them |
-| anything else, including 32-bit targets | portable one-block loop | radix 2^64 on 64-bit pointers, 5 x 26-bit limbs on 32-bit | bitsliced AES + Boolean scalar/batched GHASH |
+| anything else, including 32-bit targets | portable one-block loop | radix 2^64 on 64-bit pointers, 5 x 26-bit limbs on 32-bit | bitsliced AES; guarded 50-payload GHASH batches on 64-bit pointers, scalar GHASH on 32-bit |
 
 On an x86-64 VM (Cascade Lake) B-57 took ChaCha20-Poly1305 from about 0.62 to 1.1 GB/s (`examples/bench.rs`, 1 MiB
 messages; 0.64 to 1.2 GB/s on 16 KiB records): the keystream from 1.1 to 2.3 GB/s with AVX2 (4.6 with AVX-512, which
@@ -876,7 +899,7 @@ if anything disagrees the process uses the portable path. `pratique::crypto::aes
 one is in use, and `examples/bench.rs` prints it. The ClientHello offers AES-GCM first when it is hardware
 accelerated and ChaCha20-Poly1305 first when it is not. Portable AES processes four blocks through the independently
 authored quadratic-field-tower S-box and FIPS 197 affine map in `aes_sbox_tower_clean.rs`; the key schedule uses the
-same S-box. Current bulk, short-record, and key-setup measurements are in
+same S-box. Historical bulk, short-record, and key-setup measurements are in
 [the integration evidence](cleanroom/ghash_integration/README.md), with performance follow-up in
 [issue #11](https://github.com/lazaret-dev/pratique/issues/11).
 `RUSTFLAGS="--cfg pratique_portable"` forces the portable cipher kernels on every target. The runtime-checked ARM data-independent timing guard remains active on CPUs that support it. On x86-64 CPUs with BMI2, the X25519

@@ -132,3 +132,33 @@ Current integration, validation, lifecycle closure, and scoped attribution
 results are recorded under the identities and evidence paths above. Supported
 public AES key sizes remain 128 and 256 bits; AES-192 was not added to the
 repository's API. The original implementation-agent affirmation is unchanged.
+
+## November 10 guarded continuation record
+
+The same separate roles continue: clean primitive author `/root` in logical
+session `20261109-guarded-clmul`, integrator `/root/ghash_integrator`, and
+independent read-only reviewer `/root/pr10_final_review`, associated with parent
+workspace `01a1be54-c6e9-73d3-8a85-5e6f9a76a492`. Source and disassembly remain
+outside the clean author's view. These administrative identities supplement,
+and do not replace or backdate, the original PR #8 affirmation above.
+
+The clean chain extends working-state API `27a1c8ac` with exact guard commit
+`404718732544d328e61174963e4cc756b00a7605`, borrowed test observer
+`9f8a17c4a181988d3bbd839b415d6b58076b0124`, and retained-copy API
+`26af8b776e7aea1ad328333f9a4a1d6cafe7a85f`. They were committed independently
+before integration `c87285bc3c2cf5b7ba29e5bdd50a1b05a72563cc`. The production
+module/constants are exact copies of the final clean files; integration owns
+the GHASH scheduling, fifty-word raw guards and existing volatile cleanup.
+The separate administrative audit update is
+`ce5c179491d1a2db3ba005a083d44517fbb29dcd`, without production/Cargo changes.
+
+This is an experimental representation, not an accepted timing fix. Fifty
+payload lanes and fourteen public guard lanes preserve the exact product after
+XOR-removing its known public correction before field reduction. Only the 64-bit
+path uses that guard witness; the 32-bit portable path remains scalar. The
+circuit invariant does not cover arbitrary platform latency or all caller work.
+Compiler-created key Clone/API-return copies, registers/spills and abort paths
+retain the existing best-effort erasure limit. Paired 8370C validation is pending
+and all previous findings and HOLD remain. NOTICE and LICENSE are unchanged.
+See the detailed current [integration provenance](cleanroom/ghash_integration/PROVENANCE.md)
+and [guarded candidate record](cleanroom/ghash_integration/GUARDED_COMPARISON.md).

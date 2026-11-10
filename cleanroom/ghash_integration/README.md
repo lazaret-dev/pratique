@@ -1,10 +1,15 @@
 # Portable AES/GHASH integration validation
 
-The independently authored quadratic-field AES S-box and prepared 64-block
-Boolean GHASH primitive are integrated. The earlier integration measurements
+The independently authored quadratic-field AES S-box is integrated. This
+experimental candidate uses fifty payload blocks and fourteen fixed public guard
+lanes per portable GHASH batch on 64-bit targets, with the exact public-product
+correction removed before reduction. On 32-bit targets it uses the accepted
+scalar GHASH recurrence throughout. Hardware kernels retain their existing
+behavior. See [GUARDED_COMPARISON.md](GUARDED_COMPARISON.md) for the current
+representation, ownership and evidence limits. The earlier integration measurements
 passed all four requested portable throughput gates; its same-process hardware
 comparison was within 1.51 percent of baseline. These are historical results,
-not measurements of the later working-state cleanup described below. The
+not measurements of the later working-state cleanup or guarded candidate. The
 accelerated kernels retain their existing source. Public
 key sizes remain AES-128 and AES-256; this repository does not expose AES-192.
 No dependency or public API change is included. The lifecycle follow-up amends
@@ -13,8 +18,10 @@ audit in [ATTRIBUTION_AUDIT.md](ATTRIBUTION_AUDIT.md); unrelated notices and
 LICENSE are retained.
 
 **Timing remains on HOLD.** Earlier confirmed native GHASH timing findings are
-unresolved. The November 9 [working-state repair](WORKING_STATE_REPAIR.md) closes
-a separate source-owned batch-buffer cleanup gap using committed clean-only
+unresolved. Guarded-candidate validation on the problem Xeon 8370C is pending;
+local correctness and circuit/code-generation checks do not predeclare its
+outcome or establish whole-path timing independence. The November 9
+[working-state repair](WORKING_STATE_REPAIR.md) closes a separate source-owned batch-buffer cleanup gap using committed clean-only
 API `27a1c8ac`. Its local correctness, lifecycle and code-generation checks do
 not close those timing findings. The original timing test, threshold, crops and
 CI gate are unchanged. No new throughput claim or performance campaign is made
@@ -27,7 +34,13 @@ x86 CI therefore checks full software debug/release/timing/assembly with Rust
 x86 Rust 1.87 build is not claimed to pass. No ChaCha kernel or build-system
 compatibility change is included in this AES/GHASH work.
 
-**Key setup is deliberately more expensive:** eager portable preparation and
+## Historical 64-lane integration evidence
+
+The following measurements and lifecycle description refer to the earlier
+64-payload path. They are preserved as historical evidence, not substituted for
+new candidate measurements.
+
+**Historical key-setup tradeoff:** eager portable preparation and
 wiping cost 8.44 microseconds for AES-128 and 8.89 microseconds for AES-256,
 compared with 1.50 and 1.90 microseconds in the baseline. The prepared operand
 holds 1,536 bytes of secret planes per key. Preparation is amortized by the key
@@ -40,7 +53,7 @@ by `Zeroize`; this does not guarantee complete physical erasure. The initial
 value-taking preparation path's explicit scratch arrays were a real gap and
 were removed by the separately committed borrowed API and integration repair.
 
-The separate integrator started exactly at
+The original 64-lane integration started exactly at
 `2a1d85533505499bffe4b3990921321d2bb0658f`. Both accelerated AES kernels and
 existing scalar reduction/composition were preserved. Portable full groups of
 64 blocks use prepared powers, with the incoming state folded into the first
@@ -56,8 +69,9 @@ identity with the reviewed integration tree. See [PROVENANCE.md](PROVENANCE.md),
 [the primitive provenance](../clmul_feasibility/PROVENANCE.md), and
 [the S-box derivation](../aes_tower/DERIVATION.md).
 
-The measurements and validation counts below record the initial draft. Current
-lifecycle follow-up results are in [lifecycle_results/SUMMARY.json](lifecycle_results/SUMMARY.json).
+The measurements and validation counts below record the initial draft. Earlier
+preparation-lifecycle follow-up results are in
+[lifecycle_results/SUMMARY.json](lifecycle_results/SUMMARY.json).
 The initial measurements use decimal MB/s on Apple ARM64. Throughput is the
 median of seven calibrated windows; keys are created outside the timed seal.
 The final software build explicitly uses `--cfg pratique_portable` and
@@ -149,9 +163,28 @@ normalized for repository whitespace checks. The initial draft preceded the scop
 follow-up includes that audited amendment; no merge, re-vendor, release, or legal
 originality guarantee is included.
 
-The merge-readiness lifecycle continuation starts at public head `32615a80`,
+The historical preparation-lifecycle continuation starts at public head `32615a80`,
 merges independent API commit `5ecf2525`, and wires it in `3db15f54`. Its unique
 integrator identity and logical workspace/session are reconciled in
 `CLEAN_ROOM_AES_GHASH.md` and the integration provenance. Source-owned preparation
 arrays are checked separately from retained-state wiping. Performance issue #11
 remains a nonblocking follow-up; this repair does not change its disposition.
+
+
+## Guarded candidate and administrative audit continuation
+
+The current clean source chain is `27a1c8ac -> 40471873 -> 9f8a17c4 -> 26af8b77`,
+merged unchanged before production integration `c87285bc`. The separate audit-only
+commit `ce5c1794` recognizes the borrowed fifty-lane API and zero-first RAII
+cleanup without changing any production/Cargo or timing input. It preserves the
+legacy sixty-four-lane checks. [LIFECYCLE_AUDIT.md](LIFECYCLE_AUDIT.md) separates
+source-graph regressions, primitive-wrapper emission and actual whole-crate
+normal/unwind evidence. Earlier failed checks remain recorded as failures.
+
+The guard witness is finite, and reviewed compiler output binds only its exact
+source/toolchain/flags. The same source-owned raw/work cleanup obligations remain.
+An optimized Clone can create a prepared-field temporary and API-return copies;
+those compiler-created copies are outside the source-owned workspace contract.
+No complete physical erasure, timing/security closure, merge or release readiness
+is asserted. All earlier native failures remain evidence, thresholds and judges
+are unchanged, and the paired 8370C candidate result is pending.

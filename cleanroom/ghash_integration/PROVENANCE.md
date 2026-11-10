@@ -103,3 +103,57 @@ scope concerns explicit batch aggregates, not complete erasure of circuit
 scalars, compiler-created copies/spills, abort paths or OS copies. Independent
 review remains in `/root/pr10_final_review`; no production source or raw
 assembly is sent to the clean-only author.
+
+## November 10 guarded candidate and documentation continuation
+
+The unchanged author/integrator boundary continues in separate workspaces. The
+clean-only author `/root`, logical session `20261109-guarded-clmul`, committed:
+
+- `404718732544d328e61174963e4cc756b00a7605`: fifty payload lanes plus fourteen
+  public guard operand pairs and an exact public-product correction;
+- `9f8a17c4a181988d3bbd839b415d6b58076b0124`: a test-only borrowed retained-word
+  observer, without a production arithmetic or timing-path change; and
+- `26af8b776e7aea1ad328333f9a4a1d6cafe7a85f`: borrowed retained-state `copy_from`,
+  including deliberately wiped state and its lifecycle assertions.
+
+These descend from clean working-state API `27a1c8ac` and remain unchanged
+ancestors of integration `c87285bc3c2cf5b7ba29e5bdd50a1b05a72563cc`. The production
+guarded module/constants match the final committed clean copies byte for byte;
+the ordered polynomial circuit and accepted scalar primitive are unchanged.
+The separate integrator wired fifty descending powers and 800-byte groups,
+borrowed raw/work owners, scalar tails and the 32-bit scalar fallback. The
+source-owned arrays remain distinct from compiler-created key Clone/API-return
+copies, which retain the established best-effort erasure limit.
+
+The integration began at diagnostic source A3
+`a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf`, itself the 4848 working-state repair
+plus the three exact owner-supplied additive timing patches. Those diagnostic
+tests are not independently authored primitive expressions. Their row names,
+generators, clocks, budgets, crops, thresholds and judge are unchanged in this
+candidate; they do not replace the original gate or establish causal attribution.
+The scalar-only comparison remains a separate candidate, not this source tree.
+
+The same separate `/root/ghash_integrator` prepared administrative audit commit
+`ce5c179491d1a2db3ba005a083d44517fbb29dcd` in
+`/private/tmp/pratique-pr10-ghash-guarded-audit-20261110`. It changes only helpers
+and documentation, preserving all 197 production/Cargo input hashes from c872.
+The current documentation continuation is separate again, in
+`/private/tmp/pratique-pr10-ghash-guarded-docs-20261110`, based on that audit
+commit. It changes no primitive, production/Cargo/test input or audit behavior.
+Independent read-only review remains `/root/pr10_final_review`.
+
+The integrator consulted the author's committed guard source, public witness,
+provenance and source-free API requests; the owned production caller and exact
+owner-supplied timing patches; existing source-bound compiler/evidence records;
+and the repository's attribution records. The clean author received source-free
+API/lifecycle/results summaries, not production source, diagnostic patch bodies
+or disassembly. No excluded or third-party cryptographic implementation was
+consulted. The original clean-author affirmations are preserved unchanged.
+
+This continuation does not amend NOTICE or LICENSE. The historical scoped
+attribution decision remains an engineering record with its original limits;
+no broader pre-import originality or new package/legal review is asserted.
+No private-runner identifiers, host details or private results are added to the
+publication documentation. The fixed paired Xeon 8370C candidate validation is
+pending; no readiness, merge, release, timing waiver or security closure is
+predeclared. All previous native findings remain evidence.

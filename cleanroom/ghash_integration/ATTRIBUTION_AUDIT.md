@@ -1,6 +1,6 @@
-# Scoped current-code attribution audit
+# Scoped historical attribution audit and guarded continuation
 
-This is an engineering audit of the two implementation techniques named by the
+The historical record below is an engineering audit of the two implementation techniques named by the
 former BearSSL entry in Pratique's NOTICE. It is not a legal originality
 opinion, a comparison against third-party implementation source, or a claim
 about every dependency/test fixture or downstream release. No BearSSL,
@@ -64,3 +64,31 @@ The independent source-free evidence records are retained in
 SHA-256 values are respectively
 `98c15252b05dec2a86d28b24ae1d5bef59ac987e49cd5c12dc8df8955ab76134` and
 `278292d71009a487995ecdea2b9f416eb951a85c775c98eda6eb33bba8c16682`.
+
+
+## Guarded-candidate scope recheck
+
+The historical source/package hashes and counts above describe their named
+frozen revisions; they are not a new package scan of the guarded candidate.
+The current continuation preserves that attribution decision and all unrelated
+Mozilla, Sigstore and test-data notices. NOTICE and LICENSE remain byte-identical
+to c872 and the audit-only parent; no additional notice is removed or rewritten.
+
+The new primitive material is the independent author's committed guarded module
+and public constants, preserved through `40471873`, test observer `9f8a17c4` and
+retained-copy API `26af8b77` into integration `c87285bc`. Their exact clean-source
+copy relationship, the unchanged ordered circuit and accepted scalar primitive,
+and the continued separate author/integrator/reviewer roles are recorded in
+[PROVENANCE.md](PROVENANCE.md). No third-party cryptographic implementation was
+consulted for this recheck. The owner-supplied timing diagnostics remain separate
+from the clean primitive authorship claim.
+
+This scope recheck is not a legal originality opinion, renewed whole-history
+or fresh packaged-artifact audit, or evidence for removing any other notice.
+The original pre-import/training-data/unknown-resemblance limitations remain.
+The current raw fifty-word preparation/working arrays and retained 192 planes
+follow the reviewed source-owned cleanup policy; compiler-created key
+Clone/API-return temporaries and register/stack copies remain best effort.
+Timing validation on the problem 8370C is pending and earlier findings remain
+unresolved. No attribution decision, finite guard witness or cleanup review
+confers security, timing, merge or release readiness.
