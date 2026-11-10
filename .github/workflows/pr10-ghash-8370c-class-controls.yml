@@ -1,0 +1,117 @@
+name: Manual GHASH class controls on Xeon 8370C
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr10-ghash-8370c-manual
+  cancel-in-progress: false
+
+jobs:
+  xeon-8370c:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUSTUP_TOOLCHAIN: 1.87.0
+      RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
+      PRATIQUE_TIMING_SECS: '3'
+      PRATIQUE_EXPECTED_SOURCE_COMMIT: 9ba854cf5b793f5ff9525964d58519018ed9f275
+      PRATIQUE_CLASS_OUTPUT: /tmp/pratique-ghash-8370c
+      LC_ALL: C
+    steps:
+      - name: Record host and filter before checkout or compiler
+        id: cpu
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$PRATIQUE_CLASS_OUTPUT/host"
+          lscpu > "$PRATIQUE_CLASS_OUTPUT/host/lscpu.txt"
+          lscpu -J > "$PRATIQUE_CLASS_OUTPUT/host/lscpu.json"
+          uname -a > "$PRATIQUE_CLASS_OUTPUT/host/uname.txt"
+          cat /proc/cpuinfo > "$PRATIQUE_CLASS_OUTPUT/host/proc-cpuinfo.txt"
+          python3 - <<'PY'
+          import json, os, pathlib, re
+          root = pathlib.Path(os.environ['PRATIQUE_CLASS_OUTPUT'])
+          rows = json.loads((root / 'host/lscpu.json').read_text())['lscpu']
+          fields = {r['field'].rstrip(':'): r['data'] for r in rows}
+          model = fields.get('Model name', '')
+          matched = bool(re.search(r'\bXeon\b.*\b8370C\b', model))
+          record = {'model_name': model, 'matched_8370C': matched,
+                    'architecture': fields.get('Architecture'),
+                    'allowed_affinity': sorted(os.sched_getaffinity(0)),
+                    'workflow_head': os.environ.get('GITHUB_SHA'),
+                    'workflow_ref': os.environ.get('GITHUB_WORKFLOW_REF'),
+                    'workflow_sha': os.environ.get('GITHUB_WORKFLOW_SHA'),
+                    'run_id': os.environ.get('GITHUB_RUN_ID'),
+                    'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
+                    'diagnostic_source_commit': os.environ['PRATIQUE_EXPECTED_SOURCE_COMMIT'],
+                    'selection_basis': 'Reported Xeon model token8370C, before checkout/compiler; no outcome selection.',
+                    'skip_reason': None if matched else 'Reported model is not Xeon8370C; no checkout, compiler or tests.',
+                    'planned_six_slots': [{'iteration': i, 'kind': kind, 'execution': 'not_attempted'}
+                                         for i in range(1, 4) for kind in ['gate', 'control']]}
+          (root / 'host/selection.json').write_text(json.dumps(record, indent=2) + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('matched=' + str(matched).lower() + '\n')
+          print(json.dumps(record))
+          PY
+
+      - name: Checkout immutable reviewed diagnostic source
+        if: steps.cpu.outputs.matched == 'true'
+        timeout-minutes: 1
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 9ba854cf5b793f5ff9525964d58519018ed9f275
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/fuzz/corpus/
+
+      - name: Install exact MSRV and bind source and flags
+        if: steps.cpu.outputs.matched == 'true'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.87.0 --profile minimal > "$PRATIQUE_CLASS_OUTPUT/toolchain-install.log" 2>&1
+          rustc -vV > "$PRATIQUE_CLASS_OUTPUT/rustc-vV.txt"
+          cargo --version > "$PRATIQUE_CLASS_OUTPUT/cargo-version.txt"
+          python3 cleanroom/ghash_integration/class_controls_8370c/run.py verify
+
+      - name: Build and hash one release test executable
+        id: build
+        if: steps.cpu.outputs.matched == 'true'
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --release --all-features --lib --no-run --message-format=json > "$PRATIQUE_CLASS_OUTPUT/build-events.jsonl" 2> "$PRATIQUE_CLASS_OUTPUT/build.stderr.log"
+          python3 cleanroom/ghash_integration/class_controls_8370c/run.py bind-binary
+
+      - name: Attempt all six alternating original and control calls
+        if: steps.cpu.outputs.matched == 'true' && steps.build.outcome == 'success'
+        timeout-minutes: 6
+        shell: bash
+        run: python3 cleanroom/ghash_integration/class_controls_8370c/run.py run
+
+      - name: Preserve every available report and signed effect
+        if: always() && steps.cpu.outputs.matched == 'true' && steps.build.outcome == 'success'
+        timeout-minutes: 1
+        shell: bash
+        run: python3 cleanroom/ghash_integration/class_controls_8370c/run.py summarize
+
+      - name: Upload skipped-host metadata or all six complete and partial logs
+        if: always()
+        timeout-minutes: 2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr10-ghash-8370c-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/pratique-ghash-8370c
+          if-no-files-found: error
+          retention-days: 14
