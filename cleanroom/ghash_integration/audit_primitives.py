@@ -52,15 +52,41 @@ def main():
     copies = [('src/crypto/aes_sbox_tower_clean.rs', 'cleanroom/aes_tower/sbox.rs'),
               ('src/crypto/clmul_batch_circuit.rs', 'cleanroom/clmul_feasibility/circuit.rs')]
     record = {'commands': [], 'copies': {}, 'assembly': {}}
+    helper_dir = Path(__file__).resolve().parent
+    record['audit_helper_sha256'] = {
+        name: hashlib.sha256((helper_dir / name).read_bytes()).hexdigest()
+        for name in ['audit_primitives.py', 'preparation_lifecycle.py',
+                     'working_state_lifecycle.py', 'guarded_lifecycle.py']
+    }
+    inputs = sorted([*ROOT.glob('src/**/*'), ROOT / 'Cargo.toml', ROOT / 'Cargo.lock'])
+    inputs = [p for p in inputs if p.is_file()]
+    input_hashes = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+    record['production_input_sha256'] = input_hashes
+    caller = (ROOT / 'src/crypto/ghash.rs').read_text()
+    uses_guarded = 'prepared: &mut PreparedPolynomial128x50' in caller
+    guarded = {}
+    if uses_guarded:
+        # Required reads fail closed: missing guarded inputs cannot turn this
+        # into a passing legacy-only audit.
+        guarded = {
+            'guarded_source': (ROOT / 'src/crypto/clmul_batch_clean/guarded.rs').read_text(),
+            'clean_guarded_source': (ROOT / 'cleanroom/clmul_feasibility/guarded.rs').read_text(),
+            'zeroize_source': (ROOT / 'src/zeroize.rs').read_text(),
+        }
+        copies.extend([
+            ('src/crypto/clmul_batch_clean/guarded.rs', 'cleanroom/clmul_feasibility/guarded.rs'),
+            ('src/crypto/clmul_batch_clean/guard_constants.rs', 'cleanroom/clmul_feasibility/guard_constants.rs'),
+        ])
+    record['caller_api'] = 'guarded-50' if uses_guarded else 'legacy-64'
     record['preparation_lifecycle'] = audit_preparation_source(
         (ROOT / 'src/crypto/clmul_batch_clean.rs').read_text(),
         (ROOT / 'src/crypto/ghash.rs').read_text(),
-        (ROOT / 'cleanroom/clmul_feasibility/lib.rs').read_text())
+        (ROOT / 'cleanroom/clmul_feasibility/lib.rs').read_text(), **guarded)
     record['working_state_lifecycle'] = audit_working_source(
         (ROOT / 'src/crypto/clmul_batch_clean.rs').read_text(),
         (ROOT / 'src/crypto/ghash.rs').read_text(),
         (ROOT / 'cleanroom/clmul_feasibility/lib.rs').read_text(),
-        (ROOT / 'src/crypto/clmul_batch_circuit.rs').read_text())
+        (ROOT / 'src/crypto/clmul_batch_circuit.rs').read_text(), **guarded)
     for production, cleanroom in copies:
         actual, original = (ROOT / production).read_bytes(), (ROOT / cleanroom).read_bytes()
         assert actual == original, production + ' differs from committed clean-room source'
@@ -77,12 +103,29 @@ def main():
         raise AssertionError('Structural negative control was accepted')
     out = Path(tempfile.mkdtemp(prefix='pratique-production-primitive-audit-'))
     record['artifacts'] = str(out)
+    # An explicit #[path] import changes Rust's implicit child-module lookup.
+    # Relocate only module paths in the audit copy; all primitive expressions
+    # remain byte-identical. Original production files are never modified.
+    batch_source = (ROOT / 'src/crypto/clmul_batch_clean.rs').read_text()
+    relocated = batch_source.replace(
+        '#[path = "clmul_batch_circuit.rs"]',
+        '#[path = "' + str(ROOT / 'src/crypto/clmul_batch_circuit.rs') + '"]')
+    if uses_guarded:
+        module = 'pub(crate) mod guarded;'
+        if relocated.count(module) != 1:
+            raise ValueError('Guarded module declaration missing or ambiguous')
+        relocated = relocated.replace(module,
+            '#[path = "' + str(ROOT / 'src/crypto/clmul_batch_clean/guarded.rs') + '"]\n' + module)
+    batch_copy = out / 'batch-audit.rs'
+    batch_copy.write_text(relocated)
+    record['batch_wrapper_source_sha256'] = hashlib.sha256(batch_copy.read_bytes()).hexdigest()
+    record['batch_wrapper_change'] = 'Only circuit/guarded module path attributes relocated; primitive expressions unchanged'
     wrapper = out / 'wrapper.rs'
     wrapper.write_text('''#![no_std]
 #![forbid(unsafe_code)]
 #[path = "''' + str(ROOT / 'src/crypto/aes_sbox_tower_clean.rs') + '''"] mod sbox;
 #[path = "''' + str(ROOT / 'src/crypto/clmul_clean.rs') + '''"] mod scalar;
-#[path = "''' + str(ROOT / 'src/crypto/clmul_batch_clean.rs') + '''"] mod batch;
+#[path = "''' + str(batch_copy) + '''"] mod batch;
 pub fn aes_sbox(q: &[u64; 8]) -> [u64; 8] { sbox::sbox(q) }
 pub fn clmul(a: u64, b: u64) -> u128 { scalar::clmul64_portable(a, b) }
 pub fn empty() -> batch::PreparedPolynomial128x64 { batch::PreparedPolynomial128x64::empty() }
@@ -93,7 +136,23 @@ pub fn working_output(working: &batch::BatchWorking128x64) -> &[u128; 2] { worki
 pub fn working_words64(working: &mut batch::BatchWorking128x64) -> [&mut [u64]; 4] { working.words64_mut() }
 pub fn working_words128(working: &mut batch::BatchWorking128x64) -> [&mut [u128]; 2] { working.words128_mut() }
 pub fn prepared_words(b: &mut batch::PreparedPolynomial128x64) -> [&mut [u64; 64]; 3] { b.words_mut() }
+#[cfg(target_pointer_width = "64")]
+pub fn guarded_empty() -> batch::guarded::PreparedPolynomial128x50 { batch::guarded::PreparedPolynomial128x50::empty() }
+#[cfg(target_pointer_width = "64")]
+pub fn guarded_prepare(p: &mut batch::guarded::PreparedPolynomial128x50, b: &[u128; 50]) { p.prepare(b) }
+#[cfg(target_pointer_width = "64")]
+pub fn guarded_aggregate(a: &[u128; 50], b: &batch::guarded::PreparedPolynomial128x50, working: &mut batch::BatchWorking128x64) { batch::guarded::clmul128x50_batch_xor_prepared(a, b, working) }
+#[cfg(target_pointer_width = "64")]
+pub fn guarded_words(b: &mut batch::guarded::PreparedPolynomial128x50) -> [&mut [u64; 64]; 3] { b.words_mut() }
+#[cfg(target_pointer_width = "64")]
+pub fn guarded_copy(p: &mut batch::guarded::PreparedPolynomial128x50, b: &batch::guarded::PreparedPolynomial128x50) { p.copy_from(b) }
 ''')
+    if not uses_guarded:
+        wrapper.write_text(wrapper.read_text().split('#[cfg(target_pointer_width = "64")]')[0])
+    record['wrapper_sha256'] = hashlib.sha256(wrapper.read_bytes()).hexdigest()
+    record['guarded_entry_symbols_required_on_64_bit_targets'] = (
+        ['guarded_prepare', 'guarded_aggregate', 'guarded_copy']
+        if uses_guarded else [])
     version = subprocess.check_output(['rustc', '+' + args.toolchain, '-vV'], text=True)
     record['compiler'] = version
     host = re.search(r'^host: (.+)$', version, re.M).group(1)
@@ -105,13 +164,35 @@ pub fn prepared_words(b: &mut batch::PreparedPolynomial128x64) -> [&mut [u64; 64
         elif target.startswith(('x86', 'i686')):
             flags = ['-C', 'target-feature=-aes,-pclmulqdq']
         command = ['rustc', '+' + args.toolchain, '--edition=2021', '-O',
-                   '--crate-type=lib', '--emit=asm', '--target', target,
+                   '--crate-type=lib', '--emit=asm', '--cfg', 'pratique_portable', '--target', target,
                    *flags, str(wrapper), '-o', str(output)]
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         record['commands'].append({'argv': command, 'exit': result.returncode, 'output': result.stdout})
         if result.returncode:
             raise RuntimeError(result.stdout)
-        record['assembly'][target] = assembly_summary(output.read_text())
+        assembly = output.read_text()
+        summary = assembly_summary(assembly)
+        # Determine the target width from rustc, not from a guessed triple.
+        cfg = subprocess.check_output(['rustc', '+' + args.toolchain, '--target', target, '--print', 'cfg'], text=True)
+        summary['target_pointer_width_64'] = 'target_pointer_width="64"' in cfg.splitlines()
+        if uses_guarded and summary['target_pointer_width_64']:
+            required = record['guarded_entry_symbols_required_on_64_bit_targets']
+            emitted = [name for name in required if re.search(r'^.*' + name + r'.*:', assembly, re.M)]
+            if emitted != required:
+                raise ValueError('Guarded assembly entry missing')
+            summary['guarded_entry_symbols_emitted'] = emitted
+            for name in ['clmul128x50_batch_xor_prepared', 'guarded_sum']:
+                if name not in assembly:
+                    raise ValueError('Actual guarded product graph was not emitted')
+            summary['guarded_product_graph_emitted'] = True
+        record['assembly'][target] = summary
+    after = {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
+    if input_hashes != after:
+        raise ValueError('Production inputs changed during audit')
+    record['production_inputs_unchanged_after'] = True
+    record['limits'] = ('Primitive wrapper assembly scan plus narrow source ownership checks; '
+                        'actual normal/unwind volatile cleanup needs bound whole-crate IR review; '
+                        'no proof of arbitrary instruction latency, compiler-copy or full-frame erasure.')
     path = args.output or ROOT / 'cleanroom/ghash_integration/results' / ('production-assembly-' + args.toolchain + '.json')
     if not path.is_absolute():
         path = ROOT / path

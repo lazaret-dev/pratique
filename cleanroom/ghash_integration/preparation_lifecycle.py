@@ -74,13 +74,20 @@ def _retained_api(source):
     return found
 
 
-def audit_preparation_source(production, caller, clean_source):
+def audit_preparation_source(production, caller, clean_source, guarded_source=None,
+                             clean_guarded_source=None, zeroize_source=None):
     found = _retained_api(production)
     if found != _retained_api(clean_source):
         raise ValueError('Production preparation differs from committed clean-only expressions')
     caller = _code(caller)
+    if guarded_source is not None:
+        from guarded_lifecycle import audit_guarded_preparation
+        guarded = audit_guarded_preparation(
+            guarded_source, caller, clean_guarded_source, zeroize_source)
+    else:
+        guarded = None
     header, body = _method(caller, 'prepare_powers')
-    if '&mutPreparedPolynomial128x64' not in _normal(header) or '->' in header:
+    if guarded is None and ('&mutPreparedPolynomial128x64' not in _normal(header) or '->' in header):
         raise ValueError('Power helper must borrow its final retained destination')
     if 'PreparedPolynomial128x64::new' in body or 'transpose(' in _normal(body):
         raise ValueError('Power helper reintroduced the value-taking route')
@@ -88,7 +95,7 @@ def audit_preparation_source(production, caller, clean_source):
         raise ValueError('Caller-owned raw powers must be borrowed')
     if re.search(r'\breturn\b', body):
         raise ValueError('Power helper must not exit before wiping its raw buffers')
-    for value in ['powers', 'power']:
+    for value in ([] if guarded else ['powers', 'power']):
         if not re.search(r'\b' + value + r'\.zeroize\s*\(\s*\)', body):
             raise ValueError('Caller-owned raw powers/scalar wipe is missing')
         if body.index(value + '.zeroize') < body.index('.prepare'):
@@ -96,7 +103,8 @@ def audit_preparation_source(production, caller, clean_source):
     _, constructor_impl = _item(caller, r'\bimpl\s+GhashKey\s*\{')
     _, constructor = _method(constructor_impl, 'new')
     normalized = _normal(constructor)
-    if 'Some(PreparedPolynomial128x64::empty())' not in normalized:
+    retained_type = 'PreparedPolynomial128x50' if guarded else 'PreparedPolynomial128x64'
+    if 'Some(' + retained_type + '::empty())' not in normalized:
         raise ValueError('Retained field must start with zero state')
     if 'key.portable_powers.as_mut()' not in normalized:
         raise ValueError('Preparation must borrow the actual retained key field')
@@ -121,6 +129,7 @@ def audit_preparation_source(production, caller, clean_source):
                                  'in-place transpose', 'borrowed transpose steps'],
             'source_owned_preparation_scratch_arrays': 0,
             'caller_raw_powers_and_scalar_wipes': True,
+            'guarded_50_lane_preparation': guarded,
             'clean_api_expression_match': True,
             'graph_sha256': hashlib.sha256(repr(sorted(found.items())).encode()).hexdigest(),
             'limitation': 'Object moves and compiler-created register/stack copies remain best effort'}

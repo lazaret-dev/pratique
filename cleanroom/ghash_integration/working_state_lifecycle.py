@@ -43,7 +43,7 @@ def _working_api(source):
     return found
 
 
-def _caller_graph(caller):
+def _caller_graph(caller, guarded=False):
     caller = _code(caller)
     _, implementation = _item(caller, r'\bimpl\s+Zeroize\s+for\s+BatchWorking128x64\s*\{')
     _, wipe = _method(implementation, 'zeroize')
@@ -54,9 +54,11 @@ def _caller_graph(caller):
             raise ValueError('Working-state volatile wipe coverage is incomplete')
     _, body = _method(caller, 'absorb_portable')
     normal = _normal(body)
-    required = ['letmutblocks=Zeroizing::new([0u128;64]);',
+    count = 'PAYLOAD_LANES' if guarded else '64'
+    kernel = 'clmul128x50_batch_xor_prepared' if guarded else 'clmul128_batch_xor_prepared'
+    required = ['letmutblocks=Zeroizing::new([0u128;' + count + ']);',
                 'letmutworking=Zeroizing::new(BatchWorking128x64::empty());',
-                'clmul128_batch_xor_prepared(&blocks,prepared,&mutworking);',
+                kernel + '(&blocks,prepared,&mutworking);',
                 'acc=reduce(working.output()[0],working.output()[1]);']
     for item in required:
         if item not in normal:
@@ -65,10 +67,15 @@ def _caller_graph(caller):
         raise ValueError('Output must follow computation in the retained owner')
     if re.search(r'\breturn\s+(?:working|blocks)\b|\b(?:working|blocks)\s*\.\s*clone\s*\(', body):
         raise ValueError('Populated batch ownership must not escape or clone')
+    if guarded:
+        from guarded_lifecycle import audit_guarded_absorb
+        audit_guarded_absorb(caller)
     return {'wipe': normal_wipe, 'caller': normal}
 
 
-def audit_working_source(production, caller, clean_source, circuit_source):
+def audit_working_source(production, caller, clean_source, circuit_source,
+                         guarded_source=None, clean_guarded_source=None,
+                         zeroize_source=None):
     found = _working_api(production)
     if found != _working_api(clean_source):
         raise ValueError('Production working API differs from committed clean-only code')
@@ -77,7 +84,11 @@ def audit_working_source(production, caller, clean_source, circuit_source):
     header, _ = _method(_code(circuit_source), 'planes_product')
     if '&mut[T;128]' not in _normal(header) or '->[T;128]' in _normal(header):
         raise ValueError('Circuit aggregate output must be borrowed')
-    graph = _caller_graph(caller)
+    if guarded_source is not None:
+        from guarded_lifecycle import audit_guarded_api, audit_zeroizing_source
+        audit_guarded_api(guarded_source, clean_guarded_source)
+        audit_zeroizing_source(zeroize_source)
+    graph = _caller_graph(caller, guarded=guarded_source is not None)
     for broken in [production.replace('a: &[u128; 64]', 'a: [u128; 64]'),
                    production.replace('pub fn output(&self) -> &[u128; 2]',
                                       'pub fn output(&self) -> [u128; 2]')]:
@@ -90,13 +101,14 @@ def audit_working_source(production, caller, clean_source, circuit_source):
         except ValueError:
             continue
         raise ValueError('Borrowed-workspace negative control accepted')
+    kernel = 'clmul128x50_batch_xor_prepared' if guarded_source is not None else 'clmul128_batch_xor_prepared'
     for broken in [caller.replace('self.words128_mut()', 'self.words64_mut()'),
-                   caller.replace('clmul128_batch_xor_prepared(&blocks, prepared, &mut working)',
-                                  'clmul128_batch_xor_prepared(blocks, prepared, &mut working)')]:
+                   caller.replace(kernel + '(&blocks, prepared, &mut working)',
+                                  kernel + '(blocks, prepared, &mut working)')]:
         if broken == caller:
             raise ValueError('Working caller negative control no longer matches')
         try:
-            _caller_graph(broken)
+            _caller_graph(broken, guarded=guarded_source is not None)
         except ValueError:
             continue
         raise ValueError('Working cleanup/borrow negative control accepted')
@@ -107,7 +119,7 @@ def audit_working_source(production, caller, clean_source, circuit_source):
                   'existing volatile Zeroize for every exposed slice'],
         'workspace_u64_words': 320,
         'workspace_u128_words': 5,
-        'raw_block_u128_words': 64,
+        'raw_block_u128_words': 50 if guarded_source is not None else 64,
         'source_owned_aggregate_escapes_on_used_graph': 0,
         'clean_api_expression_match': True,
         'graph_sha256': hashlib.sha256(repr((sorted(found.items()), graph)).encode()).hexdigest(),
