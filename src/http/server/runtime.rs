@@ -36,8 +36,9 @@
 //! * a request head, in all, from its first byte (slowloris) ([`Limits::head_timeout`]);
 //! * a request body, as a rate: after [`Limits::body_grace`], at least [`Limits::body_min_rate`] bytes a second on average,
 //!   counted from when the handler first reads it (in HTTP/2, a handler waits at most [`Limits::body_wait`] for more of
-//!   its body);
-//! * each write, and in HTTP/2 a handler's wait for the client's window ([`Limits::write_timeout`]);
+//!   its body). An HTTP/2 response body must be taken by the client at the same minimum rate;
+//! * each write, and in HTTP/2 a handler's wait for actual progress in the client's window
+//!   ([`Limits::write_timeout`]);
 //! * a connection handed over by an upgrade, per read ([`Limits::upgraded_idle_timeout`]).
 //!
 //! **Shutdown.** [`Server::shutdown`] stops accepting, closes the idle connections, lets those under way finish (HTTP/1.1:
@@ -69,12 +70,19 @@ pub struct Limits {
     /// HTTP/2 handlers running at once, over all connections (each has a thread); past it a new stream is refused
     /// (REFUSED_STREAM, which a client may send again).
     pub max_h2_handlers: usize,
+    /// HTTP/2 handlers running at once from one client address (IPv6: from one /64). This keeps one address from taking
+    /// every place in `max_h2_handlers` through several connections.
+    pub max_h2_handlers_per_ip: usize,
     pub handshake_timeout: Duration,
     pub idle_timeout: Duration,
     pub head_timeout: Duration,
+    /// Grace before enforcing `body_min_rate` on request bodies and HTTP/2 response bodies.
     pub body_grace: Duration,
+    /// Minimum average bytes per second for request bodies and HTTP/2 response bodies after `body_grace`.
     pub body_min_rate: u64,
+    /// Longest an HTTP/2 handler waits for more request-body data without progress.
     pub body_wait: Duration,
+    /// Longest a write, or an HTTP/2 handler waiting for actual response flow-control progress, may stall.
     pub write_timeout: Duration,
     pub upgraded_idle_timeout: Duration,
 }
@@ -85,6 +93,7 @@ impl Default for Limits {
             max_connections: 4096,
             max_connections_per_ip: 128,
             max_h2_handlers: 2048,
+            max_h2_handlers_per_ip: 128,
             handshake_timeout: Duration::from_secs(10),
             idle_timeout: Duration::from_secs(60),
             head_timeout: Duration::from_secs(10),
@@ -344,6 +353,7 @@ pub(crate) struct Ctl {
     pub(crate) h2: Mutex<Option<Weak<dyn GoAway>>>,
     pub(crate) log: Option<AccessLog>,
     pub(crate) handlers: Option<Arc<AtomicUsize>>,
+    pub(crate) handlers_per_ip: Option<Arc<AtomicUsize>>,
     /// To close the reading side of an idle connection.
     pub(crate) stop_reading: Option<Box<dyn Fn() + Send + Sync>>,
 }
@@ -373,6 +383,7 @@ impl Ctl {
             h2: Mutex::new(None),
             log: None,
             handlers: None,
+            handlers_per_ip: None,
             stop_reading: None,
         })
     }
@@ -389,6 +400,7 @@ impl Ctl {
             h2: Mutex::new(None),
             log: None,
             handlers: None,
+            handlers_per_ip: None,
             stop_reading: None,
         })
     }
@@ -404,6 +416,7 @@ impl Ctl {
             h2: Mutex::new(None),
             log: None,
             handlers: None,
+            handlers_per_ip: None,
             stop_reading: Some(Box::new(stop)),
         })
     }
@@ -414,23 +427,40 @@ impl Ctl {
 
     /// A place for one more HTTP/2 handler, if the server has one.
     pub(crate) fn take_handler(&self) -> bool {
-        let Some(n) = &self.handlers else { return true };
-        let max = self.limits.max_h2_handlers;
-        // (a loop rather than fetch_update, which Rust 1.99 renamed try_update: this builds without a warning on both)
-        let mut c = n.load(Ordering::SeqCst);
-        loop {
-            if c >= max {
-                return false;
-            }
-            match n.compare_exchange_weak(c, c + 1, Ordering::SeqCst, Ordering::SeqCst) {
-                Ok(_) => return true,
-                Err(now) => c = now,
+        fn take(n: &AtomicUsize, max: usize) -> bool {
+            // (a loop rather than fetch_update, which Rust 1.99 renamed try_update: this builds without a warning on both)
+            let mut c = n.load(Ordering::SeqCst);
+            loop {
+                if c >= max {
+                    return false;
+                }
+                match n.compare_exchange_weak(c, c + 1, Ordering::SeqCst, Ordering::SeqCst) {
+                    Ok(_) => return true,
+                    Err(now) => c = now,
+                }
             }
         }
+        let Some(all) = &self.handlers else {
+            return true;
+        };
+        if !take(all, self.limits.max_h2_handlers) {
+            return false;
+        }
+        let Some(per_ip) = &self.handlers_per_ip else {
+            return true;
+        };
+        if take(per_ip, self.limits.max_h2_handlers_per_ip) {
+            return true;
+        }
+        all.fetch_sub(1, Ordering::SeqCst);
+        false
     }
 
     pub(crate) fn give_handler(&self) {
         if let Some(n) = &self.handlers {
+            n.fetch_sub(1, Ordering::SeqCst);
+        }
+        if let Some(n) = &self.handlers_per_ip {
             n.fetch_sub(1, Ordering::SeqCst);
         }
     }
@@ -751,6 +781,7 @@ struct Counters {
 struct Conns {
     open: HashMap<u64, Arc<ConnEntry>>,
     per_ip: HashMap<IpAddr, usize>,
+    h2_handlers_per_ip: HashMap<IpAddr, Arc<AtomicUsize>>,
 }
 
 struct ConnEntry {
@@ -843,6 +874,11 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
                 continue;
             };
             let stopper = socket.try_clone().ok();
+            let handlers_per_ip = conns
+                .h2_handlers_per_ip
+                .entry(key)
+                .or_insert_with(|| Arc::new(AtomicUsize::new(0)))
+                .clone();
             let ctl = Arc::new(Ctl {
                 timer: Some(Timer::new()),
                 limits: inner.limits.clone(),
@@ -851,6 +887,7 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
                 h2: Mutex::new(None),
                 log: inner.log.clone(),
                 handlers: Some(inner.handlers.clone()),
+                handlers_per_ip: Some(handlers_per_ip),
                 stop_reading: stopper.map(|s| {
                     Box::new(move || {
                         // (the connection's thread, waiting to read, wakes: on Windows too, B-119)
@@ -882,6 +919,7 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
                     *n -= 1;
                     if *n == 0 {
                         conns.per_ip.remove(&key);
+                        conns.h2_handlers_per_ip.remove(&key);
                     }
                 }
                 if conns.open.is_empty() {
@@ -895,6 +933,10 @@ fn accept_loop(inner: Arc<Inner>, listener: TcpListener, kind: Kind, handler: Ar
             }
             if let Some(n) = conns.per_ip.get_mut(&key) {
                 *n -= 1;
+                if *n == 0 {
+                    conns.per_ip.remove(&key);
+                    conns.h2_handlers_per_ip.remove(&key);
+                }
             }
         }
     }

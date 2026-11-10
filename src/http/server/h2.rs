@@ -126,6 +126,9 @@ struct Stream {
     send_window: i64,
     pending: Vec<u8>,
     pending_pos: usize,
+    /// Response body bytes framed for the client. Handlers use this monotonic count to distinguish real flow-control
+    /// progress from unrelated connection wake-ups.
+    sent: u64,
     end_pending: bool,
     trailers_pending: Option<Vec<(String, String)>>,
     head_sent: bool,
@@ -151,6 +154,20 @@ struct Stream {
 impl Stream {
     fn queued(&self) -> usize {
         self.pending.len() - self.pending_pos
+    }
+
+    /// Reclaims a substantial sent prefix without waiting for the whole response buffer to drain. Moving at least half a
+    /// configured buffer at a time keeps the total copying amortized and the allocation close to the advertised bound.
+    fn compact_pending(&mut self, room: usize) {
+        if self.pending_pos == 0
+            || (self.pending_pos < self.pending.len() && self.pending_pos < (room / 2).max(1))
+        {
+            return;
+        }
+        let queued = self.queued();
+        self.pending.copy_within(self.pending_pos.., 0);
+        self.pending.truncate(queued);
+        self.pending_pos = 0;
     }
 }
 
@@ -1129,6 +1146,7 @@ impl Engine {
                 send_window: self.peer_initial_window,
                 pending: Vec::new(),
                 pending_pos: 0,
+                sent: 0,
                 end_pending: false,
                 trailers_pending: None,
                 head_sent: false,
@@ -1289,11 +1307,8 @@ impl Engine {
     pub(super) fn queue_data(&mut self, id: u32, data: &[u8]) -> io::Result<usize> {
         let room = self.cfg.stream_send_buffer.max(1);
         let s = self.stream_for_writing(id)?;
+        s.compact_pending(room);
         let n = room.saturating_sub(s.queued()).min(data.len());
-        if s.pending_pos > 0 && s.pending_pos == s.pending.len() {
-            s.pending.clear();
-            s.pending_pos = 0;
-        }
         s.pending.extend_from_slice(&data[..n]);
         self.pump();
         Ok(n)
@@ -1406,6 +1421,7 @@ impl Engine {
             &s.pending[s.pending_pos..s.pending_pos + n],
         );
         s.pending_pos += n;
+        s.sent = s.sent.saturating_add(n as u64);
         if s.pending_pos == s.pending.len() {
             s.pending.clear();
             s.pending_pos = 0;
@@ -1417,6 +1433,25 @@ impl Engine {
             self.maybe_remove(id);
         }
         true
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_storage(&self, id: u32) -> Option<(usize, usize)> {
+        self.streams
+            .get(&id)
+            .map(|stream| (stream.pending.len(), stream.queued()))
+    }
+
+    fn send_progress(&self, id: u32) -> io::Result<u64> {
+        self.streams
+            .get(&id)
+            .map(|stream| stream.sent)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "the client reset the stream, or the connection is over",
+                )
+            })
     }
 
     fn encode_trailers(&mut self, trailers: &[(String, String)]) -> Vec<u8> {
@@ -1640,6 +1675,8 @@ struct Shared {
     out: Mutex<Option<Box<dyn Outbound>>>,
     /// How long a handler waits for more of its body, and for room to send (none without the runtime).
     body_wait: Option<Duration>,
+    /// The body minimum rate after its grace period, in both directions (none without the runtime).
+    body_rate: Option<(Duration, u64)>,
     write_wait: Option<Duration>,
     /// Our side of the connection is over (B-120): the GOAWAY is sent, no stream is left, and the writer has finished
     /// (close_notify, then the sending side shut, so that the client reads the end after the last byte). The connection
@@ -1659,25 +1696,34 @@ impl GoAway for Shared {
 }
 
 impl Shared {
-    /// Waits for a change, at most `limit`; false if the time ran out with nothing changed.
+    /// Waits for a change until `deadline`; false if the time ran out. The caller keeps the same deadline across unrelated
+    /// wake-ups, so a PING or activity on another stream cannot restart this wait.
     fn wait<'a>(
         &self,
         e: MutexGuard<'a, Engine>,
-        limit: Option<Duration>,
+        deadline: Option<Instant>,
     ) -> (MutexGuard<'a, Engine>, bool) {
-        match limit {
+        match deadline {
             None => (
                 self.changed.wait(e).unwrap_or_else(|p| p.into_inner()),
                 true,
             ),
-            Some(d) => {
+            Some(deadline) => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return (e, false);
+                }
                 let (e, r) = self
                     .changed
-                    .wait_timeout(e, d)
+                    .wait_timeout(e, left)
                     .unwrap_or_else(|p| p.into_inner());
                 (e, !r.timed_out())
             }
         }
+    }
+
+    fn after(&self, duration: Option<Duration>) -> Option<Instant> {
+        duration.and_then(|duration| Instant::now().checked_add(duration))
     }
 }
 
@@ -1766,10 +1812,22 @@ impl Shared {
 struct StreamIn {
     shared: Arc<Shared>,
     id: u32,
+    started: Option<Instant>,
+    read: u64,
 }
 
 impl BodySource for StreamIn {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let started = *self.started.get_or_insert_with(Instant::now);
+        let inactivity = self.shared.after(self.shared.body_wait);
+        let rate = self.shared.body_rate.and_then(|(grace, bytes_per_second)| {
+            let earned = Duration::from_secs_f64(self.read as f64 / bytes_per_second.max(1) as f64);
+            started.checked_add(grace)?.checked_add(earned)
+        });
+        let deadline = match (inactivity, rate) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
         let n = {
             let mut e = self.shared.engine();
             loop {
@@ -1783,7 +1841,7 @@ impl BodySource for StreamIn {
                             e = self.shared.engine();
                             continue;
                         }
-                        let (guard, changed) = self.shared.wait(e, self.shared.body_wait);
+                        let (guard, changed) = self.shared.wait(e, deadline);
                         e = guard;
                         if !changed {
                             // the client sent nothing more of the body for too long: the stream is given up
@@ -1799,6 +1857,7 @@ impl BodySource for StreamIn {
                 }
             }
         };
+        self.read = self.read.saturating_add(n as u64);
         // the credit the reading may have queued
         self.shared.send(true)?;
         Ok(n)
@@ -1818,6 +1877,9 @@ impl BodySource for StreamIn {
 struct StreamOut {
     shared: Arc<Shared>,
     id: u32,
+    started: Instant,
+    last_progress: Instant,
+    sent: u64,
 }
 
 impl StreamOut {
@@ -1830,10 +1892,30 @@ impl StreamOut {
                     if n > 0 {
                         break n;
                     }
-                    let (guard, changed) = self.shared.wait(e, self.shared.write_wait);
+                    let sent = e.send_progress(self.id)?;
+                    if sent != self.sent {
+                        self.sent = sent;
+                        self.last_progress = Instant::now();
+                    }
+                    let inactivity = self
+                        .shared
+                        .write_wait
+                        .and_then(|wait| self.last_progress.checked_add(wait));
+                    let rate = self.shared.body_rate.and_then(|(grace, bytes_per_second)| {
+                        let earned = Duration::from_secs_f64(
+                            self.sent as f64 / bytes_per_second.max(1) as f64,
+                        );
+                        self.started.checked_add(grace)?.checked_add(earned)
+                    });
+                    let deadline = match (inactivity, rate) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
+                    };
+                    let (guard, changed) = self.shared.wait(e, deadline);
                     e = guard;
                     if !changed {
-                        // the client opened no window for too long
+                        // The client opened no window for too long, or took the response too slowly. Unrelated
+                        // connection activity cannot move either deadline.
                         e.reset(self.id, ErrorCode::CANCEL);
                         drop(e);
                         let _ = self.shared.send(true);
@@ -1940,6 +2022,7 @@ pub(super) fn serve_after_preface(
         changed: Condvar::new(),
         out: Mutex::new(Some(writer)),
         body_wait: runtime.then_some(ctl.limits.body_wait),
+        body_rate: runtime.then_some((ctl.limits.body_grace, ctl.limits.body_min_rate)),
         write_wait: runtime.then_some(ctl.limits.write_timeout),
         over: AtomicBool::new(false),
     });
@@ -2128,6 +2211,8 @@ fn run_stream(
         Body::new(Some(Box::new(StreamIn {
             shared: shared.clone(),
             id,
+            started: None,
+            read: 0,
         })))
     };
     let interim: super::Interim = {
@@ -2251,9 +2336,13 @@ fn send_response(
     if empty && !upgrade {
         return Ok((status, 0));
     }
+    let now = Instant::now();
     let mut out = StreamOut {
         shared: shared.clone(),
         id,
+        started: now,
+        last_progress: now,
+        sent: 0,
     };
     match body {
         ResponseBody::Empty => out.end(Vec::new()).map(|()| (status, 0)),
@@ -2307,6 +2396,8 @@ fn send_response(
             let reader = Body::new(Some(Box::new(StreamIn {
                 shared: shared.clone(),
                 id,
+                started: None,
+                read: 0,
             })));
             then(Upgraded {
                 reader: Box::new(reader),
