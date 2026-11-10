@@ -9,7 +9,7 @@ use pratique::tls::tls12::Suite12;
 use pratique::tls::{ClientConfig, Suite, TlsStream, TlsVersion};
 use pratique::x509::TrustStore;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -181,14 +181,39 @@ impl Drop for Fixture {
 struct Server {
     child: Child,
     port: u16,
+    stderr_log: Option<PathBuf>,
 }
 
 impl Drop for Server {
     fn drop(&mut self) {
+        let failure_status = std::thread::panicking().then(|| self.child.try_wait());
         let _ = self.child.kill();
         let _ = self.child.wait();
+        if let (Some(status), Some(path)) = (failure_status, self.stderr_log.as_ref()) {
+            // The status was observed before our unconditional cleanup. Do not
+            // turn a diagnostic I/O failure into a second panic during unwind.
+            let tail = server_stderr_tail(path);
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "openssl s_server failure: port={} pre_cleanup_status={status:?} stderr_path={} stderr_tail={tail:?}",
+                self.port,
+                path.display(),
+            );
+        }
     }
 }
+
+/// The child has been killed and waited for before this bounded failure-only read.
+fn server_stderr_tail(path: &Path) -> std::io::Result<(u64, String)> {
+    let mut file = fs::File::open(path)?;
+    let length = file.metadata()?.len();
+    file.seek(SeekFrom::Start(length.saturating_sub(4096)))?;
+    let mut bytes = Vec::new();
+    file.take(4096).read_to_end(&mut bytes)?;
+    Ok((length, String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+static SERVER_STDERR_SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
@@ -216,6 +241,15 @@ fn start_server_with_tickets(fx: &Fixture, extra: &[&str]) -> Server {
 
 fn spawn_server(fx: &Fixture, extra: &[&str], stdout: Stdio) -> Server {
     let port = free_port();
+    let stderr_log = fx.dir.join(format!(
+        "server-stderr-{}.log",
+        SERVER_STDERR_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let stderr = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&stderr_log)
+        .expect("failed to create fresh openssl s_server stderr log");
     let mut cmd = Command::new("openssl");
     cmd.args([
         "s_server",
@@ -230,7 +264,7 @@ fn spawn_server(fx: &Fixture, extra: &[&str], stdout: Stdio) -> Server {
     .current_dir(&fx.dir)
     .stdin(Stdio::piped())
     .stdout(stdout)
-    .stderr(Stdio::null());
+    .stderr(Stdio::from(stderr));
     let child = cmd.spawn().expect("failed to start openssl s_server");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -242,7 +276,11 @@ fn spawn_server(fx: &Fixture, extra: &[&str], stdout: Stdio) -> Server {
         assert!(Instant::now() < deadline, "s_server did not start");
         std::thread::sleep(Duration::from_millis(50));
     }
-    Server { child, port }
+    Server {
+        child,
+        port,
+        stderr_log: Some(stderr_log),
+    }
 }
 
 fn connect(
@@ -2334,7 +2372,11 @@ fn start_responder(fx: &Fixture, port: u16, revoked: bool) -> Server {
     out.read_line(&mut line).unwrap();
     assert!(line.starts_with("ACCEPT"), "openssl ocsp said {line:?}");
     std::thread::spawn(move || std::io::copy(&mut out, &mut std::io::sink()));
-    Server { child, port }
+    Server {
+        child,
+        port,
+        stderr_log: None,
+    }
 }
 
 fn der_of(fx: &Fixture, file: &str) -> Vec<u8> {
