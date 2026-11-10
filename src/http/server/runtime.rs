@@ -1205,7 +1205,12 @@ pub fn refresh_ocsp_staples(
     let stop = Arc::new((Mutex::new(false), Condvar::new()));
     let stop2 = stop.clone();
     let thread = thread::spawn(move || {
+        #[cfg(not(test))]
         let source = crate::http::HttpOcspSource::new();
+        // The runtime test's responder is deliberately on loopback; production fetches use the
+        // public-address restriction of `new`.
+        #[cfg(test)]
+        let source = crate::http::HttpOcspSource::for_tests();
         // per certificate (by its DER): when to fetch next, and when its staple stops being good
         let mut next: HashMap<Vec<u8>, (i64, Option<i64>)> = HashMap::new();
         loop {

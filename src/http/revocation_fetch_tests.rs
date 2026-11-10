@@ -591,7 +591,7 @@ fn the_http_ocsp_source_posts_the_request_and_keeps_the_answer_for_its_window() 
         http_ok(&old),
         b"HTTP/1.1 500 Oops\r\nContent-Length: 0\r\n\r\n".to_vec(),
     ]);
-    let source = HttpOcspSource::new();
+    let source = HttpOcspSource::for_tests();
     let url = format!("http://127.0.0.1:{port}/ocsp");
     assert_eq!(source.fetch(&url, &request).unwrap(), good);
     {
@@ -648,7 +648,7 @@ fn the_http_crl_source_keeps_a_bounded_cache_and_fetches_the_next_list_in_good_t
         &[],
     );
     let (port, seen) = scripted(vec![http_ok(&ending), http_ok(&next)]);
-    let source = HttpCrlSource::new();
+    let source = HttpCrlSource::for_tests();
     let url = format!("http://127.0.0.1:{port}/inter.crl");
     assert_eq!(
         source.fetch(&url).unwrap().next_update(),
@@ -680,7 +680,7 @@ fn the_http_crl_source_keeps_a_bounded_cache_and_fetches_the_next_list_in_good_t
         &[],
     );
     let (port, seen) = scripted(vec![http_ok(&fresh); 70]);
-    let source = HttpCrlSource::new();
+    let source = HttpCrlSource::for_tests();
     for i in 0..70 {
         source
             .fetch(&format!("http://127.0.0.1:{port}/{i}.crl"))
