@@ -785,7 +785,7 @@ fn tls12_large_download_on_every_suite() {
         let blob = pseudo_random(3 * 1024 * 1024 + 17, 12);
         fs::write(fx.dir.join("blob.bin"), &blob).unwrap();
         for suite in suites {
-            let server = start_server(&fx, &["-WWW", "-tls1_2", "-cipher", openssl_name12(suite)]);
+            let server = start_server(&fx, &["-WWW", "-http_server_binmode", "-tls1_2", "-cipher", openssl_name12(suite)]);
             let mut tls = connect(&server, "localhost", &ClientConfig::new(fx.trust())).unwrap();
             assert_eq!(tls.cipher_suite12(), Some(suite));
             let got = download_blob(&mut tls);
@@ -980,7 +980,7 @@ fn large_download_roundtrips_exactly() {
     let data = pseudo_random((3 << 20) + 777, 12345);
     fs::write(fx.dir.join("blob.bin"), &data).unwrap();
     for suite in Suite::ALL {
-        let server = start_server(&fx, &["-WWW", "-tls1_3", "-ciphersuites", suite_arg(suite)]);
+        let server = start_server(&fx, &["-WWW", "-http_server_binmode", "-tls1_3", "-ciphersuites", suite_arg(suite)]);
         let config = ClientConfig::new(fx.trust());
         let mut tls = connect(&server, "localhost", &config).unwrap();
         assert_eq!(tls.cipher_suite(), Some(suite));
@@ -1027,7 +1027,7 @@ fn download_over_transport_that_returns_tiny_reads() {
     let server = start_server(
         &fx,
         &[
-            "-WWW",
+            "-WWW", "-http_server_binmode",
             "-tls1_3",
             "-ciphersuites",
             suite_arg(Suite::Chacha20Poly1305Sha256),
@@ -1155,7 +1155,7 @@ fn http_client_over_tls_read_until_close() {
     }
     let fx = Fixture::new("httpc", "rsa");
     fs::write(fx.dir.join("hello.txt"), "hello over tls\n").unwrap();
-    let server = start_server(&fx, &["-WWW", "-tls1_3"]);
+    let server = start_server(&fx, &["-WWW", "-http_server_binmode", "-tls1_3"]);
     let client = pratique::Client::with_tls_config(ClientConfig::new(fx.trust()))
         .timeout(Duration::from_secs(10));
     let resp = client
@@ -1173,7 +1173,7 @@ fn http_client_rejects_bad_certificate_by_default() {
     }
     let fx = Fixture::new("httpc_bad", "p256");
     let other = Fixture::new("httpc_bad_other", "p256");
-    let server = start_server(&fx, &["-WWW", "-tls1_3"]);
+    let server = start_server(&fx, &["-WWW", "-http_server_binmode", "-tls1_3"]);
     let client = pratique::Client::with_tls_config(ClientConfig::new(other.trust()))
         .timeout(Duration::from_secs(10));
     let err = client
@@ -1196,7 +1196,7 @@ fn shared_client_works_from_many_threads() {
     }
     let fx = Fixture::new("threads", "p256");
     fs::write(fx.dir.join("t.txt"), "threaded\n").unwrap();
-    let server = start_server(&fx, &["-WWW", "-tls1_3"]);
+    let server = start_server(&fx, &["-WWW", "-http_server_binmode", "-tls1_3"]);
     let client = std::sync::Arc::new(
         pratique::Client::with_tls_config(ClientConfig::new(fx.trust()))
             .timeout(Duration::from_secs(20)),
@@ -1606,7 +1606,7 @@ fn async_download_roundtrips_exactly_on_every_suite() {
     let data = pseudo_random((3 << 20) + 777, 4242);
     fs::write(fx.dir.join("blob.bin"), &data).unwrap();
     for suite in Suite::ALL {
-        let server = start_server(&fx, &["-WWW", "-tls1_3", "-ciphersuites", suite_arg(suite)]);
+        let server = start_server(&fx, &["-WWW", "-http_server_binmode", "-tls1_3", "-ciphersuites", suite_arg(suite)]);
         let config = ClientConfig::new(fx.trust());
         let mut tls = async_connect(&server, "localhost", &config).unwrap();
         assert_eq!(tls.cipher_suite(), Some(suite));
@@ -1626,7 +1626,7 @@ fn the_async_client_answers_a_hello_retry_request_too() {
     let data = pseudo_random(300_000, 99);
     fs::write(fx.dir.join("blob.bin"), &data).unwrap();
     for group in ["P-256", "P-384"] {
-        let server = start_server(&fx, &["-WWW", "-tls1_3", "-groups", group]);
+        let server = start_server(&fx, &["-WWW", "-http_server_binmode", "-tls1_3", "-groups", group]);
         let config = ClientConfig::new(fx.trust());
         let mut tls =
             async_connect(&server, "localhost", &config).unwrap_or_else(|e| panic!("{group}: {e}"));
@@ -1647,7 +1647,7 @@ fn async_stream_over_a_transport_that_stalls_and_dribbles() {
     let server = start_server(
         &fx,
         &[
-            "-WWW",
+            "-WWW", "-http_server_binmode",
             "-tls1_3",
             "-ciphersuites",
             suite_arg(Suite::Aes128GcmSha256),
@@ -1881,7 +1881,7 @@ fn async_http_client_over_tls() {
     let data = pseudo_random(1_500_000, 77);
     fs::write(fx.dir.join("blob.bin"), &data).unwrap();
     fs::write(fx.dir.join("hello.txt"), "hello over async tls\n").unwrap();
-    let server = start_server(&fx, &["-WWW", "-tls1_3"]);
+    let server = start_server(&fx, &["-WWW", "-http_server_binmode", "-tls1_3"]);
     let client = pratique::Client::with_tls_config(ClientConfig::new(fx.trust()))
         .timeout(Duration::from_secs(10))
         .total_timeout(Duration::from_secs(60))
