@@ -251,6 +251,21 @@ class Sequencing(unittest.TestCase):
 
 
 class LinkedCaptureMocks(unittest.TestCase):
+    def test_missing_optional_tools_retain_ELF_without_suppressing_the_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp);binary = root/'inert-input';binary.write_bytes(b'inert test bytes')
+            output = root/'output';output.mkdir()
+            with patch.object(linked.subprocess, 'check_output', side_effect=FileNotFoundError), \
+                 patch.object(linked.subprocess, 'run') as process:
+                result = linked.capture(binary, output)
+            self.assertFalse(process.called)
+            self.assertEqual(result['actual_ELF_sha256'], c.sha(binary))
+            self.assertEqual(c.sha(output/'linked-evidence/compiled-test.elf'), c.sha(binary))
+            self.assertEqual(len(result['optional_capture_errors']), 2)
+            self.assertFalse(result['tools']['objdump']['available'])
+            self.assertEqual(result['symbol_listings']['symbols-raw.txt']['status'], 'unavailable')
+            self.assertFalse(result['timed_work_retention_verified_by_this_script'])
+
     def test_relevant_symbols_bounded_capture_and_ELF_identity_without_execution(self):
         names = ['_ZN8pratique6crypto6timing33ghash_batch_intermediate_controls17h111E',
                  '_ZN8pratique6crypto6timing14measure_seeded17h222E',

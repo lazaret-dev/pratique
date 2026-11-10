@@ -4,11 +4,13 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import time
 
 ELF_LIMIT = 60_000_000
 LIST_LIMIT = 5_000_000
 DISASSEMBLY_LIMIT = 16_000_000
 PAYLOAD_LIMIT = 90_000_000
+CAPTURE_SECONDS = 90
 
 
 def sha(path):
@@ -41,28 +43,54 @@ def capture(binary, output):
     shutil.copyfile(binary, retained)
     retained.chmod(0o644)
     assert sha(retained) == digest
+    deadline = time.monotonic() + CAPTURE_SECONDS
     versions = {}
+    tool_errors = []
     for command in ['nm', 'objdump']:
-        versions[command] = subprocess.check_output([command, '--version'], text=True).splitlines()[0]
+        try:
+            version = subprocess.check_output([command, '--version'], text=True, stderr=subprocess.STDOUT, timeout=5)
+            versions[command] = {'available': True, 'path': shutil.which(command), 'version': version.splitlines()[0]}
+        except Exception as e:
+            versions[command] = {'available': False, 'path': shutil.which(command), 'error_type': type(e).__name__}
+            tool_errors.append({'tool': command, 'stage': 'version', 'error_type': type(e).__name__})
     listings = {}
     for name, extra in [('symbols-raw.txt', []), ('symbols-demangled.txt', ['--demangle'])]:
         path = directory / name
-        with path.open('wb') as stream, (directory / (name + '.stderr.log')).open('wb') as errors:
-            subprocess.run(['nm', '-n', '--defined-only', *extra, str(binary)],
-                           stdout=stream, stderr=errors, timeout=30, check=True)
-        assert path.stat().st_size <= LIST_LIMIT
-        listings[name] = {'bytes': path.stat().st_size, 'sha256': sha(path)}
-    names = symbol_names((directory / 'symbols-raw.txt').read_text())
+        status = 'unavailable'
+        with path.open('wb') as stream, (directory / (name + '.stderr.log')).open('wb') as errors_stream:
+            if versions['nm']['available']:
+                try:
+                    subprocess.run(['nm', '-n', '--defined-only', *extra, str(binary)],
+                                   stdout=stream, stderr=errors_stream, timeout=15, check=True)
+                    status = 'complete'
+                except Exception as e:
+                    status = 'partial:' + type(e).__name__
+                    tool_errors.append({'tool': 'nm', 'stage': name, 'error_type': type(e).__name__})
+        original_bytes = path.stat().st_size
+        if original_bytes > LIST_LIMIT:
+            with path.open('r+b') as stream:
+                stream.truncate(LIST_LIMIT)
+            status = 'truncated_at_declared_limit'
+        listings[name] = {'status': status, 'bytes': path.stat().st_size, 'original_bytes': original_bytes, 'sha256': sha(path)}
+    names = symbol_names((directory / 'symbols-raw.txt').read_text(errors='replace'))
     selected, skipped = [], []
     disassembly = directory / 'selected-disassembly.txt'
     written = 0
     with disassembly.open('wb') as dest:
         for name in names:
+            if not versions['objdump']['available'] or time.monotonic() >= deadline:
+                skipped.append({'symbol': name, 'reason': 'tool unavailable or declared capture deadline; complete ELF retained'})
+                continue
             if written >= DISASSEMBLY_LIMIT:
                 skipped.append({'symbol': name, 'reason': 'declared text ceiling; complete ELF retained'})
                 continue
-            result = subprocess.run(['objdump', '-d', '--disassemble=' + name, str(binary)],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
+            try:
+                result = subprocess.run(['objdump', '-d', '--disassemble=' + name, str(binary)],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        timeout=max(1, min(15, deadline - time.monotonic())), check=True)
+            except Exception as e:
+                skipped.append({'symbol': name, 'reason': 'optional disassembler error; complete ELF retained', 'error_type': type(e).__name__})
+                continue
             if len(result.stdout) + written > DISASSEMBLY_LIMIT:
                 skipped.append({'symbol': name, 'reason': 'would exceed declared text ceiling; complete ELF retained'})
                 continue
@@ -73,6 +101,8 @@ def capture(binary, output):
     record = {'schema': 'bounded-same-built-linked-evidence-v1', 'actual_ELF_sha256': digest,
               'actual_ELF_bytes': binary.stat().st_size, 'retained_ELF': str(retained.relative_to(output)),
               'tools': versions, 'symbol_listings': listings, 'selected': selected, 'omitted': skipped,
+              'optional_capture_errors': tool_errors,
+              'optional_capture_limit_seconds': CAPTURE_SECONDS,
               'disassembly_bytes': written, 'disassembly_sha256': sha(disassembly),
               'timed_work_retention_verified_by_this_script': False,
               'actual_linked_loop_and_ctor_drop_review': 'Pending independent read-only review before stage interpretation.',
