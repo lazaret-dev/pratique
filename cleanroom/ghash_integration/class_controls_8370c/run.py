@@ -190,7 +190,7 @@ def verify():
     assert os.environ['RUSTUP_TOOLCHAIN'] == '1.87.0'
     assert os.environ['RUSTFLAGS'] == FLAGS
     assert os.environ['PRATIQUE_TIMING_SECS'] == '3'
-    assert all(n not in os.environ for n in ['PRATIQUE_TIMING_REPS', 'PRATIQUE_TIMING_TICK_NS', 'PRATIQUE_TIMING_TICKS'])
+    assert all(n not in os.environ for n in ['PRATIQUE_TIMING_REPS', 'PRATIQUE_TIMING_TICK_NS', 'PRATIQUE_TIMING_TICKS', 'CARGO_ENCODED_RUSTFLAGS'])
     expected = os.environ['PRATIQUE_EXPECTED_SOURCE_COMMIT']
     assert re.fullmatch('[0-9a-f]{40}', expected)
     assert git('rev-parse', 'HEAD').decode().strip() == expected
@@ -303,10 +303,8 @@ def run_all(executor=execute_case):
     slots = planned()
     save(out() / 'six-slots.json', slots)
     for i, record in enumerate(slots):
-        if sha(binary) != info['sha256']:
-            slots[i].update(execution='not_attempted', reason='binary identity changed')
-            save(out() / 'six-slots.json', slots)
-            continue
+        record['binary_sha256_before_window'] = info['sha256']
+        record['source_commit'] = info.get('source_commit')
         directory = out() / ('%02d-%s-%d' % (record['slot'], record['kind'], record['iteration']))
         slots[i] = executor(record, binary, directory)
         save(out() / 'six-slots.json', slots)
@@ -316,12 +314,16 @@ def run_all(executor=execute_case):
                 later['reason'] = 'prior process cleanup unsafe or job interrupted'
             save(out() / 'six-slots.json', slots)
             break
+    final = {'before_sha256': info['sha256'], 'after_sha256': sha(binary)}
+    final['identity_unchanged'] = final['before_sha256'] == final['after_sha256']
+    save(out() / 'binary-window-identity.json', final)
 
 
 def summarize():
     results = []
     slots_path = out() / 'six-slots.json'
     slots = read(slots_path) if slots_path.exists() else planned()
+    binary_identity = read(out() / 'binary-window-identity.json') if (out() / 'binary-window-identity.json').exists() else None
     for r in slots:
         directory = out() / ('%02d-%s-%d' % (r['slot'], r['kind'], r['iteration']))
         path = directory / 'stdout-stderr.log'
@@ -330,7 +332,9 @@ def summarize():
         parsed['complete'] = bool(parsed['complete'] and r.get('execution') == 'finished' and not r.get('cleanup_incomplete'))
         results.append({'case': r, 'parsed': parsed})
     result = {'schema': 'exact-raw-class-controls-six-v1', 'cases': results,
-              'collection_complete': len(results) == 6 and all(r['parsed']['complete'] for r in results),
+              'collection_complete': bool(len(results) == 6 and all(r['parsed']['complete'] for r in results)
+                                         and binary_identity and binary_identity.get('identity_unchanged') is True),
+              'binary_window_identity': binary_identity,
               'original_confirmed_rows_by_iteration': {str(r['case']['iteration']): r['parsed']['confirmed_rows'] for r in results if r['case']['kind'] == 'gate'},
               'control_confirmed_rows_by_iteration': {str(r['case']['iteration']): [j['name'] for j in r['parsed']['judges'] if j['confirmed']] for r in results if r['case']['kind'] == 'control'},
               'authority_limit': 'Same patched binary, different selectors/row names/probe contexts. No sealed pre-patch binary or sampler trace.',

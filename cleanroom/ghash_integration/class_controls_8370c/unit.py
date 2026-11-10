@@ -162,6 +162,7 @@ class Sequencing(unittest.TestCase):
                 text = original(failed=c.NAMES[6]) if r['kind'] == 'gate' else controls([c.CONTROL_NAMES[0]])
                 (directory / 'stdout-stderr.log').write_text(text)
             c.save(root / 'six-slots.json', slots)
+            c.save(root / 'binary-window-identity.json', {'identity_unchanged': True})
             with patch.dict(c.os.environ, {'PRATIQUE_CLASS_OUTPUT': str(root)}):
                 self.assertEqual(c.summarize(), 0)
             result = c.read(root / 'results.json')
