@@ -39,9 +39,12 @@ recurrence against independent polynomial/SP800-38D oracles.
 The API borrows fifty raw powers/blocks and retains prepared planes and the
 existing caller-owned working container in place. All192 prepared words and
 all working aggregates remain exposed to the existing caller wipe APIs. No
-populated aggregate is returned or cloned. The caller must wipe its raw
-inputs when those are secret. Scalar registers and compiler-created spills
-remain outside the source-owned aggregate-erasure claim.
+populated aggregate is returned by value or implicitly cloned. The explicit
+borrowed `copy_from` method supports an intentional second retained owner by
+copying directly into its final storage; each owner must wipe its own arrays.
+The caller must wipe its raw inputs when those are secret. Scalar registers
+and compiler-created spills remain outside the source-owned aggregate-erasure
+claim.
 
 This finite circuit witness is not an optimized-code proof. A compiler may
 reassociate expressions into different intermediate words. Opaque borrowed

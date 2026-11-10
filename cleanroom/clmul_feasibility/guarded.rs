@@ -50,6 +50,15 @@ impl PreparedPolynomial128x50 {
         self.planes.words_mut()
     }
 
+    /// Copy into the caller's final retained destination, including wiped state.
+    /// This intentionally creates a second retained key, without scratch arrays
+    /// or a populated aggregate return. Each owner must wipe its own storage.
+    pub fn copy_from(&mut self, other: &Self) {
+        self.planes.low.0.copy_from_slice(&other.planes.low.0);
+        self.planes.high.0.copy_from_slice(&other.planes.high.0);
+        self.planes.mixed.0.copy_from_slice(&other.planes.mixed.0);
+    }
+
     /// Borrow the retained words for lifecycle assertions without secret copies.
     #[cfg(test)]
     pub fn words(&self) -> [&[u64; 64]; 3] {
@@ -232,6 +241,22 @@ mod tests {
         for words in p.words_mut() { words.fill(0); }
         assert!(p.words().iter().all(|x| x.iter().all(|&w| w == 0)));
         assert_eq!(b, [u128::MAX; PAYLOAD_LANES]);
+    }
+
+    #[test]
+    fn borrowed_copy_preserves_exact_prepared_and_wiped_states() {
+        let mut original = PreparedPolynomial128x50::empty();
+        let mut duplicate = PreparedPolynomial128x50::empty();
+        let destination = duplicate.words_mut().map(|w| w.as_ptr());
+        original.prepare(&[0x6594_1ae2_981c_84b3; PAYLOAD_LANES]);
+        duplicate.copy_from(&original);
+        assert_eq!(duplicate.words(), original.words());
+        assert_eq!(destination, duplicate.words_mut().map(|w| w.as_ptr()));
+        for words in original.words_mut() { words.fill(0); }
+        assert!(duplicate.words().iter().any(|w| w.iter().any(|&x| x != 0)));
+        duplicate.copy_from(&original);
+        assert!(duplicate.words().iter().all(|w| w.iter().all(|&x| x == 0)));
+        assert_eq!(destination, duplicate.words_mut().map(|w| w.as_ptr()));
     }
 
     // Direct SP800-38D Algorithm1 oracle, used only in tests. This deliberately
