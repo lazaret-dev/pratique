@@ -19,7 +19,7 @@ jobs:
       RUSTUP_TOOLCHAIN: 1.87.0
       RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
       PRATIQUE_TIMING_SECS: '3'
-      PRATIQUE_EXPECTED_SOURCE_COMMIT: 7065a33783e25953daa38bab63408de2dad97a84
+      PRATIQUE_EXPECTED_SOURCE_COMMIT: d9a8983b69cadde904f07ba5289562a61bfdcacd
       PRATIQUE_CLASS_OUTPUT: /tmp/pratique-ghash-8370c-intermediate
       LC_ALL: C
     steps:
@@ -65,7 +65,7 @@ jobs:
         timeout-minutes: 1
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 7065a33783e25953daa38bab63408de2dad97a84
+          ref: d9a8983b69cadde904f07ba5289562a61bfdcacd
           fetch-depth: 0
           persist-credentials: false
           sparse-checkout-cone-mode: false
