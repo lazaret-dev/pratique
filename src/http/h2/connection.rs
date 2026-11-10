@@ -842,11 +842,19 @@ impl Connection {
         let Some(s) = self.streams.get(&id) else {
             return 0;
         };
-        if s.failure.is_some() || s.local_ended || self.error.is_some() {
+        if s.failure.is_some() || s.local_ended || s.remote_ended || self.error.is_some() {
             return 0;
         }
         let room = OUTPUT_HIGH_WATER.saturating_sub(self.out.len() - self.out_pos);
         s.send_window.min(self.send_window).max(0).min(room as i64) as usize
+    }
+
+    /// True when the peer has ended or failed the stream, so no more of the request body should be sent. The response
+    /// head and body stay queued for the application to take with [`poll_stream`](Connection::poll_stream).
+    pub(crate) fn peer_finished(&self, id: u32) -> bool {
+        self.streams
+            .get(&id)
+            .is_none_or(|s| s.remote_ended || s.failure.is_some())
     }
 
     /// Sends as much of `data` as the windows and the output backlog allow, as DATA frames, and says how much.
@@ -3943,6 +3951,10 @@ mod tests {
         let id = h.open_with("POST", "/", &[], false);
         h.respond(id, "413", &[], false).unwrap();
         h.data(id, b"too big", true).unwrap();
+        // END_STREAM on the response stops the upload even before the server follows it with a reset.
+        assert!(h.c.peer_finished(id));
+        assert_eq!(h.c.send_capacity(id), 0);
+        assert_eq!(h.c.send_data(id, b"x", false).unwrap(), 0);
         h.feed_frame(
             kind::RST_STREAM,
             0,
@@ -3954,8 +3966,6 @@ mod tests {
         assert_eq!(got.head.unwrap().status, 413);
         assert_eq!(got.body, b"too big");
         assert!(got.ended && got.failed.is_none());
-        // and the body is no longer to be sent
-        assert!(h.c.send_data(id, b"x", false).is_err() || h.c.send_capacity(id) == 0);
     }
 
     #[test]

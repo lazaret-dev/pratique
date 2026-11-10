@@ -9,6 +9,7 @@ use super::h2_server::{response, Action, Settings, Step};
 use super::h2_testserver::*;
 use super::h2_transport::{H2Stream, Pause, Shared, Waits};
 use super::testserver::{ok, TestServer};
+use super::Batch;
 use crate::asyncio::block_on;
 use crate::error::Error;
 use std::io::Read;
@@ -847,6 +848,85 @@ fn a_silent_server_times_out_the_request_and_not_the_connection() {
     assert_eq!(
         client.get(&server.url("/quick")).unwrap().text(),
         "hello /quick"
+    );
+    assert_eq!(server.connections(), 1);
+}
+
+#[test]
+fn an_upload_with_no_window_credit_times_out_and_the_connection_goes_on() {
+    let settings = Settings {
+        initial_window: 0,
+        ..Settings::default()
+    };
+    let server = H2Server::start_with(hello, settings, |c| c);
+    let client = server.client().timeout(Duration::from_millis(300));
+    // Establish the connection first so the measured request is waiting only for upload credit.
+    assert_eq!(
+        client.get(&server.url("/warm")).unwrap().text(),
+        "hello /warm"
+    );
+    let started = Instant::now();
+    let err = client
+        .post(&server.url("/held"), vec![7u8; 100_000])
+        .unwrap_err();
+    assert!(
+        matches!(&err, Error::Io(e) if e.kind() == std::io::ErrorKind::TimedOut),
+        "{err:?}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        client.get(&server.url("/after")).unwrap().text(),
+        "hello /after"
+    );
+    assert_eq!(server.connections(), 1);
+}
+
+#[test]
+fn cancelling_a_batch_stops_an_upload_waiting_for_window_credit() {
+    let settings = Settings {
+        initial_window: 0,
+        ..Settings::default()
+    };
+    let server = H2Server::start_with(hello, settings, |c| c);
+    let client = server.client();
+    assert_eq!(
+        client.get(&server.url("/warm")).unwrap().text(),
+        "hello /warm"
+    );
+    let conn = client
+        .h2
+        .as_ref()
+        .unwrap()
+        .registry
+        .any_connection()
+        .unwrap();
+    let batch = Batch::new();
+    let (c, url, b) = (client.clone(), server.url("/held"), batch.clone());
+    let upload = thread::spawn(move || {
+        c.request("POST", &url)
+            .body(vec![9u8; 100_000])
+            .batch(&b)
+            .send()
+            .unwrap_err()
+    });
+    wait_until("the upload to wait for window credit", || {
+        conn.waits_to_send()
+    });
+    let started = Instant::now();
+    batch.cancel();
+    assert!(matches!(upload.join().unwrap(), Error::Cancelled));
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "cancellation took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        client.get(&server.url("/after")).unwrap().text(),
+        "hello /after"
     );
     assert_eq!(server.connections(), 1);
 }

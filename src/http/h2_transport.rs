@@ -1352,6 +1352,12 @@ impl Shared {
         })
     }
 
+    /// Whether a caller is asleep waiting for request-body flow-control credit (tests of the transport).
+    #[cfg(test)]
+    pub(super) fn waits_to_send(&self) -> bool {
+        self.lock().senders != 0
+    }
+
     /// Whether the last read left records in the receive buffer for the next one (see [`Shared::ingest`]); `None` if somebody
     /// is reading (tests of the transport).
     #[cfg(test)]
@@ -1496,12 +1502,16 @@ impl Shared {
         }
         slot.waiting.store(true, Ordering::Relaxed);
         slot.can_lead.store(can_lead, Ordering::Relaxed);
-        let (g, _) = slot
+        let (g, result) = slot
             .cv
             .wait_timeout(g, until - now)
             .unwrap_or_else(|e| e.into_inner());
         slot.waiting.store(false, Ordering::Relaxed);
-        Ok(g)
+        if result.timed_out() {
+            Err(())
+        } else {
+            Ok(g)
+        }
     }
 
     /// Stops the request on stream `id` (its batch was cancelled): its caller's wait ends with `Error::Cancelled` (the
@@ -1554,12 +1564,28 @@ impl Shared {
     /// If nobody is reading the socket (or the one who does is not using the right to), the caller reads it itself while it
     /// waits for the answer (see [`Reading`]), and takes the right to at once, here, with the lock that opened the stream
     /// held, so that the reader thread cannot take it between the request and the wait.
+    #[cfg(test)]
     pub(super) fn start(
         self: &Arc<Self>,
         request: &Request<'_>,
         body: &[u8],
         waits: Waits,
     ) -> Result<H2Stream, StartError> {
+        self.start_registered(request, body, waits, |_| {})
+    }
+
+    /// Opens a stream, gives its caller a chance to register cancellation, then sends the request body. Registration
+    /// happens before an upload can wait for flow-control credit, so cancelling a batch can always wake that wait.
+    pub(super) fn start_registered<F>(
+        self: &Arc<Self>,
+        request: &Request<'_>,
+        body: &[u8],
+        waits: Waits,
+        registered: F,
+    ) -> Result<H2Stream, StartError>
+    where
+        F: FnOnce(&H2Stream),
+    {
         let mut g = self.lock();
         if !g.alive() {
             return Err(StartError::Unavailable);
@@ -1588,12 +1614,30 @@ impl Shared {
             carry: Vec::new(),
             carry_pos: 0,
         };
+        // Running::set may call the canceller immediately when the batch was cancelled just before registration. It
+        // takes this lock, so never invoke it while the lock used to open the stream is held.
+        drop(g);
+        registered(&stream);
+        g = self.lock();
         // the body, as the windows and the output allow; a stream that fails meanwhile is found out when the head is waited for
         let mut sent = 0;
+        let mut until = waits.until();
         while !body.is_empty() && sent < body.len() {
+            if let Some(f) = g.cancelled(id) {
+                drop(g);
+                return Err(StartError::Failed(f));
+            }
+            if g.h2.peer_finished(id) {
+                break;
+            }
             self.notify_writer();
             match g.h2.send_data(id, &body[sent..], true) {
-                Ok(n) => sent += n,
+                Ok(n) => {
+                    sent += n;
+                    if n > 0 {
+                        until = waits.until();
+                    }
+                }
                 Err(_) => break,
             }
             if sent == body.len() {
@@ -1603,9 +1647,12 @@ impl Shared {
                 break;
             }
             if let Some(f) = g.cancelled(id) {
+                drop(g);
                 return Err(StartError::Failed(f));
             }
-            let until = waits.until();
+            if g.h2.peer_finished(id) {
+                break;
+            }
             g.senders += 1;
             // (a caller who waits to send cannot read the socket meanwhile: it is not given the right)
             let waited = self.wait_on(g, &stream.slot, until, false);
