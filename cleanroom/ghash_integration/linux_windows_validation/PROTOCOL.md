@@ -19,8 +19,8 @@ failures; their attribution requires a matched full-target baseline pair.
 
 One ubuntu-24.04 job checks out immutable release auxiliary source
 `100dd05739eecbe7695d7a495e5197e447239f28`. It is c637 plus only cache ignore
-rules and precise1MiB GCM seal labels. All197 production/Cargo and every test
-remain byte-identical to c637/c872; the separate dedicated-msgfile diagnostic
+rules and precise1MiB GCM seal labels. All197 production/Cargo inputs match c872;
+all external tests match c637, including its observer. The separate dedicated-msgfile diagnostic
 is excluded. There were zero tracked caches to delete. The ignore rule is
 hygiene, not a claim that Cargo1.87 accepts an ignored dirty fixture.
 
