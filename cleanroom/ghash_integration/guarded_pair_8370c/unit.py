@@ -122,8 +122,32 @@ class Collector(unittest.TestCase):
         def unsafe(case, binary, directory):
             calls.append(case['slot'])
             return {**self.fake(case, binary, directory), 'cleanup_incomplete': 'fixture'}
-        runner.run_all(unsafe)
+        self.assertNotEqual(runner.run_all(unsafe), 0)
         self.assertEqual(calls, [1])
+
+    def test_last_timing_unsafe_returns_failure_for_dependent_stage(self):
+        calls = []
+        def unsafe_last(case, binary, directory):
+            calls.append(case['slot'])
+            record = self.fake(case, binary, directory)
+            if case['slot'] == 20:
+                record['cleanup_incomplete'] = 'fixture'
+            return record
+        self.assertNotEqual(runner.run_all(unsafe_last), 0)
+        self.assertEqual(len(calls), 20)
+
+    def test_second_correctness_unsafe_cannot_start_timing(self):
+        def fake_aux(case, binary, directory, timeout):
+            log = directory / 'stdout-stderr.log'
+            return {**case, 'execution': 'finished', 'exit_code': 0,
+                    'stdout_stderr_sha256': runner.sha(log), 'timeout_seconds': timeout,
+                    'argv': [str(binary), case['selector'], *case['test_arguments']],
+                    **({'cleanup_incomplete': 'fixture'} if case['version'] == 'candidate' else {})}
+        with patch.object(runner, 'execute_case', side_effect=fake_aux):
+            self.assertNotEqual(runner.auxiliary('correctness'), 0)
+        records = runner.load(self.root / 'auxiliary-correctness.json')
+        self.assertTrue(records[0]['passed'])
+        self.assertFalse(records[1]['passed'])
 
     def test_modified_binary_is_rejected_before_its_next_call(self):
         calls = []

@@ -236,6 +236,8 @@ def auxiliary(phase):
         footer = re.findall(r'^test result: ok\. (\d+) passed; 0 failed; (\d+) ignored;', text, re.M)
         record['binary_sha256_after'] = sha(binary)
         record['passed'] = (record.get('exit_code') == 0 and len(footer) == 1
+                            and record.get('execution') == 'finished' and not record.get('interrupted')
+                            and not record.get('cleanup_incomplete') and not CANCELLED
                             and int(footer[0][0]) > 0 and record['binary_sha256_after'] == info['sha256']
                             and (phase != 'profile' or footer == [('1', '0')]))
         record['footer_counts'] = footer
@@ -275,7 +277,12 @@ def run_all(executor=execute_case):
                   for v, info in binaries.items()}
     save(output() / 'binary-window-identities.json', identities)
     verify()
-    return 130 if CANCELLED else 0
+    if CANCELLED:
+        return 130
+    if any(case.get('execution') != 'finished' or case.get('interrupted')
+           or case.get('cleanup_incomplete') for case in cases):
+        return 1
+    return 0
 
 
 def parser_module():
