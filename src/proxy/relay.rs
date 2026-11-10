@@ -78,6 +78,43 @@ impl Upstream {
     }
 }
 
+/// The one content coding an inspected response uses. RFC 9110 makes repeated fields equivalent to one comma-separated list;
+/// the inspection API can undo one coding, so a chain, an empty token, or an unknown coding must fail closed rather than let
+/// the scanner and client see different representations.
+fn inspected_encoding(upstream: &Upstream) -> io::Result<Option<String>> {
+    let codings: Vec<&str> = upstream
+        .headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("content-encoding"))
+        .flat_map(|(_, value)| value.split(','))
+        .map(str::trim)
+        .collect();
+    if codings.is_empty() {
+        return Ok(None);
+    }
+    if codings.iter().any(|coding| coding.is_empty()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the response has an empty content coding",
+        ));
+    }
+    if codings.len() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "the response has more than one content coding",
+        ));
+    }
+    let coding = codings[0].to_ascii_lowercase();
+    match coding.as_str() {
+        "identity" => Ok(None),
+        "gzip" | "x-gzip" | "deflate" => Ok(Some(coding)),
+        _ => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("the response has unsupported content coding {coding:?}"),
+        )),
+    }
+}
+
 /// What the scanner decides of a request, or of a body it read.
 pub enum Decision {
     /// Go on.
@@ -395,7 +432,14 @@ impl Proxy {
         let inner = &self.0;
         let client = req.connection().peer;
         let method = req.method().to_string();
-        let mut headers = end_to_end(req.headers(), &["host", "content-length", "expect"]);
+        let removed: &[&str] = if scan {
+            // An inspected response must be the whole representation. A client may otherwise assemble several successful
+            // scans of fragments into bytes the scanner never saw together.
+            &["host", "content-length", "expect", "range", "if-range"]
+        } else {
+            &["host", "content-length", "expect"]
+        };
+        let mut headers = end_to_end(req.headers(), removed);
         if scan {
             for (n, v) in headers.iter_mut() {
                 if n.eq_ignore_ascii_case("accept-encoding") {
@@ -461,6 +505,21 @@ impl Proxy {
                     .with_header("cache-control", "no-store");
             }
         };
+        if scan && resp.status == 206 {
+            let why =
+                "the upstream returned a partial response to a request that must be scanned whole";
+            self.event(
+                client,
+                Action::Fail,
+                &method,
+                &url,
+                502,
+                resp.content_length,
+                why,
+            );
+            return Response::text(502, format!("the body could not be inspected: {why}\n"))
+                .with_header("cache-control", "no-store");
+        }
         let no_body = method == "HEAD" || matches!(resp.status, 100..=199 | 204 | 304);
         let upstream = Upstream {
             status: resp.status,
@@ -522,6 +581,23 @@ impl Proxy {
                 }
             }
             BodyAction::Inspect => {
+                let encoding = match inspected_encoding(&upstream) {
+                    Ok(encoding) => encoding,
+                    Err(e) => {
+                        let why = format!("the body could not be inspected: {e}");
+                        self.event(
+                            client,
+                            Action::Fail,
+                            &method,
+                            &url,
+                            502,
+                            upstream.content_length,
+                            &why,
+                        );
+                        return Response::text(502, format!("{why}\n"))
+                            .with_header("cache-control", "no-store");
+                    }
+                };
                 let collected = if no_body {
                     Ok(Inspected {
                         memory: Vec::new(),
@@ -549,11 +625,7 @@ impl Proxy {
                             .with_header("cache-control", "no-store");
                     }
                 };
-                inspected.encoding = upstream
-                    .header("content-encoding")
-                    .map(str::trim)
-                    .filter(|e| !e.is_empty() && !e.eq_ignore_ascii_case("identity"))
-                    .map(str::to_string);
+                inspected.encoding = encoding;
                 match inner.scanner.inspect(&exchange, &upstream, &inspected) {
                     Decision::Allow => {
                         self.event(
