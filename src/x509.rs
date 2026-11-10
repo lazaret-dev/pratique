@@ -31,7 +31,7 @@ use crate::crypto::sha2::HashAlg;
 use crate::pem;
 use crate::verify_error::{cert, Error, Result};
 use core::net::IpAddr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
 // ----- OIDs (DER content octets) -----
@@ -88,6 +88,9 @@ const KU_KEY_CERT_SIGN: u16 = 1 << 5;
 pub(crate) const KU_CRL_SIGN: u16 = 1 << 6;
 
 const MAX_CHAIN_DEPTH: usize = 8;
+/// Most extensions in one certificate. Real certificates have a handful; this bounds unauthenticated parsing and
+/// duplicate detection for certificates accepted outside TLS's handshake-size limit too.
+const MAX_EXTENSIONS: usize = 256;
 
 /// How many candidate issuers (each one a signature check) the search for a path tries before it gives up.
 /// A real chain needs a handful; the limit is what stops a sender who supplies many certificates that all
@@ -865,31 +868,38 @@ impl Certificate {
                     version + 1
                 )));
             }
-            let mut list = Der::new(exts.content).sequence()?;
-            let mut seen: Vec<Vec<u8>> = Vec::new();
-            while !list.is_empty() {
-                let mut ext = list.sequence()?;
-                let oid = ext.expect(asn1::TAG_OID)?.content;
-                let critical = match ext.optional(asn1::TAG_BOOLEAN)? {
-                    Some(b) => asn1::boolean(&b)?,
-                    None => false,
-                };
-                let value = ext.expect(asn1::TAG_OCTET_STRING)?.content;
-                ext.finish()?;
-                if seen.iter().any(|s| s == oid) {
-                    return cert("duplicate extension");
-                }
-                seen.push(oid.to_vec());
-                out.extensions.push(Extension {
-                    oid: oid.to_vec(),
-                    critical,
-                    value: value.to_vec(),
-                });
-                out.apply_extension(oid, critical, value)?;
-            }
+            out.apply_extensions(exts.content)?;
         }
         tbs.finish()?;
         Ok(out)
+    }
+
+    fn apply_extensions(&mut self, encoded: &[u8]) -> Result<()> {
+        let mut list = Der::new(encoded).sequence()?;
+        let mut seen = HashSet::new();
+        while !list.is_empty() {
+            if seen.len() >= MAX_EXTENSIONS {
+                return cert("too many extensions");
+            }
+            let mut ext = list.sequence()?;
+            let oid = ext.expect(asn1::TAG_OID)?.content;
+            let critical = match ext.optional(asn1::TAG_BOOLEAN)? {
+                Some(b) => asn1::boolean(&b)?,
+                None => false,
+            };
+            let value = ext.expect(asn1::TAG_OCTET_STRING)?.content;
+            ext.finish()?;
+            if !seen.insert(oid) {
+                return cert("duplicate extension");
+            }
+            self.extensions.push(Extension {
+                oid: oid.to_vec(),
+                critical,
+                value: value.to_vec(),
+            });
+            self.apply_extension(oid, critical, value)?;
+        }
+        Ok(())
     }
 
     fn apply_extension(&mut self, oid: &[u8], critical: bool, value: &[u8]) -> Result<()> {
@@ -4344,6 +4354,48 @@ mod tests {
         }
         // version 1 has no extensions at all, so the old roots of that kind are CAs by being in the store
         rv_server("anchor_v1", &["anchor_v1_leaf"]).unwrap();
+    }
+
+    fn encoded_extensions(n: usize) -> Vec<u8> {
+        let mut all = Vec::new();
+        for i in 0..n {
+            let oid = asn1::oid_from_string(&format!("1.3.6.1.4.1.55555.{}", i + 1)).unwrap();
+            let mut extension = tlv(asn1::TAG_OID, &oid);
+            extension.extend_from_slice(&tlv(asn1::TAG_OCTET_STRING, &[]));
+            all.extend_from_slice(&tlv(asn1::TAG_SEQUENCE, &extension));
+        }
+        tlv(asn1::TAG_SEQUENCE, &all)
+    }
+
+    #[test]
+    fn extension_count_and_duplicate_work_are_bounded() {
+        let mut at_limit = Certificate::parse(&fixture!("root_rsa")).unwrap();
+        let before = at_limit.extensions.len();
+        at_limit
+            .apply_extensions(&encoded_extensions(MAX_EXTENSIONS))
+            .unwrap();
+        assert_eq!(at_limit.extensions.len(), before + MAX_EXTENSIONS);
+
+        let mut over_limit = Certificate::parse(&fixture!("root_rsa")).unwrap();
+        assert!(over_limit
+            .apply_extensions(&encoded_extensions(MAX_EXTENSIONS + 1))
+            .unwrap_err()
+            .to_string()
+            .contains("too many extensions"));
+
+        let one = encoded_extensions(1);
+        let mut sequence = Der::new(&one).sequence().unwrap();
+        let extension = sequence.next().unwrap().raw.to_vec();
+        let duplicate = tlv(
+            asn1::TAG_SEQUENCE,
+            &[extension.as_slice(), &extension].concat(),
+        );
+        let mut cert = Certificate::parse(&fixture!("root_rsa")).unwrap();
+        assert!(cert
+            .apply_extensions(&duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate extension"));
     }
 
     #[test]
