@@ -467,11 +467,24 @@ impl Proxy {
         if u.scheme != "http" {
             return Err(Error::Http("unsupported proxy scheme".into()));
         }
-        let port = if with_scheme
-            .rsplit('/')
+        // Look only at the authority. A path or query says nothing about whether the authority
+        // included a port, and credentials may contain colons of their own.
+        let authority = with_scheme
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or("")
+            .split(['/', '?', '#'])
             .next()
-            .map_or(false, |h| h.contains(':') && !h.ends_with(']'))
-        {
+            .unwrap_or("");
+        let host_port = authority.rsplit('@').next().unwrap_or(authority);
+        let has_port = if let Some(bracketed) = host_port.strip_prefix('[') {
+            bracketed
+                .find(']')
+                .is_some_and(|end| bracketed[end + 1..].starts_with(':'))
+        } else {
+            host_port.rsplit_once(':').is_some()
+        };
+        let port = if has_port {
             u.port
         } else {
             DEFAULT_PROXY_PORT
@@ -3573,6 +3586,32 @@ mod tests {
         );
         assert_eq!(Proxy::parse("proxy.local:8888").unwrap().port, 8888);
         assert_eq!(Proxy::parse("http://proxy.local").unwrap().port, 8080);
+        for suffix in ["/", "/proxy.pac", "?mode=tunnel", "/path?q=a:b#fragment"] {
+            assert_eq!(
+                Proxy::parse(&format!("http://user:pw@proxy.local:3128{suffix}"))
+                    .unwrap()
+                    .port,
+                3128,
+                "an authority port survives {suffix:?}"
+            );
+            assert_eq!(
+                Proxy::parse(&format!("http://proxy.local{suffix}"))
+                    .unwrap()
+                    .port,
+                DEFAULT_PROXY_PORT,
+                "a colon outside the authority is not a port in {suffix:?}"
+            );
+        }
+        assert_eq!(
+            Proxy::parse("http://[2001:db8::1]:3128/path")
+                .unwrap()
+                .port,
+            3128
+        );
+        assert_eq!(
+            Proxy::parse("http://[2001:db8::1]/path").unwrap().port,
+            DEFAULT_PROXY_PORT
+        );
         assert!(Proxy::parse("https://proxy.local:3128").is_err());
     }
 
