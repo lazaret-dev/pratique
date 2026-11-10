@@ -36,7 +36,7 @@
 //! not know does not make the metadata unreadable (python-tuf refuses the whole file), it just never verifies.
 //! Not supported: `succinct_roles` (hash-bin delegations; an error), and the DSSE envelope form of metadata.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::crypto::ecdsa::{self, Curve};
@@ -64,7 +64,8 @@ pub const SIGSTORE_TRUSTED_ROOT_TARGET: &str = "trusted_root.json";
 /// The path of npm's registry keys among the repository's targets (in the delegated role `registry.npmjs.org`).
 pub const NPM_KEYS_TARGET: &str = "registry.npmjs.org/keys.json";
 
-/// Upper limits on what is fetched, python-tuf's defaults.
+/// Upper limits on fetched metadata and on unauthenticated collections. The byte limits are python-tuf's defaults; the
+/// collection limits bound parsing, lookup and signature work before metadata is trusted.
 pub mod limits {
     /// Longest root metadata file.
     pub const ROOT: u64 = 512_000;
@@ -78,6 +79,10 @@ pub mod limits {
     pub const ROOT_ROTATIONS: u64 = 256;
     /// Most targets roles visited to find one target.
     pub const DELEGATIONS: usize = 32;
+    /// Most signatures on one metadata envelope.
+    pub const SIGNATURES: usize = 256;
+    /// Most key ids assigned to one role.
+    pub const ROLE_KEY_IDS: usize = 256;
 }
 
 const TOP_LEVEL: [&str; 4] = ["root", "timestamp", "snapshot", "targets"];
@@ -493,7 +498,7 @@ fn common(signed: &Value, kind: &str) -> Result<Common, Error> {
 struct Envelope {
     signed: Value,
     payload: Vec<u8>,
-    signatures: Vec<(String, Vec<u8>)>,
+    signatures: BTreeMap<String, Vec<u8>>,
 }
 
 fn envelope(bytes: &[u8]) -> Result<Envelope, Error> {
@@ -504,8 +509,15 @@ fn envelope(bytes: &[u8]) -> Result<Envelope, Error> {
     let Some(signed) = doc.get("signed").cloned() else {
         return malformed("$.signed", "missing");
     };
-    let mut signatures: Vec<(String, Vec<u8>)> = Vec::new();
-    for (i, s) in array(&doc, "signatures", "$")?.iter().enumerate() {
+    let raw_signatures = array(&doc, "signatures", "$")?;
+    if raw_signatures.len() > limits::SIGNATURES {
+        return malformed(
+            "$.signatures",
+            &format!("more than {} signatures", limits::SIGNATURES),
+        );
+    }
+    let mut signatures = BTreeMap::new();
+    for (i, s) in raw_signatures.iter().enumerate() {
         let path = format!("$.signatures[{i}]");
         if s.as_object().is_none() {
             return malformed(&path, "not an object");
@@ -515,10 +527,10 @@ fn envelope(bytes: &[u8]) -> Result<Envelope, Error> {
         if sig.len() % 2 != 0 || !sig.bytes().all(|b| b.is_ascii_hexdigit()) {
             return malformed(&format!("{path}.sig"), "not hex");
         }
-        if signatures.iter().any(|(k, _)| *k == keyid) {
+        if signatures.contains_key(&keyid) {
             return malformed(&path, &format!("a second signature by key id {keyid}"));
         }
-        signatures.push((keyid, crate::util::unhex(&sig)));
+        signatures.insert(keyid, crate::util::unhex(&sig));
     }
     let payload = canonical_json(&signed)?;
     Ok(Envelope {
@@ -536,12 +548,21 @@ pub struct RoleKeys {
 }
 
 fn role_keys(v: &Value, path: &str) -> Result<RoleKeys, Error> {
-    let keyids = strings(
-        v.get("keyids").unwrap_or(&Value::Null),
-        &format!("{path}.keyids"),
-    )?;
-    for (i, k) in keyids.iter().enumerate() {
-        if keyids[..i].contains(k) {
+    let keyids_path = format!("{path}.keyids");
+    let keyids_value = v.get("keyids").unwrap_or(&Value::Null);
+    let Some(raw_keyids) = keyids_value.as_array() else {
+        return malformed(&keyids_path, "not an array");
+    };
+    if raw_keyids.len() > limits::ROLE_KEY_IDS {
+        return malformed(
+            &keyids_path,
+            &format!("more than {} key ids", limits::ROLE_KEY_IDS),
+        );
+    }
+    let keyids = strings(keyids_value, &keyids_path)?;
+    let mut seen = BTreeSet::new();
+    for k in &keyids {
+        if !seen.insert(k) {
             return malformed(&format!("{path}.keyids"), &format!("{k} twice"));
         }
     }
@@ -566,10 +587,7 @@ fn verify_role(
 ) -> Result<(), Error> {
     let mut good: Vec<Vec<u8>> = Vec::new();
     for keyid in &role.keyids {
-        let (Some(key), Some((_, sig))) = (
-            keys.get(keyid),
-            env.signatures.iter().find(|(k, _)| k == keyid),
-        ) else {
+        let (Some(key), Some(sig)) = (keys.get(keyid), env.signatures.get(keyid)) else {
             continue;
         };
         if key.verify(&env.payload, sig) {
@@ -1012,6 +1030,7 @@ impl Delegations {
         }
         let keys = keys(object(d, "keys", path)?, &format!("{path}.keys"))?;
         let mut roles: Vec<DelegatedRole> = Vec::new();
+        let mut role_names = BTreeSet::new();
         for (i, r) in array(d, "roles", path)?.iter().enumerate() {
             let p = format!("{path}.roles[{i}]");
             if r.as_object().is_none() {
@@ -1024,7 +1043,7 @@ impl Delegations {
                     "empty or the name of a top-level role",
                 );
             }
-            if roles.iter().any(|x| x.name == name) {
+            if !role_names.insert(name.clone()) {
                 return malformed(&format!("{p}.name"), &format!("{name:?} twice"));
             }
             let terminating = match r.get("terminating") {
@@ -1624,6 +1643,61 @@ fn required(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn json_list(n: usize, one: impl Fn(usize) -> String) -> String {
+        (0..n).map(one).collect::<Vec<_>>().join(",")
+    }
+
+    #[test]
+    fn unauthenticated_signature_and_role_key_lists_are_bounded() {
+        let metadata = |n| {
+            format!(
+                r#"{{"signed":{{}},"signatures":[{}]}}"#,
+                json_list(n, |i| format!(r#"{{"keyid":"k{i}","sig":"00"}}"#))
+            )
+        };
+        assert_eq!(
+            envelope(metadata(limits::SIGNATURES).as_bytes())
+                .unwrap()
+                .signatures
+                .len(),
+            limits::SIGNATURES
+        );
+        let too_many_signatures = envelope(metadata(limits::SIGNATURES + 1).as_bytes())
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(too_many_signatures.contains(&format!(
+            "more than {} signatures",
+            limits::SIGNATURES
+        )));
+
+        let role = |n| {
+            json::parse(
+                format!(
+                    r#"{{"keyids":[{}],"threshold":1}}"#,
+                    json_list(n, |i| format!(r#""k{i}""#))
+                )
+                .as_bytes(),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            role_keys(&role(limits::ROLE_KEY_IDS), "role")
+                .unwrap()
+                .keyids
+                .len(),
+            limits::ROLE_KEY_IDS
+        );
+        let too_many_keys = role_keys(&role(limits::ROLE_KEY_IDS + 1), "role")
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(too_many_keys.contains(&format!(
+            "more than {} key ids",
+            limits::ROLE_KEY_IDS
+        )));
+    }
 
     #[test]
     fn canonical_json_is_securesystemslibs() {
