@@ -1,0 +1,45 @@
+{
+  "schema": "paired-administration-preflight-v1",
+  "checked_at_utc": "2026-11-10T06:32:15.944225+00:00",
+  "scope": "Collector regressions using frozen A3 logs and synthetic metadata; no project ELF or native timing test executed.",
+  "candidate_commit": "c87285bc3c2cf5b7ba29e5bdd50a1b05a72563cc",
+  "commands": [
+    {
+      "argv": [
+        "/Library/Developer/CommandLineTools/usr/bin/python3",
+        "/private/tmp/pratique-pr10-ghash-8370c-guarded-pair-workflow-20261110/cleanroom/ghash_integration/guarded_pair_8370c/unit.py",
+        "--baseline-source",
+        "/private/tmp/pratique-pr10-ghash-8370c-hot-key-swap-controls-20261109",
+        "--artifact",
+        "/private/tmp/pratique-ghash-timing-investigation/hot-key-swap-8370c-execution-20261109-wave2/attempt-07-42758551301/artifact"
+      ],
+      "exit_code": 0,
+      "log": "preflight-unit.log",
+      "log_sha256": "a48a3f6054194315ea43b2a1efe2b42c248df00a0d23e3b7ea89ba39a2e3b31a"
+    },
+    {
+      "argv": [
+        "/private/tmp/pratique-actionlint-bin/actionlint",
+        ".github/workflows/pr10-ghash-8370c-class-controls.yml"
+      ],
+      "exit_code": 0,
+      "log": "preflight-actionlint.log",
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "files_sha256": {
+    "cleanroom/ghash_integration/guarded_pair_8370c/config.json": "e8907944fafba9411074996d2a75ea1d0e9f8afa360fc1953cde6bcd30ec5763",
+    "cleanroom/ghash_integration/guarded_pair_8370c/run.py": "cfb2ab83cc01ed13921ddf277c11dc7b677cf96ea323899843f8b188de358df2",
+    "cleanroom/ghash_integration/guarded_pair_8370c/capture_linked.py": "d79476eec74cf4b29e62243e7206b13bb253a0217ec75c0d25c9749c43affb1f",
+    "cleanroom/ghash_integration/guarded_pair_8370c/unit.py": "b27644d47fee2c2a82fb296c2c804aee6e3a3f1aabff7a348a0a153f8c87c588",
+    "cleanroom/ghash_integration/guarded_pair_8370c/PROTOCOL.md": "f531c5d4aaefbdf7485d7df8d6ea92090913ceeffa7737596f3d641d7f994d4c",
+    ".github/workflows/pr10-ghash-8370c-class-controls.yml": "a9abb92d10ac9802e2f90f1ac5612d4ff6c88141c92690741f66a961b42a3e00"
+  },
+  "controller": {
+    "path": "/private/tmp/pratique-guarded-pair-8370c-controller-20261110.py",
+    "sha256": "2a03530c6f49e0b8be5dba5555434246dbec3bd0e2549168482462ef7ee6beb5"
+  },
+  "unit_tests_passed": 12,
+  "actionlint_passed": true,
+  "native_invocations": 0
+}

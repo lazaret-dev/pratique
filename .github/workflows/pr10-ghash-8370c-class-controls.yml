@@ -1,4 +1,4 @@
-name: Manual GHASH class controls on Xeon 8370C
+name: Manual paired baseline and guarded GHASH on Xeon 8370C
 
 on:
   workflow_dispatch:
@@ -7,20 +7,22 @@ permissions:
   contents: read
 
 concurrency:
-  group: pr10-ghash-8370c-manual
+  group: pr10-ghash-8370c-guarded-pair-manual
   cancel-in-progress: false
 
 jobs:
   xeon-8370c:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/codex/pr10-ghash-8370c-guarded-pair-workflow'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 50
     env:
       RUSTUP_TOOLCHAIN: 1.87.0
       RUSTFLAGS: --cfg pratique_portable -C target-feature=-aes,-pclmulqdq
       PRATIQUE_TIMING_SECS: '3'
-      PRATIQUE_EXPECTED_SOURCE_COMMIT: 9ba854cf5b793f5ff9525964d58519018ed9f275
-      PRATIQUE_CLASS_OUTPUT: /tmp/pratique-ghash-8370c
+      PRATIQUE_BASELINE_COMMIT: a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf
+      PRATIQUE_CANDIDATE_COMMIT: c87285bc3c2cf5b7ba29e5bdd50a1b05a72563cc
+      PRATIQUE_PAIR_OUTPUT: /tmp/pratique-ghash-8370c-guarded-pair
+      PYTHONDONTWRITEBYTECODE: '1'
       LC_ALL: C
     steps:
       - name: Record host and filter before checkout or compiler
@@ -29,14 +31,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$PRATIQUE_CLASS_OUTPUT/host"
-          lscpu > "$PRATIQUE_CLASS_OUTPUT/host/lscpu.txt"
-          lscpu -J > "$PRATIQUE_CLASS_OUTPUT/host/lscpu.json"
-          uname -a > "$PRATIQUE_CLASS_OUTPUT/host/uname.txt"
-          cat /proc/cpuinfo > "$PRATIQUE_CLASS_OUTPUT/host/proc-cpuinfo.txt"
+          mkdir -p "$PRATIQUE_PAIR_OUTPUT/host"
+          lscpu > "$PRATIQUE_PAIR_OUTPUT/host/lscpu.txt"
+          lscpu -J > "$PRATIQUE_PAIR_OUTPUT/host/lscpu.json"
+          uname -a > "$PRATIQUE_PAIR_OUTPUT/host/uname.txt"
+          cat /proc/cpuinfo > "$PRATIQUE_PAIR_OUTPUT/host/proc-cpuinfo.txt"
+          awk '/^microcode[[:space:]]*:/ {print}' /proc/cpuinfo > "$PRATIQUE_PAIR_OUTPUT/host/microcode.txt"
+          cat /sys/devices/system/clocksource/clocksource0/current_clocksource > "$PRATIQUE_PAIR_OUTPUT/host/clocksource.txt" 2>&1 || true
+          cat /sys/kernel/security/lockdown > "$PRATIQUE_PAIR_OUTPUT/host/lockdown.txt" 2>&1 || true
           python3 - <<'PY'
           import json, os, pathlib, re
-          root = pathlib.Path(os.environ['PRATIQUE_CLASS_OUTPUT'])
+          root = pathlib.Path(os.environ['PRATIQUE_PAIR_OUTPUT'])
           rows = json.loads((root / 'host/lscpu.json').read_text())['lscpu']
           fields = {r['field'].rstrip(':'): r['data'] for r in rows}
           model = fields.get('Model name', '')
@@ -49,23 +54,40 @@ jobs:
                     'workflow_sha': os.environ.get('GITHUB_WORKFLOW_SHA'),
                     'run_id': os.environ.get('GITHUB_RUN_ID'),
                     'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
-                    'diagnostic_source_commit': os.environ['PRATIQUE_EXPECTED_SOURCE_COMMIT'],
-                    'selection_basis': 'Reported Xeon model token8370C, before checkout/compiler; no outcome selection.',
-                    'skip_reason': None if matched else 'Reported model is not Xeon8370C; no checkout, compiler or tests.',
-                    'planned_six_slots': [{'iteration': i, 'kind': kind, 'execution': 'not_attempted'}
-                                         for i in range(1, 4) for kind in ['gate', 'control']]}
+                    'baseline_commit': os.environ['PRATIQUE_BASELINE_COMMIT'],
+                    'candidate_commit': os.environ['PRATIQUE_CANDIDATE_COMMIT'],
+                    'selection_basis': 'CPU model only; at most40 assignments; first8370C stops regardless of outcomes.',
+                    'native_test_invocations_planned': 24 if matched else 0,
+                    'timing_test_invocations_planned': 20 if matched else 0,
+                    'auxiliary_test_invocations_planned': 4 if matched else 0,
+                    'skip_reason': None if matched else 'Not reported Xeon8370C; no checkout, compiler or tests.'}
           (root / 'host/selection.json').write_text(json.dumps(record, indent=2) + '\n')
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              f.write('matched=' + str(matched).lower() + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+              stream.write('matched=' + str(matched).lower() + '\n')
           print(json.dumps(record))
           PY
 
-      - name: Checkout immutable reviewed diagnostic source
+      - name: Checkout immutable workflow administration
         if: steps.cpu.outputs.matched == 'true'
         timeout-minutes: 1
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 9ba854cf5b793f5ff9525964d58519018ed9f275
+          ref: ${{ github.sha }}
+          path: admin
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/workflows/pr10-ghash-8370c-class-controls.yml
+            /cleanroom/ghash_integration/guarded_pair_8370c/
+
+      - name: Checkout immutable baseline source
+        if: steps.cpu.outputs.matched == 'true'
+        timeout-minutes: 1
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf
+          path: source-baseline
           fetch-depth: 0
           persist-credentials: false
           sparse-checkout-cone-mode: false
@@ -73,45 +95,86 @@ jobs:
             /*
             !/fuzz/corpus/
 
-      - name: Install exact MSRV and bind source and flags
+      - name: Checkout immutable guarded candidate source
+        if: steps.cpu.outputs.matched == 'true'
+        timeout-minutes: 1
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: c87285bc3c2cf5b7ba29e5bdd50a1b05a72563cc
+          path: source-candidate
+          fetch-depth: 0
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/fuzz/corpus/
+
+      - name: Install exact MSRV and bind both source trees
         if: steps.cpu.outputs.matched == 'true'
         timeout-minutes: 2
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.87.0 --profile minimal > "$PRATIQUE_CLASS_OUTPUT/toolchain-install.log" 2>&1
-          rustc -vV > "$PRATIQUE_CLASS_OUTPUT/rustc-vV.txt"
-          cargo --version > "$PRATIQUE_CLASS_OUTPUT/cargo-version.txt"
-          python3 cleanroom/ghash_integration/class_controls_8370c/run.py verify
+          mkdir -p "$PRATIQUE_PAIR_OUTPUT/baseline" "$PRATIQUE_PAIR_OUTPUT/candidate"
+          timeout --kill-after=5s 100s rustup toolchain install 1.87.0 --profile minimal > "$PRATIQUE_PAIR_OUTPUT/toolchain-install.log" 2>&1
+          rustc -vV > "$PRATIQUE_PAIR_OUTPUT/rustc-vV.txt"
+          cargo --version > "$PRATIQUE_PAIR_OUTPUT/cargo-version.txt"
+          python3 "$GITHUB_WORKSPACE/admin/cleanroom/ghash_integration/guarded_pair_8370c/run.py" verify
 
-      - name: Build and hash one release test executable
-        id: build
+      - name: Build and retain one baseline release executable
+        id: baseline
         if: steps.cpu.outputs.matched == 'true'
         timeout-minutes: 6
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --release --all-features --lib --no-run --message-format=json > "$PRATIQUE_CLASS_OUTPUT/build-events.jsonl" 2> "$PRATIQUE_CLASS_OUTPUT/build.stderr.log"
-          python3 cleanroom/ghash_integration/class_controls_8370c/run.py bind-binary
+          cd "$GITHUB_WORKSPACE/source-baseline"
+          cargo test --release --all-features --lib --no-run --message-format=json > "$PRATIQUE_PAIR_OUTPUT/baseline/build-events.jsonl" 2> "$PRATIQUE_PAIR_OUTPUT/baseline/build.stderr.log"
+          python3 "$GITHUB_WORKSPACE/admin/cleanroom/ghash_integration/guarded_pair_8370c/run.py" bind-binary baseline
 
-      - name: Attempt all six alternating original and control calls
-        if: steps.cpu.outputs.matched == 'true' && steps.build.outcome == 'success'
+      - name: Build and retain one guarded release executable
+        id: candidate
+        if: steps.cpu.outputs.matched == 'true'
         timeout-minutes: 6
         shell: bash
-        run: python3 cleanroom/ghash_integration/class_controls_8370c/run.py run
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/source-candidate"
+          cargo test --release --all-features --lib --no-run --message-format=json > "$PRATIQUE_PAIR_OUTPUT/candidate/build-events.jsonl" 2> "$PRATIQUE_PAIR_OUTPUT/candidate/build.stderr.log"
+          python3 "$GITHUB_WORKSPACE/admin/cleanroom/ghash_integration/guarded_pair_8370c/run.py" bind-binary candidate
 
-      - name: Preserve every available report and signed effect
-        if: always() && steps.cpu.outputs.matched == 'true' && steps.build.outcome == 'success'
+      - name: Run both native crypto correctness groups
+        id: correctness
+        if: steps.cpu.outputs.matched == 'true' && steps.baseline.outcome == 'success' && steps.candidate.outcome == 'success'
+        timeout-minutes: 3
+        shell: bash
+        run: exec python3 "$GITHUB_WORKSPACE/admin/cleanroom/ghash_integration/guarded_pair_8370c/run.py" aux-correctness
+
+      - name: Attempt all twenty predetermined gate and swap calls
+        id: timing
+        if: steps.cpu.outputs.matched == 'true' && steps.correctness.outcome == 'success'
+        timeout-minutes: 20
+        shell: bash
+        run: exec python3 "$GITHUB_WORKSPACE/admin/cleanroom/ghash_integration/guarded_pair_8370c/run.py" run
+
+      - name: Profile both unchanged release benchmark selectors
+        if: steps.cpu.outputs.matched == 'true' && steps.timing.outcome == 'success'
+        timeout-minutes: 3
+        shell: bash
+        run: exec python3 "$GITHUB_WORKSPACE/admin/cleanroom/ghash_integration/guarded_pair_8370c/run.py" aux-profile
+
+      - name: Preserve every paired report and signed effect
+        if: always() && steps.cpu.outputs.matched == 'true' && steps.baseline.outcome == 'success' && steps.candidate.outcome == 'success'
         timeout-minutes: 1
         shell: bash
-        run: python3 cleanroom/ghash_integration/class_controls_8370c/run.py summarize
+        run: exec python3 "$GITHUB_WORKSPACE/admin/cleanroom/ghash_integration/guarded_pair_8370c/run.py" summarize
 
-      - name: Upload skipped-host metadata or all six complete and partial logs
+      - name: Upload host metadata or both executable identities and all logs
         if: always()
         timeout-minutes: 2
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: pr10-ghash-8370c-${{ github.run_id }}-${{ github.run_attempt }}
-          path: /tmp/pratique-ghash-8370c
+          name: pr10-ghash-guarded-pair-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /tmp/pratique-ghash-8370c-guarded-pair
           if-no-files-found: error
           retention-days: 14

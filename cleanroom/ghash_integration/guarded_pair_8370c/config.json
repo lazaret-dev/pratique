@@ -1,0 +1,13 @@
+{
+  "schema": "pr10-guarded-pair-8370c-v1",
+  "baseline_commit": "a29c72ffbf7bfcade5b99f04f1414f77ac31a8cf",
+  "candidate_commit": "c87285bc3c2cf5b7ba29e5bdd50a1b05a72563cc",
+  "workflow_branch": "codex/pr10-ghash-8370c-guarded-pair-workflow",
+  "timing_sha256": "11f3d7da0bdfc636443f3b569836f879cb9fc267fed54ad344e5fafbff9b20a4",
+  "parser_sha256": "63b604708b60762bc62068c7505b51b332ad474cad1e8a34536305afcda63450",
+  "rustflags": "--cfg pratique_portable -C target-feature=-aes,-pclmulqdq",
+  "timing_seconds": "3",
+  "rounds": 5,
+  "maximum_cpu_assignments": 40,
+  "selection_policy": "Stop at the first reported Xeon8370C regardless of outcomes; no outcome-based replacement or rerun."
+}
