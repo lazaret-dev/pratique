@@ -2174,7 +2174,7 @@ fn serve_crl(port: u16, body: Arc<Mutex<Vec<u8>>>) -> Arc<AtomicUsize> {
 }
 
 #[test]
-fn hard_fail_fetches_the_crl_named_in_the_certificate_and_caches_it() {
+fn a_private_crl_distribution_point_is_not_contacted() {
     if !have_openssl() {
         return;
     }
@@ -2190,37 +2190,35 @@ fn hard_fail_fetches_the_crl_named_in_the_certificate_and_caches_it() {
     let body = Arc::new(Mutex::new(Vec::new()));
     let requests = serve_crl(crl_port, body.clone());
 
-    // a CRL that does not list the certificate: downloaded once, then served from the cache
+    // The list is valid and the endpoint is listening, but the built-in source must reject the
+    // private destination before it opens a connection.
     fx.crl(false);
     *body.lock().unwrap() = fs::read(fx.dir.join("crl.pem")).unwrap();
     let server = start_server(&fx, &["-www", "-tls1_3"]);
     let cfg = ClientConfig::new(fx.trust())
         .with_revocation(Revocation::hard_fail().with_crl_source(Arc::new(HttpCrlSource::new())));
-    for _ in 0..2 {
-        let mut tls = connect(&server, "localhost", &cfg).unwrap_or_else(|e| panic!("{}", e));
-        assert!(get_root(&mut tls).contains("HTTP/1.0 200"));
-    }
-    assert_eq!(
-        requests.load(Ordering::SeqCst),
-        1,
-        "the second connection should use the cached CRL"
-    );
-
-    // the same certificate once the CA lists it: a fresh source downloads the new list and refuses
-    fx.crl(true);
-    *body.lock().unwrap() = fs::read(fx.dir.join("crl.pem")).unwrap();
-    let cfg = ClientConfig::new(fx.trust())
-        .with_revocation(Revocation::soft_fail().with_crl_source(Arc::new(HttpCrlSource::new())));
     let err = connect(&server, "localhost", &cfg)
         .err()
-        .expect("a listed certificate must be refused");
-    assert!(
-        err.to_string().contains("certificate_revoked")
-            && err.to_string().contains("a fetched CRL"),
-        "{}",
-        err
+        .expect("hard-fail needs evidence from an allowed destination");
+    assert_eq!(
+        requests.load(Ordering::SeqCst),
+        0,
+        "the private CRL endpoint must not be contacted"
     );
-    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    assert!(
+        err.to_string().contains("no valid evidence")
+            && err
+                .to_string()
+                .contains("127.0.0.1 did not resolve to any address"),
+        "{err}"
+    );
+
+    // An unavailable source is still forgiven in soft-fail mode, without contacting it.
+    let cfg = ClientConfig::new(fx.trust())
+        .with_revocation(Revocation::soft_fail().with_crl_source(Arc::new(HttpCrlSource::new())));
+    let mut tls = connect(&server, "localhost", &cfg).unwrap();
+    assert!(get_root(&mut tls).contains("HTTP/1.0 200"));
+    assert_eq!(requests.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -2360,7 +2358,7 @@ fn our_ocsp_request_is_openssls_byte_for_byte() {
 }
 
 #[test]
-fn a_live_openssl_responder_settles_revocation_for_both_clients() {
+fn a_private_openssl_responder_is_not_contacted() {
     if !have_openssl() {
         return;
     }
@@ -2375,19 +2373,33 @@ fn a_live_openssl_responder_settles_revocation_for_both_clients() {
             Revocation::new(mode).with_ocsp_source(Arc::new(HttpOcspSource::new())),
         )
     };
-    // no staple: the responder is what satisfies hard-fail, for the bare TLS stream, the blocking client and the async one
+    // The responder is live, but a certificate-controlled loopback destination is rejected
+    // before connect. Hard-fail therefore has no evidence.
     let responder = start_responder(&fx, port, false);
     let server = start_server(&fx, &["-www", "-tls1_3"]);
-    let mut tls = connect(&server, "localhost", &config(RevocationMode::HardFail)).unwrap();
+    let err = connect(&server, "localhost", &config(RevocationMode::HardFail))
+        .err()
+        .expect("hard-fail needs evidence from an allowed destination");
+    assert!(
+        err.to_string().contains("no valid evidence")
+            && err
+                .to_string()
+                .contains("127.0.0.1 did not resolve to any address"),
+        "{err}"
+    );
+
+    // Soft-fail proceeds for the bare TLS stream and both HTTP client forms, while the
+    // production source continues to refuse the private responder.
+    let mut tls = connect(&server, "localhost", &config(RevocationMode::SoftFail)).unwrap();
     assert!(get_root(&mut tls).contains("HTTP/1.0 200"));
     drop(tls);
     let url = format!("https://localhost:{}/", server.port);
-    let blocking = pratique::Client::with_tls_config(config(RevocationMode::HardFail))
+    let blocking = pratique::Client::with_tls_config(config(RevocationMode::SoftFail))
         .timeout(Duration::from_secs(10));
     assert_eq!(blocking.get(&url).unwrap().status, 200);
     let server = start_server(&fx, &["-www", "-tls1_3"]);
     let url = format!("https://localhost:{}/", server.port);
-    let asynchronous = pratique::Client::with_tls_config(config(RevocationMode::HardFail))
+    let asynchronous = pratique::Client::with_tls_config(config(RevocationMode::SoftFail))
         .timeout(Duration::from_secs(10))
         .into_async();
     assert_eq!(
@@ -2397,36 +2409,6 @@ fn a_live_openssl_responder_settles_revocation_for_both_clients() {
         200
     );
     drop(responder);
-    // the responder says revoked: refused, even in soft-fail
-    let responder = start_responder(&fx, port, true);
-    let server = start_server(&fx, &["-www", "-tls1_2"]);
-    let err = connect(&server, "localhost", &config(RevocationMode::SoftFail))
-        .err()
-        .expect("a revoked certificate must be refused");
-    assert!(
-        err.to_string().contains("certificate_revoked")
-            && err.to_string().contains("OCSP responder"),
-        "{err}"
-    );
-    let server = start_server(&fx, &["-www", "-tls1_3"]);
-    let url = format!("https://localhost:{}/", server.port);
-    let asynchronous = pratique::Client::with_tls_config(config(RevocationMode::SoftFail))
-        .timeout(Duration::from_secs(10))
-        .into_async();
-    let err = pratique::asyncio::block_on(asynchronous.get(&url)).unwrap_err();
-    assert!(err.to_string().contains("certificate_revoked"), "{err}");
-    drop(responder);
-    // no responder at all: soft-fail goes on, hard-fail refuses
-    let server = start_server(&fx, &["-www", "-tls1_3"]);
-    assert!(connect(&server, "localhost", &config(RevocationMode::SoftFail)).is_ok());
-    let server = start_server(&fx, &["-www", "-tls1_3"]);
-    let err = connect(&server, "localhost", &config(RevocationMode::HardFail))
-        .err()
-        .expect("hard-fail needs evidence");
-    assert!(
-        err.to_string().contains("no valid evidence") && err.to_string().contains("OCSP responder"),
-        "{err}"
-    );
 }
 
 /// TLS 1.3 session resumption (B-35) with OpenSSL's server, which checks the binder and makes the resumed key schedule on
