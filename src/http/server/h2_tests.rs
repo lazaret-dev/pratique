@@ -1542,6 +1542,39 @@ fn connection_credit(e: &super::h2::Engine, out: &[u8]) -> (u64, u64) {
 }
 
 #[test]
+fn a_stream_reclaims_sent_response_storage_before_the_queue_empties() {
+    const BUFFER: usize = 1024;
+    let mut config = HttpConfig::default();
+    config.h2.stream_send_buffer = BUFFER;
+    config.h2.flood_small_updates = 8 * BUFFER as u32;
+    let mut e = super::h2::Engine::new(&config);
+    let mut c = ClientFrames::new();
+    frame::write_settings(&mut c.out, &[(setting::INITIAL_WINDOW_SIZE, 1)]);
+    c.post(1);
+    assert_eq!(e.receive(&c.take()).unwrap().len(), 1);
+    e.send_head(1, 200, &[], false).unwrap();
+    assert_eq!(e.queue_data(1, &[7; BUFFER]).unwrap(), BUFFER);
+    e.out.clear();
+
+    for _ in 0..(4 * BUFFER) {
+        let mut update = Vec::new();
+        frame::write_window_update(&mut update, 1, 1);
+        e.receive(&update).unwrap();
+        e.out.clear();
+        assert_eq!(e.queue_data(1, &[7]).unwrap(), 1);
+    }
+    let (storage, queued) = e.pending_storage(1).unwrap();
+    assert!(
+        queued >= BUFFER - 1,
+        "the queue unexpectedly drained to {queued}"
+    );
+    assert!(
+        storage <= BUFFER + BUFFER / 2,
+        "{storage} bytes allocated for a {queued}-byte bounded queue"
+    );
+}
+
+#[test]
 fn a_body_that_is_never_read_gives_the_connection_its_window_back() {
     // B-119 (the review of round 4, probe A; so on main too): a stream whose request had ended was dropped with its
     // unread body, and the connection never got that credit back. A handler that answers a POST without reading it (a

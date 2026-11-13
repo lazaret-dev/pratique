@@ -1255,6 +1255,109 @@ fn an_idle_http2_connection_is_not_kept_alive_by_pings() {
 }
 
 #[test]
+fn pings_do_not_restart_an_http2_request_body_deadline() {
+    let server = plain(quick());
+    let mut c = Raw::connect_to(server.local_addrs()[0], &[]);
+    c.headers(
+        1,
+        &[
+            (":method", "POST"),
+            (":scheme", "http"),
+            (":authority", "a"),
+            (":path", "/body"),
+        ],
+        false,
+    );
+    c.data(1, b"x", false);
+    let started = Instant::now();
+    let mut reset = false;
+    while started.elapsed() < Duration::from_secs(2) {
+        c.raw_frame(kind::PING, 0, 0, b"pingwake");
+        let frames = c.until(|frame| {
+            frame.is(kind::PING) || (frame.h.stream == 1 && frame.is(kind::RST_STREAM))
+        });
+        if frames
+            .iter()
+            .any(|frame| frame.h.stream == 1 && frame.is(kind::RST_STREAM))
+        {
+            reset = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(reset, "PING wake-ups kept a body wait alive");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the fixed body deadline took {:?}",
+        started.elapsed()
+    );
+    server.shutdown(Duration::from_secs(1));
+}
+
+#[test]
+fn tiny_window_updates_do_not_stretch_an_http2_response_deadline() {
+    let server = plain(quick());
+    let mut c = Raw::connect_to(
+        server.local_addrs()[0],
+        &[(setting::INITIAL_WINDOW_SIZE, 0)],
+    );
+    c.get(1, "/huge");
+    let started = Instant::now();
+    let mut reset = false;
+    while started.elapsed() < Duration::from_secs(2) {
+        let mut update = Vec::new();
+        frame::write_window_update(&mut update, 1, 1);
+        c.send(&update);
+        let frames = c.until(|frame| {
+            frame.h.stream == 1 && (frame.is(kind::DATA) || frame.is(kind::RST_STREAM))
+        });
+        if frames
+            .iter()
+            .any(|frame| frame.h.stream == 1 && frame.is(kind::RST_STREAM))
+        {
+            reset = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert!(reset, "one-byte WINDOW_UPDATEs kept a response alive");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the response-rate deadline took {:?}",
+        started.elapsed()
+    );
+    server.shutdown(Duration::from_secs(1));
+}
+
+#[test]
+fn one_address_has_only_its_share_of_http2_handlers() {
+    let server = plain(Limits {
+        max_h2_handlers: 4,
+        max_h2_handlers_per_ip: 1,
+        ..quick()
+    });
+    let addr = server.local_addrs()[0];
+    let mut first = Raw::connect_to(addr, &[]);
+    let mut second = Raw::connect_to(addr, &[]);
+    first.get(1, "/slow");
+    thread::sleep(Duration::from_millis(50));
+    second.get(1, "/");
+    assert_eq!(
+        second.reset_of(1),
+        Some(ErrorCode::REFUSED_STREAM.0),
+        "the second connection from the same address exceeded its handler share"
+    );
+    assert_eq!(first.response(1).0, 200);
+    second.get(3, "/");
+    assert_eq!(
+        second.response(3).0,
+        200,
+        "the address's place was returned"
+    );
+    server.shutdown(Duration::from_secs(1));
+}
+
+#[test]
 fn http2_handlers_past_the_server_limit_are_refused_and_their_waits_end() {
     let server = plain(Limits {
         max_h2_handlers: 1,
