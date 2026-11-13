@@ -18,7 +18,7 @@ const MAX_RESPONSE: usize = 256 << 10;
 /// Plain HTTP is what OCSP is served over, and it does not need to be more: the response is verified (signed by the
 /// certificate's issuer or by a responder it authorized, about this certificate, in its window) before it counts, every
 /// time it is used. Requests are limited in size (256 KiB of answer) and time (5 s to connect, 10 s per read or write,
-/// 20 s in all), follow at most three redirects, and go only to `http://` URLs. Requests carry no nonce: the responders of
+/// 20 s in all), follow no redirects, go only to public Internet addresses, and use only `http://` URLs. Requests carry no nonce: the responders of
 /// the public CAs answer from responses they signed in advance and ignore one (RFC 5019), and what stops an old response is
 /// its window, which is checked.
 pub struct HttpOcspSource {
@@ -35,15 +35,34 @@ struct Cache {
 
 impl HttpOcspSource {
     pub fn new() -> HttpOcspSource {
+        Self::build(None, true)
+    }
+
+    /// A source additionally restricted to `rules`. The rule applies to the initial URL; redirects
+    /// are never followed, and resolved addresses must still be public.
+    pub fn with_allowed_hosts(rules: crate::http::HostRules) -> HttpOcspSource {
+        Self::build(Some(rules), true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> HttpOcspSource {
+        Self::build(None, false)
+    }
+
+    fn build(rules: Option<crate::http::HostRules>, public_only: bool) -> HttpOcspSource {
         let mut tls = crate::tls::ClientConfig::new(crate::x509::TrustStore::empty());
         tls.revocation = Revocation::off();
-        let client = crate::http::Client::with_tls_config(tls)
+        let mut client = crate::http::Client::with_tls_config(tls)
             .allow_insecure_http(true)
             .timeout(Duration::from_secs(10))
             .connect_timeout(Duration::from_secs(5))
             .total_timeout(Duration::from_secs(20))
-            .max_redirects(3)
+            .follow_redirects(false)
+            .public_addresses_only(public_only)
             .max_body_bytes(MAX_RESPONSE as u64);
+        if let Some(rules) = rules {
+            client = client.allowed_hosts(rules);
+        }
         HttpOcspSource {
             client,
             cache: Mutex::new(Cache::default()),

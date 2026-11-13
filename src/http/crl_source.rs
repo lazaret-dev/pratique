@@ -20,7 +20,7 @@ const REFRESH_SHARE: i64 = 10;
 ///
 /// The download is not a secure channel and does not need to be: the list is verified against the
 /// certificate's issuer before it counts. Fetches are limited in size (16 MiB) and time (10 s),
-/// follow no more than three redirects, and only `http://` URLs are used.
+/// follow no redirects, go only to public Internet addresses, and only `http://` URLs are used.
 ///
 /// The cache holds at most 64 lists and 64 MiB of them; the one used longest ago goes first. A list whose window is nearly
 /// over (less than a tenth of it, or an hour, left) is fetched again on a thread of its own while the one in the cache is
@@ -53,15 +53,34 @@ struct Entry {
 
 impl HttpCrlSource {
     pub fn new() -> HttpCrlSource {
+        Self::build(None, true)
+    }
+
+    /// A source additionally restricted to `rules`. The rule applies to the initial URL; redirects
+    /// are never followed, and resolved addresses must still be public.
+    pub fn with_allowed_hosts(rules: crate::http::HostRules) -> HttpCrlSource {
+        Self::build(Some(rules), true)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn for_tests() -> HttpCrlSource {
+        Self::build(None, false)
+    }
+
+    fn build(rules: Option<crate::http::HostRules>, public_only: bool) -> HttpCrlSource {
         let mut tls = crate::tls::ClientConfig::new(crate::x509::TrustStore::empty());
         tls.revocation = Revocation::off();
-        let client = crate::http::Client::with_tls_config(tls)
+        let mut client = crate::http::Client::with_tls_config(tls)
             .allow_insecure_http(true)
             .timeout(Duration::from_secs(10))
             .connect_timeout(Duration::from_secs(5))
             .total_timeout(Duration::from_secs(20))
-            .max_redirects(3)
+            .follow_redirects(false)
+            .public_addresses_only(public_only)
             .max_body_bytes(16 << 20);
+        if let Some(rules) = rules {
+            client = client.allowed_hosts(rules);
+        }
         HttpCrlSource {
             inner: Arc::new(Inner {
                 client,
@@ -251,7 +270,7 @@ mod tests {
             http_ok(b"this is not a CRL"),
             http_ok(good),
         ]);
-        let source = HttpCrlSource::new();
+        let source = HttpCrlSource::for_tests();
         let url = format!("http://127.0.0.1:{}/inter.crl", port);
         let crl = source.fetch(&url).unwrap();
         assert_eq!(crl.len(), 1);
@@ -282,5 +301,36 @@ mod tests {
             assert!(err.contains("only http://"), "{}: {}", bad, err);
         }
         assert_eq!(served.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn revocation_fetches_do_not_follow_redirects_or_reach_local_addresses() {
+        let good = include_bytes!("../../tests/data/rev_crl_empty.der").as_slice();
+        let (target_port, target_served) = serve(vec![http_ok(good)]);
+        let redirect = format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{target_port}/target.crl\r\nContent-Length: 0\r\n\r\n"
+        )
+        .into_bytes();
+        let (redirect_port, redirect_served) = serve(vec![redirect]);
+        let local = format!("http://127.0.0.1:{redirect_port}/start.crl");
+
+        let source = HttpCrlSource::for_tests();
+        let err = source.fetch(&local).unwrap_err().to_string();
+        assert!(err.contains("302"), "{err}");
+        assert_eq!(redirect_served.load(Ordering::SeqCst), 1);
+        assert_eq!(target_served.load(Ordering::SeqCst), 0);
+
+        let source = HttpCrlSource::new();
+        assert!(source.fetch(&local).is_err());
+        assert_eq!(redirect_served.load(Ordering::SeqCst), 1);
+
+        let source = HttpCrlSource::with_allowed_hosts(
+            crate::http::HostRules::new(std::iter::empty::<&str>()).unwrap(),
+        );
+        let err = source
+            .fetch("http://1.1.1.1/list.crl")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("host not allowed"), "{err}");
     }
 }

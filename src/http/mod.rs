@@ -833,6 +833,13 @@ impl Client {
         self
     }
 
+    /// Allows connections only to public Internet addresses, after resolution and before connect.
+    /// Used by the built-in revocation fetchers, which must not become an internal-network oracle.
+    pub(crate) fn public_addresses_only(mut self, on: bool) -> Client {
+        self.establish.public_only = on;
+        self
+    }
+
     pub fn user_agent(mut self, ua: impl Into<String>) -> Client {
         self.user_agent = ua.into();
         self

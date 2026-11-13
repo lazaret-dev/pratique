@@ -45,6 +45,8 @@ const MAX_ATTEMPTS: usize = 32;
 pub(crate) struct Establish {
     pub(crate) resolver: Arc<Resolver>,
     pub(crate) attempt_delay: Duration,
+    /// Whether addresses that are not public Internet addresses are removed after resolution.
+    pub(crate) public_only: bool,
 }
 
 impl std::fmt::Debug for Establish {
@@ -52,6 +54,7 @@ impl std::fmt::Debug for Establish {
         f.debug_struct("Establish")
             .field("dns_ttl", &self.resolver.ttl)
             .field("attempt_delay", &self.attempt_delay)
+            .field("public_only", &self.public_only)
             .finish()
     }
 }
@@ -61,6 +64,7 @@ impl Default for Establish {
         Establish {
             resolver: Arc::new(Resolver::new(DEFAULT_DNS_TTL)),
             attempt_delay: DEFAULT_ATTEMPT_DELAY,
+            public_only: false,
         }
     }
 }
@@ -441,7 +445,10 @@ pub(crate) fn connect(
     port: u16,
     until: Instant,
 ) -> io::Result<TcpStream> {
-    let ips = est.resolver.resolve(host, until)?;
+    let mut ips = est.resolver.resolve(host, until)?;
+    if est.public_only {
+        ips.retain(|ip| is_public(*ip));
+    }
     if ips.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -456,6 +463,46 @@ pub(crate) fn connect(
     Ok(tcp)
 }
 
+/// Whether an address is suitable for a connection constrained to the public Internet. This is
+/// deliberately conservative: documentation, benchmarking, shared, link-local, multicast and
+/// reserved ranges are not destinations for an automatic revocation fetch either.
+fn is_public(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(a) => {
+            let [x, y, z, _] = a.octets();
+            !matches!(
+                (x, y, z),
+                (0, _, _)
+                    | (10, _, _)
+                    | (100, 64..=127, _)
+                    | (127, _, _)
+                    | (169, 254, _)
+                    | (172, 16..=31, _)
+                    | (192, 0, _)
+                    | (192, 88, 99)
+                    | (192, 168, _)
+                    | (198, 18..=19, _)
+                    | (198, 51, 100)
+                    | (203, 0, 113)
+                    | (224..=255, _, _)
+            )
+        }
+        IpAddr::V6(a) => {
+            if let Some(v4) = a.to_ipv4() {
+                return is_public(IpAddr::V4(v4));
+            }
+            let [a0, a1, ..] = a.segments();
+            !a.is_unspecified()
+                && !a.is_loopback()
+                && !a.is_multicast()
+                && a0 & 0xfe00 != 0xfc00 // unique-local fc00::/7
+                && a0 & 0xffc0 != 0xfe80 // link-local fe80::/10
+                && a0 & 0xffc0 != 0xfec0 // deprecated site-local fec0::/10
+                && !(a0 == 0x2001 && a1 == 0x0db8) // documentation
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -468,6 +515,35 @@ pub(crate) mod tests {
 
     fn v6(n: u16) -> IpAddr {
         IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, n))
+    }
+
+    #[test]
+    fn public_address_filter_refuses_local_and_special_ranges() {
+        for private in [
+            "0.0.0.1",
+            "10.0.0.1",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.1.1",
+            "172.16.0.1",
+            "192.168.0.1",
+            "198.18.0.1",
+            "224.0.0.1",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "fc00::1",
+            "fe80::1",
+            "fec0::1",
+            "ff02::1",
+        ] {
+            let ip: IpAddr = private.parse().unwrap();
+            assert!(!is_public(ip), "{private}");
+        }
+        for public in ["1.1.1.1", "8.8.8.8", "2606:4700:4700::1111"] {
+            let ip: IpAddr = public.parse().unwrap();
+            assert!(is_public(ip), "{public}");
+        }
     }
 
     #[test]
@@ -774,6 +850,7 @@ pub(crate) mod tests {
         let est = Establish {
             resolver: Arc::new(Resolver::with_lookup(Duration::from_secs(30), lookup)),
             attempt_delay: DEFAULT_ATTEMPT_DELAY,
+            public_only: false,
         };
         let t = Instant::now();
         let s = connect(&est, "dual.test", port, t + Duration::from_secs(10)).unwrap();
