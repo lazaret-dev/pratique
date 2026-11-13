@@ -284,6 +284,7 @@ fn with_session(host: &str, suite: Suite) -> ClientConfig {
         trust: cfg.trust_store.clone(),
         verify: true,
         revocation: cfg.revocation.mode,
+        client_identity: None,
     };
     let session = Kept {
         ticket: vec![9; 16],

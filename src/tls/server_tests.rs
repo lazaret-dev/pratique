@@ -2215,6 +2215,43 @@ fn a_resumed_session_keeps_the_client_certificate_it_was_made_with() {
 }
 
 #[test]
+fn a_session_is_not_resumed_under_a_different_client_identity() {
+    let (server, pki) = ServerConfig::for_names(&["server.test"]).unwrap();
+    let (client_cert, roots) = client_ca();
+    let config = server.with_client_auth(ClientAuth::Optional(roots));
+
+    // A clone shares the ticket store, but removing the certificate must force a full handshake;
+    // otherwise the server would restore the old authenticated identity from the ticket.
+    let with_cert =
+        ClientConfig::new(pki.trust_store()).with_client_certificate(client_cert.clone());
+    let without_cert = ClientConfig {
+        client_certificate: None,
+        ..with_cert.clone()
+    };
+    let (c, s) = client_auth_exchange(config.clone(), &with_cert);
+    c.unwrap();
+    assert_eq!(s.unwrap(), client_cert.chain().to_vec());
+    let (c, s) = client_auth_exchange(config.clone(), &without_cert);
+    c.unwrap();
+    assert!(s.unwrap().is_empty());
+    assert_eq!(config.resumed_count(), 0);
+
+    // The reverse transition must also be a full handshake, so a newly configured certificate is
+    // actually presented instead of resuming the unauthenticated session.
+    let without_cert = ClientConfig::new(pki.trust_store());
+    let with_cert = without_cert
+        .clone()
+        .with_client_certificate(client_cert.clone());
+    let (c, s) = client_auth_exchange(config.clone(), &without_cert);
+    c.unwrap();
+    assert!(s.unwrap().is_empty());
+    let (c, s) = client_auth_exchange(config.clone(), &with_cert);
+    c.unwrap();
+    assert_eq!(s.unwrap(), client_cert.chain().to_vec());
+    assert_eq!(config.resumed_count(), 0);
+}
+
+#[test]
 fn a_client_certificate_verify_that_is_wrong_is_refused() {
     let (server, _) = ServerConfig::for_names(&["server.test"]).unwrap();
     let (client_cert, roots) = client_ca();
