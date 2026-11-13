@@ -2272,10 +2272,11 @@ impl Client {
             headers,
             secret: &secret,
         };
-        let started = conn.start(&request, &hop.body, waits);
-        if let (Ok(stream), Some(r)) = (&started, &hop.running) {
-            r.set(Interrupt::Call(Box::new(stream.canceller())));
-        }
+        let started = conn.start_registered(&request, &hop.body, waits, |stream| {
+            if let Some(r) = &hop.running {
+                r.set(Interrupt::Call(Box::new(stream.canceller())));
+            }
+        });
         let failure = match started {
             Ok(mut stream) if whole => match stream.response(limits.max_body_bytes, waits) {
                 // the caller wants it all: head and body were waited for together, and the body is here
