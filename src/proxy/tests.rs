@@ -79,6 +79,21 @@ fn registry_handler(
                 gzip_stored(br#"{"hello":"world"}"#),
             )
             .with_header("content-encoding", "gzip"),
+            "/double-encoding/-/archive.tgz" => {
+                Response::bytes(200, "application/octet-stream", gzip_stored(b"archive"))
+                    .with_header("content-encoding", "identity")
+                    .with_header("content-encoding", "gzip")
+            }
+            "/partial/-/archive.tgz" => {
+                Response::bytes(206, "application/octet-stream", b"PART".to_vec())
+            }
+            "/range/-/archive.tgz" => {
+                if req.header("range").is_some() || req.header("if-range").is_some() {
+                    Response::bytes(206, "application/octet-stream", b"PART".to_vec())
+                } else {
+                    Response::bytes(200, "application/octet-stream", b"WHOLE".to_vec())
+                }
+            }
             "/chunked" => Response::stream(200, |w| {
                 for i in 0..50 {
                     w.write_all(&pattern(1000 + i))?;
@@ -474,6 +489,66 @@ fn the_scanner_refuses_inspects_and_answers_in_the_hosts_place() {
             "{want}: {events:?}"
         );
     }
+}
+
+#[test]
+fn inspected_responses_fail_closed_for_ambiguous_encoding_and_partial_content() {
+    let reg = registry();
+    let rules = Arc::new(Rules::default());
+    let p = start(&reg, rules.clone(), |b| b);
+    let c = p.client();
+    let base = format!("https://registry.test:{}", reg.port);
+
+    let ambiguous = c
+        .get(&format!("{base}/double-encoding/-/archive.tgz"))
+        .unwrap();
+    assert_eq!(ambiguous.status, 502);
+    assert!(
+        ambiguous.text().contains("more than one content coding"),
+        "{}",
+        ambiguous.text()
+    );
+
+    let partial = c.get(&format!("{base}/partial/-/archive.tgz")).unwrap();
+    assert_eq!(partial.status, 502);
+    assert!(
+        partial.text().contains("partial response"),
+        "{}",
+        partial.text()
+    );
+    assert!(
+        rules.sizes.lock().unwrap().is_empty(),
+        "neither unsafe representation reached the scanner"
+    );
+}
+
+#[test]
+fn scanned_requests_fetch_the_whole_representation() {
+    let reg = registry();
+    let rules = Arc::new(Rules::default());
+    let p = start(&reg, rules.clone(), |b| b);
+    let base = format!("https://registry.test:{}", reg.port);
+    let response = p
+        .client()
+        .request("GET", &format!("{base}/range/-/archive.tgz"))
+        .header("range", "bytes=0-3")
+        .header("if-range", "opaque-validator")
+        .send()
+        .unwrap();
+    assert_eq!(
+        (response.status, response.body.as_slice()),
+        (200, &b"WHOLE"[..])
+    );
+    let seen = rules.seen.lock().unwrap();
+    let exchange = seen
+        .iter()
+        .find(|exchange| exchange.target == "/range/-/archive.tgz")
+        .unwrap();
+    assert_eq!(
+        (exchange.header("range"), exchange.header("if-range")),
+        (None, None)
+    );
+    assert_eq!(*rules.sizes.lock().unwrap(), [(5, true)]);
 }
 
 #[test]
